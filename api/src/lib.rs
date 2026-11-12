@@ -1,0 +1,104 @@
+//! Manna DLS backend (Phase 1: AI-assisted lesson preparation).
+//!
+//! `main.rs` is a thin wrapper: load [`config::Config`], connect + migrate the database,
+//! create the bootstrap PI invite, then serve [`build_app`].
+
+pub mod ai;
+pub mod auth;
+pub mod checks;
+pub mod config;
+pub mod core_questions;
+pub mod db;
+pub mod error;
+pub mod prompts;
+pub mod retrieval;
+pub mod routes;
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::handler::HandlerWithoutStateExt;
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::{StatusCode, Uri};
+use axum::response::{IntoResponse, Response};
+use axum::Router;
+use sqlx::PgPool;
+use tower_http::services::ServeDir;
+use tower_http::trace::TraceLayer;
+
+use crate::ai::AiClient;
+use crate::config::Config;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub db: PgPool,
+    pub config: Arc<Config>,
+    pub ai: Arc<AiClient>,
+}
+
+impl AppState {
+    pub fn new(db: PgPool, config: Config) -> Self {
+        let ai = Arc::new(AiClient::from_config(&config));
+        Self {
+            db,
+            config: Arc::new(config),
+            ai,
+        }
+    }
+}
+
+/// `/api/*` routes plus the frontend: files from `STATIC_DIR` (e.g. `/assets/*`), and
+/// `index.html` for other non-API paths (SPA routing). A missing static directory only yields
+/// 404s.
+pub fn build_app(state: AppState) -> Router {
+    let static_dir = state.config.static_dir.clone();
+    let index = static_dir.join("index.html");
+    let spa_fallback = move |uri: Uri| spa_index(index.clone(), uri);
+    let files = ServeDir::new(&static_dir).fallback(spa_fallback.into_service());
+    Router::new()
+        .nest("/api", routes::api_router().with_state(state))
+        .fallback_service(files)
+        .layer(TraceLayer::new_for_http())
+}
+
+/// True for paths that name a file (anything under `/assets/`, or a last segment with an
+/// extension): a missing file must be a 404, not the SPA shell.
+pub fn looks_like_file(path: &str) -> bool {
+    path.starts_with("/assets/")
+        || path
+            .rsplit('/')
+            .next()
+            .is_some_and(|last| last.contains('.'))
+}
+
+async fn spa_index(index: PathBuf, uri: Uri) -> Response {
+    if looks_like_file(uri.path()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match tokio::fs::read(&index).await {
+        Ok(html) => (
+            [
+                (CONTENT_TYPE, "text/html; charset=utf-8"),
+                (CACHE_CONTROL, "no-cache"),
+            ],
+            html,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_file;
+
+    #[test]
+    fn file_paths_never_fall_back_to_the_spa() {
+        assert!(looks_like_file("/assets/index-abc.js"));
+        assert!(looks_like_file("/assets/avatars/a"));
+        assert!(looks_like_file("/favicon.ico"));
+        assert!(!looks_like_file("/"));
+        assert!(!looks_like_file("/units/12/core"));
+        assert!(!looks_like_file("/lessons/3"));
+    }
+}
