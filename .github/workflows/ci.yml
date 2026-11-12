@@ -9,9 +9,48 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Saving Actions minutes (private repo, 2,000 free minutes/month per account):
+#   * jobs run only when their part of the repo changed (docs-only changes run nothing);
+#   * the Docker image is built on pull requests only. After merge, main runs the
+#     tests again and deploys; Coolify builds the image itself and the deploy job
+#     fails if that build or the live health check fails.
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # paths-filter lists PR files through the API
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      api: ${{ steps.filter.outputs.api }}
+      app: ${{ steps.filter.outputs.app }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'web/**'
+            api:
+              - 'api/**'
+            app:
+              - 'web/**'
+              - 'api/**'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'docker-compose.yml'
+            ci:
+              - '.github/workflows/**'
+
   web:
     name: Web (lint, typecheck, test, build)
+    needs: [changes]
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,6 +73,8 @@ jobs:
 
   api:
     name: API (fmt, clippy, test)
+    needs: [changes]
+    if: needs.changes.outputs.api == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -70,7 +111,12 @@ jobs:
 
   docker:
     name: Docker image builds
-    needs: [web, api]
+    needs: [changes, web, api]
+    # PRs only; skipped/absent web or api results are fine, failures are not.
+    if: >-
+      always() && github.event_name == 'pull_request' &&
+      (needs.changes.outputs.app == 'true' || needs.changes.outputs.ci == 'true') &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,8 +140,13 @@ jobs:
   #   variable COOLIFY_URL, COOLIFY_APP_UUIDS, DEPLOY_APP_ID, DEPLOY_ENV_NAME, DEPLOY_ENV_URL
   deploy:
     name: Deploy (Coolify)
-    needs: [docker]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [changes, web, api]
+    # Only when the app changed (docs/CI-only merges do not redeploy), and only
+    # if the tests that ran passed.
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.app == 'true' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

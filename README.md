@@ -47,8 +47,8 @@ cd web && pnpm install && pnpm dev
 ### 開發流程（一律走 PR）
 
 1. 從 `main` 開分支開發，推上去開 PR。
-2. PR 會跑 CI（前端、後端、Docker 建置）與 Coolify 連線檢查；**全部通過才合併**。
-3. 合併進 `main` 後，CI 再跑一次，全過才把該 commit 快轉到 `deploy` 分支。
+2. PR 會跑 CI 與 Coolify 連線檢查；**全部通過才合併**。CI 只跑有變動的部分：改 `web/` 才跑前端、改 `api/` 才跑後端，只改文件則全部跳過；Docker 建置只在 PR 上跑。
+3. 合併進 `main` 後，CI 再跑一次相關測試（不重建 Docker 映像），全過且這次有改到程式或部署設定，才把該 commit 快轉到 `deploy` 分支；只改文件不會重新部署。
 4. Coolify（manna 主機）監看 **`deploy` 分支**，一有更新就自動部署。
 5. CI 會等 Coolify 部署完成，並用 `coolify-deployments-richard` App 在 GitHub 建立 Deployment 紀錄（repo 首頁右側的 Deployments）。
 
