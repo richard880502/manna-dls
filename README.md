@@ -11,7 +11,7 @@ AI 輔助英文教師備課的研究型平台（國科會蔓娜計畫）。Phase
 web/        React 19 + TypeScript + Vite（前端）
 api/        Rust（axum + sqlx）後端，migrations 在 api/migrations
 Dockerfile  單一映像：前端靜態檔由後端提供
-docker-compose.yml  Coolify 部署用（app + pgvector Postgres）
+docker-compose.yml  Coolify 部署用（只有 app；資料庫是 Coolify 獨立的 PostgreSQL 資源，見 docs/BLUEPRINT.md §10）
 .github/workflows/ci.yml  CI：前端、後端測試、Docker 建置，main 通過後觸發 Coolify 部署
 ```
 
