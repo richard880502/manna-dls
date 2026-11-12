@@ -44,9 +44,8 @@ cd web && pnpm install && pnpm dev
 
 ## 部署
 
-`main` 分支的 CI 全部通過後，`deploy` job 會呼叫 Coolify 的部署 webhook。需要在 GitHub repo 的 Secrets 設定：
-
-- `COOLIFY_WEBHOOK_URL`：Coolify 應用程式 → Webhooks 頁的 Deploy Webhook 網址
-- `COOLIFY_TOKEN`：Coolify → Keys & Tokens → API tokens 建立的權杖（需要 deploy 權限）
+- Coolify（manna 主機）監看的是 **`deploy` 分支**，該分支一有更新就自動部署。
+- 不要直接推 `deploy`。開發一律推到 `main`；`main` 的 CI 全部通過後，`deploy` job 用 GitHub 內建權杖把同一個 commit 快轉到 `deploy`。CI 沒過，網站就不會更新。
+- 主機 nginx 把 `manna.biobank.tw` 代理到 `127.0.0.1:8080`（設定檔 `/etc/nginx/sites-available/manna-dls`）。
 
 金鑰（`ANTHROPIC_API_KEY` 等）只設在 Coolify 的環境變數，不進版本庫。

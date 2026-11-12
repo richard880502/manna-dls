@@ -82,20 +82,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Coolify watches the `deploy` branch (auto deploy on push via its GitHub App).
+  # Only a fully green run on main moves `deploy` forward, so a failing CI never
+  # reaches manna.biobank.tw. Uses the built-in GITHUB_TOKEN; no extra secrets.
   deploy:
-    name: Deploy to manna (Coolify)
+    name: Promote to deploy branch (Coolify deploys it)
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Trigger Coolify deployment
-        env:
-          COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-        run: |
-          if [ -z "$COOLIFY_WEBHOOK_URL" ] || [ -z "$COOLIFY_TOKEN" ]; then
-            echo "::warning::COOLIFY_WEBHOOK_URL / COOLIFY_TOKEN secrets are not set; skipping deploy."
-            exit 0
-          fi
-          curl --fail-with-body -sS -X GET "$COOLIFY_WEBHOOK_URL" \
-            -H "Authorization: Bearer $COOLIFY_TOKEN"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fast-forward deploy branch to this commit
+        run: git push origin "${GITHUB_SHA}:refs/heads/deploy"
