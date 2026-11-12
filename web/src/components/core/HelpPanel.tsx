@@ -1,5 +1,6 @@
 import type { AiResult, AssistLevel, CoreAssistOutput, CoreQuestion, Thumbs } from "../../api/types";
 import { ASSIST_LEVEL_LABELS } from "../../lib/core";
+import { AiContextPanel } from "../AiContextPanel";
 import { AiStatusMessage, AiUnavailableNote, ErrorText } from "../common";
 
 export interface HelpEntry {
@@ -131,6 +132,7 @@ export function HelpPanel({
                 </div>
               )}
               <ErrorText message={entry.decisionError} />
+              <AiContextPanel items={entry.result.context} />
             </>
           ) : (
             <AiStatusMessage status={entry.result.status} message={entry.result.message} />

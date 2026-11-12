@@ -8,18 +8,26 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::ai::pipeline::{self, AiResult, Finish, InteractionMeta, Source};
+use crate::ai::pipeline::{self, AiResult, ContextList, Finish, InteractionMeta, Source};
 use crate::ai::schemas::{self, PlanSuggestOutput};
 use crate::ai::LlmRequest;
 use crate::auth::AuthTeacher;
 use crate::checks::{self, RetrievedRef};
 use crate::core_questions::CORE_QUESTIONS;
 use crate::error::{ApiPath, AppError, AppResult};
+use crate::preferences::{self, Hardest};
 use crate::prompts;
 use crate::retrieval::{self, Scored};
-use crate::routes::lessons::{latest_version, linked_focus_ids, selected_siop_ids};
-use crate::routes::{owned_lesson, scaffold_id, track_label};
+use crate::routes::lessons::{latest_version, linked_focus_ids, selected_siop_ids, LessonStep};
+use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
+use crate::routes::{clip_chars, or_blank, owned_lesson, scaffold_id, track_label};
 use crate::AppState;
+
+/// How much of 我的範例 is sent to the model (style reference only).
+pub const MY_EXAMPLE_PROMPT_CHARS: usize = 3000;
+
+pub const DIFFERENTIATION_REQUIRED: &str = "這位老師表示「差異化與時間安排」是備課時最花時間或最困難的部分，所以每一項建議都必須填寫：duration_min（這個活動預估需要幾分鐘，1 到 120 的整數；老師會看到「AI 估計，請依班級調整」）、support_note（給程度較弱學生的支援，一到兩句）、extension_note（給程度較好學生的延伸，一到兩句）。";
+pub const DIFFERENTIATION_OPTIONAL: &str = "duration_min、support_note、extension_note 可以填 null；若要提供，duration_min 必須是 1 到 120 的整數分鐘。";
 
 #[derive(Debug, Default, Deserialize)]
 pub struct SuggestRequest {
@@ -27,20 +35,24 @@ pub struct SuggestRequest {
     pub request_note: Option<String>,
 }
 
-fn or_blank(s: &str) -> String {
-    if s.trim().is_empty() {
-        "（尚未填寫）".to_string()
-    } else {
-        s.to_string()
+fn format_step(s: &LessonStep) -> String {
+    let mut line = format!(
+        "{}. [活動型態：{}｜ICAP：{}",
+        s.position,
+        or_blank(&s.activity_type),
+        s.icap_level.as_deref().unwrap_or("未設定"),
+    );
+    if let Some(d) = s.duration_min {
+        line.push_str(&format!("｜預估 {d} 分鐘"));
     }
-}
-
-fn clip_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", s.chars().take(max).collect::<String>())
+    line.push_str(&format!("] {}", s.content));
+    if !s.support_note.trim().is_empty() {
+        line.push_str(&format!("\n   程度較弱的支援：{}", s.support_note.trim()));
     }
+    if !s.extension_note.trim().is_empty() {
+        line.push_str(&format!("\n   程度較好的延伸：{}", s.extension_note.trim()));
+    }
+    line
 }
 
 fn format_items(items: &[Scored]) -> String {
@@ -108,19 +120,7 @@ pub async fn suggest(
     let steps_text = if steps.is_empty() {
         "（尚未填寫）".to_string()
     } else {
-        steps
-            .iter()
-            .map(|s| {
-                format!(
-                    "{}. [活動型態：{}｜ICAP：{}] {}",
-                    s.position,
-                    or_blank(&s.activity_type),
-                    s.icap_level.as_deref().unwrap_or("未設定"),
-                    s.content
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        steps.iter().map(format_step).collect::<Vec<_>>().join("\n")
     };
 
     let focus_ids = linked_focus_ids(&state.db, id).await?;
@@ -198,11 +198,34 @@ pub async fn suggest(
         retrieval::retrieve(&state.db, &track, &query_text, state.config.rag_top_k).await?;
     let codes: Vec<String> = retrieved.iter().map(|s| s.item.item_code.clone()).collect();
 
-    let vars: HashMap<&str, String> = HashMap::from([
+    let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
+    let differentiation = prefs.has_hardest(Hardest::Differentiation);
+    let class_profile = lesson.effective_class_profile();
+    let my_example = lesson.my_example.trim().to_string();
+    let my_example_prompt = if my_example.is_empty() {
+        "（沒有提供）".to_string()
+    } else {
+        clip_chars(&my_example, MY_EXAMPLE_PROMPT_CHARS)
+    };
+
+    let mut vars: HashMap<&str, String> = HashMap::from([
         ("school_track", track_label(&track).to_string()),
         ("unit_title", lesson.unit_title.clone()),
         ("lesson_title", lesson.title.clone()),
-        ("class_description", or_blank(&lesson.class_description)),
+        // v1 templates name the effective class profile 班級描述.
+        ("class_description", or_blank(&class_profile)),
+        ("class_profile", or_blank(&class_profile)),
+        ("my_example", my_example_prompt),
+        ("detail_instruction", prefs.detail_instruction().to_string()),
+        (
+            "differentiation_instruction",
+            if differentiation {
+                DIFFERENTIATION_REQUIRED
+            } else {
+                DIFFERENTIATION_OPTIONAL
+            }
+            .to_string(),
+        ),
         ("objective", or_blank(&objective)),
         ("steps", steps_text),
         ("core_focuses", core_text),
@@ -218,10 +241,24 @@ pub async fn suggest(
         ("knowledge_items", format_items(&retrieved)),
         ("allowed_codes", codes.join("、")),
     ]);
+    let mut required = vec![
+        ("class_profile", "班級特性"),
+        ("detail_instruction", "建議正文的長度"),
+    ];
+    if !my_example.is_empty() {
+        required.push(("my_example", "老師自己的範例（只作風格參考，不是依據）"));
+    }
+    if differentiation {
+        required.push(("differentiation_instruction", "差異化欄位"));
+    }
     let system = prompts::render(&prompt.system_text, &vars);
-    let user = prompts::render(&prompt.user_template, &vars);
+    let user = prompts::render_user_with(&prompt, &vars, &required);
+    // 我的範例 is deletable by the teacher (D5): the logged copy keeps only a hash.
+    vars.insert("my_example", prompts::redacted("我的範例", &my_example));
+    let logged_user = prompts::render_user_with(&prompt, &vars, &required);
     let snapshot = json!({
         "inputs": vars,
+        "preferences": pref_snapshot(&prefs),
         "retrieval": {
             "query": query_text,
             "top_k": state.config.rag_top_k,
@@ -231,7 +268,7 @@ pub async fn suggest(
         },
         "prompt": {
             "key": prompts::KEY_PLAN_SUGGEST, "version_no": prompt.version_no,
-            "system": system, "user": user
+            "system": system, "user": logged_user
         },
         "schema": schemas::PLAN_SUGGEST_SCHEMA_NAME,
         "model_called": !retrieved.is_empty(),
@@ -265,6 +302,53 @@ pub async fn suggest(
     .execute(&state.db)
     .await?;
 
+    let mut context = ContextList::default();
+    let first_step = steps
+        .first()
+        .map(|s| s.content.as_str())
+        .unwrap_or_default();
+    context
+        .add("班級特性", &class_profile)
+        .add("本課目標", &objective)
+        .add(
+            "教案步驟",
+            &if steps.is_empty() {
+                String::new()
+            } else {
+                format!("共 {} 步：{}", steps.len(), first_step)
+            },
+        )
+        .add(
+            "本課連結的 CoRe 重點",
+            &focuses
+                .iter()
+                .map(|f| f.big_idea.as_str())
+                .collect::<Vec<_>>()
+                .join("、"),
+        )
+        .add(
+            "SIOP 提示",
+            &siop
+                .iter()
+                .map(|s| s.component.as_str())
+                .collect::<Vec<_>>()
+                .join("、"),
+        )
+        .add("我的範例", &my_example)
+        .add("補充需求", &request_note)
+        .add(
+            "你的備課偏好",
+            &preference_summary(
+                &prefs,
+                if differentiation {
+                    &["每項建議附預估時間與分層支援"]
+                } else {
+                    &[]
+                },
+            ),
+        );
+    let context = context.into_vec();
+
     // Nothing retrieved: answer 「知識庫查無」 without calling the model (spec §5.1).
     if retrieved.is_empty() {
         let output = PlanSuggestOutput {
@@ -288,7 +372,9 @@ pub async fn suggest(
             },
         )
         .await?;
-        return Ok(Json(AiResult::shown(first_id, output, Vec::new())));
+        return Ok(Json(
+            AiResult::shown(first_id, output, Vec::new()).with_context(context),
+        ));
     }
 
     let refs: Vec<RetrievedRef> = retrieved
@@ -306,6 +392,7 @@ pub async fn suggest(
         fake_context: json!({
             "task": "plan_suggest",
             "request_note": request_note,
+            "differentiation": differentiation,
             "items": retrieved.iter().map(|s| json!({
                 "item_code": s.item.item_code, "title": s.item.title
             })).collect::<Vec<_>>(),
@@ -320,27 +407,33 @@ pub async fn suggest(
         llm_req,
         |raw: &Value| {
             pipeline::parse_and_check::<PlanSuggestOutput>(raw, |o| {
-                (checks::check_plan(o, &refs, &track), checks::cited_codes(o))
+                let mut results = checks::check_plan(o, &refs, &track);
+                results.extend(checks::check_plan_differentiation(o, differentiation));
+                (results, checks::cited_codes(o))
             })
         },
     )
     .await?;
 
-    Ok(Json(outcome.into_result(|out| {
-        let by_code: HashMap<&str, &Scored> = retrieved
-            .iter()
-            .map(|s| (s.item.item_code.as_str(), s))
-            .collect();
-        checks::cited_codes(out)
-            .iter()
-            .filter_map(|c| by_code.get(c.as_str()))
-            .map(|s| Source {
-                item_code: s.item.item_code.clone(),
-                title: s.item.title.clone(),
-                category: s.item.category.clone(),
-                source_doc: s.item.source_doc.clone(),
-                source_page: s.item.source_page.clone(),
+    Ok(Json(
+        outcome
+            .into_result(|out| {
+                let by_code: HashMap<&str, &Scored> = retrieved
+                    .iter()
+                    .map(|s| (s.item.item_code.as_str(), s))
+                    .collect();
+                checks::cited_codes(out)
+                    .iter()
+                    .filter_map(|c| by_code.get(c.as_str()))
+                    .map(|s| Source {
+                        item_code: s.item.item_code.clone(),
+                        title: s.item.title.clone(),
+                        category: s.item.category.clone(),
+                        source_doc: s.item.source_doc.clone(),
+                        source_page: s.item.source_page.clone(),
+                    })
+                    .collect()
             })
-            .collect()
-    })))
+            .with_context(context),
+    ))
 }

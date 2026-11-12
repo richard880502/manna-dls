@@ -8,6 +8,7 @@ import { CorePage } from "./pages/CorePage";
 import { HomePage, PlanIndexPage } from "./pages/HomePage";
 import { LessonPage } from "./pages/LessonPage";
 import { LoginPage } from "./pages/LoginPage";
+import { PreferencesPage } from "./pages/PreferencesPage";
 import { CommunityPage } from "./pages/static/CommunityPage";
 import { ProfilePage, RecordPage, ReflectPage, SharePage } from "./pages/static/StaticPages";
 import { UnitPage } from "./pages/UnitPage";
@@ -66,6 +67,7 @@ export function AppRoutes() {
         <Route path="share" element={<SharePage />} />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="community" element={<CommunityPage />} />
+        <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

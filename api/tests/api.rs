@@ -31,6 +31,7 @@ async fn health_config_and_api_errors() {
     assert_eq!(v["ai_provider"], "fake");
     assert_eq!(v["ai_model"], "fake-model");
     assert_eq!(v["demo_mode"], false);
+    assert_eq!(v["route_choice_enabled"], true);
 
     let (s, v) = app.get("/api/does-not-exist", None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
@@ -1222,14 +1223,26 @@ async fn admin_prompts_imports_and_permissions() {
             "core_assist_l1",
             "core_assist_l2",
             "core_assist_l3",
+            "material_focuses",
             "plan_suggest"
         ]
     );
-    assert!(prompts
+    // Phase 1.1 seeds v2 of core_assist_l2 and plan_suggest (v1 rows are kept).
+    let versions: Vec<i64> = prompts
         .as_array()
         .unwrap()
         .iter()
-        .all(|p| p["version_no"] == 1));
+        .map(|p| p["version_no"].as_i64().unwrap())
+        .collect();
+    assert_eq!(versions, vec![1, 2, 1, 1, 2]);
+    let v1_kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1
+            AND prompt_key IN ('core_assist_l2', 'plan_suggest')",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(v1_kept, 2);
     let (s, created) = app
         .post(
             "/api/admin/prompts",
@@ -1238,7 +1251,7 @@ async fn admin_prompts_imports_and_permissions() {
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{created}");
-    assert_eq!(created["version_no"], 2);
+    assert_eq!(created["version_no"], 3);
     let (_, prompts) = app.get("/api/admin/prompts", Some(&pi)).await;
     let plan = prompts
         .as_array()
@@ -1246,7 +1259,7 @@ async fn admin_prompts_imports_and_permissions() {
         .iter()
         .find(|p| p["prompt_key"] == "plan_suggest")
         .unwrap();
-    assert_eq!(plan["version_no"], 2);
+    assert_eq!(plan["version_no"], 3);
     assert_eq!(plan["system_text"], "新版系統提示");
     let (s, _) = app
         .post(
@@ -1432,6 +1445,24 @@ async fn ai_disabled_returns_disabled_status() {
             json!({}),
         )
         .await;
+    assert_eq!(r["status"], "disabled");
+    assert_eq!(r["context"], json!([]), "nothing was sent");
+    let (s, m) = app
+        .post(
+            &format!("/api/units/{unit}/materials"),
+            Some(&t),
+            json!({ "text": "Not only is it fun, but it is also useful." }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{m}");
+    let (s, r) = app
+        .post(
+            &format!("/api/units/{unit}/material-focuses"),
+            Some(&t),
+            json!({ "material_id": m["id"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{r}");
     assert_eq!(r["status"], "disabled");
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ai_interactions")
         .fetch_one(&app.db)

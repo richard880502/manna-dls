@@ -13,6 +13,7 @@ describe("admin page (pi)", () => {
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/me": pi,
+      "GET /api/admin/settings": { route_choice_enabled: true },
       "GET /api/admin/prompts": [
         {
           id: 1,
@@ -68,6 +69,31 @@ describe("admin page (pi)", () => {
     const upload = api.callsTo("POST", "/api/admin/knowledge/import")[0];
     expect(upload?.headers["Content-Type"]).toBe("text/csv");
     expect(upload?.rawBody).toBe(csv);
+  });
+
+  it("toggles route_choice_enabled (自選備課菜單) for the whole platform", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/me": pi,
+      "GET /api/admin/settings": { route_choice_enabled: true },
+      "PUT /api/admin/settings": (call: MockCall) => call.body,
+      "GET /api/admin/prompts": [],
+    });
+    const user = userEvent.setup();
+    renderApp("/admin");
+
+    const toggle = await screen.findByRole("checkbox", { name: /允許教師自選備課菜單/ });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    await waitFor(() => expect(api.lastBody("PUT", "/api/admin/settings")).toEqual({ route_choice_enabled: false }));
+    expect(await screen.findByText(/已關閉：所有單元改用固定的「目標優先」順序/)).toBeInTheDocument();
+    expect(toggle).not.toBeChecked();
+
+    // the rest of the app follows the new setting without a reload
+    await user.click(screen.getByRole("link", { name: /Study & Plan/ }));
+    await screen.findByLabelText("建立新單元");
+    expect(screen.queryByRole("radio", { name: /教材優先/ })).not.toBeInTheDocument();
   });
 
   it("hides the admin page from teachers", async () => {

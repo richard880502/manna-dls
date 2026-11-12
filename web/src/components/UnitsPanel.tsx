@@ -1,16 +1,26 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { Unit } from "../api/types";
+import type { PrepRoute, Unit } from "../api/types";
+import { useApp } from "../context/AppContext";
 import { CORE_STATUS_LABELS, formatDate } from "../lib/labels";
+import { PREP_ROUTE_LABELS, effectiveRoute } from "../lib/preferences";
 import { ErrorText, Loading } from "./common";
+import { RouteOptions } from "./unit/RouteOptions";
 
 export function UnitsPanel() {
+  const { routeChoiceEnabled, preferences } = useApp();
+  const navigate = useNavigate();
   const [units, setUnits] = useState<Unit[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
+  /** null = teacher has not picked; the default comes from 我的備課偏好 (P2). */
+  const [pickedRoute, setPickedRoute] = useState<PrepRoute | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  const defaultRoute = effectiveRoute(true, preferences?.answers?.start_from ?? null);
+  const route = pickedRoute ?? defaultRoute;
 
   useEffect(() => {
     let alive = true;
@@ -37,9 +47,12 @@ export function UnitsPanel() {
     setCreating(true);
     setCreateError(null);
     try {
-      const unit = await api.createUnit(trimmed);
+      const unit = await api.createUnit(routeChoiceEnabled ? { title: trimmed, prep_route: route } : { title: trimmed });
       setUnits((prev) => [unit, ...(prev ?? [])]);
       setTitle("");
+      setPickedRoute(null);
+      // The unit page opens on the first screen of the chosen prep route.
+      navigate(`/units/${unit.id}`);
     } catch (err) {
       setCreateError(errorMessage(err));
     } finally {
@@ -73,6 +86,20 @@ export function UnitsPanel() {
             {creating ? "建立中…" : "建立單元"}
           </button>
         </div>
+        {routeChoiceEnabled && (
+          <RouteOptions
+            name="new-unit-route"
+            legend="從哪裡開始備課？"
+            value={route}
+            onChange={setPickedRoute}
+            disabled={creating}
+            hint={
+              preferences?.answers?.start_from
+                ? "預設依你的備課偏好；建立後也可以在單元頁隨時切換。"
+                : "建立後也可以在單元頁隨時切換。"
+            }
+          />
+        )}
         <ErrorText message={createError} />
       </form>
 
@@ -94,6 +121,9 @@ export function UnitsPanel() {
                   CoRe：{CORE_STATUS_LABELS[unit.core_status]}
                 </span>
                 <span className="soft-tag">{unit.lesson_count} 個課例</span>
+                {routeChoiceEnabled && (
+                  <span className="soft-tag route-tag">{PREP_ROUTE_LABELS[effectiveRoute(true, unit.prep_route)]}</span>
+                )}
               </div>
               <div className="unit-card-actions">
                 <Link className="secondary-button link-button" to={`/units/${unit.id}/core`}>

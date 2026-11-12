@@ -8,6 +8,9 @@ import type {
   CoreResponse,
   CoreVersion,
   LessonDetail,
+  LessonStep,
+  PreferenceAnswers,
+  Preferences,
   QuestionId,
   Teacher,
   Unit,
@@ -15,6 +18,7 @@ import type {
 import { QUESTION_IDS } from "../api/types";
 import { App } from "../App";
 import { FALLBACK_QUESTIONS } from "../lib/core";
+import { FALLBACK_PREFERENCE_QUESTIONS } from "../lib/preferences";
 import { TOKEN_STORAGE_KEY } from "../lib/storage";
 
 export interface MockCall {
@@ -121,6 +125,7 @@ export const config = (overrides: Partial<AppConfig> = {}): AppConfig => ({
   ai_enabled: true,
   ai_provider: "anthropic",
   ai_model: "claude-opus-5-5",
+  route_choice_enabled: true,
   ...overrides,
 });
 
@@ -132,7 +137,43 @@ export const unit: Unit = {
   created_at: "2026-11-10T08:00:00Z",
   core_status: "draft",
   lesson_count: 1,
+  prep_route: "goal",
+  class_profile: "",
 };
+
+export const unitWith = (overrides: Partial<Unit> = {}): Unit => ({ ...unit, ...overrides });
+
+export const preferences = (
+  answers: Partial<PreferenceAnswers> = {},
+  extra: Partial<Preferences> = {},
+): Preferences => ({
+  version_no: 1,
+  question_set_version: 1,
+  answers: {
+    experience: null,
+    start_from: null,
+    hardest: [],
+    ai_experience: null,
+    detail: null,
+    class_profile: "",
+    ...answers,
+  },
+  skipped: false,
+  source: "onboarding",
+  created_at: "2026-11-10T08:00:00Z",
+  ...extra,
+});
+
+export const step = (overrides: Partial<LessonStep> = {}): LessonStep => ({
+  position: 1,
+  activity_type: "",
+  icap_level: null,
+  content: "",
+  duration_min: null,
+  support_note: "",
+  extension_note: "",
+  ...overrides,
+});
 
 export const questions: CoreQuestion[] = FALLBACK_QUESTIONS;
 
@@ -170,11 +211,13 @@ export const lessonDetail = (overrides: Partial<LessonDetail> = {}): LessonDetai
   lesson_date: null,
   class_description: "高一普通班",
   created_at: "2026-11-10T08:00:00Z",
+  my_example: "",
+  effective_class_profile: "高一普通班",
   latest_version: {
     id: 70,
     version_no: 2,
     objective: "學生能說明倒裝的語意功能",
-    steps: [{ position: 1, activity_type: "暖身", icap_level: "active", content: "比較兩組句子" }],
+    steps: [step({ position: 1, activity_type: "暖身", icap_level: "active", content: "比較兩組句子" })],
     created_at: "2026-11-11T08:00:00Z",
   },
   versions_count: 2,
@@ -184,11 +227,18 @@ export const lessonDetail = (overrides: Partial<LessonDetail> = {}): LessonDetai
   ...overrides,
 });
 
-/** Routes every authenticated page needs. */
-export function baseRoutes(cfg: Partial<AppConfig> = {}): Record<string, RouteValue> {
+/** Mirrors the server: P6's privacy hint is part of its prompt text. */
+export const preferenceQuestions = FALLBACK_PREFERENCE_QUESTIONS.map((q) =>
+  q.id === "P6" ? { ...q, prompt: "我的班級特性（選填；不要寫學生姓名或個人資料）" } : q,
+);
+
+/** Routes every authenticated page needs. Preferences default to an answered survey with no P3 picks. */
+export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | null = preferences()): Record<string, RouteValue> {
   return {
     "GET /api/config": config(cfg),
     "GET /api/me": teacher,
+    "GET /api/me/preferences": prefs,
+    "GET /api/preferences/questions": { question_set_version: 1, questions: preferenceQuestions },
     "GET /api/units": [unit],
     "GET /api/units/1": unit,
     "GET /api/core/questions": questions,

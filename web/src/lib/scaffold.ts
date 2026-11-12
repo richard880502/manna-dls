@@ -1,5 +1,7 @@
+import { useEffect, useRef } from "react";
 import { api } from "../api/client";
-import type { ScaffoldAction, ScaffoldCode } from "../api/types";
+import type { Hardest, ScaffoldAction, ScaffoldCode } from "../api/types";
+import { preferenceTrigger } from "./preferences";
 
 /**
  * Fire-and-forget scaffold event. Never throws, never rejects, never blocks the UI.
@@ -15,4 +17,17 @@ export function logScaffold(
   } catch {
     // swallow: research logging must not break the teacher's work
   }
+}
+
+/**
+ * Logs `SC-PREF show` once per mounted component when an aid is opened by default
+ * because of the teacher's preference (e.g. trigger "preference:hardest=differentiation").
+ */
+export function usePreferenceScaffold(active: boolean, value: Hardest): void {
+  const logged = useRef(false);
+  useEffect(() => {
+    if (!active || logged.current) return;
+    logged.current = true;
+    logScaffold("SC-PREF", "show", { trigger: preferenceTrigger(value) });
+  }, [active, value]);
 }

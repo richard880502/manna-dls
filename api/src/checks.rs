@@ -10,7 +10,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::ai::schemas::{CoreAssistOutput, PlanSuggestOutput};
+use crate::ai::schemas::{CoreAssistOutput, MaterialFocusesOutput, PlanSuggestOutput};
 use crate::retrieval::is_cjk;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -295,6 +295,52 @@ pub fn check_plan(
     r
 }
 
+/// Plausible range for an AI-estimated activity duration, in minutes.
+pub const DURATION_RANGE: std::ops::RangeInclusive<i32> = 1..=120;
+
+/// Differentiation fields of plan suggestions (docs/API.md Phase 1.1):
+/// * when the teacher's P3 includes differentiation, every suggestion must carry
+///   `duration_min`, a non-blank `support_note` and a non-blank `extension_note`;
+/// * any `duration_min` given must lie in [`DURATION_RANGE`] (≤ 0 or > 120 is rejected).
+pub fn check_plan_differentiation(out: &PlanSuggestOutput, required: bool) -> Vec<CheckResult> {
+    let mut r = Vec::new();
+    for (i, s) in out.suggestions.iter().enumerate() {
+        if required {
+            let blank = |v: &Option<String>| v.as_deref().is_none_or(|t| t.trim().is_empty());
+            let mut missing = Vec::new();
+            if s.duration_min.is_none() {
+                missing.push("duration_min");
+            }
+            if blank(&s.support_note) {
+                missing.push("support_note");
+            }
+            if blank(&s.extension_note) {
+                missing.push("extension_note");
+            }
+            r.push(
+                CheckResult::new(
+                    "differentiation_fields",
+                    missing.is_empty(),
+                    (!missing.is_empty()).then(|| format!("missing: {}", missing.join(", "))),
+                )
+                .at(i),
+            );
+        }
+        if let Some(d) = s.duration_min {
+            let ok = DURATION_RANGE.contains(&d);
+            r.push(
+                CheckResult::new(
+                    "duration_plausible",
+                    ok,
+                    (!ok).then(|| format!("duration_min={d} outside 1–120")),
+                )
+                .at(i),
+            );
+        }
+    }
+    r
+}
+
 /// Distinct cited codes in first-cited order.
 pub fn cited_codes(out: &PlanSuggestOutput) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -306,10 +352,59 @@ pub fn cited_codes(out: &PlanSuggestOutput) -> Vec<String> {
         .collect()
 }
 
+// ---------------------------------------------------------------- material focuses
+
+pub const MAX_MATERIAL_CANDIDATES: usize = 5;
+
+/// Whitespace-insensitive form used to compare excerpts with the material: every whitespace
+/// character is removed, so line breaks or doubled spaces in either text do not matter.
+pub fn normalize_ws(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Checks for 教材優先 candidate focuses:
+/// * at most [`MAX_MATERIAL_CANDIDATES`] candidates (fewer than three, even none, is allowed);
+/// * every excerpt is non-empty and, whitespace-normalised, a verbatim substring of the stored
+///   material text;
+/// * every big_idea contains Chinese; no 大考-level ↔ CEFR/grade equating.
+pub fn check_material_focuses(out: &MaterialFocusesOutput, material: &str) -> Vec<CheckResult> {
+    let n = out.candidates.len();
+    let mut r = vec![CheckResult::new(
+        "max_candidates",
+        n <= MAX_MATERIAL_CANDIDATES,
+        (n > MAX_MATERIAL_CANDIDATES).then(|| format!("{n} candidates")),
+    )];
+    let haystack = normalize_ws(material);
+    for (i, c) in out.candidates.iter().enumerate() {
+        let needle = normalize_ws(&c.excerpt);
+        let verbatim = !needle.is_empty() && haystack.contains(&needle);
+        r.push(
+            CheckResult::new(
+                "excerpt_verbatim",
+                verbatim,
+                (!verbatim).then(|| "excerpt 不是教材原文的一段".to_string()),
+            )
+            .at(i),
+        );
+        let zh = contains_cjk(&c.big_idea);
+        r.push(
+            CheckResult::new(
+                "big_idea_zh",
+                zh,
+                (!zh).then(|| "學習重點需以中文撰寫".to_string()),
+            )
+            .at(i),
+        );
+        let mapping = level_mapping_violation(&format!("{}\n{}", c.big_idea, c.rationale));
+        r.push(CheckResult::new("level_mapping", mapping.is_none(), mapping).at(i));
+    }
+    r
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::schemas::{IcapLevel, PlanSuggestion};
+    use crate::ai::schemas::{IcapLevel, MaterialCandidate, PlanSuggestion};
 
     fn core(level: u8, text: &str) -> CoreAssistOutput {
         CoreAssistOutput {
@@ -424,6 +519,9 @@ mod tests {
             activity_type: Some("配對討論".into()),
             icap_level: Some(IcapLevel::Interactive),
             citations: cites.iter().map(|c| c.to_string()).collect(),
+            duration_min: None,
+            support_note: None,
+            extension_note: None,
         }
     }
 
@@ -530,5 +628,114 @@ mod tests {
         let v = report(&r);
         assert_eq!(v["passed"], json!(true));
         assert!(v["checks"].as_array().unwrap().len() >= 4);
+    }
+
+    fn diff(d: Option<i32>, support: Option<&str>, ext: Option<&str>) -> PlanSuggestOutput {
+        let mut s = sug("讓學生兩兩練習。", &["DEMO-GRM-001"]);
+        s.duration_min = d;
+        s.support_note = support.map(str::to_string);
+        s.extension_note = ext.map(str::to_string);
+        PlanSuggestOutput {
+            kb_empty: false,
+            suggestions: vec![s],
+        }
+    }
+
+    #[test]
+    fn differentiation_fields_required_only_when_preferred() {
+        let full = diff(Some(15), Some("提供句型框架"), Some("改寫成正式語氣"));
+        assert!(all_passed(&check_plan_differentiation(&full, true)));
+        let none = diff(None, None, None);
+        assert!(all_passed(&check_plan_differentiation(&none, false)));
+        let r = check_plan_differentiation(&none, true);
+        assert_eq!(failed(&r), vec!["differentiation_fields"]);
+        assert!(r[0].detail.as_deref().unwrap().contains("extension_note"));
+        let blank = diff(Some(10), Some("  "), Some("延伸"));
+        assert_eq!(
+            failed(&check_plan_differentiation(&blank, true)),
+            vec!["differentiation_fields"]
+        );
+    }
+
+    #[test]
+    fn absurd_durations_are_rejected() {
+        for d in [0, -5, 121, 600] {
+            let out = diff(Some(d), Some("支援"), Some("延伸"));
+            assert_eq!(
+                failed(&check_plan_differentiation(&out, false)),
+                vec!["duration_plausible"],
+                "{d}"
+            );
+        }
+        for d in [1, 45, 120] {
+            assert!(all_passed(&check_plan_differentiation(
+                &diff(Some(d), Some("支援"), Some("延伸")),
+                true
+            )));
+        }
+    }
+
+    const MATERIAL: &str = "Not only does Taiwan have tall mountains,\n  but it also has beautiful beaches.\n\n台灣的夜市 文化很有名。";
+
+    fn cand(big_idea: &str, excerpt: &str) -> MaterialCandidate {
+        MaterialCandidate {
+            big_idea: big_idea.into(),
+            rationale: "這段可以讓學生觀察倒裝句。".into(),
+            excerpt: excerpt.into(),
+        }
+    }
+
+    #[test]
+    fn material_excerpts_must_be_verbatim_whitespace_normalised() {
+        let out = MaterialFocusesOutput {
+            candidates: vec![
+                cand(
+                    "倒裝句 Not only",
+                    "Not only does Taiwan have tall mountains, but it also has",
+                ),
+                cand("夜市文化", "台灣的夜市文化很有名。"),
+            ],
+        };
+        let r = check_material_focuses(&out, MATERIAL);
+        assert!(all_passed(&r), "{r:?}");
+        let bad = MaterialFocusesOutput {
+            candidates: vec![
+                cand("改寫的句子", "Taiwan has not only mountains"),
+                cand("空白", "   "),
+            ],
+        };
+        let f: Vec<(&str, Option<usize>)> = check_material_focuses(&bad, MATERIAL)
+            .iter()
+            .filter(|c| !c.passed)
+            .map(|c| (c.name, c.item_index))
+            .collect();
+        assert_eq!(
+            f,
+            vec![("excerpt_verbatim", Some(0)), ("excerpt_verbatim", Some(1))]
+        );
+    }
+
+    #[test]
+    fn material_big_idea_needs_chinese_and_at_most_five() {
+        let english = MaterialFocusesOutput {
+            candidates: vec![cand("Inversion", "台灣的夜市")],
+        };
+        assert_eq!(
+            failed(&check_material_focuses(&english, MATERIAL)),
+            vec!["big_idea_zh"]
+        );
+        let six = MaterialFocusesOutput {
+            candidates: (0..6).map(|_| cand("夜市", "夜市")).collect(),
+        };
+        assert_eq!(
+            failed(&check_material_focuses(&six, MATERIAL)),
+            vec!["max_candidates"]
+        );
+        let none = MaterialFocusesOutput { candidates: vec![] };
+        assert!(all_passed(&check_material_focuses(&none, MATERIAL)));
+        let two = MaterialFocusesOutput {
+            candidates: vec![cand("夜市", "夜市"), cand("山", "mountains")],
+        };
+        assert!(all_passed(&check_material_focuses(&two, MATERIAL)));
     }
 }

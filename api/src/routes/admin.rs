@@ -1,4 +1,5 @@
-//! PI-only endpoints: invites, prompt versions, knowledge-base and teacher-case CSV imports.
+//! PI-only endpoints: invites, platform settings, prompt versions, knowledge-base and
+//! teacher-case CSV imports.
 
 use std::collections::HashSet;
 
@@ -11,6 +12,8 @@ use serde_json::{json, Value};
 use crate::auth::{self, AuthTeacher};
 use crate::error::{ApiJson, AppError, AppResult};
 use crate::prompts::PromptVersion;
+use crate::routes::log_usage;
+use crate::settings;
 use crate::AppState;
 
 // ---------------------------------------------------------------- invites
@@ -55,6 +58,55 @@ pub async fn create_invite(
     .await?;
     // The clear-text code is returned only once; the database keeps its hash.
     Ok(Json(json!({ "code": code })))
+}
+
+// ---------------------------------------------------------------- settings
+
+pub async fn get_settings(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+) -> AppResult<Json<Value>> {
+    teacher.require_pi()?;
+    Ok(Json(json!({
+        "route_choice_enabled": settings::route_choice_enabled(&state.db).await?,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsRequest {
+    pub route_choice_enabled: bool,
+}
+
+/// Updates the settings; each change is logged to `usage_logs` (`setting_changed`).
+pub async fn put_settings(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiJson(req): ApiJson<SettingsRequest>,
+) -> AppResult<Json<Value>> {
+    teacher.require_pi()?;
+    let value = json!(req.route_choice_enabled);
+    let mut tx = state.db.begin().await?;
+    let previous = settings::set(
+        &mut tx,
+        settings::ROUTE_CHOICE_ENABLED,
+        &value,
+        teacher.id(),
+    )
+    .await?;
+    if previous.as_ref() != Some(&value) {
+        log_usage(
+            &mut *tx,
+            teacher.id(),
+            "setting_changed",
+            json!({ "key": settings::ROUTE_CHOICE_ENABLED, "from": previous, "to": value }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(
+        json!({ "route_choice_enabled": req.route_choice_enabled }),
+    ))
 }
 
 // ---------------------------------------------------------------- prompts

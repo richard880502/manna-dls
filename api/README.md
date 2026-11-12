@@ -33,7 +33,7 @@ cargo clippy --all-targets -- -D warnings
 DATABASE_URL=postgres://manna:manna@127.0.0.1:55432/manna cargo test
 ```
 
-Integration tests (`tests/api.rs`) create a throwaway database `test_<random>` per test on the
+Integration tests (`tests/api.rs`, `tests/onboarding.rs`) create a throwaway database `test_<random>` per test on the
 `DATABASE_URL` server, run the migrations, and drop it afterwards (`WITH (FORCE)`), so they run
 in parallel. The role needs `CREATEDB`, and the server needs the `vector` extension
 (`pgvector/pgvector:pg17`). Without `DATABASE_URL` the integration tests are skipped, except
@@ -69,18 +69,21 @@ forbids sending real teacher data to overseas APIs; Anthropic is for the demo en
 | `src/lib.rs` | `AppState`, `build_app` (API router + SPA static files) |
 | `src/config.rs` | env parsing and validation |
 | `src/auth.rs` | invite-code login, bearer sessions (SHA-256 of codes/tokens only), PI check |
-| `src/routes/` | `units`, `core` (CoRe + assist), `lessons` (versions, links, SIOP), `suggestions` (RAG), `feedback` (decisions, scaffold events, teacher cases), `admin` |
+| `src/routes/` | `units` (incl. prep route), `core` (CoRe + assist), `lessons` (versions, links, SIOP), `suggestions` (RAG), `materials` (pasted unit materials, 教材優先 candidates), `preferences` (onboarding P1–P6), `feedback` (decisions, scaffold events, teacher cases), `admin` (incl. settings) |
+| `src/preferences.rs`, `src/settings.rs` | preference question set + answer types; `app_settings` (`route_choice_enabled`) |
 | `src/ai/` | provider abstraction: `anthropic` (raw HTTP), `openai` (compatible), `fake`; `schemas` (structured output); `pipeline` (log → call → check → regenerate once → blocked/shown/timeout/error) |
 | `src/checks.rs` | automatic output checks (citations, track, language, 大考-level ↔ CEFR/grade heuristic, pasteable-answer heuristic, single question) |
 | `src/retrieval.rs` | keyword retrieval (English words + CJK bigrams), track-filtered |
-| `src/prompts.rs` | prompt versions from `prompt_versions`, `{{placeholder}}` rendering |
-| `migrations/` | `0001_init.sql` schema, `0002_seed.sql` prompts v1, scaffolds, DEMO SIOP/knowledge items |
+| `src/prompts.rs` | prompt versions from `prompt_versions`, `{{placeholder}}` rendering; required context (class profile, length preference…) is appended when a template lacks its placeholder; `redacted` keeps deletable text (materials, 我的範例) out of AI input snapshots |
+| `migrations/` | `0001_init.sql` schema, `0002_seed.sql` prompts v1, scaffolds, DEMO SIOP/knowledge items, `0003_onboarding.sql` preferences, settings, prep routes, step fields, prompts v2 + `material_focuses`, SC-MATERIAL/SC-PREF/SC-CONTEXT |
 
 ### Fake provider markers (tests)
 
 Text in the request (e.g. a lesson `request_note` or a CoRe answer) containing `FAKE_TIMEOUT`,
 `FAKE_ERROR`, `FAKE_REFUSAL`, `FAKE_BLOCK` (fails checks on both attempts), `FAKE_BLOCK_ONCE`
-(fails once, regeneration passes) or `FAKE_KB_EMPTY` simulates that outcome.
+(fails once, regeneration passes) or `FAKE_KB_EMPTY` simulates that outcome; `FAKE_NO_DIFF`
+leaves the plan-suggestion differentiation fields null. Material candidates quote sentences of
+the pasted material verbatim (put a marker in the material text to trigger a failure).
 
 ### Seed content
 

@@ -1,12 +1,17 @@
-//! Units (單元).
+//! Units (單元), including the prep route (備課菜單) and the unit-level class profile.
 
 use axum::extract::State;
 use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
+use crate::preferences::{self, PrepRoute};
+use crate::routes::log_usage;
+use crate::routes::preferences::check_class_profile;
+use crate::settings;
 use crate::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -16,6 +21,8 @@ pub struct Unit {
     pub created_at: DateTime<Utc>,
     pub core_status: String,
     pub lesson_count: i64,
+    pub prep_route: String,
+    pub class_profile: String,
 }
 
 const UNIT_SELECT: &str = "
@@ -24,9 +31,12 @@ const UNIT_SELECT: &str = "
                        FROM core_versions cv
                       WHERE cv.unit_id = u.id AND cv.phase = 'pre'
                       ORDER BY cv.version_no DESC LIMIT 1), 'none') AS core_status,
-           (SELECT COUNT(*) FROM lessons l WHERE l.unit_id = u.id AND l.deleted_at IS NULL) AS lesson_count
+           (SELECT COUNT(*) FROM lessons l WHERE l.unit_id = u.id AND l.deleted_at IS NULL) AS lesson_count,
+           u.prep_route, u.class_profile
       FROM units u
      WHERE u.teacher_id = $1 AND u.deleted_at IS NULL";
+
+pub const MSG_ROUTE_LOCKED: &str = "目前平台採固定的備課順序，無法切換備課菜單。";
 
 pub async fn list(
     State(state): State<AppState>,
@@ -61,8 +71,14 @@ pub async fn get_one(
 #[derive(Deserialize)]
 pub struct CreateUnit {
     pub title: String,
+    #[serde(default)]
+    pub prep_route: Option<PrepRoute>,
+    #[serde(default)]
+    pub class_profile: Option<String>,
 }
 
+/// Defaults (docs/API.md Phase 1.1): prep_route from the preference `start_from` (else goal),
+/// class_profile from the preference P6. With route choice disabled the route is always goal.
 pub async fn create(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -72,11 +88,98 @@ pub async fn create(
     if title.is_empty() {
         return Err(AppError::bad_request("請輸入單元名稱。"));
     }
-    let id: i64 =
-        sqlx::query_scalar("INSERT INTO units (teacher_id, title) VALUES ($1, $2) RETURNING id")
-            .bind(teacher.id())
-            .bind(title)
-            .fetch_one(&state.db)
-            .await?;
+    let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
+    let route = if settings::route_choice_enabled(&state.db).await? {
+        req.prep_route
+            .or(prefs.start_from)
+            .unwrap_or(PrepRoute::Goal)
+    } else {
+        PrepRoute::Goal
+    };
+    let class_profile = match req.class_profile {
+        Some(c) => c.trim().to_string(),
+        None => prefs.class_profile.clone(),
+    };
+    check_class_profile(&class_profile)?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO units (teacher_id, title, prep_route, class_profile)
+         VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(teacher.id())
+    .bind(title)
+    .bind(route.as_str())
+    .bind(&class_profile)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(load(&state, teacher.id(), id).await?))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateUnit {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub prep_route: Option<PrepRoute>,
+    #[serde(default)]
+    pub class_profile: Option<String>,
+}
+
+/// Updates the given fields. A prep-route change is logged to `usage_logs`
+/// (`prep_route_changed`, `{unit_id, from, to}`) and refused with 409 while route choice is
+/// disabled; re-sending the current route is not a change.
+pub async fn update(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(req): ApiJson<UpdateUnit>,
+) -> AppResult<Json<Unit>> {
+    let title = match req.title.as_deref().map(str::trim) {
+        Some("") => return Err(AppError::bad_request("請輸入單元名稱。")),
+        t => t.map(str::to_string),
+    };
+    let class_profile = req.class_profile.as_deref().map(str::trim);
+    if let Some(c) = class_profile {
+        check_class_profile(c)?;
+    }
+    let route_enabled = settings::route_choice_enabled(&state.db).await?;
+
+    let mut tx = state.db.begin().await?;
+    let current: String = sqlx::query_scalar(
+        "SELECT prep_route FROM units
+          WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL FOR UPDATE",
+    )
+    .bind(id)
+    .bind(teacher.id())
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("找不到這個單元。"))?;
+    let new_route = req
+        .prep_route
+        .map(PrepRoute::as_str)
+        .filter(|r| *r != current);
+    if new_route.is_some() && !route_enabled {
+        return Err(AppError::Conflict(MSG_ROUTE_LOCKED.into()));
+    }
+    sqlx::query(
+        "UPDATE units SET title = COALESCE($2, title), prep_route = COALESCE($3, prep_route),
+                          class_profile = COALESCE($4, class_profile)
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&title)
+    .bind(new_route)
+    .bind(class_profile)
+    .execute(&mut *tx)
+    .await?;
+    if let Some(to) = new_route {
+        log_usage(
+            &mut *tx,
+            teacher.id(),
+            "prep_route_changed",
+            json!({ "unit_id": id, "from": current, "to": to }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(Json(load(&state, teacher.id(), id).await?))
 }

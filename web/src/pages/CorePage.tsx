@@ -6,6 +6,7 @@ import type {
   ContentSource,
   CoreQuestion,
   CoreVersion,
+  PrepRoute,
   QuestionId,
   Thumbs,
   Unit,
@@ -25,7 +26,15 @@ import {
   type FocusState,
 } from "../lib/core";
 import { formatDateTime } from "../lib/labels";
+import { PREP_ROUTE_LABELS, ROUTE_CORE_HIGHLIGHTS, effectiveRoute } from "../lib/preferences";
 import { logScaffold } from "../lib/scaffold";
+
+const ROUTE_CORE_NOTES: Record<PrepRoute, string> = {
+  goal: "建議先寫標示「建議先寫」的 Q1–Q3：學生要學會什麼、為什麼要學、這次先不教什麼。其他題可以之後再補。",
+  material: "從教材候選重點放進來的學習重點會出現在這裡；你可以改寫、移除，或自己新增。",
+  student: "建議先寫標示「建議先寫」的 Q5、Q6：學生可能怎麼想或誤解、還有哪些因素會影響教學。",
+  activity: "活動優先：可以先在課例寫活動，連結 CoRe 重點後再回來補寫這裡。",
+};
 
 export const AUTOSAVE_DELAY_MS = 1500;
 
@@ -36,7 +45,7 @@ const cellKey = (focusKey: string, q: QuestionId) => `${focusKey}:${q}`;
 
 export function CorePage() {
   const unitId = Number(useParams().unitId);
-  const { aiEnabled } = useApp();
+  const { aiEnabled, routeChoiceEnabled } = useApp();
 
   const [unit, setUnit] = useState<Unit | null>(null);
   const [questions, setQuestions] = useState<CoreQuestion[]>(FALLBACK_QUESTIONS);
@@ -338,6 +347,8 @@ export function CorePage() {
   if (loadError) return <ErrorText message={loadError} />;
   if (!meta) return <Loading />;
 
+  const route = effectiveRoute(routeChoiceEnabled, unit?.prep_route);
+  const highlights = unit ? ROUTE_CORE_HIGHLIGHTS[route] : [];
   const activeFocusIndex = focuses.findIndex((f) => f.key === activeFocusKey);
   const activeFocus = activeFocusIndex >= 0 ? focuses[activeFocusIndex] : undefined;
   const helpFocusIndex = activeHelp ? focuses.findIndex((f) => f.key === activeHelp.focusKey) : -1;
@@ -363,6 +374,13 @@ export function CorePage() {
         <p className="core-pre-question">{CORE_PRE_QUESTION}</p>
         <p className="field-hint">八題全部可以留白，不設必填；隨時會自動存草稿。</p>
       </div>
+
+      {unit && (
+        <Notice>
+          {routeChoiceEnabled ? <strong>{PREP_ROUTE_LABELS[route]}：</strong> : null}
+          {ROUTE_CORE_NOTES[route]}
+        </Notice>
+      )}
 
       <div className="core-layout">
         <div className="core-main">
@@ -444,6 +462,7 @@ export function CorePage() {
                     cellId={`${activeFocus.key}-${question.id}`}
                     cell={activeFocus.cells[question.id]}
                     isHelpActive={activeHelp?.focusKey === activeFocus.key && activeHelp.q === question.id}
+                    highlighted={highlights.includes(question.id)}
                     onAnswer={(value) => updateCell(activeFocus.key, question.id, (c) => ({ ...c, answer: value }))}
                     onToggleNoIdea={(on) =>
                       updateCell(activeFocus.key, question.id, (c) =>
@@ -478,6 +497,11 @@ export function CorePage() {
             {completeMessage && <Notice tone="success">{completeMessage}</Notice>}
             <ErrorText message={completeError} />
             <p className="field-hint">留白或選「目前沒有想法」都可以完成；完成後仍可回來修改。</p>
+            <p className="core-next">
+              <Link to={`/units/${unitId}`}>
+                {route === "activity" ? "下一步：回到單元頁繼續寫課例 →" : "下一步：到單元頁建立或打開課例 →"}
+              </Link>
+            </p>
           </div>
         </div>
 
