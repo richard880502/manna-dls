@@ -23,6 +23,29 @@ const NAV: NavEntry[] = [
   { to: "/preferences", label: "我的備課偏好", symbol: "✎" },
 ];
 
+/** One stroke icon set for the sidebar (20px grid, 1.6 stroke, currentColor). Unknown paths keep their text symbol. */
+const NAV_ICON_PATHS: Record<string, string> = {
+  "/": "M3.5 9.2 10 4l6.5 5.2V16a1 1 0 0 1-1 1h-3.25v-4.5h-4.5V17H4.5a1 1 0 0 1-1-1z",
+  "/plan": "M10 5.6C8.4 4.5 6.3 4 3.5 4v11.2c2.8 0 4.9.5 6.5 1.6 1.6-1.1 3.7-1.6 6.5-1.6V4c-2.8 0-4.9.5-6.5 1.6zm0 0v11.2",
+  "/record": "M6 3.5h8a1 1 0 0 1 1 1v12.3l-5-3.1-5 3.1V4.5a1 1 0 0 1 1-1z",
+  "/reflect": "M15.8 8.5A6 6 0 1 0 16 11.5M16.2 4.2v4.3h-4.3",
+  "/share": "M7.5 9.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 16.5c0-2.6 2-4.5 4.5-4.5s4.5 1.9 4.5 4.5M13.5 9.5a2 2 0 1 0 0-4M14 12.2c1.8.3 3 1.9 3 4.3",
+  "/profile": "M4.5 4.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM7.5 10.5a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5zM5.3 13.3c.5-1.1 1.2-1.6 2.2-1.6s1.7.5 2.2 1.6M12 8.5h2.5M12 11h2.5",
+  "/community": "M10 17s-5.2-4.5-5.2-8.7a5.2 5.2 0 0 1 10.4 0C15.2 12.5 10 17 10 17zm0-6.8a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8z",
+  "/preferences": "M4 6h6.5M14.5 6H16M4 14h1.5M9.5 14H16M12.5 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM7.5 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
+  "/admin": "M4.5 4h11a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 7h11a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1zM6.5 6.5h.01M6.5 13.5h.01",
+};
+
+function NavIcon({ to, symbol }: { to: string; symbol: string }) {
+  const d = NAV_ICON_PATHS[to];
+  if (!d) return <>{symbol}</>;
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d={d} />
+    </svg>
+  );
+}
+
 function viewTitle(pathname: string): { eyebrow: string; title: string } {
   if (pathname === "/") return { eyebrow: "Manna DLS · Phase 1 AI 備課", title: "教師工作檯" };
   if (pathname === "/plan") return { eyebrow: "01 · Study & Plan", title: "Study & Plan｜單元與課例" };
@@ -114,7 +137,7 @@ export function Layout() {
                 className={({ isActive }) => `nav-item${isActive ? " is-active" : ""}`}
               >
                 <span className="nav-symbol" aria-hidden="true">
-                  {item.symbol}
+                  <NavIcon to={item.to} symbol={item.symbol} />
                 </span>
                 {item.label}
               </NavLink>
