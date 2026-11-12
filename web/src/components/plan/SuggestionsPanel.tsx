@@ -12,6 +12,7 @@ import type {
 import { useApp } from "../../context/AppContext";
 import { DECISION_REASONS, DECISION_REASON_LABELS, ICAP_LABELS } from "../../lib/labels";
 import { logScaffold } from "../../lib/scaffold";
+import { AiContextPanel } from "../AiContextPanel";
 import { AiStatusMessage, AiUnavailableNote, ErrorText, PrivacyHint } from "../common";
 import type { EditableStep } from "./StepsEditor";
 
@@ -26,9 +27,11 @@ const DECIDED_LABELS: Record<PlanDecision, string> = {
 interface SuggestionsPanelProps {
   lessonId: number;
   onAppendStep: (step: Omit<EditableStep, "key">) => void;
+  /** Moved to the top of the lesson page because of the teacher's preference (P3 找合適素材). */
+  pinned?: boolean;
 }
 
-export function SuggestionsPanel({ lessonId, onAppendStep }: SuggestionsPanelProps) {
+export function SuggestionsPanel({ lessonId, onAppendStep, pinned = false }: SuggestionsPanelProps) {
   const { aiEnabled } = useApp();
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
@@ -56,13 +59,16 @@ export function SuggestionsPanel({ lessonId, onAppendStep }: SuggestionsPanelPro
   const output = result?.status === "shown" ? result.output : null;
 
   return (
-    <section className="panel-card suggestion-card" aria-labelledby="rag-heading">
+    <section className={`panel-card suggestion-card${pinned ? " is-pinned" : ""}`} aria-labelledby="rag-heading">
       <div className="card-heading">
         <div>
           <p className="eyebrow warm">Manna · RAG</p>
           <h3 id="rag-heading">備課建議</h3>
         </div>
-        {result && result.sources.length > 0 && <span className="source-count">{result.sources.length} 個來源</span>}
+        <div className="card-heading-tags">
+          {pinned && <span className="optional-label">依你的備課偏好置頂</span>}
+          {result && result.sources.length > 0 && <span className="source-count">{result.sources.length} 個來源</span>}
+        </div>
       </div>
       <p className="field-hint">每項建議都附知識庫引用；採用、修訂或拒絕由你決定，也可以完全不使用。</p>
 
@@ -91,6 +97,7 @@ export function SuggestionsPanel({ lessonId, onAppendStep }: SuggestionsPanelPro
       <ErrorText message={error} />
 
       {result && result.status !== "shown" && <AiStatusMessage status={result.status} message={result.message} />}
+      {result && <AiContextPanel key={requestId} items={result.context} />}
 
       {output?.kb_empty && (
         <div className="ai-status ai-status-kb-empty" role="status">
@@ -135,6 +142,8 @@ export function SuggestionCard({ index, suggestion, sources, interactionId, onAp
   const [error, setError] = useState<string | null>(null);
 
   const titleId = `suggestion-${index}-title`;
+  const hasDiff =
+    typeof suggestion.duration_min === "number" || !!suggestion.support_note || !!suggestion.extension_note;
 
   async function decide(decision: PlanDecision) {
     if (interactionId === null) return;
@@ -155,6 +164,9 @@ export function SuggestionCard({ index, suggestion, sources, interactionId, onAp
           activity_type: suggestion.activity_type ?? "",
           icap_level: suggestion.icap_level,
           content: decision === "revise" ? revisedText.trim() : `${suggestion.title}：${suggestion.body}`,
+          duration_min: typeof suggestion.duration_min === "number" ? suggestion.duration_min : null,
+          support_note: suggestion.support_note ?? "",
+          extension_note: suggestion.extension_note ?? "",
         });
         setAppended(true);
       }
@@ -176,6 +188,31 @@ export function SuggestionCard({ index, suggestion, sources, interactionId, onAp
         {suggestion.icap_level && <span className="soft-tag">{ICAP_LABELS[suggestion.icap_level]}</span>}
       </div>
       <p>{suggestion.body}</p>
+
+      {hasDiff && (
+        <dl className="suggestion-diff" aria-label="時間與差異化">
+          {typeof suggestion.duration_min === "number" && (
+            <div>
+              <dt>預估時間</dt>
+              <dd>
+                {suggestion.duration_min} 分鐘 <span className="ai-estimate">AI 估計，請依班級調整</span>
+              </dd>
+            </div>
+          )}
+          {suggestion.support_note && (
+            <div>
+              <dt>程度較弱的支援</dt>
+              <dd>{suggestion.support_note}</dd>
+            </div>
+          )}
+          {suggestion.extension_note && (
+            <div>
+              <dt>程度較好的延伸</dt>
+              <dd>{suggestion.extension_note}</dd>
+            </div>
+          )}
+        </dl>
+      )}
 
       <div className="citations">
         <span className="citations-label">引用條目</span>

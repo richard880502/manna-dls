@@ -9,6 +9,8 @@ interface CoreCellProps {
   cellId: string;
   cell: CellState;
   isHelpActive: boolean;
+  /** Emphasised first by the unit's prep route (e.g. Q1–Q3 for goal-first). */
+  highlighted?: boolean;
   onAnswer: (value: string) => void;
   onToggleNoIdea: (on: boolean) => void;
   onSource: (source: ContentSource) => void;
@@ -20,6 +22,7 @@ export function CoreCell({
   cellId,
   cell,
   isHelpActive,
+  highlighted = false,
   onAnswer,
   onToggleNoIdea,
   onSource,
@@ -28,7 +31,9 @@ export function CoreCell({
   const labelId = `${cellId}-label`;
   return (
     <fieldset
-      className={`core-cell${cell.noIdea ? " is-no-idea" : ""}${isHelpActive ? " is-help-active" : ""}`}
+      className={`core-cell${cell.noIdea ? " is-no-idea" : ""}${isHelpActive ? " is-help-active" : ""}${
+        highlighted ? " is-route-highlight" : ""
+      }`}
       aria-labelledby={labelId}
     >
       <div className="core-cell-head">
@@ -36,6 +41,7 @@ export function CoreCell({
           <span className="core-qid">{question.id}</span>
           {question.prompt}
         </label>
+        {highlighted && <span className="route-highlight-tag">建議先寫</span>}
         <button
           type="button"
           className="ghost-button help-button"

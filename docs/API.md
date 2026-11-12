@@ -120,3 +120,82 @@ interface PlanSuggestOutput { kb_empty: boolean; suggestions: PlanSuggestion[]; 
 | `SC-RAG` | 備課 RAG 建議 | content_design_support |
 | `SC-SIOP` | SIOP 提示 | content_design_support |
 | `SC-CASES` | 其他老師怎麼教 | content_design_support |
+
+---
+
+# Phase 1.1：初次使用設定與備課菜單（設計見 [ONBOARDING.md](ONBOARDING.md)）
+
+以下為**新增或變更**；未提到的端點維持原樣。所有新欄位都可空，舊資料不需搬遷。
+
+## 型別變更
+
+```ts
+type PrepRoute = "goal" | "material" | "student" | "activity";   // 目標／教材／學生／活動優先
+type Hardest = "goal" | "material" | "differentiation" | "activity" | "worksheet" | "ai_communication";
+
+interface PreferenceAnswers {
+  experience: "0-2" | "3-9" | "10+" | null;          // P1
+  start_from: PrepRoute | null;                       // P2
+  hardest: Hardest[];                                 // P3（可空陣列）
+  ai_experience: "none" | "sometimes" | "often" | null; // P4
+  detail: "concise" | "medium" | "detailed" | null;   // P5
+  class_profile: string;                              // P6（可空字串，不含學生個資）
+}
+interface Preferences {
+  version_no: number; question_set_version: number;
+  answers: PreferenceAnswers;
+  skipped: boolean;                                   // 初次設定按「略過」
+  source: "onboarding" | "settings";
+  created_at: string;
+}
+interface PreferenceQuestion { id: "P1"|"P2"|"P3"|"P4"|"P5"|"P6"; prompt: string; options: Array<{ value: string; label: string }>; multi: boolean; }
+
+// Unit 新增
+interface Unit { /* 原欄位… */ prep_route: PrepRoute; class_profile: string; }
+
+// Lesson / LessonDetail 新增
+interface Lesson { /* 原欄位… */ my_example: string; }        // 我的範例（自己的舊教案或學習單文字）
+interface LessonDetail { /* 原欄位… */ effective_class_profile: string; }  // 課例 class_description 非空時用它，否則用單元 class_profile
+
+// LessonStep 新增（皆可空）
+interface LessonStep { /* 原欄位… */ duration_min: number | null; support_note: string; extension_note: string; }
+
+// PlanSuggestion 新增
+interface PlanSuggestion { /* 原欄位… */ duration_min: number | null; support_note: string | null; extension_note: string | null; }
+
+// 教材優先：AI 從教材提出的候選學習重點
+interface MaterialCandidate { big_idea: string; rationale: string; excerpt: string; }  // excerpt 必須逐字出自教師貼上的教材
+interface MaterialFocusesOutput { candidates: MaterialCandidate[]; }  // 3–5 項；教材不足時可為空
+interface UnitMaterial { id: number; filename: string; char_count: number; created_at: string; }
+
+// AiContext：每次 AI 回應附上「Manna 已帶入的資訊」，給 P3 選了 ai_communication 的教師看
+interface AiContextItem { label: string; preview: string; }   // 例：{label:"班級特性", preview:"高一普通班，…"}
+// AiResult<T> 新增欄位：context: AiContextItem[]
+```
+
+## 端點
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/config` | – | 原欄位＋`route_choice_enabled: boolean` |
+| GET | `/api/preferences/questions` | – | `{ question_set_version: number; questions: PreferenceQuestion[] }` |
+| GET | `/api/me/preferences` | – | `Preferences \| null`（null＝尚未做初次設定 → 前端顯示設定精靈） |
+| PUT | `/api/me/preferences` | `{ answers: PreferenceAnswers; skipped: boolean; source: "onboarding" \| "settings" }` | `Preferences`（新版本，version_no + 1；不覆蓋舊版） |
+| POST | `/api/units` | `{ title; prep_route?; class_profile? }` | `Unit`。未帶時：prep_route 取偏好 start_from（無則 `goal`），class_profile 取偏好 class_profile。`route_choice_enabled=false` 時一律 `goal` |
+| PUT | `/api/units/:id` | `{ title?; prep_route?; class_profile? }` | `Unit`。prep_route 變更寫入 usage_logs（event=`prep_route_changed`）；`route_choice_enabled=false` 時改 prep_route 回 409 |
+| PUT | `/api/lessons/:id` | `{ title?; lesson_date?; class_description?; my_example? }` | `LessonDetail` |
+| POST | `/api/lessons/:id/versions` | steps 帶新欄位 | 同原本 |
+| GET | `/api/units/:id/materials` | – | `UnitMaterial[]` |
+| POST | `/api/units/:id/materials` | `{ text: string; filename?: string }`（手動貼上的教材文字，上限 50,000 字） | `UnitMaterial` |
+| DELETE | `/api/units/:id/materials/:mid` | – | `{ ok: true }`（**實際刪除**原文與切塊，規格 4.5） |
+| POST | `/api/units/:id/material-focuses` | `{ material_id: number }` | `AiResult<MaterialFocusesOutput>`；檢核：每項 excerpt 必須是教材原文的子字串、big_idea 含中文 |
+| POST | `/api/scaffold-events` | 原欄位；`trigger` 可帶 `preference:hardest=differentiation` 這類值 | 同原本 |
+| GET | `/api/admin/settings` | – | `{ route_choice_enabled: boolean }` |
+| PUT | `/api/admin/settings` | `{ route_choice_enabled: boolean }` | 同上 |
+
+## AI 行為變更（提示詞 v2，舊版保留）
+
+- 所有 AI 呼叫帶入：有效班級特性、（備課建議）我的範例、教師偏好的 `detail`（concise＝每項正文兩句內；medium＝三句內；detailed＝五句內）。
+- CoRe 第二層：偏好 `hardest` 含 `goal` 時，思考面向強調選文理由、語言以外的內容目標、與課綱及考點的連結。仍只給面向、不給答案。
+- 備課建議：偏好 `hardest` 含 `differentiation` 時，每項建議必須填 `duration_min`、`support_note`、`extension_note`；其他情況可為 null。時間在前端標示「AI 估計，請依班級調整」。
+- 新鷹架：`SC-MATERIAL`（教材優先候選重點，content_design_support）、`SC-PREF`（偏好驅動的預設展開，teacher_control_fading）、`SC-CONTEXT`（Manna 已帶入的資訊，teacher_control_fading）。

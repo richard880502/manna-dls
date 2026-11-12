@@ -5,16 +5,20 @@ use std::collections::HashSet;
 use axum::extract::State;
 use axum::Json;
 use chrono::{DateTime, NaiveDate, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::ai::schemas::IcapLevel;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::routes::{owned_lesson, owned_unit};
+use crate::routes::{effective_class_profile, owned_lesson, owned_unit};
 use crate::AppState;
 
 pub const MAX_CORE_LINKS: usize = 3;
+/// Upper bound for 我的範例 (same as pasted unit materials).
+pub const MAX_MY_EXAMPLE_CHARS: usize = 50_000;
+/// Teacher-entered step durations above this are rejected as typos.
+pub const MAX_STEP_MINUTES: i32 = 600;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct Lesson {
@@ -24,6 +28,7 @@ pub struct Lesson {
     pub lesson_date: Option<NaiveDate>,
     pub class_description: String,
     pub created_at: DateTime<Utc>,
+    pub my_example: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -34,6 +39,12 @@ pub struct LessonStep {
     pub icap_level: Option<String>,
     #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub duration_min: Option<i32>,
+    #[serde(default)]
+    pub support_note: String,
+    #[serde(default)]
+    pub extension_note: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,9 +65,12 @@ pub struct LessonDetail {
     pub core_focus_ids: Vec<i64>,
     pub siop_feature_ids: Vec<i64>,
     pub previous_next_change: Option<String>,
+    /// The lesson's class_description when non-empty, otherwise the unit's class_profile.
+    pub effective_class_profile: String,
 }
 
-const LESSON_COLS: &str = "id, unit_id, title, lesson_date, class_description, created_at";
+const LESSON_COLS: &str =
+    "id, unit_id, title, lesson_date, class_description, created_at, my_example";
 
 pub async fn list(
     State(state): State<AppState>,
@@ -79,6 +93,27 @@ pub struct CreateLesson {
     pub title: String,
     pub lesson_date: Option<String>,
     pub class_description: Option<String>,
+    #[serde(default)]
+    pub my_example: Option<String>,
+}
+
+fn parse_date(d: Option<&str>) -> AppResult<Option<NaiveDate>> {
+    match d.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(d) => NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            .map(Some)
+            .map_err(|_| AppError::bad_request("日期格式需為 YYYY-MM-DD。")),
+    }
+}
+
+fn check_my_example(s: &str) -> AppResult<()> {
+    if s.chars().count() > MAX_MY_EXAMPLE_CHARS {
+        Err(AppError::bad_request(format!(
+            "我的範例最多 {MAX_MY_EXAMPLE_CHARS} 字。"
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 pub async fn create(
@@ -92,21 +127,18 @@ pub async fn create(
     if title.is_empty() {
         return Err(AppError::bad_request("請輸入課例名稱。"));
     }
-    let lesson_date = match req.lesson_date.as_deref().map(str::trim) {
-        None | Some("") => None,
-        Some(d) => Some(
-            NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                .map_err(|_| AppError::bad_request("日期格式需為 YYYY-MM-DD。"))?,
-        ),
-    };
+    let lesson_date = parse_date(req.lesson_date.as_deref())?;
+    let my_example = req.my_example.unwrap_or_default();
+    check_my_example(&my_example)?;
     let lesson = sqlx::query_as(&format!(
-        "INSERT INTO lessons (unit_id, title, lesson_date, class_description)
-         VALUES ($1, $2, $3, $4) RETURNING {LESSON_COLS}"
+        "INSERT INTO lessons (unit_id, title, lesson_date, class_description, my_example)
+         VALUES ($1, $2, $3, $4, $5) RETURNING {LESSON_COLS}"
     ))
     .bind(unit_id)
     .bind(title)
     .bind(lesson_date)
     .bind(req.class_description.unwrap_or_default())
+    .bind(&my_example)
     .fetch_one(&state.db)
     .await?;
     Ok(Json(lesson))
@@ -133,8 +165,9 @@ pub async fn latest_version(
     .await?;
     let Some(v) = row else { return Ok(None) };
     let steps = sqlx::query_as(
-        "SELECT position, activity_type, icap_level, content FROM lesson_steps
-          WHERE lesson_version_id = $1 ORDER BY position",
+        "SELECT position, activity_type, icap_level, content, duration_min, support_note,
+                extension_note
+           FROM lesson_steps WHERE lesson_version_id = $1 ORDER BY position",
     )
     .bind(v.id)
     .fetch_all(db)
@@ -168,31 +201,107 @@ pub async fn selected_siop_ids(db: &sqlx::PgPool, lesson_id: i64) -> sqlx::Resul
     .await
 }
 
+/// Loads the detail of a lesson whose ownership was already checked.
+async fn load_detail(
+    db: &sqlx::PgPool,
+    id: i64,
+    unit_class_profile: &str,
+) -> AppResult<LessonDetail> {
+    let lesson: Lesson =
+        sqlx::query_as(&format!("SELECT {LESSON_COLS} FROM lessons WHERE id = $1"))
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+    let versions_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM lesson_versions WHERE lesson_id = $1")
+            .bind(id)
+            .fetch_one(db)
+            .await?;
+    let effective_class_profile =
+        effective_class_profile(&lesson.class_description, unit_class_profile);
+    Ok(LessonDetail {
+        lesson,
+        latest_version: latest_version(db, id).await?,
+        versions_count,
+        core_focus_ids: linked_focus_ids(db, id).await?,
+        siop_feature_ids: selected_siop_ids(db, id).await?,
+        // Phase 2 (「下次要改」 carry-forward).
+        previous_next_change: None,
+        effective_class_profile,
+    })
+}
+
 pub async fn detail(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<LessonDetail>> {
-    owned_lesson(&state.db, id, teacher.id()).await?;
-    let lesson: Lesson =
-        sqlx::query_as(&format!("SELECT {LESSON_COLS} FROM lessons WHERE id = $1"))
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?;
-    let versions_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM lesson_versions WHERE lesson_id = $1")
-            .bind(id)
-            .fetch_one(&state.db)
-            .await?;
-    Ok(Json(LessonDetail {
-        lesson,
-        latest_version: latest_version(&state.db, id).await?,
-        versions_count,
-        core_focus_ids: linked_focus_ids(&state.db, id).await?,
-        siop_feature_ids: selected_siop_ids(&state.db, id).await?,
-        // Phase 2 (「下次要改」 carry-forward).
-        previous_next_change: None,
-    }))
+    let r = owned_lesson(&state.db, id, teacher.id()).await?;
+    Ok(Json(
+        load_detail(&state.db, id, &r.unit_class_profile).await?,
+    ))
+}
+
+/// `Some(None)` for an explicit JSON null, `None` when the field is absent.
+fn nullable<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateLesson {
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Absent: unchanged; null or "": cleared; "YYYY-MM-DD": set.
+    #[serde(default, deserialize_with = "nullable")]
+    pub lesson_date: Option<Option<String>>,
+    #[serde(default)]
+    pub class_description: Option<String>,
+    /// Overwritten in place (not versioned): clearing it deletes the text (D5).
+    #[serde(default)]
+    pub my_example: Option<String>,
+}
+
+pub async fn update(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(req): ApiJson<UpdateLesson>,
+) -> AppResult<Json<LessonDetail>> {
+    let r = owned_lesson(&state.db, id, teacher.id()).await?;
+    let title = match req.title.as_deref().map(str::trim) {
+        Some("") => return Err(AppError::bad_request("請輸入課例名稱。")),
+        t => t.map(str::to_string),
+    };
+    let date = match &req.lesson_date {
+        None => None,
+        Some(d) => Some(parse_date(d.as_deref())?),
+    };
+    if let Some(e) = &req.my_example {
+        check_my_example(e)?;
+    }
+    sqlx::query(
+        "UPDATE lessons
+            SET title = COALESCE($2, title),
+                lesson_date = CASE WHEN $3 THEN $4 ELSE lesson_date END,
+                class_description = COALESCE($5, class_description),
+                my_example = COALESCE($6, my_example)
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&title)
+    .bind(date.is_some())
+    .bind(date.flatten())
+    .bind(&req.class_description)
+    .bind(&req.my_example)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(
+        load_detail(&state.db, id, &r.unit_class_profile).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +325,14 @@ fn validate_steps(steps: &[LessonStep]) -> AppResult<()> {
             if serde_json::from_value::<IcapLevel>(Value::String(level.clone())).is_err() {
                 return Err(AppError::bad_request(format!(
                     "ICAP 層次「{level}」不正確。"
+                )));
+            }
+        }
+        if let Some(d) = s.duration_min {
+            if !(0..=MAX_STEP_MINUTES).contains(&d) {
+                return Err(AppError::bad_request(format!(
+                    "步驟 {} 的預估時間需介於 0 到 {MAX_STEP_MINUTES} 分鐘。",
+                    s.position
                 )));
             }
         }
@@ -256,14 +373,18 @@ pub async fn create_version(
     .await?;
     for s in &steps {
         sqlx::query(
-            "INSERT INTO lesson_steps (lesson_version_id, position, activity_type, icap_level, content)
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO lesson_steps (lesson_version_id, position, activity_type, icap_level, content,
+                                       duration_min, support_note, extension_note)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(v.id)
         .bind(s.position)
         .bind(&s.activity_type)
         .bind(&s.icap_level)
         .bind(&s.content)
+        .bind(s.duration_min)
+        .bind(&s.support_note)
+        .bind(&s.extension_note)
         .execute(&mut *tx)
         .await?;
     }

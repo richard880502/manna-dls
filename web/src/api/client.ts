@@ -1,5 +1,6 @@
 import { loadToken } from "../lib/storage";
 import type {
+  AdminSettings,
   AiResult,
   ApiErrorBody,
   AppConfig,
@@ -10,7 +11,9 @@ import type {
   CoreQuestion,
   CoreVersion,
   CreateLessonRequest,
+  CreateMaterialRequest,
   CreatePromptRequest,
+  CreateUnitRequest,
   DecisionRequest,
   Health,
   ImportResult,
@@ -21,16 +24,23 @@ import type {
   LessonSiopResponse,
   LessonVersion,
   LoginResponse,
+  MaterialFocusesOutput,
   OkResponse,
   PlanSuggestOutput,
+  PreferenceQuestionsResponse,
+  Preferences,
   PromptVersion,
   SaveLessonVersionRequest,
+  SavePreferencesRequest,
   ScaffoldEventRequest,
   SiopFeature,
   SuggestionsRequest,
   Teacher,
   TeacherCase,
   Unit,
+  UnitMaterial,
+  UpdateLessonRequest,
+  UpdateUnitRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -141,6 +151,7 @@ const get = <T>(path: string, query?: Record<string, string | undefined>) =>
   request<T>("GET", path, { query });
 const post = <T>(path: string, json?: unknown) => request<T>("POST", path, { json: json ?? {} });
 const put = <T>(path: string, json: unknown) => request<T>("PUT", path, { json });
+const del = <T>(path: string) => request<T>("DELETE", path);
 
 export const api = {
   // 公開
@@ -152,9 +163,22 @@ export const api = {
 
   // 教師
   me: () => get<Teacher>("/me"),
+  preferenceQuestions: () => get<PreferenceQuestionsResponse>("/preferences/questions"),
+  /** null＝尚未做初次設定 */
+  myPreferences: () => get<Preferences | null>("/me/preferences"),
+  savePreferences: (body: SavePreferencesRequest) => put<Preferences>("/me/preferences", body),
   listUnits: () => get<Unit[]>("/units"),
-  createUnit: (title: string) => post<Unit>("/units", { title }),
+  createUnit: (body: CreateUnitRequest) => post<Unit>("/units", body),
   getUnit: (unitId: number) => get<Unit>(`/units/${unitId}`),
+  updateUnit: (unitId: number, body: UpdateUnitRequest) => put<Unit>(`/units/${unitId}`, body),
+  listMaterials: (unitId: number) => get<UnitMaterial[]>(`/units/${unitId}/materials`),
+  createMaterial: (unitId: number, body: CreateMaterialRequest) =>
+    post<UnitMaterial>(`/units/${unitId}/materials`, body),
+  /** 實際刪除原文與切塊 */
+  deleteMaterial: (unitId: number, materialId: number) =>
+    del<OkResponse>(`/units/${unitId}/materials/${materialId}`),
+  materialFocuses: (unitId: number, materialId: number) =>
+    post<AiResult<MaterialFocusesOutput>>(`/units/${unitId}/material-focuses`, { material_id: materialId }),
   coreQuestions: () => get<CoreQuestion[]>("/core/questions"),
   getCore: (unitId: number) => get<CoreVersion>(`/units/${unitId}/core`),
   saveCoreDraft: (unitId: number, body: CoreDraftRequest) =>
@@ -165,6 +189,8 @@ export const api = {
   createLesson: (unitId: number, body: CreateLessonRequest) =>
     post<Lesson>(`/units/${unitId}/lessons`, body),
   getLesson: (lessonId: number) => get<LessonDetail>(`/lessons/${lessonId}`),
+  updateLesson: (lessonId: number, body: UpdateLessonRequest) =>
+    put<LessonDetail>(`/lessons/${lessonId}`, body),
   saveLessonVersion: (lessonId: number, body: SaveLessonVersionRequest) =>
     post<LessonVersion>(`/lessons/${lessonId}/versions`, body),
   setCoreLinks: (lessonId: number, focusIds: number[]) =>
@@ -181,6 +207,8 @@ export const api = {
 
   // 主持人
   admin: {
+    getSettings: () => get<AdminSettings>("/admin/settings"),
+    updateSettings: (body: AdminSettings) => put<AdminSettings>("/admin/settings", body),
     createInvite: (body: InviteRequest) => post<InviteResponse>("/admin/invites", body),
     listPrompts: () => get<PromptVersion[]>("/admin/prompts"),
     createPrompt: (body: CreatePromptRequest) => post<PromptVersion>("/admin/prompts", body),

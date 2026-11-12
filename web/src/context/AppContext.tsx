@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiError, api, setUnauthorizedHandler } from "../api/client";
-import type { AppConfig, Teacher } from "../api/types";
+import type { AppConfig, Preferences, Teacher } from "../api/types";
 import { clearToken, loadToken, saveToken } from "../lib/storage";
 
 interface AppContextValue {
@@ -12,6 +12,14 @@ interface AppContextValue {
   authChecked: boolean;
   authError: string | null;
   sessionNotice: string | null;
+  /** Platform switch (主持人後台): teachers may pick a prep route. Off → fixed goal-first order. */
+  routeChoiceEnabled: boolean;
+  /** Latest preferences version; null = none yet (or failed to load — see preferencesStatus). */
+  preferences: Preferences | null;
+  /** "loaded" with preferences === null means the first-use survey has not been done. */
+  preferencesStatus: "idle" | "loading" | "loaded" | "error";
+  setPreferences: (prefs: Preferences) => void;
+  patchConfig: (change: Partial<AppConfig>) => void;
   login: (code: string) => Promise<void>;
   logout: () => Promise<void>;
   retryAuth: () => void;
@@ -27,6 +35,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [authAttempt, setAuthAttempt] = useState(0);
+  const [preferences, setPreferencesState] = useState<Preferences | null>(null);
+  /** Teacher id the preferences were fetched for (null = not fetched yet). */
+  const [prefsFor, setPrefsFor] = useState<number | null>(null);
+  const [prefsError, setPrefsError] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -79,6 +91,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [token, teacher, authAttempt, dropSession]);
 
+  // Load the latest preferences once per signed-in teacher.
+  const teacherId = teacher?.id ?? null;
+  useEffect(() => {
+    if (teacherId === null) return;
+    let alive = true;
+    api
+      .myPreferences()
+      .then((p) => {
+        if (!alive) return;
+        setPreferencesState(p ?? null);
+        setPrefsError(false);
+        setPrefsFor(teacherId);
+      })
+      .catch(() => {
+        if (!alive) return;
+        // Not blocking: the app works with default (no) preferences.
+        setPreferencesState(null);
+        setPrefsError(true);
+        setPrefsFor(teacherId);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [teacherId]);
+
+  const setPreferences = useCallback(
+    (prefs: Preferences) => {
+      setPreferencesState(prefs);
+      setPrefsError(false);
+      if (teacherId !== null) setPrefsFor(teacherId);
+    },
+    [teacherId],
+  );
+
+  const patchConfig = useCallback((change: Partial<AppConfig>) => {
+    setConfig((prev) => (prev ? { ...prev, ...change } : prev));
+  }, []);
+
+  let preferencesStatus: AppContextValue["preferencesStatus"] = "idle";
+  if (teacherId !== null) {
+    if (prefsFor !== teacherId) preferencesStatus = "loading";
+    else preferencesStatus = prefsError ? "error" : "loaded";
+  }
+  const currentPreferences = teacherId !== null && prefsFor === teacherId ? preferences : null;
+
   const login = useCallback(async (code: string) => {
     const res = await api.login(code);
     saveToken(res.token);
@@ -113,11 +170,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       authChecked,
       authError,
       sessionNotice,
+      routeChoiceEnabled: config?.route_choice_enabled === true,
+      preferences: currentPreferences,
+      preferencesStatus,
+      setPreferences,
+      patchConfig,
       login,
       logout,
       retryAuth,
     }),
-    [config, token, teacher, authChecked, authError, sessionNotice, login, logout, retryAuth],
+    [
+      config,
+      token,
+      teacher,
+      authChecked,
+      authError,
+      sessionNotice,
+      currentPreferences,
+      preferencesStatus,
+      setPreferences,
+      patchConfig,
+      login,
+      logout,
+      retryAuth,
+    ],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

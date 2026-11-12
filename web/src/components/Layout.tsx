@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router";
 import { useApp } from "../context/AppContext";
 import { ROLE_LABELS, SCHOOL_TRACK_LABELS } from "../lib/labels";
-import { DemoBanner } from "./common";
+import { DemoBanner, Loading } from "./common";
+import { OnboardingWizard } from "./prefs/OnboardingWizard";
 
 interface NavEntry {
   to: string;
@@ -19,6 +20,7 @@ const NAV: NavEntry[] = [
   { to: "/share", label: "Share & Connect", symbol: "♧" },
   { to: "/profile", label: "履歷頁", symbol: "▥" },
   { to: "/community", label: "社群動能地圖", symbol: "⌖" },
+  { to: "/preferences", label: "我的備課偏好", symbol: "✎" },
 ];
 
 function viewTitle(pathname: string): { eyebrow: string; title: string } {
@@ -33,14 +35,19 @@ function viewTitle(pathname: string): { eyebrow: string; title: string } {
   if (pathname === "/profile") return { eyebrow: "Professional Profile", title: "教師專業履歷" };
   if (pathname === "/community") return { eyebrow: "Community pulse", title: "社群動能地圖" };
   if (pathname === "/admin") return { eyebrow: "主持人後台", title: "後台管理" };
+  if (pathname === "/preferences") return { eyebrow: "Settings", title: "我的備課偏好" };
   return { eyebrow: "Manna DLS", title: "Manna DLS" };
 }
 
 export function Layout() {
-  const { teacher, logout, config } = useApp();
+  const { teacher, logout, config, preferences, preferencesStatus } = useApp();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { eyebrow, title } = viewTitle(location.pathname);
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const needsOnboarding = preferencesStatus === "loaded" && preferences === null && !onboardingDismissed;
+  const { eyebrow, title } = needsOnboarding
+    ? { eyebrow: "Manna DLS · 第一次使用", title: "初次使用設定" }
+    : viewTitle(location.pathname);
 
   useEffect(() => {
     try {
@@ -144,7 +151,13 @@ export function Layout() {
               <h1>{title}</h1>
             </div>
           </header>
-          <Outlet />
+          {preferencesStatus === "loading" ? (
+            <Loading label="正在載入你的備課偏好…" />
+          ) : needsOnboarding ? (
+            <OnboardingWizard onDismiss={() => setOnboardingDismissed(true)} />
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
     </>

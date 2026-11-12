@@ -34,6 +34,54 @@ pub struct Source {
     pub source_page: String,
 }
 
+/// One piece of information Manna injected into an AI call (「Manna 已帶入的資訊」).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct AiContextItem {
+    pub label: String,
+    pub preview: String,
+}
+
+/// Longest preview shown for a context item, in characters (before the ellipsis).
+pub const CONTEXT_PREVIEW_CHARS: usize = 60;
+
+/// Collapses whitespace and clips to [`CONTEXT_PREVIEW_CHARS`] characters.
+pub fn preview(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= CONTEXT_PREVIEW_CHARS {
+        flat
+    } else {
+        let mut out: String = flat.chars().take(CONTEXT_PREVIEW_CHARS).collect();
+        out.push('…');
+        out
+    }
+}
+
+impl AiContextItem {
+    pub fn new(label: impl Into<String>, text: &str) -> Self {
+        Self {
+            label: label.into(),
+            preview: preview(text),
+        }
+    }
+}
+
+/// Builds a context list, skipping items whose text is blank.
+#[derive(Debug, Default)]
+pub struct ContextList(Vec<AiContextItem>);
+
+impl ContextList {
+    pub fn add(&mut self, label: &str, text: &str) -> &mut Self {
+        if !text.trim().is_empty() {
+            self.0.push(AiContextItem::new(label, text));
+        }
+        self
+    }
+
+    pub fn into_vec(self) -> Vec<AiContextItem> {
+        self.0
+    }
+}
+
 /// `AiResult<T>` from docs/API.md.
 #[derive(Debug, Serialize)]
 pub struct AiResult<T: Serialize> {
@@ -42,6 +90,8 @@ pub struct AiResult<T: Serialize> {
     pub message: Option<String>,
     pub output: Option<T>,
     pub sources: Vec<Source>,
+    /// What Manna injected into the call (empty when AI is disabled and nothing was sent).
+    pub context: Vec<AiContextItem>,
 }
 
 impl<T: Serialize> AiResult<T> {
@@ -56,6 +106,7 @@ impl<T: Serialize> AiResult<T> {
             message: Some(msg.to_string()),
             output: None,
             sources: Vec::new(),
+            context: Vec::new(),
         }
     }
 
@@ -66,7 +117,13 @@ impl<T: Serialize> AiResult<T> {
             message: None,
             output: Some(output),
             sources,
+            context: Vec::new(),
         }
+    }
+
+    pub fn with_context(mut self, context: Vec<AiContextItem>) -> Self {
+        self.context = context;
+        self
     }
 }
 
@@ -344,4 +401,31 @@ where
         .await?;
     }
     Ok(Outcome::Blocked { interaction_id })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_flattens_and_clips() {
+        assert_eq!(preview("  高二\n普通班  30 人 "), "高二 普通班 30 人");
+        let long = "字".repeat(80);
+        let p = preview(&long);
+        assert_eq!(p.chars().count(), CONTEXT_PREVIEW_CHARS + 1);
+        assert!(p.ends_with('…'));
+    }
+
+    #[test]
+    fn context_list_skips_blank_items() {
+        let mut c = ContextList::default();
+        c.add("班級特性", "  ").add("我的範例", "舊學習單");
+        let v = c.into_vec();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].label, "我的範例");
+        let r: AiResult<()> = AiResult::disabled();
+        assert!(r.context.is_empty());
+        let json = serde_json::to_value(r.with_context(v)).unwrap();
+        assert_eq!(json["context"][0]["preview"], "舊學習單");
+    }
 }

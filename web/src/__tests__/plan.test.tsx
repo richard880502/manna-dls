@@ -29,6 +29,9 @@ const shownResult: AiResult<PlanSuggestOutput> = {
         activity_type: "暖身",
         icap_level: "constructive",
         citations: ["CUR-E-5-01"],
+        duration_min: null,
+        support_note: null,
+        extension_note: null,
       },
       {
         title: "兩兩改寫",
@@ -36,6 +39,9 @@ const shownResult: AiResult<PlanSuggestOutput> = {
         activity_type: "兩兩討論",
         icap_level: "interactive",
         citations: ["GRM-076", "VOC-2000-12"],
+        duration_min: null,
+        support_note: null,
+        extension_note: null,
       },
       {
         title: "出場券",
@@ -43,6 +49,9 @@ const shownResult: AiResult<PlanSuggestOutput> = {
         activity_type: null,
         icap_level: null,
         citations: ["CUR-E-5-01"],
+        duration_min: null,
+        support_note: null,
+        extension_note: null,
       },
     ],
   },
@@ -57,6 +66,7 @@ const shownResult: AiResult<PlanSuggestOutput> = {
     { item_code: "GRM-076", title: "倒裝句", category: "grammar", source_doc: "文法 76 項", source_page: "45" },
     { item_code: "VOC-2000-12", title: "only", category: "vocabulary", source_doc: "國教院 2000 字", source_page: "88" },
   ],
+  context: [],
 };
 
 function lessonRoutes(extra: Record<string, unknown> = {}) {
@@ -278,9 +288,10 @@ describe("Study & Plan lesson page", () => {
 
     await screen.findByText(/已儲存為第 3 版/);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
+    const blankDiff = { duration_min: null, support_note: "", extension_note: "" };
     expect(saved.steps).toEqual([
-      { position: 1, activity_type: "小組討論", icap_level: "interactive", content: "小組改寫" },
-      { position: 2, activity_type: "暖身", icap_level: "active", content: "比較兩組句子" },
+      { position: 1, activity_type: "小組討論", icap_level: "interactive", content: "小組改寫", ...blankDiff },
+      { position: 2, activity_type: "暖身", icap_level: "active", content: "比較兩組句子", ...blankDiff },
     ]);
   });
 

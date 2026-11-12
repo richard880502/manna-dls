@@ -7,6 +7,9 @@ export interface EditableStep {
   activity_type: string;
   icap_level: IcapLevel | null;
   content: string;
+  duration_min: number | null;
+  support_note: string;
+  extension_note: string;
 }
 
 let stepCounter = 0;
@@ -17,7 +20,30 @@ export function newStep(partial: Partial<Omit<EditableStep, "key">> = {}): Edita
     activity_type: partial.activity_type ?? "",
     icap_level: partial.icap_level ?? null,
     content: partial.content ?? "",
+    duration_min: partial.duration_min ?? null,
+    support_note: partial.support_note ?? "",
+    extension_note: partial.extension_note ?? "",
   };
+}
+
+export function hasDiffData(s: EditableStep): boolean {
+  return s.duration_min !== null || !!s.support_note.trim() || !!s.extension_note.trim();
+}
+
+/** Server accepts 0–600 minutes per step. */
+export const MAX_STEP_MINUTES = 600;
+
+/** "" → null; negative / non-numeric → null; otherwise whole minutes, capped at 600. */
+export function parseMinutes(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.min(MAX_STEP_MINUTES, Math.round(n));
+}
+
+export function totalMinutes(steps: EditableStep[]): number {
+  return steps.reduce((sum, s) => sum + (s.duration_min ?? 0), 0);
 }
 
 interface StepsEditorProps {
@@ -25,9 +51,22 @@ interface StepsEditorProps {
   steps: EditableStep[];
   onObjective: (value: string) => void;
   onSteps: (steps: EditableStep[]) => void;
+  /** 預估時間／程度較弱的支援／程度較好的延伸 fields visible. */
+  showDiff: boolean;
+  /** The fields are open because of the teacher's preference (P3 差異化與時間安排). */
+  diffByPreference: boolean;
+  onToggleDiff: () => void;
 }
 
-export function StepsEditor({ objective, steps, onObjective, onSteps }: StepsEditorProps) {
+export function StepsEditor({
+  objective,
+  steps,
+  onObjective,
+  onSteps,
+  showDiff,
+  diffByPreference,
+  onToggleDiff,
+}: StepsEditorProps) {
   const update = (key: string, change: Partial<EditableStep>) =>
     onSteps(steps.map((s) => (s.key === key ? { ...s, ...change } : s)));
   const move = (index: number, delta: number) => {
@@ -38,6 +77,7 @@ export function StepsEditor({ objective, steps, onObjective, onSteps }: StepsEdi
     if (item) next.splice(target, 0, item);
     onSteps(next);
   };
+  const timed = steps.filter((s) => s.duration_min !== null).length;
 
   return (
     <div className="steps-editor">
@@ -58,7 +98,23 @@ export function StepsEditor({ objective, steps, onObjective, onSteps }: StepsEdi
         ))}
       </datalist>
 
-      <div className="field-label">教案步驟</div>
+      <div className="steps-heading">
+        <div className="field-label">教案步驟</div>
+        <div className="steps-heading-tools">
+          {showDiff && diffByPreference && <span className="optional-label">依你的備課偏好預設顯示</span>}
+          <button type="button" className="ghost-button small-button" aria-expanded={showDiff} onClick={onToggleDiff}>
+            {showDiff ? "隱藏時間與差異化欄位" : "顯示時間與差異化欄位"}
+          </button>
+        </div>
+      </div>
+      {showDiff && steps.length > 0 && (
+        <p className="total-minutes" aria-live="polite">
+          <span>{`預估總時間：${totalMinutes(steps)} 分鐘`}</span>
+          <span className="field-hint">
+            {timed}/{steps.length} 個步驟已填時間
+          </span>
+        </p>
+      )}
       {steps.length === 0 && <p className="empty-preview">還沒有步驟。按「新增步驟」開始，或從右側建議採用。</p>}
       <ol className="step-list">
         {steps.map((step, index) => (
@@ -136,6 +192,51 @@ export function StepsEditor({ objective, steps, onObjective, onSteps }: StepsEdi
               value={step.content}
               onChange={(e) => update(step.key, { content: e.target.value })}
             />
+            {showDiff && (
+              <div className="diff-fields">
+                <div className="diff-duration">
+                  <label className="field-label" htmlFor={`${step.key}-duration`}>
+                    預估時間（分鐘）
+                  </label>
+                  <input
+                    id={`${step.key}-duration`}
+                    type="number"
+                    min={0}
+                    max={MAX_STEP_MINUTES}
+                    step={1}
+                    inputMode="numeric"
+                    value={step.duration_min ?? ""}
+                    onChange={(e) => update(step.key, { duration_min: parseMinutes(e.target.value) })}
+                  />
+                </div>
+                <div className="two-fields">
+                  <div>
+                    <label className="field-label" htmlFor={`${step.key}-support`}>
+                      程度較弱的支援
+                    </label>
+                    <textarea
+                      id={`${step.key}-support`}
+                      rows={2}
+                      value={step.support_note}
+                      placeholder="例如：提供句型框架、關鍵字提示"
+                      onChange={(e) => update(step.key, { support_note: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label" htmlFor={`${step.key}-extension`}>
+                      程度較好的延伸
+                    </label>
+                    <textarea
+                      id={`${step.key}-extension`}
+                      rows={2}
+                      value={step.extension_note}
+                      placeholder="例如：改寫成兩種倒裝並說明語氣差異"
+                      onChange={(e) => update(step.key, { extension_note: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </li>
         ))}
       </ol>

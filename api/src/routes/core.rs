@@ -10,15 +10,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use crate::ai::pipeline::{self, AiResult, InteractionMeta};
+use crate::ai::pipeline::{self, AiResult, ContextList, InteractionMeta};
 use crate::ai::schemas::{self, CoreAssistOutput};
 use crate::ai::LlmRequest;
 use crate::auth::AuthTeacher;
 use crate::checks;
 use crate::core_questions::{self, CoreQuestion, CORE_QUESTIONS, QUESTION_IDS};
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
+use crate::preferences::{self, Hardest};
 use crate::prompts;
-use crate::routes::{owned_unit, scaffold_id, track_label};
+use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
+use crate::routes::{or_blank, owned_unit, scaffold_id, track_label};
 use crate::AppState;
 
 pub const MAX_FOCUSES: usize = 3;
@@ -420,6 +422,10 @@ pub async fn complete(
 
 // ---------------------------------------------------------------- assist
 
+/// Level-2 emphasis when the teacher's P3 includes 學習目標 (docs/API.md Phase 1.1).
+pub const GOAL_EMPHASIS: &str = "這位老師表示「學習目標」是備課時最花時間或最困難的部分。這次提出的面向請優先涵蓋三個角度：選這篇課文或教材的理由、語言以外的內容目標（例如主題知識、思考能力、文化內容）、與課綱學習表現及考點的連結。每個角度仍然只說明可以從哪裡想，不替老師寫出目標或答案。";
+pub const NO_EMPHASIS: &str = "（這位老師沒有指定要特別強調的面向，依學習重點本身提出即可。）";
+
 #[derive(Debug, Deserialize)]
 pub struct AssistRequest {
     pub unit_id: i64,
@@ -529,6 +535,9 @@ pub async fn assist(
     } else {
         focus.big_idea.clone()
     };
+    let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
+    let goal_emphasis = req.level == 2 && prefs.has_hardest(Hardest::Goal);
+    let class_profile = unit.class_profile.trim().to_string();
 
     let vars: HashMap<&str, String> = HashMap::from([
         ("unit_title", unit.title.clone()),
@@ -541,11 +550,30 @@ pub async fn assist(
         ("teacher_answer", teacher_answer.clone()),
         ("other_answers", other_answers.clone()),
         ("level", req.level.to_string()),
+        ("class_profile", or_blank(&class_profile)),
+        ("detail_instruction", prefs.detail_instruction().to_string()),
+        (
+            "focus_emphasis",
+            if goal_emphasis {
+                GOAL_EMPHASIS
+            } else {
+                NO_EMPHASIS
+            }
+            .to_string(),
+        ),
     ]);
+    let mut required = vec![
+        ("class_profile", "班級特性"),
+        ("detail_instruction", "回覆長度"),
+    ];
+    if goal_emphasis {
+        required.push(("focus_emphasis", "這次請特別強調"));
+    }
     let system = prompts::render(&prompt.system_text, &vars);
-    let user = prompts::render(&prompt.user_template, &vars);
+    let user = prompts::render_user_with(&prompt, &vars, &required);
     let snapshot = json!({
         "inputs": vars,
+        "preferences": pref_snapshot(&prefs),
         "prompt": { "key": key, "version_no": prompt.version_no, "system": system, "user": user },
         "schema": schemas::CORE_ASSIST_SCHEMA_NAME,
     });
@@ -578,6 +606,7 @@ pub async fn assist(
             "question_help": question.help,
             "big_idea": focus.big_idea,
             "teacher_answer": current.map(|c| c.answer).unwrap_or_default(),
+            "goal_emphasis": goal_emphasis,
         }),
         attempt: 1,
     };
@@ -603,7 +632,35 @@ pub async fn assist(
             .execute(&state.db)
             .await?;
     }
-    Ok(Json(outcome.into_result(|_| Vec::new())))
+    let mut context = ContextList::default();
+    let emphasis: &[&str] = if goal_emphasis {
+        &["這次強調：選文理由、內容目標、課綱與考點"]
+    } else {
+        &[]
+    };
+    context
+        .add("班級特性", &class_profile)
+        .add("學習重點", &focus.big_idea)
+        .add(
+            &format!("{} 目前寫的內容", question.id),
+            &teacher_answer_text(&teacher_answer),
+        )
+        .add("同一重點的其他題", &others.join("；"))
+        .add("你的備課偏好", &preference_summary(&prefs, emphasis));
+    Ok(Json(
+        outcome
+            .into_result(|_| Vec::new())
+            .with_context(context.into_vec()),
+    ))
+}
+
+/// The cell text for the context list (placeholders for blank cells are not "injected info").
+fn teacher_answer_text(described: &str) -> String {
+    if described == "（尚未填寫）" {
+        String::new()
+    } else {
+        described.to_string()
+    }
 }
 
 #[cfg(test)]

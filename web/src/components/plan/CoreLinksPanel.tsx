@@ -9,9 +9,11 @@ interface CoreLinksPanelProps {
   lessonId: number;
   unitId: number;
   initialLinked: number[];
+  /** Activity-first route: after writing the plan, link focuses and go back to fill in CoRe. */
+  backfillHint?: boolean;
 }
 
-export function CoreLinksPanel({ lessonId, unitId, initialLinked }: CoreLinksPanelProps) {
+export function CoreLinksPanel({ lessonId, unitId, initialLinked, backfillHint = false }: CoreLinksPanelProps) {
   const [focuses, setFocuses] = useState<CoreFocus[] | null>(null);
   const [questions, setQuestions] = useState<CoreQuestion[]>(FALLBACK_QUESTIONS);
   const [linked, setLinked] = useState<number[]>(initialLinked);
@@ -60,6 +62,11 @@ export function CoreLinksPanel({ lessonId, unitId, initialLinked }: CoreLinksPan
         <span className="optional-label">可略過</span>
       </div>
       <ErrorText message={error} />
+      {backfillHint && (
+        <p className="field-hint route-hint">
+          寫完活動後，勾選 1–3 個相關的學習重點，再 <Link to={`/units/${unitId}/core`}>回頭補寫 CoRe →</Link>
+        </p>
+      )}
       {focuses && focuses.length === 0 && (
         <p className="empty-preview">
           這個單元的 CoRe 還沒有學習重點。可以略過，或先到 <Link to={`/units/${unitId}/core`}>單元 CoRe</Link> 補寫。

@@ -1,4 +1,4 @@
-// Mirrors docs/API.md (Manna DLS API 合約，Phase 1). Keep in sync with the contract.
+// Mirrors docs/API.md (Manna DLS API 合約，Phase 1 + Phase 1.1). Keep in sync with the contract.
 
 export type SchoolTrack = "general" | "vocational";
 export type Role = "teacher" | "pi" | "ra" | "rater" | "engineer";
@@ -8,6 +8,56 @@ export type ContentSource = "self" | "self_after_ai" | "modified_ai_example" | "
 export type IcapLevel = "passive" | "active" | "constructive" | "interactive";
 
 export const QUESTION_IDS: readonly QuestionId[] = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8"];
+
+// ---- Phase 1.1：初次使用設定與備課菜單 ----
+
+/** 目標／教材／學生／活動優先 */
+export type PrepRoute = "goal" | "material" | "student" | "activity";
+export type Hardest = "goal" | "material" | "differentiation" | "activity" | "worksheet" | "ai_communication";
+export type PreferenceQuestionId = "P1" | "P2" | "P3" | "P4" | "P5" | "P6";
+
+export interface PreferenceAnswers {
+  experience: "0-2" | "3-9" | "10+" | null; // P1
+  start_from: PrepRoute | null; // P2
+  hardest: Hardest[]; // P3（可空陣列）
+  ai_experience: "none" | "sometimes" | "often" | null; // P4
+  detail: "concise" | "medium" | "detailed" | null; // P5
+  class_profile: string; // P6（可空字串，不含學生個資）
+}
+
+export type PreferenceSource = "onboarding" | "settings";
+
+export interface Preferences {
+  version_no: number;
+  question_set_version: number;
+  answers: PreferenceAnswers;
+  skipped: boolean;
+  source: PreferenceSource;
+  created_at: string;
+}
+
+export interface PreferenceOption {
+  value: string;
+  label: string;
+}
+
+export interface PreferenceQuestion {
+  id: PreferenceQuestionId;
+  prompt: string;
+  options: PreferenceOption[];
+  multi: boolean;
+}
+
+export interface PreferenceQuestionsResponse {
+  question_set_version: number;
+  questions: PreferenceQuestion[];
+}
+
+export interface SavePreferencesRequest {
+  answers: PreferenceAnswers;
+  skipped: boolean;
+  source: PreferenceSource;
+}
 
 export interface Teacher {
   id: number;
@@ -22,6 +72,8 @@ export interface Unit {
   created_at: string;
   core_status: "none" | "draft" | "completed";
   lesson_count: number;
+  prep_route: PrepRoute;
+  class_profile: string;
 }
 
 export interface CoreResponse {
@@ -59,6 +111,9 @@ export interface LessonStep {
   activity_type: string;
   icap_level: IcapLevel | null;
   content: string;
+  duration_min: number | null;
+  support_note: string;
+  extension_note: string;
 }
 
 export interface LessonVersion {
@@ -76,6 +131,8 @@ export interface Lesson {
   lesson_date: string | null;
   class_description: string;
   created_at: string;
+  /** 我的範例（自己的舊教案或學習單文字），只存在該課例 */
+  my_example: string;
 }
 
 export interface LessonDetail extends Lesson {
@@ -84,6 +141,8 @@ export interface LessonDetail extends Lesson {
   core_focus_ids: number[];
   siop_feature_ids: number[];
   previous_next_change: string | null;
+  /** 課例 class_description 非空時用它，否則用單元 class_profile */
+  effective_class_profile: string;
 }
 
 export interface Source {
@@ -96,12 +155,19 @@ export interface Source {
 
 export type AiStatus = "shown" | "blocked" | "timeout" | "error" | "disabled";
 
+/** 「Manna 已帶入的資訊」 */
+export interface AiContextItem {
+  label: string;
+  preview: string;
+}
+
 export interface AiResult<T> {
   interaction_id: number | null;
   status: AiStatus;
   message: string | null;
   output: T | null;
   sources: Source[];
+  context: AiContextItem[];
 }
 
 export interface CoreAssistOutput {
@@ -115,11 +181,32 @@ export interface PlanSuggestion {
   activity_type: string | null;
   icap_level: IcapLevel | null;
   citations: string[];
+  duration_min: number | null;
+  support_note: string | null;
+  extension_note: string | null;
 }
 
 export interface PlanSuggestOutput {
   kb_empty: boolean;
   suggestions: PlanSuggestion[];
+}
+
+/** 教材優先：AI 從教材提出的候選學習重點；excerpt 逐字出自教師貼上的教材 */
+export interface MaterialCandidate {
+  big_idea: string;
+  rationale: string;
+  excerpt: string;
+}
+
+export interface MaterialFocusesOutput {
+  candidates: MaterialCandidate[];
+}
+
+export interface UnitMaterial {
+  id: number;
+  filename: string;
+  char_count: number;
+  created_at: string;
 }
 
 // ---- Request / response shapes for endpoints ----
@@ -134,6 +221,7 @@ export interface AppConfig {
   ai_enabled: boolean;
   ai_provider: string;
   ai_model: string;
+  route_choice_enabled: boolean;
 }
 
 export interface LoginRequest {
@@ -151,6 +239,35 @@ export interface OkResponse {
 
 export interface CreateUnitRequest {
   title: string;
+  prep_route?: PrepRoute;
+  class_profile?: string;
+}
+
+export interface UpdateUnitRequest {
+  title?: string;
+  prep_route?: PrepRoute;
+  class_profile?: string;
+}
+
+export interface UpdateLessonRequest {
+  title?: string;
+  /** null clears the date */
+  lesson_date?: string | null;
+  class_description?: string;
+  my_example?: string;
+}
+
+export interface CreateMaterialRequest {
+  text: string;
+  filename?: string;
+}
+
+export interface MaterialFocusesRequest {
+  material_id: number;
+}
+
+export interface AdminSettings {
+  route_choice_enabled: boolean;
 }
 
 export interface CoreDraftResponse {
@@ -183,6 +300,7 @@ export interface CreateLessonRequest {
   title: string;
   lesson_date?: string;
   class_description?: string;
+  my_example?: string;
 }
 
 export interface SaveLessonVersionRequest {
@@ -236,7 +354,15 @@ export interface DecisionRequest {
   thumbs?: Thumbs;
 }
 
-export type ScaffoldCode = "SC-CORE-HELP" | "SC-CORE" | "SC-RAG" | "SC-SIOP" | "SC-CASES";
+export type ScaffoldCode =
+  | "SC-CORE-HELP"
+  | "SC-CORE"
+  | "SC-RAG"
+  | "SC-SIOP"
+  | "SC-CASES"
+  | "SC-MATERIAL"
+  | "SC-PREF"
+  | "SC-CONTEXT";
 export type ScaffoldAction = "show" | "expand" | "use" | "skip";
 
 export interface ScaffoldEventRequest {
