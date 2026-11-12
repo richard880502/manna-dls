@@ -160,11 +160,13 @@ AI 供應商 ◄──────────────┘（只經後端；�
 
 ## 10. 部署（manna）
 
-- Coolify：Docker Compose 資源，來源為私有 repo `richard880502/manna-dls`。
-- 服務：`app`（埠 `127.0.0.1:8080:8080`，只對本機開放）、`db`（`pgvector/pgvector:pg17`，volume 保存資料）。
-- 環境變數（在 Coolify 設定，不進版本庫）：`DATABASE_URL`、`AI_PROVIDER`、`AI_MODEL`、`ANTHROPIC_API_KEY`、`DEMO_MODE`、`ADMIN_BOOTSTRAP_CODE`。
-- nginx：`manna.biobank.tw` 改為反向代理到 `127.0.0.1:8080`（取代貪食蛇），沿用現有 Certbot 憑證。
-- 備份：每日 `pg_dump` 加密備份（Phase 2 前完成，規格 6.2）。
+- Coolify 專案 `manna-dls`（production 環境）內有兩個資源：
+  - **manna-dls**：Docker Compose 應用（來源 `richard880502/manna-dls` 的 `deploy` 分支），埠 `127.0.0.1:8080:8080`，只對本機開放。
+  - **manna-dls-db**：獨立的 Coolify PostgreSQL 資源（`pgvector/pgvector:pg17`），不對外開 port，只在 Coolify 內部網路可見；使用 Coolify 的排程備份。
+- 應用的 Advanced 設定開啟「Connect to predefined network」，才能連到資料庫。
+- 環境變數（在 Coolify 設定，不進版本庫）：`DATABASE_URL`（資料庫資源的 Postgres URL (internal)）、`AI_PROVIDER`、`AI_MODEL`、`ANTHROPIC_API_KEY`、`DEMO_MODE`；`ADMIN_BOOTSTRAP_CODE` 由 Coolify 自動產生（`SERVICE_PASSWORD_ADMINCODE`）。
+- nginx：`manna.biobank.tw` 反向代理到 `127.0.0.1:8080`，沿用 Certbot 憑證。
+- 備份：資料庫資源每日排程備份（規格 6.2 要求每日加密備份並定期還原演練；異地備份目的地待定）。
 
 ## 11. 時程（對應規格里程碑）
 

@@ -1,5 +1,12 @@
 # Used by Coolify on the manna host (Docker Compose build pack).
-# Coolify fills SERVICE_PASSWORD_* automatically and shows them in its UI.
+#
+# The database is NOT part of this compose file: it is a standalone Coolify
+# PostgreSQL resource (image pgvector/pgvector:pg17, "manna-dls-db") in the same
+# project and environment, private to Coolify's internal network, with Coolify's
+# scheduled backups. Set DATABASE_URL in this application's environment variables
+# to that resource's "Postgres URL (internal)", and keep "Connect to predefined
+# network" enabled (Advanced) so the app can reach it.
+#
 # The app port is bound to 127.0.0.1 only; host nginx terminates TLS for
 # manna.biobank.tw and proxies to it.
 services:
@@ -7,7 +14,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://manna:${SERVICE_PASSWORD_POSTGRES}@db:5432/manna
+      DATABASE_URL: ${DATABASE_URL}
       AI_PROVIDER: ${AI_PROVIDER:-none}
       AI_MODEL: ${AI_MODEL:-claude-opus-5-5}
       AI_EFFORT: ${AI_EFFORT:-medium}
@@ -19,24 +26,3 @@ services:
       SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on:
-      db:
-        condition: service_healthy
-
-  db:
-    image: pgvector/pgvector:pg17
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: manna
-      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
-      POSTGRES_DB: manna
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U manna -d manna"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-volumes:
-  pgdata:
