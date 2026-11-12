@@ -44,8 +44,25 @@ cd web && pnpm install && pnpm dev
 
 ## 部署
 
-- Coolify（manna 主機）監看的是 **`deploy` 分支**，該分支一有更新就自動部署。
-- 不要直接推 `deploy`。開發一律推到 `main`；`main` 的 CI 全部通過後，`deploy` job 用 GitHub 內建權杖把同一個 commit 快轉到 `deploy`。CI 沒過，網站就不會更新。
+### 開發流程（一律走 PR）
+
+1. 從 `main` 開分支開發，推上去開 PR。
+2. PR 會跑 CI（前端、後端、Docker 建置）與 Coolify 連線檢查；**全部通過才合併**。
+3. 合併進 `main` 後，CI 再跑一次，全過才把該 commit 快轉到 `deploy` 分支。
+4. Coolify（manna 主機）監看 **`deploy` 分支**，一有更新就自動部署。
+5. CI 會等 Coolify 部署完成，並用 `coolify-deployments-richard` App 在 GitHub 建立 Deployment 紀錄（repo 首頁右側的 Deployments）。
+
+不要直接推 `main` 或 `deploy`。私有 repo 在 GitHub 免費方案無法設分支保護，所以「CI 過了才合併」靠慣例；`deploy` 分支是保底：即使誤推 `main`，CI 沒過網站也不會更新。
+
+Actions 設定（Settings → Secrets and variables → Actions）：
+
+| 類型 | 名稱 | 說明 |
+|---|---|---|
+| secret | `COOLIFY_API_TOKEN` | Coolify API token（read 權限即可） |
+| secret | `DEPLOY_APP_PRIVATE_KEY` | `coolify-deployments-richard` App 的私鑰 |
+| variable | `COOLIFY_URL`、`COOLIFY_APP_UUIDS`、`DEPLOY_APP_ID`、`DEPLOY_ENV_NAME`、`DEPLOY_ENV_URL` | 已設定 |
+
+沒有兩個 secret 時，部署照常進行，只是不會在 GitHub 留下 Deployment 紀錄。
 - 主機 nginx 把 `manna.biobank.tw` 代理到 `127.0.0.1:8080`（設定檔 `/etc/nginx/sites-available/manna-dls`）。
 
 金鑰（`ANTHROPIC_API_KEY` 等）只設在 Coolify 的環境變數，不進版本庫。

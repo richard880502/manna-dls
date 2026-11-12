@@ -76,7 +76,20 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     } else {
         StatusCode::SERVICE_UNAVAILABLE
     };
-    (status, Json(json!({ "ok": db, "db": db })))
+    (
+        status,
+        Json(json!({ "ok": db, "db": db, "commit": running_commit() })),
+    )
+}
+
+/// Git commit of the running build. Coolify provides `SOURCE_COMMIT` at runtime;
+/// CI polls this to confirm a deployment actually went live.
+fn running_commit() -> String {
+    std::env::var("SOURCE_COMMIT")
+        .ok()
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 async fn public_config(State(state): State<AppState>) -> impl IntoResponse {

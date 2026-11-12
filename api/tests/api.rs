@@ -21,7 +21,9 @@ async fn health_config_and_api_errors() {
     let app = test_app!();
     let (s, v) = app.get("/api/health", None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(v, json!({ "ok": true, "db": true }));
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["db"], true);
+    assert!(v["commit"].is_string());
 
     let (s, v) = app.get("/api/config", None).await;
     assert_eq!(s, StatusCode::OK);

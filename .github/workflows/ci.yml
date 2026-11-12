@@ -82,19 +82,158 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Coolify watches the `deploy` branch (auto deploy on push via its GitHub App).
-  # Only a fully green run on main moves `deploy` forward, so a failing CI never
-  # reaches manna.biobank.tw. Uses the built-in GITHUB_TOKEN; no extra secrets.
+  # Deployment flow (development happens through PRs; see README):
+  #   1. A fully green run on main fast-forwards the `deploy` branch (GITHUB_TOKEN).
+  #   2. Coolify watches `deploy` and deploys it (auto deploy via its GitHub App).
+  #   3. This job waits for that Coolify deployment and records it as a GitHub
+  #      Deployment + "Coolify" check created by the coolify-deployments-richard App,
+  #      the same way as neverland-erp and llm-label.
+  # Without the secrets, steps 1-2 still happen; only waiting/recording is skipped.
+  #   secret   COOLIFY_API_TOKEN       Coolify API token (read permission is enough)
+  #   secret   DEPLOY_APP_PRIVATE_KEY  private key of the deployments GitHub App
+  #   variable COOLIFY_URL, COOLIFY_APP_UUIDS, DEPLOY_APP_ID, DEPLOY_ENV_NAME, DEPLOY_ENV_URL
   deploy:
-    name: Promote to deploy branch (Coolify deploys it)
+    name: Deploy (Coolify)
     needs: [docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      SHA: ${{ github.sha }}
+      COOLIFY_URL: ${{ vars.COOLIFY_URL }}
+      APP_UUIDS: ${{ vars.COOLIFY_APP_UUIDS }}
+      COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+      ENV_NAME: ${{ vars.DEPLOY_ENV_NAME || 'production' }}
+      ENV_URL: ${{ vars.DEPLOY_ENV_URL }}
+      # the secrets context cannot be used in step conditions
+      HAS_APP_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY != '' }}
     steps:
+      - name: Create GitHub App token
+        id: app
+        if: env.HAS_APP_KEY == 'true'
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-deployments: write
+          permission-checks: write
+
+      - name: Create the Coolify check and GitHub Deployment (in progress)
+        id: dep
+        if: steps.app.outputs.token != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          check_id=$(jq -n --arg sha "$SHA" --arg url "$run_url" \
+            '{name:"Coolify", head_sha:$sha, status:"in_progress", details_url:$url, output:{title:"Deployment in progress", summary:"Waiting for Coolify deployment results."}}' \
+            | gh api "repos/$GITHUB_REPOSITORY/check-runs" --input - --jq .id)
+          echo "check_id=$check_id" >> "$GITHUB_OUTPUT"
+          dep_id=$(jq -n --arg ref "$SHA" --arg env "$ENV_NAME" \
+            '{ref:$ref, environment:$env, auto_merge:false, required_contexts:[], production_environment:true, transient_environment:false, description:"Coolify deployment"}' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)
+          echo "dep_id=$dep_id" >> "$GITHUB_OUTPUT"
+          jq -n --arg log "$run_url" '{state:"in_progress", log_url:$log, description:"Waiting for Coolify"}' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments/$dep_id/statuses" --input - --silent
+          echo "GitHub deployment $dep_id created"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Fast-forward deploy branch to this commit
-        run: git push origin "${GITHUB_SHA}:refs/heads/deploy"
+
+      - name: Fast-forward the deploy branch to this commit
+        run: git push origin "${SHA}:refs/heads/deploy"
+
+      - name: Wait for the Coolify deployment of this commit
+        id: wait
+        run: |
+          set -euo pipefail
+          if [ -z "${COOLIFY_TOKEN:-}" ] || [ -z "${COOLIFY_URL:-}" ] || [ -z "${APP_UUIDS:-}" ]; then
+            echo "::warning::COOLIFY_API_TOKEN / COOLIFY_URL / COOLIFY_APP_UUIDS not set: deploy branch was updated, but the Coolify result is not tracked."
+            exit 0
+          fi
+          api() {
+            curl -sS --retry 3 --retry-delay 5 \
+              -H "Authorization: Bearer $COOLIFY_TOKEN" -H 'Accept: application/json' \
+              "$COOLIFY_URL/api/v1/$1"
+          }
+          fail=0
+          last_log=""
+          for u in $APP_UUIDS; do
+            name=$(api "applications/$u" | jq -r '.name // "app"')
+            echo "::group::$name ($u)"
+            # 1) find the deployment Coolify started for this commit (up to ~6 minutes)
+            dep=""
+            for i in $(seq 1 24); do
+              dep=$(api "deployments/applications/$u?skip=0&take=15" \
+                | jq -r --arg sha "$SHA" '[.deployments[] | select(.commit == $sha)] | sort_by(.created_at) | last | .deployment_uuid // empty')
+              [ -n "$dep" ] && break
+              sleep 15
+            done
+            if [ -z "$dep" ]; then
+              echo "::error::Coolify did not start a deployment of $SHA for $name within 6 minutes. Check that it watches the deploy branch with auto deploy on."
+              echo "- $name: **no deployment started** for \`${SHA:0:7}\`" >> "$GITHUB_STEP_SUMMARY"
+              fail=1
+              echo "::endgroup::"
+              continue
+            fi
+            echo "Deployment: $dep"
+            # 2) wait until it finishes (up to ~35 minutes; Rust builds on manna are slow)
+            status=""
+            for i in $(seq 1 140); do
+              status=$(api "deployments/$dep" | jq -r '.status // "unknown"')
+              case "$status" in finished|failed|cancelled-by-user|cancelled) break ;; esac
+              sleep 15
+            done
+            echo "Final status: $status"
+            path=$(api "deployments/$dep" | jq -r '.deployment_url // empty')
+            [ -n "$path" ] && last_log="${COOLIFY_URL}${path}" && echo "Coolify log: $last_log"
+            echo "- $name: **$status** (deployment \`$dep\`, commit \`${SHA:0:7}\`)" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$status" != "finished" ]; then
+              echo "::error::$name deployment ended as '$status'"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          echo "log_url=$last_log" >> "$GITHUB_OUTPUT"
+          exit $fail
+
+      - name: Create GitHub App token (for the final status)
+        id: app2
+        if: ${{ always() && steps.dep.outputs.check_id != '' }}
+        uses: actions/create-github-app-token@v3.3.0
+        with:
+          app-id: ${{ vars.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          permission-deployments: write
+          permission-checks: write
+
+      - name: Report the result to GitHub
+        if: ${{ always() && steps.dep.outputs.check_id != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app2.outputs.token }}
+          DEP_ID: ${{ steps.dep.outputs.dep_id }}
+          CHECK_ID: ${{ steps.dep.outputs.check_id }}
+          RESULT: ${{ job.status }}
+          COOLIFY_LOG: ${{ steps.wait.outputs.log_url }}
+        run: |
+          set -euo pipefail
+          case "$RESULT" in
+            success)   state=success; conclusion=success; desc="Deployed successfully" ;;
+            cancelled) state=inactive; conclusion=cancelled; desc="Cancelled" ;;
+            *)         state=failure; conclusion=failure; desc="Coolify deployment failed" ;;
+          esac
+          log="${COOLIFY_LOG:-$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID}"
+          jq -n --arg result "$conclusion" --arg title "$desc" --arg log "$log" \
+            '{status:"completed", conclusion:$result, details_url:$log, output:{title:$title, summary:("[View deployment logs](" + $log + ")")}}' \
+            | gh api "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID" --method PATCH --input - --silent
+          jq -n --arg s "$state" --arg d "$desc" --arg log "$log" --arg url "$ENV_URL" \
+            '{state:$s, description:$d, log_url:$log, auto_inactive:true} + (if $url != "" and $s == "success" then {environment_url:$url} else {} end)' \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments/$DEP_ID/statuses" --input - --silent
+          echo "GitHub deployment $DEP_ID -> $state"
