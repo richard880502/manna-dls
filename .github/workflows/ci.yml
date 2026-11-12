@@ -204,6 +204,25 @@ jobs:
           echo "log_url=$last_log" >> "$GITHUB_OUTPUT"
           exit $fail
 
+      # Coolify reports "finished" once the containers are started, even if the
+      # app then crash-loops (e.g. a missing DATABASE_URL). Only a healthy
+      # /api/health on the public URL counts as a successful deployment.
+      - name: Check the live site is healthy
+        if: env.ENV_URL != ''
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 24); do
+            body=$(curl -fsS -m 10 "$ENV_URL/api/health" || true)
+            echo "attempt $i: ${body:-no response}"
+            if [ "$(jq -r '.ok // false' <<<"${body:-{}}" 2>/dev/null)" = "true" ]; then
+              echo "Live site is healthy"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$ENV_URL/api/health did not report ok within 4 minutes after the Coolify deployment finished. Check the app container logs in Coolify (for example an empty DATABASE_URL)."
+          exit 1
+
       - name: Create GitHub App token (for the final status)
         id: app2
         if: ${{ always() && steps.dep.outputs.check_id != '' }}
