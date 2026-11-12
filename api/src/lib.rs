@@ -12,6 +12,7 @@ pub mod db;
 pub mod error;
 pub mod preferences;
 pub mod prompts;
+pub mod record;
 pub mod retrieval;
 pub mod routes;
 pub mod settings;

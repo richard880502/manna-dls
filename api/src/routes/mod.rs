@@ -6,6 +6,8 @@ pub mod feedback;
 pub mod lessons;
 pub mod materials;
 pub mod preferences;
+pub mod remote;
+pub mod runs;
 pub mod suggestions;
 pub mod units;
 
@@ -64,6 +66,28 @@ pub fn api_router() -> Router<AppState> {
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
         .route("/scaffold-events", post(feedback::scaffold_event))
         .route("/teacher-cases", get(feedback::teacher_cases))
+        // Teach & Record (Phase 1.2)
+        .route("/runs", get(runs::list_mine))
+        .route(
+            "/lessons/{id}/runs",
+            get(runs::list_for_lesson).post(runs::start),
+        )
+        .route("/runs/{id}", get(runs::detail))
+        .route("/runs/{id}/end", post(runs::end))
+        .route("/runs/{id}/events/sync", post(runs::sync))
+        .route(
+            "/runs/{id}/events/{device_event_id}/review",
+            put(runs::review),
+        )
+        .route("/runs/{id}/review/complete", post(runs::complete_review))
+        .route(
+            "/runs/{id}/pairing",
+            post(runs::create_pairing).delete(runs::revoke_pairing),
+        )
+        // phone remote (run-scoped token, no teacher login)
+        .route("/remote/pair", post(remote::pair))
+        .route("/remote/run", get(remote::get_run))
+        .route("/remote/events/sync", post(remote::sync))
         // PI
         .route("/admin/invites", post(admin::create_invite))
         .route(
