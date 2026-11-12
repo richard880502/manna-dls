@@ -11,8 +11,8 @@
 |---|---|---|
 | 1. 單元前 CoRe | ✅ 做 | 2–3 個學習重點 × Q1–Q8；三層「需要協助」 |
 | 2. 各課備課（RAG、SIOP、連結 CoRe） | ✅ 做 | RAG 建議附引用；採用／修訂／拒絕＋理由 |
-| 3. 課中書籤 | 預留資料表 | Phase 2 |
-| 4. 課後補寫 | 預留 | Phase 2 |
+| 3. 課中書籤 | ✅ 做（Phase 1.2） | 👍／⚠ 書籤、離線同步、手機 QR 遙控、子母畫面；見 [API.md](API.md)「Phase 1.2」 |
+| 4. 課後補寫 | ✅ 做（Phase 1.2） | 書籤依時間排列、旁列教案步驟；活動歸屬、學生可觀察行為、處理方式、補寫（全部選填） |
 | 5. Reflect AI 追問 | 預留（共用 AI 管線） | Phase 2 |
 | 6. 「下次要改」 | 預留 `carry_forward_links` | Phase 2 |
 | 7. 單元後 CoRe 修訂 | 資料模型已支援（版本複製） | Phase 2 做畫面 |
@@ -102,7 +102,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | AI | `ai_interactions`、`teacher_decisions`、`retrieval_logs`、`prompt_versions` | 建 |
 | 鷹架 | `scaffolds`、`scaffold_events` | 建 |
 | 知識庫 | `knowledge_items`（含 `embedding vector` 欄位預留）、`teacher_cases` | 建 |
-| 書籤 | `lesson_runs`、`record_events`、`record_event_revisions` | 預留（建表不做畫面） |
+| 書籤 | `lesson_runs`、`record_events`、`record_event_revisions`、`run_pairings`、`run_remotes` | 建（Phase 1.2，migration `0004_teach_record.sql`） |
 | 反思 | `reflections`、`carry_forward_links`、`progress_logs` | 預留 |
 | 系統 | `notifications`、`export_logs`、`access_logs`、`system_versions`、`usage_logs` | 預留 |
 | 其他 | `unit_materials`、`eval_sets`、`eval_runs`、`feedback`、`design_changes`、`expert_ratings` | 預留 |
@@ -132,6 +132,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | POST | `/api/admin/knowledge/import` | 匯入知識庫條目 CSV（含來源 SHA-256） |
 | POST | `/api/admin/teacher-cases/import` | 匯入教師備課經驗 CSV |
 | GET | `/api/health` | 健康檢查（含 DB、AI 設定狀態） |
+| – | `/api/runs/*`、`/api/lessons/:id/runs`、`/api/remote/*` | Teach & Record 與課後補寫（Phase 1.2，完整合約見 API.md） |
 
 ## 7. 前端頁面
 
@@ -141,8 +142,9 @@ AI 供應商 ◄──────────────┘（只經後端；�
 2. 工作檯：單元列表、目前進度
 3. **CoRe**：重點 2–3 個 × Q1–Q8；每格「目前沒有想法」、內容來源；「需要協助」逐層展開
 4. **Study & Plan**：連結 CoRe 重點（旁列 CoRe 答案）、教案步驟（活動型態、ICAP）、RAG 建議卡（引用、採用／修訂／拒絕＋理由）、SIOP 提示、其他老師怎麼教
-5. Teach & Record、Reflect & Progress、Share & Connect：保留交接版的靜態展示，標示「Phase 2」
-6. 後台（主持人）：提示詞版本、知識庫與教師經驗匯入
+5. **Teach & Record**（Phase 1.2）：開始本節課 → 課堂紀錄頁（兩顆大按鈕、加一句話、復原與更正、待同步筆數、手機 QR 遙控、子母畫面小視窗）→ 結束本節課並回顧 → 課後補寫；手機遙控器頁 `/remote` 不需登入
+6. Reflect & Progress、Share & Connect：保留交接版的靜態展示，標示「Phase 2」
+7. 後台（主持人）：提示詞版本、知識庫與教師經驗匯入
 
 ## 8. 教師備課經驗（問卷）
 
@@ -175,7 +177,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | 11/12–11/15 | 藍圖、專案骨架、CI、部署管線、資料庫 migration、邀請碼登入 |
 | 11/16–11/22 | CoRe（含三層協助）、AI 管線與紀錄 |
 | 11/23–11/29 | Study & Plan＋RAG＋教師判斷紀錄；知識庫與教師經驗匯入 |
-| 11/30–12/08 | Phase 2：書籤、Reflect AI、「下次要改」、單元後 CoRe 修訂、匯出 |
+| 11/30–12/08 | Phase 2：Reflect AI、「下次要改」、單元後 CoRe 修訂、匯出（書籤與課後補寫已在 Phase 1.2 先做） |
 | 12/09–12/15 | 主持人走一次完整單元；修正 |
 
 ## 12. 待決事項
@@ -188,7 +190,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | AI 模型：暫不使用 Claude 示範模式（2026-11-12 決定），等國網中心模型 API 後以 `openai_compatible` 接上 | 共同主持人 |
 | 資料庫異地備份的目的地（須為核准的儲存環境） | 主持人 |
 | 第一年是否開放任何同儕互動（見 §13.2） | 主持人 |
-| 每次取回條目數、追問自動收起秒數等參數 | 主持人 |
+| 每次取回條目數、追問自動收起秒數等參數（「加一句話」目前 8 秒，前端常數 `NOTE_IDLE_SECONDS`） | 主持人 |
 
 ## 13. 後續路線圖（2026-11-12 討論結論）
 
@@ -236,4 +238,3 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | staging 測試環境 | 待辦；Coolify 同專案另開環境，含獨立網站與資料庫 |
 | AI 模型 | 暫不啟用；等國網中心模型 API |
 | 資料庫異地備份 | 待主持人決定核准的儲存位置 |
-

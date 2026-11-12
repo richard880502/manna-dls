@@ -9,8 +9,12 @@ import { HomePage, PlanIndexPage } from "./pages/HomePage";
 import { LessonPage } from "./pages/LessonPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PreferencesPage } from "./pages/PreferencesPage";
+import { RecordIndexPage } from "./pages/RecordIndexPage";
+import { RemotePage } from "./pages/RemotePage";
+import { RunConsolePage } from "./pages/RunConsolePage";
+import { RunReviewPage } from "./pages/RunReviewPage";
 import { CommunityPage } from "./pages/static/CommunityPage";
-import { ProfilePage, RecordPage, ReflectPage, SharePage } from "./pages/static/StaticPages";
+import { ProfilePage, ReflectPage, SharePage } from "./pages/static/StaticPages";
 import { UnitPage } from "./pages/UnitPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -50,6 +54,8 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Phone remote opened from the QR code: no teacher login, run-scoped token only. */}
+      <Route path="/remote" element={<RemotePage />} />
       <Route
         element={
           <RequireAuth>
@@ -62,7 +68,9 @@ export function AppRoutes() {
         <Route path="units/:unitId" element={<UnitPage />} />
         <Route path="units/:unitId/core" element={<CorePage />} />
         <Route path="lessons/:lessonId" element={<LessonPage />} />
-        <Route path="record" element={<RecordPage />} />
+        <Route path="record" element={<RecordIndexPage />} />
+        <Route path="runs/:runId" element={<RunConsolePage />} />
+        <Route path="runs/:runId/review" element={<RunReviewPage />} />
         <Route path="reflect" element={<ReflectPage />} />
         <Route path="share" element={<SharePage />} />
         <Route path="profile" element={<ProfilePage />} />

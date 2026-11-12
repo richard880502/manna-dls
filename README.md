@@ -1,6 +1,6 @@
 # Manna DLS
 
-AI 輔助英文教師備課的研究型平台（國科會蔓娜計畫）。Phase 1 範圍：單元前 CoRe（含三層 AI 協助）與 Study & Plan（RAG 備課建議與教師判斷紀錄）。
+AI 輔助英文教師備課的研究型平台（國科會蔓娜計畫）。Phase 1 範圍：單元前 CoRe（含三層 AI 協助）與 Study & Plan（RAG 備課建議與教師判斷紀錄）；Phase 1.2 加上 Teach & Record（課中書籤、手機遙控、離線同步）與課後補寫。
 
 - 設計藍圖：[docs/BLUEPRINT.md](docs/BLUEPRINT.md)
 - API 合約：[docs/API.md](docs/API.md)
