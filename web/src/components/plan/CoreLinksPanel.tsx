@@ -55,10 +55,7 @@ export function CoreLinksPanel({ lessonId, unitId, initialLinked, backfillHint =
   return (
     <section className="panel-card core-links" aria-labelledby="core-links-heading">
       <div className="card-heading">
-        <div>
-          <p className="eyebrow warm">CoRe</p>
-          <h3 id="core-links-heading">本課連結的 CoRe 學習重點</h3>
-        </div>
+        <h3 id="core-links-heading">本課連結的 CoRe 學習重點</h3>
         <span className="optional-label">可略過</span>
       </div>
       <ErrorText message={error} />

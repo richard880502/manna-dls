@@ -59,10 +59,7 @@ export function SiopPanel({ lessonId, initialSelected }: SiopPanelProps) {
   return (
     <section className="panel-card siop-card" aria-labelledby="siop-heading">
       <div className="card-heading">
-        <div>
-          <p className="eyebrow warm">SIOP</p>
-          <h3 id="siop-heading">SIOP 提示（選用）</h3>
-        </div>
+        <h3 id="siop-heading">SIOP 提示（選用）</h3>
         {collapsed ? (
           <button
             type="button"

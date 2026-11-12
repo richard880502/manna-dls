@@ -63,10 +63,7 @@ export function UnitsPanel() {
   return (
     <section className="units-panel" aria-labelledby="units-heading">
       <div className="section-heading">
-        <div>
-          <p className="eyebrow">My units</p>
-          <h3 id="units-heading">我的單元</h3>
-        </div>
+        <h3 id="units-heading">我的單元</h3>
         {units && <span className="status-pill">{units.length} 個單元</span>}
       </div>
 

@@ -29,6 +29,25 @@ interface HelpPanelProps {
   onClose: () => void;
 }
 
+/** Rating icon for the 有幫助／沒有幫助 buttons (their names come from aria-label). */
+function ThumbIcon({ down = false }: { down?: boolean }) {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={down ? { transform: "rotate(180deg)" } : undefined}
+    >
+      <path d="M6.5 9v8h-2a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1zm0 0 3-5.5c1.2 0 2.1 1 1.9 2.2L11 8h4a1.5 1.5 0 0 1 1.5 1.8l-1.1 5.6A2 2 0 0 1 13.4 17H6.5" />
+    </svg>
+  );
+}
+
 export function HelpPanel({
   question,
   focusLabel,
@@ -118,7 +137,7 @@ export function HelpPanel({
                     aria-pressed={entry.thumbs === "up"}
                     onClick={() => onThumbs(index, "up")}
                   >
-                    👍
+                    <ThumbIcon />
                   </button>
                   <button
                     type="button"
@@ -127,7 +146,7 @@ export function HelpPanel({
                     aria-pressed={entry.thumbs === "down"}
                     onClick={() => onThumbs(index, "down")}
                   >
-                    👎
+                    <ThumbIcon down />
                   </button>
                 </div>
               )}

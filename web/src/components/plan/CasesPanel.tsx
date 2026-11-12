@@ -61,10 +61,7 @@ export function CasesPanel() {
   return (
     <section className="teacher-case-panel" aria-labelledby="cases-heading">
       <div className="card-heading">
-        <div>
-          <p className="eyebrow warm">TEACHER CASES</p>
-          <h3 id="cases-heading">其他老師怎麼教</h3>
-        </div>
+        <h3 id="cases-heading">其他老師怎麼教</h3>
         <span className="soft-tag">教師經驗，非官方來源</span>
       </div>
       <form className="peer-search-row" onSubmit={onSearch}>
