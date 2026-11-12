@@ -38,11 +38,11 @@ export function HomePage() {
             <p>連結 CoRe 重點、寫教案步驟，取得附引用的 RAG 建議。</p>
           </div>
         </div>
-        <div className="workflow-card optional">
+        <div className="workflow-card current">
           <span className="step-number">03</span>
           <div>
             <strong>Teach &amp; Record</strong>
-            <p>課中書籤（Phase 2 規劃中）</p>
+            <p>課中按「順利／卡住」留下書籤，下課後依時間補寫。</p>
           </div>
         </div>
         <div className="workflow-card optional">

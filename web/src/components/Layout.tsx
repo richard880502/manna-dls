@@ -29,7 +29,9 @@ function viewTitle(pathname: string): { eyebrow: string; title: string } {
   if (/^\/units\/\d+\/core/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "單元前 CoRe" };
   if (/^\/units\/\d+/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "單元與課例" };
   if (/^\/lessons\/\d+/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "課例備課" };
-  if (pathname === "/record") return { eyebrow: "02 · Teach & Record", title: "Teach & Record｜課堂事件紀錄" };
+  if (pathname === "/record") return { eyebrow: "02 · Teach & Record", title: "Teach & Record｜課中書籤" };
+  if (/^\/runs\/\d+\/review/.test(pathname)) return { eyebrow: "02 · Teach & Record", title: "課後補寫" };
+  if (/^\/runs\/\d+/.test(pathname)) return { eyebrow: "02 · Teach & Record", title: "課堂紀錄" };
   if (pathname === "/reflect") return { eyebrow: "03 · Reflect & Progress", title: "Reflect & Progress｜精彩片段回顧" };
   if (pathname === "/share") return { eyebrow: "04 · Share & Connect", title: "Share & Connect｜我不孤單" };
   if (pathname === "/profile") return { eyebrow: "Professional Profile", title: "教師專業履歷" };
@@ -121,7 +123,7 @@ export function Layout() {
 
           <section className="side-panel" aria-label="Phase 1 範圍">
             <div className="panel-label">本輪平台範圍</div>
-            <div className="cycle-title">Phase 1：AI 備課</div>
+            <div className="cycle-title">Phase 1：AI 備課與課堂紀錄</div>
             <div className="stage-mini">
               <span className="stage-item done">
                 <b>●</b>
@@ -131,9 +133,13 @@ export function Layout() {
                 <b>●</b>
                 <span>課例備課（RAG、SIOP）</span>
               </span>
+              <span className="stage-item done">
+                <b>●</b>
+                <span>課中書籤、課後補寫</span>
+              </span>
               <span className="stage-item">
                 <b>—</b>
-                <span>課中書籤、反思（Phase 2）</span>
+                <span>反思（Phase 2）</span>
               </span>
             </div>
             {config && !config.ai_enabled && <p className="side-note">AI 功能目前未開放</p>}

@@ -2,9 +2,14 @@ import type {
   AiStatus,
   ContentSource,
   DecisionReason,
+  DeviceType,
+  Handling,
   IcapLevel,
+  Polarity,
+  RecordVia,
   Role,
   SchoolTrack,
+  StudentBehavior,
   Unit,
 } from "../api/types";
 
@@ -86,6 +91,74 @@ export const ACTIVITY_TYPE_OPTIONS: readonly string[] = [
 ];
 
 export const PRIVACY_HINT = "請不要輸入學生姓名或其他個人資料。";
+
+// ---- Teach & Record ----
+
+export const POLARITY_LABELS: Record<Polarity, string> = { good: "順利", stuck: "卡住" };
+
+export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = { phone: "手機", tablet: "平板", desktop: "電腦" };
+
+export const VIA_LABELS: Record<RecordVia, string> = { console: "課堂紀錄頁", pip: "子母畫面", remote: "手機遙控" };
+
+/** Canonical order (same as the server). */
+export const STUDENT_BEHAVIORS: readonly StudentBehavior[] = [
+  "listening",
+  "note_taking",
+  "answering",
+  "asking",
+  "explaining",
+  "discussing",
+  "probing",
+  "co_completing",
+  "other",
+];
+
+export const BEHAVIOR_LABELS: Record<StudentBehavior, string> = {
+  listening: "聆聽",
+  note_taking: "筆記",
+  answering: "回答",
+  asking: "提問",
+  explaining: "解釋",
+  discussing: "討論",
+  probing: "相互追問",
+  co_completing: "共同完成任務",
+  other: "其他",
+};
+
+export const HANDLINGS: readonly Handling[] = [
+  "re_explain",
+  "add_example",
+  "adjust_questions",
+  "change_activity",
+  "adjust_time",
+  "defer",
+];
+
+export const HANDLING_LABELS: Record<Handling, string> = {
+  re_explain: "重新解釋",
+  add_example: "補充例子",
+  adjust_questions: "調整提問",
+  change_activity: "改變活動",
+  adjust_time: "調整時間",
+  defer: "稍後處理",
+};
+
+/** HH:MM:SS in local time (bookmark device timestamps). */
+export function formatClock(value: string | null | undefined, withSeconds = true): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return withSeconds ? `${hm}:${pad(d.getSeconds())}` : hm;
+}
+
+/** Elapsed time as HH:MM:SS. */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+}
 
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return "";

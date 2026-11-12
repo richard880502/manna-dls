@@ -1,4 +1,4 @@
-// Mirrors docs/API.md (Manna DLS API 合約，Phase 1 + Phase 1.1). Keep in sync with the contract.
+// Mirrors docs/API.md (Manna DLS API 合約，Phase 1 + 1.1 + 1.2). Keep in sync with the contract.
 
 export type SchoolTrack = "general" | "vocational";
 export type Role = "teacher" | "pi" | "ra" | "rater" | "engineer";
@@ -362,7 +362,8 @@ export type ScaffoldCode =
   | "SC-CASES"
   | "SC-MATERIAL"
   | "SC-PREF"
-  | "SC-CONTEXT";
+  | "SC-CONTEXT"
+  | "SC-RECORD";
 export type ScaffoldAction = "show" | "expand" | "use" | "skip";
 
 export interface ScaffoldEventRequest {
@@ -421,4 +422,141 @@ export type ApiErrorCode =
 
 export interface ApiErrorBody {
   error: { code: ApiErrorCode; message: string };
+}
+
+// ---- Phase 1.2：Teach & Record（課中書籤與課後補寫） ----
+
+/** 👍 順利 | ⚠ 卡住 */
+export type Polarity = "good" | "stuck";
+export type DeviceType = "phone" | "tablet" | "desktop";
+/** 課堂紀錄頁 | 子母畫面小視窗 | 手機遙控器 */
+export type RecordVia = "console" | "pip" | "remote";
+/** 學生可觀察行為（可複選） */
+export type StudentBehavior =
+  | "listening"
+  | "note_taking"
+  | "answering"
+  | "asking"
+  | "explaining"
+  | "discussing"
+  | "probing"
+  | "co_completing"
+  | "other";
+/** 處理方式（單選，可不選） */
+export type Handling = "re_explain" | "add_example" | "adjust_questions" | "change_activity" | "adjust_time" | "defer";
+
+export interface LessonRun {
+  id: number;
+  lesson_id: number;
+  lesson_title: string;
+  unit_id: number;
+  unit_title: string;
+  started_at: string;
+  /** null：進行中 */
+  ended_at: string | null;
+  review_completed_at: string | null;
+  good_count: number;
+  stuck_count: number;
+}
+
+export interface RecordEvent {
+  id: number;
+  device_event_id: string;
+  device_ts: string;
+  received_at: string;
+  polarity: Polarity;
+  note: string;
+  device_type: DeviceType;
+  via: RecordVia;
+  activity_step_id: number | null;
+  behaviors: StudentBehavior[];
+  handling: Handling | null;
+  followup_text: string;
+  followup_at: string | null;
+  revision_count: number;
+}
+
+export interface PlanStepRef extends LessonStep {
+  id: number;
+}
+
+export interface RunPlan {
+  lesson_version_id: number;
+  version_no: number;
+  objective: string;
+  steps: PlanStepRef[];
+}
+
+export interface RemoteDevice {
+  id: number;
+  device_type: DeviceType;
+  paired_at: string;
+  last_seen_at: string | null;
+}
+
+export interface RunDetail extends LessonRun {
+  events: RecordEvent[];
+  plan: RunPlan | null;
+  remotes: RemoteDevice[];
+}
+
+export type RecordOp =
+  | {
+      op_id: string;
+      kind: "create";
+      device_event_id: string;
+      device_ts: string;
+      polarity: Polarity;
+      note?: string;
+      device_type: DeviceType;
+      via?: "console" | "pip";
+    }
+  | { op_id: string; kind: "edit"; device_event_id: string; polarity?: Polarity; note?: string; at?: string }
+  | { op_id: string; kind: "undo"; device_event_id: string; at?: string }
+  | { op_id: string; kind: "delete"; device_event_id: string; at?: string };
+
+export interface SyncOpResult {
+  op_id: string;
+  status: "applied" | "duplicate" | "rejected";
+  code?: string;
+  message?: string;
+}
+
+export interface SyncResponse {
+  results: SyncOpResult[];
+  events: RecordEvent[];
+  ended_at: string | null;
+}
+
+export interface ReviewRequest {
+  activity_step_id: number | null;
+  behaviors: StudentBehavior[];
+  handling: Handling | null;
+  followup_text: string;
+}
+
+export interface Pairing {
+  pairing_id: number;
+  code: string;
+  expires_at: string;
+}
+
+export interface RevokePairingResponse {
+  ok: true;
+  revoked_pairings: number;
+  revoked_remotes: number;
+}
+
+export interface RemoteRun {
+  run_id: number;
+  lesson_title: string;
+  started_at: string;
+  ended_at: string | null;
+  /** 只含這支遙控器按的書籤 */
+  events: RecordEvent[];
+}
+
+export interface PairResponse {
+  token: string;
+  run: RemoteRun;
 }

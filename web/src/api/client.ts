@@ -21,20 +21,30 @@ import type {
   InviteResponse,
   Lesson,
   LessonDetail,
+  LessonRun,
   LessonSiopResponse,
   LessonVersion,
   LoginResponse,
   MaterialFocusesOutput,
   OkResponse,
+  PairResponse,
+  Pairing,
   PlanSuggestOutput,
   PreferenceQuestionsResponse,
   Preferences,
   PromptVersion,
+  RecordEvent,
+  RecordOp,
+  RemoteRun,
+  ReviewRequest,
+  RevokePairingResponse,
+  RunDetail,
   SaveLessonVersionRequest,
   SavePreferencesRequest,
   ScaffoldEventRequest,
   SiopFeature,
   SuggestionsRequest,
+  SyncResponse,
   Teacher,
   TeacherCase,
   Unit,
@@ -85,8 +95,10 @@ interface RequestOptions {
   text?: string;
   contentType?: string;
   query?: Record<string, string | undefined>;
-  /** Skip the global 401 handler (used by login). */
+  /** Skip the global 401 handler (used by login and the phone remote). */
   skipAuthHandler?: boolean;
+  /** Bearer token to send instead of the teacher's session (phone remote; null = none). */
+  token?: string | null;
 }
 
 function buildUrl(path: string, query?: Record<string, string | undefined>): string {
@@ -102,7 +114,7 @@ function buildUrl(path: string, query?: Record<string, string | undefined>): str
 
 async function request<T>(method: string, path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  const token = loadToken();
+  const token = options.token !== undefined ? options.token : loadToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
   let body: string | undefined;
@@ -205,6 +217,22 @@ export const api = {
   scaffoldEvent: (body: ScaffoldEventRequest) => post<OkResponse>("/scaffold-events", body),
   listTeacherCases: (q?: string) => get<TeacherCase[]>("/teacher-cases", { q }),
 
+  // Teach & Record
+  listRuns: () => get<LessonRun[]>("/runs"),
+  listLessonRuns: (lessonId: number) => get<LessonRun[]>(`/lessons/${lessonId}/runs`),
+  /** 開始本節課（已有進行中的課 → 409） */
+  startRun: (lessonId: number) => post<LessonRun>(`/lessons/${lessonId}/runs`),
+  getRun: (runId: number) => get<RunDetail>(`/runs/${runId}`),
+  /** 結束本節課並回顧 */
+  endRun: (runId: number) => post<LessonRun>(`/runs/${runId}/end`),
+  syncRunEvents: (runId: number, ops: RecordOp[]) => post<SyncResponse>(`/runs/${runId}/events/sync`, { ops }),
+  reviewEvent: (runId: number, deviceEventId: string, body: ReviewRequest) =>
+    put<RecordEvent>(`/runs/${runId}/events/${encodeURIComponent(deviceEventId)}/review`, body),
+  completeReview: (runId: number) => post<LessonRun>(`/runs/${runId}/review/complete`),
+  createPairing: (runId: number) => post<Pairing>(`/runs/${runId}/pairing`),
+  /** 撤銷未使用的配對碼與已配對的遙控器 */
+  revokePairing: (runId: number) => del<RevokePairingResponse>(`/runs/${runId}/pairing`),
+
   // 主持人
   admin: {
     getSettings: () => get<AdminSettings>("/admin/settings"),
@@ -220,4 +248,17 @@ export const api = {
         contentType: "text/csv",
       }),
   },
+};
+
+/** Phone remote: sends its run-scoped token (never the teacher session) and never logs anyone out. */
+export const remoteApi = {
+  pair: (code: string, deviceType: string) =>
+    request<PairResponse>("POST", "/remote/pair", {
+      json: { code, device_type: deviceType },
+      token: null,
+      skipAuthHandler: true,
+    }),
+  getRun: (token: string) => request<RemoteRun>("GET", "/remote/run", { token, skipAuthHandler: true }),
+  sync: (token: string, ops: RecordOp[]) =>
+    request<SyncResponse>("POST", "/remote/events/sync", { json: { ops }, token, skipAuthHandler: true }),
 };

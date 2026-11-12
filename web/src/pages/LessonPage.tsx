@@ -6,6 +6,7 @@ import { ErrorText, Loading, Notice } from "../components/common";
 import { CasesPanel } from "../components/plan/CasesPanel";
 import { CoreLinksPanel } from "../components/plan/CoreLinksPanel";
 import { LessonContextCard } from "../components/plan/LessonContextCard";
+import { RunsPanel } from "../components/plan/RunsPanel";
 import { SiopPanel } from "../components/plan/SiopPanel";
 import { StepsEditor, hasDiffData, newStep, type EditableStep } from "../components/plan/StepsEditor";
 import { SuggestionsPanel } from "../components/plan/SuggestionsPanel";
@@ -223,6 +224,8 @@ export function LessonPage() {
           {mainOrder.map(([key, node]) => (
             <Fragment key={key}>{node}</Fragment>
           ))}
+          {/* After planning comes teaching: 開始本節課 / 課後補寫 for this lesson. */}
+          <RunsPanel lessonId={lesson.id} />
         </div>
 
         <div className="lesson-side">

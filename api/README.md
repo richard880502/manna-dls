@@ -33,7 +33,7 @@ cargo clippy --all-targets -- -D warnings
 DATABASE_URL=postgres://manna:manna@127.0.0.1:55432/manna cargo test
 ```
 
-Integration tests (`tests/api.rs`, `tests/onboarding.rs`) create a throwaway database `test_<random>` per test on the
+Integration tests (`tests/api.rs`, `tests/onboarding.rs`, `tests/teach_record.rs`) create a throwaway database `test_<random>` per test on the
 `DATABASE_URL` server, run the migrations, and drop it afterwards (`WITH (FORCE)`), so they run
 in parallel. The role needs `CREATEDB`, and the server needs the `vector` extension
 (`pgvector/pgvector:pg17`). Without `DATABASE_URL` the integration tests are skipped, except
