@@ -5,6 +5,9 @@
  * signature: the CoRe ledger, eight questions numbered in the margin of each learning focus
  * pre-emit critique: P4 H4 E4 S4 R4 V3 | weakest: V, the project's sidebar-plus-panels skeleton stays; the two-ink rule and the ledger carry the difference
  * kept as found (copy, tests or another branch read them): meta lines above heads that carry a fact (version, route, stage), "·" inside those lines, "→" in three links
+ * sweep: manual walk of gates.md section 4 (0 colour or face literals past this file, no tracked caps, no transition: all, focus-visible on every control, no sideways scroll 320 to 1920 at the widths checked)
+ * nudges: 0.1em/0.2em to centre native radios and checkboxes on their first line, -1px to seat the tab underline on the rule
+ * finish-review: subagent, fix, 8 findings: 5 resolved (lesson ledger, unit empty half, record log rows, grey on gold, focus tab), 3 partial (sync chip stays above the buttons, help sheet 58dvh, CJK head wraps at narrow widths)
  * Source of truth for docs/DESIGN.md. Every colour, face, size, space, radius, shadow, duration and layer below; nothing literal past this file. */
 
 :root {
@@ -43,6 +46,7 @@
   /* ---------- colour: states ---------- */
   --color-success: oklch(46% 0.09 155);
   --color-success-wash: oklch(95.2% 0.03 155);
+  --color-success-rule: oklch(74% 0.08 155);
   --color-warn-ink: oklch(45% 0.1 55);
   --color-warn-wash: oklch(95.6% 0.03 70);
   --color-warn-rule: oklch(80% 0.09 65);

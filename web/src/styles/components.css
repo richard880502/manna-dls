@@ -652,6 +652,13 @@ summary {
   min-width: 0;
 }
 
+/* On a phone, a head that shares its row with a button gets the whole line; the button goes beneath. */
+@media (max-width: 40rem) {
+  .card-heading:has(> button) > :first-child {
+    flex-basis: 100%;
+  }
+}
+
 .card-heading-tags {
   display: flex;
   flex-wrap: wrap;

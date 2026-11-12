@@ -33,7 +33,7 @@
 }
 
 .tap-good {
-  border-color: var(--color-success);
+  border-color: var(--color-success-rule);
   background: var(--color-success-wash);
   color: var(--color-success);
 }
@@ -139,12 +139,17 @@
 }
 
 /* ================= sync state (a live status, so its dot carries meaning) ================= */
+/* A status chip, not a band: it reports, the buttons below it act. */
 .sync-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-self: start;
   gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-md);
+  width: fit-content;
+  max-width: 100%;
+  min-height: 2rem;
+  padding: var(--space-2xs) var(--space-sm);
   border-radius: var(--radius-control);
   color: var(--color-ink);
   font-size: var(--text-sm);
@@ -326,6 +331,33 @@
   grid-column: 2;
 }
 
+/* Wide screens: a log row is one line, its corrections at the right end; an open note editor takes the line below. */
+@media (min-width: 60rem) {
+  .record-log li {
+    grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .record-log .event-controls {
+    display: contents;
+  }
+
+  .record-log .event-control-buttons {
+    grid-column: 3;
+    grid-row: 1;
+    justify-content: flex-end;
+    margin-top: 0;
+  }
+
+  .record-log .event-note-edit {
+    grid-column: 2 / -1;
+  }
+}
+
+.live-context-bar strong {
+  text-wrap: balance;
+}
+
 .event-control-buttons {
   display: flex;
   flex-wrap: wrap;
@@ -456,6 +488,20 @@
 
 .review-fields {
   margin-top: var(--space-xs);
+}
+
+/* Legends ignore their own top margin inside a fieldset, so the group carries it. */
+.review-choice {
+  margin-top: var(--space-md);
+}
+
+.review-choice > legend.field-label {
+  margin-top: 0;
+}
+
+/* A running lesson: the console's live state is green. */
+.live-classroom .live-status i {
+  background: var(--color-success);
 }
 
 .review-choice .pref-option {

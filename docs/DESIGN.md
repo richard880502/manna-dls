@@ -14,7 +14,7 @@ The locked visual system for the web app (`web/`). Every screen reads it; change
 
 Teachers write in blue-black ink (藍黑墨水): their own words, their actions, what they select. Whatever **Manna** (the AI) adds sits in **gold**, the colour of the project's star mascot, and always carries its sources: help entries, suggestion cards, material candidates, the source count, the 需要協助 button. A teacher can tell at a glance which words are theirs and which came from Manna. That matters for a research platform that records whether an answer was written by the teacher, after AI help, or adopted from an AI example.
 
-The signature object is the **CoRe ledger**: each learning focus is a ruled sheet of eight questions, Q1 to Q8 numbered in the left margin in the serif, the row being helped turning gold.
+The signature object is the **CoRe ledger**: each learning focus is a ruled sheet of eight questions, Q1 to Q8 numbered in the left margin in the serif, the row being helped turning gold. The lesson page shows the linked focus's answers as the same ledger, set compact.
 
 ## Tokens
 
@@ -67,7 +67,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75 (`--leading-body`), U
 - Sidebar 16rem, sticky below the demo banner; under 60rem it becomes a top bar with a 選單 button.
 - Workspace content is capped at `--container` (75rem) and centred; at 1920 the gutters grow, nothing else does.
 - A running head on every screen: the stage (`01 · Study & Plan`) over the view title (`h1`). The page's own title is the larger `h2` below it.
-- Breakpoints: 60rem (shell) and 40rem (type, single column), plus 75rem where two working panels sit side by side (CoRe with 需要協助, the lesson page, the unit page grid, admin, 課後補寫).
+- Breakpoints: 60rem (shell) and 40rem (type, single column), plus 75rem where two working panels sit side by side (CoRe with 需要協助, the lesson page, admin, 課後補寫). The unit page stays one column so no short panel leaves an empty half beside a long one.
 
 ## Components
 
@@ -75,12 +75,12 @@ CJK rules: body never under 16px; prose `line-height` 1.75 (`--leading-body`), U
 - **Fields.** Label above (14px, 600), helper below in muted 14px, 1px `--color-field-edge` border that never changes width, the focus ring an inset outline. Selects keep native behaviour with a drawn chevron.
 - **Choice tiles** (`pref-option`, `route-option`, `siop-choice`): the native radio or checkbox stays visible; checked tiles take the accent wash and border; the ring sits on the tile.
 - **Panels** (`panel-card`): paper, 1px rule, radius 12. Inside a panel, parts are parted by hairlines or set in a well; never a bordered box inside a well, never a card inside a card.
-- **Manna content** (`help-entry`, `ai-suggestion`, `candidate-card`, `ai-status`): a gold well, no border; its sources sit under a gold hairline, item codes in mono chips. A rejected suggestion turns neutral grey rather than fading.
+- **Manna content** (`help-entry`, `ai-suggestion`, `candidate-card`, `ai-status`): a gold well, no border; its sources sit under a gold hairline, item codes in mono chips; secondary text inside it is `--color-ink-2`, never the muted grey. A rejected suggestion turns neutral grey rather than fading.
 - **Ledger rows** (`core-cell`): hairline-ruled, Q number in the margin (inline on a phone), the row being helped in the gold wash, rows the prep route recommends first get an accent Q number and a 建議先寫 tag.
 - **Tags** (`soft-tag`, `status-pill`, `core-status-*`, `route-tag`, `source-count`): body face 14px, sentence case, pill, tinted by meaning.
 - **Notices:** a tinted well (`info` paper-2, `success`, `warn`), ink text, no side stripe.
 - **Meta line** (`.eyebrow`): 14px muted body face above a head, only where it carries a fact (stage, version, route, focus).
-- **Teach & Record:** two big bookmark buttons (順利 green, 卡住 amber, each with its SVG icon and word), sync state as a live status with a dot, the phone remote with buttons a third of the screen tall.
+- **Teach & Record:** two big bookmark buttons (順利 green, 卡住 amber, each with its SVG icon and word), sync state as a status chip with a live dot, each logged bookmark one row with its corrections at the right end (stacked on a phone), the phone remote with buttons a third of the screen tall.
 
 ## Do and don't
 

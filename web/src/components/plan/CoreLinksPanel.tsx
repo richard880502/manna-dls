@@ -101,7 +101,7 @@ export function CoreLinksPanel({ lessonId, unitId, initialLinked, backfillHint =
                     return (
                       <div key={q} className="core-answer-row">
                         <dt>
-                          {q} {promptOf(q)}
+                          <span className="answer-qid">{q}</span> {promptOf(q)}
                         </dt>
                         <dd>{text}</dd>
                       </div>

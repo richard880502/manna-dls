@@ -2,7 +2,7 @@
 
 /* ================= home: 教師工作檯 ================= */
 .welcome-banner {
-  margin-bottom: var(--space-2xl);
+  margin-bottom: var(--space-xl);
 }
 
 .welcome-banner h2 {
@@ -26,7 +26,7 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-lg);
-  margin: 0 0 var(--space-2xl);
+  margin: 0 0 var(--space-xl);
   padding: 0;
   list-style: none;
 }
@@ -47,7 +47,7 @@
 .workflow-card .step-number {
   color: var(--color-accent-text);
   font-family: var(--font-display);
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: var(--weight-strong);
   font-variant-numeric: lining-nums tabular-nums;
   line-height: 1;
@@ -148,7 +148,7 @@
 
 .unit-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-lg);
   align-items: start;
 }
@@ -517,7 +517,7 @@
 
 .core-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
+  grid-template-columns: minmax(0, 1fr) 22rem;
   gap: var(--space-lg);
   align-items: start;
   margin-top: var(--space-lg);
@@ -560,6 +560,7 @@
 
 .focus-tab.is-selected {
   border-bottom-color: var(--color-accent);
+  background: var(--color-accent-wash);
   color: var(--color-accent-text);
 }
 
@@ -933,21 +934,38 @@
   margin-top: 0;
 }
 
-/* The teacher's own CoRe answers, for reference: a neutral well. */
+/* The teacher's own CoRe answers, for reference: the same ledger as the CoRe page, set compact. */
 .core-answer-block {
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius-control);
-  background: var(--color-paper-2);
+  border-top: var(--rule-hair) solid var(--color-rule-strong);
 }
 
 .core-answer-block > summary {
-  min-height: var(--control-h-sm);
+  min-height: var(--control-h);
   color: var(--color-ink);
-  font-size: var(--text-sm);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  line-height: 1.45;
 }
 
 .core-answer-block dl {
-  margin: var(--space-2xs) 0 var(--space-xs);
+  margin-bottom: var(--space-xs);
+}
+
+.core-answer-block .core-answer-row {
+  position: relative;
+  padding-left: 2.5rem;
+}
+
+.answer-qid {
+  position: absolute;
+  top: var(--space-xs);
+  left: 0;
+  color: var(--color-muted);
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: lining-nums tabular-nums;
+  line-height: 1.45;
 }
 
 /* ---------- 教案 and its steps ---------- */
@@ -1196,6 +1214,12 @@
 .appended-note {
   color: var(--color-success);
   font-weight: var(--weight-strong);
+}
+
+/* Inside Manna's gold wells, secondary text uses ink-2: grey never sits on a coloured surface. */
+:is(.help-entry, .ai-suggestion, .candidate-card, .ai-status, .prompt-card)
+  :is(.field-hint, .citation-meta, .ai-context-count, .ai-decision, .thumbs-label, .loading-text) {
+  color: var(--color-ink-2);
 }
 
 /* ---------- 班級特性與我的範例 ---------- */
@@ -1483,7 +1507,7 @@
     position: fixed;
     inset: auto 0 0;
     z-index: var(--z-overlay);
-    max-height: 70dvh;
+    max-height: 58dvh;
     border-bottom: 0;
     border-radius: var(--radius-card) var(--radius-card) 0 0;
     box-shadow: var(--shadow-overlay);
@@ -1503,8 +1527,7 @@
 
 @media (max-width: 40rem) {
   .workflow-cards {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: var(--space-lg);
+    gap: var(--space-md);
   }
 
   .route-option-grid {

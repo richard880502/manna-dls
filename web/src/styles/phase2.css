@@ -1,5 +1,7 @@
-/* Phase 2 static pages (Teach & Record, Reflect, Share, Profile, Community): read-only ports of the
-   handover prototype, drawn in the same system. Controls are disabled and say so through the fieldset. */
+/* Phase 2 static pages (Reflect, Share, Profile, Community): read-only ports of the handover prototype,
+   drawn in the same system. Controls are disabled and say so through the fieldset.
+   The live-classroom frame below started as a static port and is now the real Teach & Record console;
+   what only recording needs lives in record.css. */
 
 .static-fieldset {
   min-width: 0;
@@ -13,7 +15,7 @@
   opacity: 0.8;
 }
 
-/* ================= Teach & Record: the live classroom console ================= */
+/* ================= the live classroom frame (Teach & Record console) ================= */
 .live-classroom {
   display: grid;
   gap: var(--space-lg);
