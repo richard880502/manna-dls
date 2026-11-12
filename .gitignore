@@ -11,3 +11,6 @@ web/node_modules/
 web/dist/
 web/coverage/
 *.log
+
+# Claude Code agent worktrees
+.claude/worktrees/
