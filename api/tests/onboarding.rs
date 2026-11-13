@@ -260,6 +260,233 @@ async fn unit_defaults_follow_preferences() {
     assert_eq!(routes, vec!["activity", "material", "goal"]);
 }
 
+// ---------------------------------------------------------------- class profile carry-over (R3)
+
+const PROFILE_DEFAULT: &str = "/api/units/class-profile-default";
+
+async fn create_unit_with(app: &common::TestApp, t: &str, body: Value) -> Value {
+    let (s, u) = app.post("/api/units", Some(t), body).await;
+    assert_eq!(s, StatusCode::OK, "{u}");
+    u
+}
+
+async fn stored_source(app: &common::TestApp, unit_id: &Value) -> (Option<String>, Option<i64>) {
+    sqlx::query_as(
+        "SELECT class_profile_source, class_profile_source_unit_id FROM units WHERE id = $1",
+    )
+    .bind(unit_id.as_i64().unwrap())
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn first_unit_class_profile_falls_back_to_the_preference() {
+    let app = test_app!();
+    let (s, _) = app.get(PROFILE_DEFAULT, None).await;
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
+
+    // No preference, no unit: nothing to carry over.
+    let t = app.teacher("T-CP0", "general").await;
+    let (s, d) = app.get(PROFILE_DEFAULT, Some(&t)).await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!(
+        d,
+        json!({ "class_profile": "", "source": "none", "source_unit": null })
+    );
+    let u = create_unit_with(&app, &t, json!({ "title": "Nothing yet" })).await;
+    assert_eq!(u["class_profile"], "");
+    assert_eq!(u["class_profile_source"], "none");
+
+    // First unit with a preference answer: P6 is the default.
+    let t = app.teacher("T-CP1", "general").await;
+    set_prefs(
+        &app,
+        &t,
+        answers(json!("goal"), json!([]), json!(null), "問卷：高一普通班"),
+    )
+    .await;
+    let (_, d) = app.get(PROFILE_DEFAULT, Some(&t)).await;
+    assert_eq!(
+        d,
+        json!({ "class_profile": "問卷：高一普通班", "source": "preference", "source_unit": null })
+    );
+    let u = create_unit_with(&app, &t, json!({ "title": "First" })).await;
+    assert_eq!(u["class_profile"], "問卷：高一普通班");
+    assert_eq!(u["class_profile_source"], "preference");
+    assert_eq!(
+        stored_source(&app, &u["id"]).await,
+        (Some("preference".into()), None)
+    );
+}
+
+#[tokio::test]
+async fn new_unit_class_profile_carries_over_from_the_previous_unit() {
+    let app = test_app!();
+    let t = app.teacher("T-CP2", "general").await;
+    set_prefs(
+        &app,
+        &t,
+        answers(json!("goal"), json!([]), json!(null), "問卷：高一普通班"),
+    )
+    .await;
+    let first = create_unit_with(&app, &t, json!({ "title": "L2 分詞構句" })).await;
+    assert_eq!(first["class_profile"], "問卷：高一普通班");
+    // The teacher rewrites the profile on the first unit (persona B in docs/UX_REVIEW.md F4).
+    let path = format!("/api/units/{}", first["id"]);
+    let (s, _) = app
+        .put(
+            &path,
+            Some(&t),
+            json!({ "class_profile": "高二 207 普通班 34 人，用計時與角色卡比較順" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Second unit: the previous unit's profile, not the stale survey answer.
+    let (_, d) = app.get(PROFILE_DEFAULT, Some(&t)).await;
+    assert_eq!(
+        d,
+        json!({
+            "class_profile": "高二 207 普通班 34 人，用計時與角色卡比較順",
+            "source": "previous_unit",
+            "source_unit": { "id": first["id"], "title": "L2 分詞構句" }
+        })
+    );
+    let second = create_unit_with(&app, &t, json!({ "title": "L3 倒裝句" })).await;
+    assert_eq!(
+        second["class_profile"],
+        "高二 207 普通班 34 人，用計時與角色卡比較順"
+    );
+    assert_eq!(second["class_profile_source"], "previous_unit");
+    assert_eq!(
+        stored_source(&app, &second["id"]).await,
+        (Some("previous_unit".into()), first["id"].as_i64())
+    );
+
+    // Most recent wins; a later unit with an empty profile is skipped.
+    let (s, _) = app
+        .put(
+            &format!("/api/units/{}", second["id"]),
+            Some(&t),
+            json!({ "class_profile": "第二單元改寫過的描述" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let blank = create_unit_with(
+        &app,
+        &t,
+        json!({ "title": "Blank on purpose", "class_profile": "" }),
+    )
+    .await;
+    assert_eq!(blank["class_profile"], "");
+    let third = create_unit_with(&app, &t, json!({ "title": "L4 假設語氣" })).await;
+    assert_eq!(third["class_profile"], "第二單元改寫過的描述");
+    assert_eq!(
+        stored_source(&app, &third["id"]).await,
+        (Some("previous_unit".into()), second["id"].as_i64())
+    );
+
+    // Another teacher's units never leak in.
+    let other = app.teacher("T-CP3", "general").await;
+    create_unit_with(
+        &app,
+        &other,
+        json!({ "title": "Other", "class_profile": "別人的班級" }),
+    )
+    .await;
+    let (_, d) = app.get(PROFILE_DEFAULT, Some(&t)).await;
+    assert_eq!(d["class_profile"], "第二單元改寫過的描述");
+    assert_eq!(d["source_unit"]["id"], third["id"]);
+}
+
+#[tokio::test]
+async fn explicit_class_profile_wins_over_the_carried_over_one() {
+    let app = test_app!();
+    let t = app.teacher("T-CP4", "general").await;
+    create_unit_with(
+        &app,
+        &t,
+        json!({ "title": "Earlier", "class_profile": "高一普通班 32 人" }),
+    )
+    .await;
+
+    let u = create_unit_with(
+        &app,
+        &t,
+        json!({ "title": "Edited", "class_profile": "  今年只有半班  " }),
+    )
+    .await;
+    assert_eq!(u["class_profile"], "今年只有半班");
+    assert_eq!(u["class_profile_source"], "teacher");
+    assert_eq!(
+        stored_source(&app, &u["id"]).await,
+        (Some("teacher".into()), None)
+    );
+
+    // An explicit empty string is the teacher's choice too.
+    let u = create_unit_with(&app, &t, json!({ "title": "Cleared", "class_profile": "" })).await;
+    assert_eq!(u["class_profile"], "");
+    assert_eq!(u["class_profile_source"], "teacher");
+
+    let (s, v) = app
+        .post(
+            "/api/units",
+            Some(&t),
+            json!({ "title": "Too long", "class_profile": "字".repeat(2001) }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+}
+
+#[tokio::test]
+async fn deleted_units_are_ignored_for_the_class_profile_default() {
+    let app = test_app!();
+    let t = app.teacher("T-CP5", "general").await;
+    set_prefs(
+        &app,
+        &t,
+        answers(json!("goal"), json!([]), json!(null), "問卷：高三選修"),
+    )
+    .await;
+    let older = create_unit_with(
+        &app,
+        &t,
+        json!({ "title": "Older", "class_profile": "較舊的單元描述" }),
+    )
+    .await;
+    let newer = create_unit_with(
+        &app,
+        &t,
+        json!({ "title": "Newer", "class_profile": "較新的單元描述" }),
+    )
+    .await;
+    let soft_delete = |id: &Value| {
+        sqlx::query("UPDATE units SET deleted_at = now() WHERE id = $1")
+            .bind(id.as_i64().unwrap())
+            .execute(&app.db)
+    };
+
+    soft_delete(&newer["id"]).await.unwrap();
+    let (_, d) = app.get(PROFILE_DEFAULT, Some(&t)).await;
+    assert_eq!(d["class_profile"], "較舊的單元描述");
+    assert_eq!(d["source_unit"]["id"], older["id"]);
+    let u = create_unit_with(&app, &t, json!({ "title": "After delete" })).await;
+    assert_eq!(u["class_profile"], "較舊的單元描述");
+
+    // With every unit that had a profile deleted, the preference is the fallback again.
+    soft_delete(&older["id"]).await.unwrap();
+    soft_delete(&u["id"]).await.unwrap();
+    let (_, d) = app.get(PROFILE_DEFAULT, Some(&t)).await;
+    assert_eq!(
+        d,
+        json!({ "class_profile": "問卷：高三選修", "source": "preference", "source_unit": null })
+    );
+    let u = create_unit_with(&app, &t, json!({ "title": "Fresh start" })).await;
+    assert_eq!(u["class_profile"], "問卷：高三選修");
+    assert_eq!(u["class_profile_source"], "preference");
+}
+
 #[tokio::test]
 async fn prep_route_changes_are_logged_and_locked_when_disabled() {
     let app = test_app!();

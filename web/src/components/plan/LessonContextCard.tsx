@@ -1,20 +1,30 @@
-import { useState } from "react";
+import { useEffect, useImperativeHandle, useState, type Ref } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { LessonDetail } from "../../api/types";
 import { MY_EXAMPLE_MAX_CHARS } from "../../lib/preferences";
 import { ErrorText, Notice } from "../common";
 
+/** Lets the lesson page save pending edits before it starts the lesson or leaves. */
+export interface LessonContextHandle {
+  /** Saves pending edits; resolves to an error message, or null when there was nothing to save or it saved. */
+  save: () => Promise<string | null>;
+}
+
 interface LessonContextCardProps {
   lesson: LessonDetail;
   unitProfile: string;
   onSaved: (detail: LessonDetail) => void;
+  /** Reports unsaved edits. Pass a stable function. */
+  onDirtyChange?: (dirty: boolean) => void;
+  ref?: Ref<LessonContextHandle>;
 }
 
 /**
- * 本課背景：課例層級的班級描述（覆寫單元班級特性）與「我的範例」。
- * Both are sent to Manna with every suggestion request; 我的範例 stays in this lesson only.
+ * 本課背景：課例層級的班級描述（覆寫單元班級特性）與「我的範例」, inside the lesson page's
+ * 「更多備課工具」. Both are sent to Manna with every suggestion request; 我的範例 stays in this
+ * lesson only.
  */
-export function LessonContextCard({ lesson, unitProfile, onSaved }: LessonContextCardProps) {
+export function LessonContextCard({ lesson, unitProfile, onSaved, onDirtyChange, ref }: LessonContextCardProps) {
   const [classDescription, setClassDescription] = useState(lesson.class_description ?? "");
   const [myExample, setMyExample] = useState(lesson.my_example ?? "");
   const [dirty, setDirty] = useState(false);
@@ -25,7 +35,11 @@ export function LessonContextCard({ lesson, unitProfile, onSaved }: LessonContex
   const effective = lesson.effective_class_profile ?? (lesson.class_description || unitProfile);
   const overridden = !!lesson.class_description?.trim();
 
-  async function save() {
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  async function save(): Promise<string | null> {
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -39,23 +53,20 @@ export function LessonContextCard({ lesson, unitProfile, onSaved }: LessonContex
       setMyExample(detail.my_example ?? myExample);
       setDirty(false);
       setSaved(true);
+      return null;
     } catch (err) {
-      setError(errorMessage(err));
+      const message = errorMessage(err);
+      setError(message);
+      return message;
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <section className="panel-card lesson-context-card" aria-labelledby="lesson-context-heading">
-      <div className="card-heading">
-        <div>
-          <p className="eyebrow warm">本課背景</p>
-          <h3 id="lesson-context-heading">班級特性與我的範例</h3>
-        </div>
-        <span className="optional-label">選填</span>
-      </div>
+  useImperativeHandle(ref, () => ({ save: () => (dirty ? save() : Promise.resolve(null)) }));
 
+  return (
+    <div className="lesson-context-card">
       <div className="effective-profile" aria-label="目前生效的班級特性">
         <span>目前生效的班級特性{overridden ? "（本課覆寫）" : "（沿用單元設定）"}</span>
         <p>{effective || "尚未設定。可以在單元頁或下面填寫。"}</p>
@@ -102,9 +113,10 @@ export function LessonContextCard({ lesson, unitProfile, onSaved }: LessonContex
         <button type="button" className="secondary-button" onClick={() => void save()} disabled={saving || !dirty}>
           {saving ? "儲存中…" : "儲存本課背景"}
         </button>
+        {dirty && <span className="status-pill">尚未儲存</span>}
       </div>
       {saved && <Notice tone="success">已儲存本課背景。</Notice>}
       <ErrorText message={error} />
-    </section>
+    </div>
   );
 }

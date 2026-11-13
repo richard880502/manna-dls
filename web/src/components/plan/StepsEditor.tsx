@@ -47,9 +47,7 @@ export function totalMinutes(steps: EditableStep[]): number {
 }
 
 interface StepsEditorProps {
-  objective: string;
   steps: EditableStep[];
-  onObjective: (value: string) => void;
   onSteps: (steps: EditableStep[]) => void;
   /** 預估時間／程度較弱的支援／程度較好的延伸 fields visible. */
   showDiff: boolean;
@@ -58,15 +56,8 @@ interface StepsEditorProps {
   onToggleDiff: () => void;
 }
 
-export function StepsEditor({
-  objective,
-  steps,
-  onObjective,
-  onSteps,
-  showDiff,
-  diffByPreference,
-  onToggleDiff,
-}: StepsEditorProps) {
+/** The lesson's teaching steps. The objective (今天要教什麼？) sits above, on the lesson page's first view. */
+export function StepsEditor({ steps, onSteps, showDiff, diffByPreference, onToggleDiff }: StepsEditorProps) {
   const update = (key: string, change: Partial<EditableStep>) =>
     onSteps(steps.map((s) => (s.key === key ? { ...s, ...change } : s)));
   const move = (index: number, delta: number) => {
@@ -81,17 +72,6 @@ export function StepsEditor({
 
   return (
     <div className="steps-editor">
-      <label className="field-label" htmlFor="lesson-objective">
-        本課教學目標
-      </label>
-      <textarea
-        id="lesson-objective"
-        rows={2}
-        value={objective}
-        onChange={(e) => onObjective(e.target.value)}
-        placeholder="例如：學生能比較一般語序與句首倒裝，並用一句話說明倒裝的語意功能。"
-      />
-
       <datalist id="activity-type-options">
         {ACTIVITY_TYPE_OPTIONS.map((o) => (
           <option key={o} value={o} aria-label={o} />
@@ -99,7 +79,7 @@ export function StepsEditor({
       </datalist>
 
       <div className="steps-heading">
-        <div className="field-label">教案步驟</div>
+        <p className="field-hint">每個欄位都可以留白。</p>
         <div className="steps-heading-tools">
           {showDiff && diffByPreference && <span className="optional-label">依你的備課偏好預設顯示</span>}
           <button type="button" className="ghost-button small-button" aria-expanded={showDiff} onClick={onToggleDiff}>

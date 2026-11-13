@@ -101,6 +101,8 @@
 
   /* ---------- elevation: borders do the work; one shadow, for the bottom sheet only ---------- */
   --shadow-overlay: 0 -0.5rem 1.5rem oklch(25% 0.03 250 / 0.16);
+  /* Behind the 「還有沒儲存的內容」 confirm: dims the page, never a colour of its own. */
+  --color-scrim: oklch(25% 0.035 252 / 0.42);
 
   /* ---------- controls ---------- */
   --control-h: 2.5rem; /* 40 */

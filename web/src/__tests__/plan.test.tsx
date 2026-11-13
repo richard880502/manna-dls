@@ -8,8 +8,12 @@ import {
   focus,
   lessonDetail,
   mockApi,
+  openSection,
   renderApp,
+  savePlanButton,
+  sectionToggle,
   signIn,
+  todayCard,
   type MockCall,
 } from "../test/mockApi";
 
@@ -131,7 +135,8 @@ describe("Study & Plan lesson page", () => {
     expect(screen.getByLabelText("步驟 2").querySelector("textarea")).toHaveValue(
       "語意對比暖身：先比較一般語序與倒裝句兩組句子，請學生說出共同語意。",
     );
-    expect(screen.getByText("尚未儲存")).toBeInTheDocument();
+    expect(todayCard().getByText("尚未儲存")).toBeInTheDocument();
+    expect(sectionToggle("教學步驟")).toHaveAccessibleName("教學步驟（2）");
 
     // revise with edited text and a reason
     await user.click(second.getByRole("button", { name: "修訂" }));
@@ -164,7 +169,7 @@ describe("Study & Plan lesson page", () => {
     expect(await third.findByText("已拒絕")).toBeInTheDocument();
 
     // teacher saves: a new version with ordered positions
-    await user.click(screen.getByRole("button", { name: "儲存教案（產生新版本）" }));
+    await user.click(savePlanButton());
     expect(await screen.findByText(/已儲存為第 3 版/)).toBeInTheDocument();
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     expect(saved.objective).toBe("學生能說明倒裝的語意功能");
@@ -236,7 +241,7 @@ describe("Study & Plan lesson page", () => {
     const user = userEvent.setup();
     await openLesson();
     expect(await screen.findByRole("button", { name: "AI 目前未開放" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "儲存教案（產生新版本）" }));
+    await user.click(savePlanButton());
     expect(await screen.findByText(/已儲存為第 3 版/)).toBeInTheDocument();
     expect(api.callsTo("POST", SUGGEST)).toHaveLength(0);
   });
@@ -252,13 +257,25 @@ describe("Study & Plan lesson page", () => {
     await openLesson();
     expect(screen.getByText("下次先給例句再請學生歸納")).toBeInTheDocument();
 
+    // Collapsed behind 「連結的 CoRe 重點（0）」 until the teacher opens it.
+    expect(sectionToggle("連結的 CoRe 重點")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("checkbox", { name: /學習重點 1/ })).not.toBeInTheDocument();
+    await openSection(user, "連結的 CoRe 重點");
+
     await user.click(await screen.findByRole("checkbox", { name: /學習重點 1：倒裝句的語意功能/ }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/lessons/7/core-links")).toEqual({ focus_ids: [11] }));
     expect(await screen.findByText("能說明倒裝的語意")).toBeInTheDocument();
+    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（1）");
 
     await user.click(screen.getByRole("checkbox", { name: /學習重點 2：口語表達/ }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/lessons/7/core-links")).toEqual({ focus_ids: [11, 12] }));
     expect(screen.getAllByText("目前沒有想法").length).toBeGreaterThan(0);
+    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（2）");
+
+    // Collapsing keeps the links (and the count).
+    await user.click(sectionToggle("連結的 CoRe 重點"));
+    expect(sectionToggle("連結的 CoRe 重點")).toHaveAttribute("aria-expanded", "false");
+    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（2）");
   });
 
   it("reorders and removes steps before saving", async () => {
@@ -284,7 +301,9 @@ describe("Study & Plan lesson page", () => {
     await user.click(screen.getByRole("button", { name: "步驟 2 上移" }));
     await user.click(screen.getByRole("button", { name: "＋ 新增步驟" }));
     await user.click(screen.getByRole("button", { name: "刪除步驟 3" }));
-    await user.click(screen.getByRole("button", { name: "儲存教案（產生新版本）" }));
+    // The steps section repeats 儲存教案 at its end.
+    const stepsSection = within(screen.getByRole("region", { name: /^教學步驟/ }));
+    await user.click(stepsSection.getByRole("button", { name: "儲存教案（產生新版本）" }));
 
     await screen.findByText(/已儲存為第 3 版/);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
@@ -330,9 +349,18 @@ describe("Study & Plan lesson page", () => {
     const user = userEvent.setup();
     await openLesson();
 
+    // Both sit collapsed in 更多備課工具, with counts; opening and closing is logged.
+    expect(await screen.findByRole("button", { name: "SIOP 提示（2）" })).toHaveAttribute("aria-expanded", "false");
+    expect(await screen.findByRole("button", { name: "其他老師怎麼教（1）" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("checkbox", { name: /清楚寫出語言目標/ })).not.toBeInTheDocument();
+    await openSection(user, "SIOP 提示");
+
     await user.click(await screen.findByRole("checkbox", { name: /清楚寫出語言目標/ }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/lessons/7/siop")).toEqual({ siop_feature_ids: [1] }));
+    expect(screen.getByText("已選 1")).toBeInTheDocument();
+    await user.click(sectionToggle("SIOP 提示"));
 
+    await openSection(user, "其他老師怎麼教");
     expect(await screen.findByText(/用語意卡片比較句型/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "閱讀" }));
     expect(screen.getByText("先發卡片，再兩兩比較")).toBeInTheDocument();
@@ -341,5 +369,22 @@ describe("Study & Plan lesson page", () => {
     await user.click(screen.getByRole("button", { name: "搜尋" }));
     expect(await screen.findByText("用圖片引導口說")).toBeInTheDocument();
     expect(api.callsTo("GET", "/api/teacher-cases").some((c) => c.url.endsWith("?q=%E5%8F%A3%E8%AA%AA"))).toBe(true);
+
+    const events = api
+      .callsTo("POST", "/api/scaffold-events")
+      .map((c) => c.body as { scaffold_code: string; action: string; trigger?: string })
+      .filter((e) => e.scaffold_code === "SC-SIOP" || e.scaffold_code === "SC-CASES");
+    expect(events.filter((e) => e.scaffold_code === "SC-SIOP")).toEqual([
+      { scaffold_code: "SC-SIOP", action: "show", trigger: "collapsed" },
+      { scaffold_code: "SC-SIOP", action: "expand", trigger: "section" },
+      { scaffold_code: "SC-SIOP", action: "use", trigger: "1" },
+      { scaffold_code: "SC-SIOP", action: "skip", trigger: "section" },
+    ]);
+    expect(events.filter((e) => e.scaffold_code === "SC-CASES")).toEqual([
+      { scaffold_code: "SC-CASES", action: "show", trigger: "collapsed" },
+      { scaffold_code: "SC-CASES", action: "expand", trigger: "section" },
+      { scaffold_code: "SC-CASES", action: "expand", trigger: "TC-1" },
+      { scaffold_code: "SC-CASES", action: "expand", trigger: "search" },
+    ]);
   });
 });

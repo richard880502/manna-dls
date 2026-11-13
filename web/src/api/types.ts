@@ -74,6 +74,18 @@ export interface Unit {
   lesson_count: number;
   prep_route: PrepRoute;
   class_profile: string;
+  /** Where the class profile came from when the unit was created; null for older units. */
+  class_profile_source: ClassProfileSource | null;
+}
+
+/** teacher = sent on create; previous_unit / preference = carried-over default; none = empty. */
+export type ClassProfileSource = "teacher" | "previous_unit" | "preference" | "none";
+
+/** GET /api/units/class-profile-default: what a new unit gets when no class_profile is sent. */
+export interface ClassProfileDefault {
+  class_profile: string;
+  source: Exclude<ClassProfileSource, "teacher">;
+  source_unit: { id: number; title: string } | null;
 }
 
 export interface CoreResponse {

@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { PrepRoute, Unit } from "../api/types";
+import type { ClassProfileDefault, CreateUnitRequest, PrepRoute, Unit } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { CORE_STATUS_LABELS, formatDate } from "../lib/labels";
 import { PREP_ROUTE_LABELS, effectiveRoute } from "../lib/preferences";
 import { ErrorText, Loading } from "./common";
+import { ClassProfilePrefill } from "./unit/ClassProfilePrefill";
 import { RouteOptions } from "./unit/RouteOptions";
 
 export function UnitsPanel() {
@@ -16,6 +17,10 @@ export function UnitsPanel() {
   const [title, setTitle] = useState("");
   /** null = teacher has not picked; the default comes from 我的備課偏好 (P2). */
   const [pickedRoute, setPickedRoute] = useState<PrepRoute | null>(null);
+  /** R3: the class profile the server will use (previous unit, else P6), shown as an editable prefill. */
+  const [profileDefault, setProfileDefault] = useState<ClassProfileDefault | null>(null);
+  /** null = not edited: nothing is sent and the server applies (and records) the default. */
+  const [profileDraft, setProfileDraft] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -32,6 +37,11 @@ export function UnitsPanel() {
       .catch((err: unknown) => {
         if (alive) setLoadError(errorMessage(err));
       });
+    api
+      .classProfileDefault()
+      .then((d) => alive && setProfileDefault(d))
+      // Without it the form still works: the server applies the same default on create.
+      .catch(() => undefined);
     return () => {
       alive = false;
     };
@@ -44,13 +54,20 @@ export function UnitsPanel() {
       setCreateError("請輸入單元名稱。");
       return;
     }
+    const body: CreateUnitRequest = { title: trimmed };
+    if (routeChoiceEnabled) body.prep_route = route;
+    // Only an edited profile is sent; an untouched prefill stays the server's default (and its source).
+    if (profileDraft !== null && profileDraft.trim() !== (profileDefault?.class_profile ?? "").trim()) {
+      body.class_profile = profileDraft.trim();
+    }
     setCreating(true);
     setCreateError(null);
     try {
-      const unit = await api.createUnit(routeChoiceEnabled ? { title: trimmed, prep_route: route } : { title: trimmed });
+      const unit = await api.createUnit(body);
       setUnits((prev) => [unit, ...(prev ?? [])]);
       setTitle("");
       setPickedRoute(null);
+      setProfileDraft(null);
       // The unit page opens on the first screen of the chosen prep route.
       navigate(`/units/${unit.id}`);
     } catch (err) {
@@ -83,6 +100,12 @@ export function UnitsPanel() {
             {creating ? "建立中…" : "建立單元"}
           </button>
         </div>
+        <ClassProfilePrefill
+          prefill={profileDefault}
+          draft={profileDraft}
+          onDraft={setProfileDraft}
+          disabled={creating}
+        />
         {routeChoiceEnabled && (
           <RouteOptions
             name="new-unit-route"
