@@ -4,7 +4,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LessonRun, RecordOp, ReviewRequest, RunDetail, SyncResponse } from "../api/types";
 import { NOTE_IDLE_SECONDS } from "../lib/recordQueue";
 import { fakeRecordServer, recordEvent } from "../test/fakeRecordServer";
-import { baseRoutes, lessonDetail, mockApi, renderApp, respond, signIn, step, type MockCall } from "../test/mockApi";
+import {
+  baseRoutes,
+  lessonDetail,
+  mockApi,
+  openSection,
+  renderApp,
+  respond,
+  signIn,
+  step,
+  todayCard,
+  type MockCall,
+} from "../test/mockApi";
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SYNC = "/api/runs/9/events/sync";
@@ -497,6 +508,110 @@ describe("課後補寫", () => {
   });
 });
 
+describe("課後補寫 never drops an unsaved bookmark choice (R2c, regression for docs/UX_REVIEW.md F2)", () => {
+  const REVIEW_1 = "/api/runs/9/events/ev-1/review";
+  const COMPLETE = "/api/runs/9/review/complete";
+  const ended = runDetail({
+    ended_at: "2026-11-12T01:50:00Z",
+    events: [
+      recordEvent("ev-1", "2026-11-12T01:10:00Z", { id: 11, polarity: "stuck", note: "例句太難" }),
+      recordEvent("ev-2", "2026-11-12T01:20:00Z", { id: 12, polarity: "good" }),
+    ],
+  });
+  const reviewed = (call: MockCall) => ({
+    ...recordEvent("ev-1", "2026-11-12T01:10:00Z", { id: 11, polarity: "stuck", note: "例句太難" }),
+    ...(call.body as ReviewRequest),
+  });
+  const completed = run({ ended_at: "2026-11-12T01:50:00Z", review_completed_at: "2026-11-12T02:05:00Z" });
+  const index = (api: ReturnType<typeof mockApi>, method: string, path: string) =>
+    api.calls.findIndex((c) => c.method === method && c.path === path);
+
+  async function openReview() {
+    const rendered = renderApp("/runs/9/review");
+    const card = within(await screen.findByRole("article", { name: /卡住$/ }));
+    return { ...rendered, card };
+  }
+
+  it("「完成課後補寫」 first saves a card the teacher did not save", async () => {
+    signIn();
+    const api = mockApi({ ...baseRoutes(), "GET /api/runs/9": ended, [`PUT ${REVIEW_1}`]: reviewed, [`POST ${COMPLETE}`]: completed });
+    const user = userEvent.setup();
+    const { card } = await openReview();
+
+    // The reported case: pick 處理方式 重新解釋, do not press 儲存這張書籤, press 完成課後補寫.
+    await user.click(card.getByRole("radio", { name: "重新解釋" }));
+    expect(card.getByText("尚未儲存")).toBeInTheDocument();
+    expect(screen.getByText("有 1 張書籤的補寫還沒儲存；按「完成課後補寫」會先把它們存起來。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "完成課後補寫" }));
+
+    expect(await screen.findByText(/完成課後補寫。之後仍可回來修改/)).toBeInTheDocument();
+    expect(api.lastBody("PUT", REVIEW_1)).toEqual({
+      activity_step_id: null,
+      behaviors: [],
+      handling: "re_explain",
+      followup_text: "",
+    });
+    expect(index(api, "PUT", REVIEW_1)).toBeLessThan(index(api, "POST", COMPLETE));
+    // Only the edited card is saved; the untouched one is not re-sent.
+    expect(api.callsTo("PUT", "/api/runs/9/events/ev-2/review")).toHaveLength(0);
+    expect(await card.findByText("● 已儲存")).toBeInTheDocument();
+  });
+
+  it("does not complete when a pending card cannot be saved, and keeps the choice", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/runs/9": ended,
+      [`PUT ${REVIEW_1}`]: respond(502, { error: { code: "internal", message: "伺服器暫時發生問題" } }),
+      [`POST ${COMPLETE}`]: completed,
+    });
+    const user = userEvent.setup();
+    const { card } = await openReview();
+    await user.click(card.getByRole("radio", { name: "重新解釋" }));
+    await user.click(screen.getByRole("button", { name: "完成課後補寫" }));
+
+    expect(
+      await screen.findByText("1 張書籤的補寫沒有存成功（伺服器暫時發生問題），所以還沒完成課後補寫。請看該張書籤的訊息後再試一次。"),
+    ).toBeInTheDocument();
+    expect(card.getByText("伺服器暫時發生問題")).toBeInTheDocument();
+    expect(api.callsTo("POST", COMPLETE)).toHaveLength(0);
+    expect(card.getByRole("radio", { name: "重新解釋" })).toBeChecked();
+  });
+
+  it("asks before leaving with an unsaved card; 「儲存後離開」 saves it", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/runs/9": ended,
+      [`PUT ${REVIEW_1}`]: reviewed,
+      "GET /api/lessons/7": lessonDetail(),
+      "GET /api/units/1/core": { id: 1, unit_id: 1, phase: "pre", version_no: 1, completed_at: null, saw_ai_assist: false, focuses: [] },
+      "GET /api/siop": [],
+      "GET /api/teacher-cases": [],
+      "GET /api/lessons/7/runs": [],
+    });
+    const user = userEvent.setup();
+    const { card, router } = await openReview();
+    await user.type(card.getByLabelText("補寫（選填）"), "多給例句");
+
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    await user.click(screen.getByRole("link", { name: "第 1 課：Not only… but also" }));
+    const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
+    expect(dialog.getByText("離開這頁，還沒儲存的書籤補寫就會遺失。")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "留在這頁" }));
+    expect(router.state.location.pathname).toBe("/runs/9/review");
+    expect(card.getByLabelText("補寫（選填）")).toHaveValue("多給例句");
+
+    await user.click(screen.getByRole("link", { name: "第 1 課：Not only… but also" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "儲存後離開" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/lessons/7"));
+    expect(api.lastBody("PUT", REVIEW_1)).toMatchObject({ followup_text: "多給例句" });
+  });
+});
+
 describe("starting a run", () => {
   it("開始本節課 on the lesson page opens the console; an already open run is resumed", async () => {
     signIn();
@@ -512,9 +627,10 @@ describe("starting a run", () => {
     });
     const user = userEvent.setup();
     renderApp("/lessons/7");
-    const panel = within(await screen.findByRole("region", { name: "Teach & Record" }));
-    expect(await panel.findByText(/順利 2 · 卡住 1 · 課後補寫/)).toBeInTheDocument();
-    await user.click(panel.getByRole("button", { name: "開始本節課" }));
+    expect(await screen.findByRole("button", { name: "上課紀錄與課後補寫（1）" })).toBeInTheDocument();
+    await openSection(user, "上課紀錄與課後補寫");
+    expect(await screen.findByText(/順利 2 · 卡住 1 · 課後補寫/)).toBeInTheDocument();
+    await user.click(todayCard().getByRole("button", { name: "開始本節課" }));
     expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/lessons/7/runs")).toHaveLength(1);
   });

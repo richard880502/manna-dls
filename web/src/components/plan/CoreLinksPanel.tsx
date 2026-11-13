@@ -11,13 +11,26 @@ interface CoreLinksPanelProps {
   initialLinked: number[];
   /** Activity-first route: after writing the plan, link focuses and go back to fill in CoRe. */
   backfillHint?: boolean;
+  /** Reports the linked focus ids (for the 「連結的 CoRe 重點（n）」 count). Pass a stable function. */
+  onLinkedChange?: (ids: number[]) => void;
 }
 
-export function CoreLinksPanel({ lessonId, unitId, initialLinked, backfillHint = false }: CoreLinksPanelProps) {
+/** 本課連結的 CoRe 學習重點: choose 0–3 focuses and read their answers. Shown inside a lesson-page section. */
+export function CoreLinksPanel({
+  lessonId,
+  unitId,
+  initialLinked,
+  backfillHint = false,
+  onLinkedChange,
+}: CoreLinksPanelProps) {
   const [focuses, setFocuses] = useState<CoreFocus[] | null>(null);
   const [questions, setQuestions] = useState<CoreQuestion[]>(FALLBACK_QUESTIONS);
   const [linked, setLinked] = useState<number[]>(initialLinked);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onLinkedChange?.(linked);
+  }, [linked, onLinkedChange]);
 
   useEffect(() => {
     let alive = true;
@@ -53,11 +66,7 @@ export function CoreLinksPanel({ lessonId, unitId, initialLinked, backfillHint =
   const linkedFocuses = (focuses ?? []).filter((f) => linked.includes(f.id));
 
   return (
-    <section className="panel-card core-links" aria-labelledby="core-links-heading">
-      <div className="card-heading">
-        <h3 id="core-links-heading">本課連結的 CoRe 學習重點</h3>
-        <span className="optional-label">可略過</span>
-      </div>
+    <div className="core-links">
       <ErrorText message={error} />
       {backfillHint && (
         <p className="field-hint route-hint">
@@ -113,6 +122,6 @@ export function CoreLinksPanel({ lessonId, unitId, initialLinked, backfillHint =
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }

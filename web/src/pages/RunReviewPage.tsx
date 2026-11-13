@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { Handling, PlanStepRef, ReviewRequest, RunDetail, StudentBehavior } from "../api/types";
 import { ErrorText, Loading, Notice } from "../components/common";
+import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { EventControls, SyncStatus } from "../components/record/EventControls";
 import { PolarityIcon } from "../components/record/RecordIcons";
 import {
@@ -27,15 +28,25 @@ function stepLabel(s: PlanStepRef): string {
   return `步驟 ${s.position}：${head}`;
 }
 
+/** What the page needs from a card to save its pending 補寫 before completing or leaving. */
+interface ReviewCardHandle {
+  /** Saves the card if it has unsaved edits; resolves to an error message, or null. */
+  save: () => Promise<string | null>;
+}
+
 interface ReviewCardProps {
   runId: number;
   event: ViewEvent;
   steps: PlanStepRef[];
   sync: RecordSync;
+  /** Registers (or, with null, removes) the card's handle. Stable. */
+  register: (deviceEventId: string, handle: ReviewCardHandle | null) => void;
+  /** Reports unsaved edits. Stable. */
+  onDirtyChange: (deviceEventId: string, dirty: boolean) => void;
 }
 
 /** One bookmark: time, 順利／卡住, the in-class sentence, corrections and the optional 補寫 fields. */
-function ReviewCard({ runId, event, steps, sync }: ReviewCardProps) {
+function ReviewCard({ runId, event, steps, sync, register, onDirtyChange }: ReviewCardProps) {
   const ids = useId();
   const server = event.server;
   const [loadedFrom, setLoadedFrom] = useState<number | null>(server ? server.id : null);
@@ -62,7 +73,7 @@ function ReviewCard({ runId, event, steps, sync }: ReviewCardProps) {
     setSaved(false);
   };
 
-  async function save() {
+  async function save(): Promise<string | null> {
     const body: ReviewRequest = {
       activity_step_id: stepId ? Number(stepId) : null,
       behaviors: STUDENT_BEHAVIORS.filter((b) => behaviors.includes(b)),
@@ -77,12 +88,26 @@ function ReviewCard({ runId, event, steps, sync }: ReviewCardProps) {
       setDirty(false);
       setSaved(true);
       logScaffold("SC-RECORD", "use", { trigger: "review" });
+      return null;
     } catch (err) {
-      setError(errorMessage(err));
+      const message = errorMessage(err);
+      setError(message);
+      return message;
     } finally {
       setSaving(false);
     }
   }
+
+  const id = event.device_event_id;
+  // Re-registered every render so the page always calls the save with the current fields.
+  useEffect(() => {
+    register(id, { save: () => (dirty ? save() : Promise.resolve(null)) });
+  });
+  useEffect(() => () => register(id, null), [id, register]);
+  useEffect(() => {
+    onDirtyChange(id, dirty);
+  }, [id, dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(id, false), [id, onDirtyChange]);
 
   const time = formatClock(event.device_ts);
   const unknownStep = stepId !== "" && !steps.some((s) => String(s.id) === stepId);
@@ -200,6 +225,7 @@ function ReviewCard({ runId, event, steps, sync }: ReviewCardProps) {
             {saving ? "儲存中…" : "儲存這張書籤"}
           </button>
           {saved && <span className="saved-label">● 已儲存</span>}
+          {dirty && <span className="status-pill">尚未儲存</span>}
         </div>
       </fieldset>
       {!server && <p className="field-hint">這個書籤還沒同步，同步後才能補寫。</p>}
@@ -218,6 +244,35 @@ export function RunReviewPage() {
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const shownLogged = useRef(false);
+
+  // Cards with unsaved 補寫 (R2): saved before 完成課後補寫, and leaving asks first.
+  const cards = useRef(new Map<string, ReviewCardHandle>());
+  const [dirtyCards, setDirtyCards] = useState<ReadonlySet<string>>(() => new Set());
+  const registerCard = useCallback((deviceEventId: string, handle: ReviewCardHandle | null) => {
+    if (handle) cards.current.set(deviceEventId, handle);
+    else cards.current.delete(deviceEventId);
+  }, []);
+  const onCardDirty = useCallback((deviceEventId: string, dirty: boolean) => {
+    setDirtyCards((prev) => {
+      if (prev.has(deviceEventId) === dirty) return prev;
+      const next = new Set(prev);
+      if (dirty) next.add(deviceEventId);
+      else next.delete(deviceEventId);
+      return next;
+    });
+  }, []);
+  const guard = useLeaveGuard(dirtyCards.size > 0);
+
+  /** Saves every card with unsaved 補寫. Resolves to an error message, or null when all saved. */
+  async function savePendingCards(): Promise<string | null> {
+    const failures: string[] = [];
+    for (const id of dirtyCards) {
+      const failed = (await cards.current.get(id)?.save()) ?? null;
+      if (failed) failures.push(failed);
+    }
+    if (failures.length === 0) return null;
+    return `${failures.length} 張書籤的補寫沒有存成功（${failures[0]}）`;
+  }
 
   const refresh = useCallback(() => {
     const stamp = sync.nextStamp();
@@ -244,9 +299,16 @@ export function RunReviewPage() {
     }
   }, [detail]);
 
+  /** 完成課後補寫: pending card edits are saved first; if one fails, nothing is completed. */
   async function complete() {
     setBusy(true);
     setActionError(null);
+    const failed = await savePendingCards();
+    if (failed) {
+      setActionError(`${failed}，所以還沒完成課後補寫。請看該張書籤的訊息後再試一次。`);
+      setBusy(false);
+      return;
+    }
     try {
       const run = await api.completeReview(runId);
       setDetail((d) => (d ? { ...d, ...run } : d));
@@ -341,7 +403,17 @@ export function RunReviewPage() {
           {events.length === 0 ? (
             <p className="empty-preview">這節課沒有書籤。沒有書籤也沒關係，可以直接完成。</p>
           ) : (
-            events.map((ev) => <ReviewCard key={ev.device_event_id} runId={runId} event={ev} steps={steps} sync={sync} />)
+            events.map((ev) => (
+              <ReviewCard
+                key={ev.device_event_id}
+                runId={runId}
+                event={ev}
+                steps={steps}
+                sync={sync}
+                register={registerCard}
+                onDirtyChange={onCardDirty}
+              />
+            ))
           )}
         </div>
       </div>
@@ -354,15 +426,23 @@ export function RunReviewPage() {
         ) : (
           <div className="button-row">
             <button type="button" className="primary-button" onClick={() => void complete()} disabled={busy || open}>
-              完成課後補寫
+              {busy && dirtyCards.size > 0 ? "儲存並完成中…" : "完成課後補寫"}
             </button>
           </div>
+        )}
+        {dirtyCards.size > 0 && (
+          <p className="field-hint pending-review-hint" role="status">
+            有 {dirtyCards.size} 張書籤的補寫還沒儲存
+            {detail.review_completed_at ? "，請按該張書籤的「儲存這張書籤」。" : "；按「完成課後補寫」會先把它們存起來。"}
+          </p>
         )}
         <p className="field-hint">
           沒有填寫的欄位都可以留白，不會影響完成。下一步：Reflect &amp; Progress（Phase 2 規劃中）。
         </p>
         <ErrorText message={actionError} />
       </section>
+
+      <LeaveConfirm guard={guard} message="離開這頁，還沒儲存的書籤補寫就會遺失。" onSave={savePendingCards} />
     </section>
   );
 }

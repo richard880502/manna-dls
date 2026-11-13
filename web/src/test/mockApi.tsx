@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { render, screen, within } from "@testing-library/react";
+import { createMemoryRouter, RouterProvider } from "react-router";
 import { vi } from "vitest";
 import type {
   AppConfig,
@@ -106,12 +106,28 @@ export function mockApi(routes: Record<string, RouteValue>) {
   };
 }
 
+// ---------- lesson page helpers ----------
+
+/** The lesson page's first view: 今天要教什麼？ and 開始本節課. */
+export const todayCard = () => within(screen.getByRole("region", { name: "今天要教什麼？" }));
+
+/** 儲存教案 on the first view (the open steps section repeats it at its end). */
+export const savePlanButton = () => todayCard().getByRole("button", { name: "儲存教案（產生新版本）" });
+
+/** The toggle of a collapsible lesson-page section, by the start of its label (e.g. "SIOP 提示"). */
+export const sectionToggle = (title: string) =>
+  screen.getByRole("button", { name: new RegExp(`^${title.replace(/[()（）]/g, "\\$&")}`) });
+
+/** Opens a lesson-page section if it is collapsed. */
+export async function openSection(user: { click: (el: Element) => Promise<void> }, title: string) {
+  const toggle = sectionToggle(title);
+  if (toggle.getAttribute("aria-expanded") !== "true") await user.click(toggle);
+}
+
+/** Renders the app in a memory data router (as main.tsx does), so pages can use useBlocker. */
 export function renderApp(path: string) {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <App />
-    </MemoryRouter>,
-  );
+  const router = createMemoryRouter([{ path: "*", element: <App /> }], { initialEntries: [path] });
+  return { router, ...render(<RouterProvider router={router} />) };
 }
 
 export function signIn(token = "test-token") {
@@ -139,6 +155,7 @@ export const unit: Unit = {
   lesson_count: 1,
   prep_route: "goal",
   class_profile: "",
+  class_profile_source: null,
 };
 
 export const unitWith = (overrides: Partial<Unit> = {}): Unit => ({ ...unit, ...overrides });

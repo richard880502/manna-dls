@@ -14,8 +14,11 @@ import {
   coreVersion,
   lessonDetail,
   mockApi,
+  openSection,
   preferences,
   renderApp,
+  savePlanButton,
+  sectionToggle,
   signIn,
   step,
   type MockCall,
@@ -115,7 +118,7 @@ describe("preference: 差異化與時間安排 (differentiation)", () => {
       }),
     );
 
-    await user.click(screen.getByRole("button", { name: "儲存教案（產生新版本）" }));
+    await user.click(savePlanButton());
     await screen.findByText(/已儲存為第 3 版/);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     expect(saved.steps.map((s) => [s.duration_min, s.support_note, s.extension_note])).toEqual([
@@ -166,14 +169,17 @@ describe("preference: 差異化與時間安排 (differentiation)", () => {
 });
 
 describe("preference: 找合適素材 (material)", () => {
-  it("moves the RAG suggestion panel to the top of the lesson page, expanded", async () => {
+  it("moves the RAG suggestion panel to the top of the lesson page, expanded, right under the first view", async () => {
     signIn();
     const api = mockApi(routesFor(["material"]));
     await openLesson();
     const rag = screen.getByRole("region", { name: "備課建議" });
     expect(within(rag).getByText("依你的備課偏好置頂")).toBeInTheDocument();
     expect(within(rag).getByRole("button", { name: "請 Manna 提供建議" })).toBeInTheDocument();
-    const links = screen.getByRole("heading", { name: "本課連結的 CoRe 學習重點" });
+    // 今天要教什麼？ stays first (R1); the pinned panel comes before every collapsed section.
+    const today = screen.getByRole("region", { name: "今天要教什麼？" });
+    expect(today.compareDocumentPosition(rag) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const links = sectionToggle("連結的 CoRe 重點");
     expect(rag.compareDocumentPosition(links) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await waitFor(() =>
       expect(events(api)).toContainEqual({ scaffold_code: "SC-PREF", action: "show", trigger: "preference:hardest=material" }),
@@ -255,6 +261,7 @@ describe("lesson background: class description override and 我的範例", () =>
     const user = userEvent.setup();
     await openLesson();
 
+    await openSection(user, "本課背景");
     const effective = screen.getByLabelText("目前生效的班級特性");
     expect(within(effective).getByText("目前生效的班級特性（本課覆寫）")).toBeInTheDocument();
     expect(within(effective).getByText("高一普通班")).toBeInTheDocument();

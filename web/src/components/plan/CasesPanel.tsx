@@ -10,7 +10,17 @@ const TRACK_LABELS: Record<TeacherCase["school_track"], string> = {
   both: "普高・技高",
 };
 
-export function CasesPanel() {
+interface CasesPanelProps {
+  /** Reports how many cases the first load found (for the 「其他老師怎麼教（n）」 count). Pass a stable function. */
+  onLoaded?: (count: number) => void;
+}
+
+/**
+ * 其他老師怎麼教, inside the lesson page's 「更多備課工具」. The section starts collapsed, so the
+ * first load logs `SC-CASES show` with trigger `collapsed`; opening and closing the section is
+ * logged by the lesson page (`expand` / `skip`, trigger `section`).
+ */
+export function CasesPanel({ onLoaded }: CasesPanelProps) {
   const [cases, setCases] = useState<TeacherCase[] | null>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -35,13 +45,14 @@ export function CasesPanel() {
       .then((list) => {
         if (!alive) return;
         setCases(list);
-        if (list.length > 0) logScaffold("SC-CASES", "show");
+        onLoaded?.(list.length);
+        if (list.length > 0) logScaffold("SC-CASES", "show", { trigger: "collapsed" });
       })
       .catch((err: unknown) => alive && setError(errorMessage(err)));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [onLoaded]);
 
   function onSearch(event: FormEvent) {
     event.preventDefault();
@@ -59,11 +70,8 @@ export function CasesPanel() {
   }
 
   return (
-    <section className="teacher-case-panel" aria-labelledby="cases-heading">
-      <div className="card-heading">
-        <h3 id="cases-heading">其他老師怎麼教</h3>
-        <span className="soft-tag">教師經驗，非官方來源</span>
-      </div>
+    <div className="teacher-case-panel">
+      <p className="field-hint">教師經驗，非官方來源。</p>
       <form className="peer-search-row" onSubmit={onSearch}>
         <input
           type="search"
@@ -101,6 +109,6 @@ export function CasesPanel() {
           ))}
         </div>
       )}
-    </section>
+    </div>
   );
 }

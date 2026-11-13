@@ -38,6 +38,10 @@ pub fn api_router() -> Router<AppState> {
             get(preferences::get_mine).put(preferences::put_mine),
         )
         .route("/units", get(units::list).post(units::create))
+        .route(
+            "/units/class-profile-default",
+            get(units::get_class_profile_default),
+        )
         .route("/units/{id}", get(units::get_one).put(units::update))
         .route(
             "/units/{id}/materials",

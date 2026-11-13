@@ -60,7 +60,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75 (`--leading-body`), U
 - **Radius:** `--radius-control` 8 (buttons, inputs, wells, tiles) · `--radius-card` 12 (panels) · `--radius-pill` (tags, status, steppers) · `--radius-sm` 6 (code chips).
 - **Depth:** borders, not shadows. A panel is paper plus a 1px `--color-rule` border. The only shadow is `--shadow-overlay`, on the 需要協助 sheet that opens over the bottom of a narrow screen.
 - **Motion:** state only. `--dur-micro` 120ms for colour, `--dur-short` 220ms for a disclosure chevron or a switch; `--ease-out`, `--ease-in-out`; only `transform`, `opacity` and colours move. Under `prefers-reduced-motion: reduce` everything ends at once.
-- **Layers:** `--z-sticky` (sidebar), `--z-sticky-nav` (demo banner), `--z-overlay` (help sheet).
+- **Layers:** `--z-sticky` (sidebar), `--z-sticky-nav` (demo banner), `--z-overlay` (help sheet, the leave confirm over `--color-scrim`).
 
 ## Layout
 
@@ -80,6 +80,9 @@ CJK rules: body never under 16px; prose `line-height` 1.75 (`--leading-body`), U
 - **Tags** (`soft-tag`, `status-pill`, `core-status-*`, `route-tag`, `source-count`): body face 14px, sentence case, pill, tinted by meaning.
 - **Notices:** a tinted well (`info` paper-2, `success`, `warn`), ink text, no side stripe.
 - **Meta line** (`.eyebrow`): 14px muted body face above a head, only where it carries a fact (stage, version, route, focus).
+- **Collapsible sections** (`plan-section`): on the lesson page, everything past the first view (「今天要教什麼？」 and 開始本節課) is a row inside one panel, parted by hairlines: a full-width toggle in the accent text with the drawn chevron, its label carrying the count (「教學步驟（3）」), an optional tag at the right (已選 2, 尚未儲存). The body stays mounted while closed (`hidden`), so nothing half-written is lost.
+- **Leave confirm** (`leave-confirm`): when a page with unsaved work is left, a panel over `--color-scrim` (`--z-overlay`) asks 儲存後離開 (filled) / 留在這頁 (focused first, also Escape) / 不儲存，直接離開. No shadow; never `window.confirm`.
+- **Carried-over text** (`profile-prefill`): text the teacher wrote earlier and the app reuses (the class profile on a new unit) sits in a paper-2 well with its source in one line above it and a 修改 button; it is the teacher's ink, never Manna gold.
 - **Teach & Record:** two big bookmark buttons (順利 green, 卡住 amber, each with its SVG icon and word), sync state as a status chip with a live dot, each logged bookmark one row with its corrections at the right end (stacked on a phone), the phone remote with buttons a third of the screen tall.
 
 ## Do and don't

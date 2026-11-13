@@ -14,9 +14,11 @@ import {
   focus,
   lessonDetail,
   mockApi,
+  openSection,
   preferences,
   renderApp,
   respond,
+  sectionToggle,
   signIn,
   unitWith,
   type MockCall,
@@ -194,11 +196,14 @@ describe("prep route (備課菜單) on unit creation and the unit page", () => {
       "GET /api/siop": [],
       "GET /api/teacher-cases": [],
     });
+    const user = userEvent.setup();
     renderApp("/lessons/7");
-    expect(await screen.findByRole("link", { name: "回頭補寫 CoRe →" })).toHaveAttribute("href", "/units/1/core");
-    const plan = screen.getByRole("heading", { name: "教案" });
-    const links = screen.getByRole("heading", { name: "本課連結的 CoRe 學習重點" });
+    expect(await screen.findByText(/活動優先：先寫活動點子與教學步驟/)).toBeInTheDocument();
+    const plan = sectionToggle("教學步驟");
+    const links = sectionToggle("連結的 CoRe 重點");
     expect(plan.compareDocumentPosition(links) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await openSection(user, "連結的 CoRe 重點");
+    expect(await screen.findByRole("link", { name: "回頭補寫 CoRe →" })).toHaveAttribute("href", "/units/1/core");
   });
 });
 

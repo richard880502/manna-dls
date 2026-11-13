@@ -386,18 +386,6 @@
   font-weight: var(--weight-regular);
 }
 
-.runs-panel > .field-hint {
-  margin-top: 0;
-}
-
-.runs-panel .button-row {
-  margin-top: var(--space-sm);
-}
-
-.runs-panel .run-list {
-  margin-top: var(--space-md);
-}
-
 .record-start-row {
   margin-top: var(--space-md);
 }
