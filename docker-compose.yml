@@ -19,6 +19,11 @@ services:
       AI_MODEL: ${AI_MODEL:-claude-opus-5-5}
       AI_EFFORT: ${AI_EFFORT:-medium}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # NCHC (國網中心) GenAI — the approved provider for the formal platform.
+      # Set AI_PROVIDER=openai_compatible and these in Coolify (never in this file).
+      OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-}
+      OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
+      AI_TIMEOUT_SECS: ${AI_TIMEOUT_SECS:-60}
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}
