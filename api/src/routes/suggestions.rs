@@ -20,7 +20,9 @@ use crate::prompts;
 use crate::retrieval::{self, Scored};
 use crate::routes::lessons::{latest_version, linked_focus_ids, selected_siop_ids, LessonStep};
 use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
-use crate::routes::{clip_chars, or_blank, owned_lesson, scaffold_id, track_label};
+use crate::routes::{
+    clip_chars, or_blank, owned_lesson, resolved_profile, scaffold_id, track_label,
+};
 use crate::AppState;
 
 /// How much of 我的範例 is sent to the model (style reference only).
@@ -33,6 +35,10 @@ pub const DIFFERENTIATION_OPTIONAL: &str = "duration_min、support_note、extens
 pub struct SuggestRequest {
     #[serde(default)]
     pub request_note: Option<String>,
+    /// The class the teacher is working in (Phase 1.4): its profile is used per the precedence
+    /// in `routes::resolve_class_profile`.
+    #[serde(default)]
+    pub class_id: Option<i64>,
 }
 
 fn format_step(s: &LessonStep) -> String {
@@ -98,6 +104,14 @@ pub async fn suggest(
             .map_err(|e| AppError::bad_request(format!("請求內容格式不正確：{e}")))?
     };
     let lesson = owned_lesson(&state.db, id, teacher.id()).await?;
+    let profile = resolved_profile(
+        &state.db,
+        teacher.id(),
+        req.class_id,
+        &lesson.class_description,
+        &lesson.unit_class_profile,
+    )
+    .await?;
     if !state.ai.enabled() {
         return Ok(Json(AiResult::disabled()));
     }
@@ -200,7 +214,7 @@ pub async fn suggest(
 
     let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
     let differentiation = prefs.has_hardest(Hardest::Differentiation);
-    let class_profile = lesson.effective_class_profile();
+    let class_profile = profile.text.clone();
     let my_example = lesson.my_example.trim().to_string();
     let my_example_prompt = if my_example.is_empty() {
         "（沒有提供）".to_string()
@@ -259,6 +273,7 @@ pub async fn suggest(
     let snapshot = json!({
         "inputs": vars,
         "preferences": pref_snapshot(&prefs),
+        "class_context": profile.snapshot(),
         "retrieval": {
             "query": query_text,
             "top_k": state.config.rag_top_k,
@@ -308,7 +323,7 @@ pub async fn suggest(
         .map(|s| s.content.as_str())
         .unwrap_or_default();
     context
-        .add("班級特性", &class_profile)
+        .add(&profile.context_label(), &class_profile)
         .add("本課目標", &objective)
         .add(
             "教案步驟",

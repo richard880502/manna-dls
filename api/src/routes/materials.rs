@@ -21,7 +21,7 @@ use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences;
 use crate::prompts;
 use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
-use crate::routes::{log_usage, or_blank, owned_unit, scaffold_id, track_label};
+use crate::routes::{log_usage, or_blank, owned_unit, resolved_profile, scaffold_id, track_label};
 use crate::AppState;
 
 pub const MAX_MATERIAL_CHARS: usize = 50_000;
@@ -192,6 +192,9 @@ pub async fn remove(
 #[derive(Debug, Deserialize)]
 pub struct FocusesRequest {
     pub material_id: i64,
+    /// The class the teacher is working in (Phase 1.4), optional.
+    #[serde(default)]
+    pub class_id: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -208,6 +211,14 @@ pub async fn material_focuses(
     ApiJson(req): ApiJson<FocusesRequest>,
 ) -> AppResult<Json<AiResult<MaterialFocusesOutput>>> {
     let unit = owned_unit(&state.db, unit_id, teacher.id()).await?;
+    let profile = resolved_profile(
+        &state.db,
+        teacher.id(),
+        req.class_id,
+        "",
+        &unit.class_profile,
+    )
+    .await?;
     let material: MaterialText = sqlx::query_as(
         "SELECT id, filename, text_content FROM unit_materials WHERE id = $1 AND unit_id = $2",
     )
@@ -230,7 +241,7 @@ pub async fn material_focuses(
         })?;
     let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
     let track = teacher.track().to_string();
-    let class_profile = unit.class_profile.trim().to_string();
+    let class_profile = profile.text.clone();
 
     let mut vars: HashMap<&str, String> = HashMap::from([
         ("school_track", track_label(&track).to_string()),
@@ -258,6 +269,7 @@ pub async fn material_focuses(
             "sha256": auth::sha256_hex(&text),
         },
         "preferences": pref_snapshot(&prefs),
+        "class_context": profile.snapshot(),
         "prompt": {
             "key": prompts::KEY_MATERIAL_FOCUSES, "version_no": prompt.version_no,
             "system": system, "user": logged_user
@@ -308,7 +320,7 @@ pub async fn material_focuses(
     context
         .add("教材摘錄", &format!("{}：{}", material.filename, text))
         .add("單元", &unit.title)
-        .add("班級特性", &class_profile)
+        .add(&profile.context_label(), &class_profile)
         .add("你的備課偏好", &preference_summary(&prefs, &[]));
     Ok(Json(
         outcome

@@ -20,7 +20,7 @@ use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences::{self, Hardest};
 use crate::prompts;
 use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
-use crate::routes::{or_blank, owned_unit, scaffold_id, track_label};
+use crate::routes::{or_blank, owned_unit, resolved_profile, scaffold_id, track_label};
 use crate::AppState;
 
 pub const MAX_FOCUSES: usize = 3;
@@ -432,6 +432,9 @@ pub struct AssistRequest {
     pub focus_id: i64,
     pub question_id: String,
     pub level: u8,
+    /// The class the teacher is working in (Phase 1.4), optional.
+    #[serde(default)]
+    pub class_id: Option<i64>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -455,6 +458,14 @@ pub async fn assist(
     ApiJson(req): ApiJson<AssistRequest>,
 ) -> AppResult<Json<AiResult<CoreAssistOutput>>> {
     let unit = owned_unit(&state.db, req.unit_id, teacher.id()).await?;
+    let profile = resolved_profile(
+        &state.db,
+        teacher.id(),
+        req.class_id,
+        "",
+        &unit.class_profile,
+    )
+    .await?;
     if !(1..=3).contains(&req.level) {
         return Err(AppError::bad_request("協助層級必須是 1、2 或 3。"));
     }
@@ -537,7 +548,7 @@ pub async fn assist(
     };
     let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
     let goal_emphasis = req.level == 2 && prefs.has_hardest(Hardest::Goal);
-    let class_profile = unit.class_profile.trim().to_string();
+    let class_profile = profile.text.clone();
 
     let vars: HashMap<&str, String> = HashMap::from([
         ("unit_title", unit.title.clone()),
@@ -574,6 +585,7 @@ pub async fn assist(
     let snapshot = json!({
         "inputs": vars,
         "preferences": pref_snapshot(&prefs),
+        "class_context": profile.snapshot(),
         "prompt": { "key": key, "version_no": prompt.version_no, "system": system, "user": user },
         "schema": schemas::CORE_ASSIST_SCHEMA_NAME,
     });
@@ -639,7 +651,7 @@ pub async fn assist(
         &[]
     };
     context
-        .add("班級特性", &class_profile)
+        .add(&profile.context_label(), &class_profile)
         .add("學習重點", &focus.big_idea)
         .add(
             &format!("{} 目前寫的內容", question.id),

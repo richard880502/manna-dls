@@ -2,6 +2,7 @@
 //! post-lesson review (課後補寫) and QR pairing for the phone remote (spec §4.3, §6.4;
 //! contract: docs/API.md「Phase 1.2」). The phone remote's own endpoints are in `routes::remote`.
 
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -10,12 +11,13 @@ use serde_json::{json, Value};
 use sqlx::{PgExecutor, PgPool, Postgres, Transaction};
 
 use crate::auth::{new_token, sha256_hex, AuthTeacher};
-use crate::error::{ApiJson, ApiPath, AppError, AppResult};
+use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::record::{
     self, normalize_behaviors, remote_create_allowed, valid_handling, Actor, RecordOp, Rejection,
     MAX_FOLLOWUP_CHARS, MAX_OPS_PER_SYNC, PAIRING_MINUTES,
 };
-use crate::routes::owned_lesson;
+use crate::routes::classes::MSG_CLASS_ARCHIVED;
+use crate::routes::{owned_class, owned_lesson};
 use crate::AppState;
 
 // ---------------------------------------------------------------- shapes
@@ -32,6 +34,9 @@ pub struct LessonRun {
     pub review_completed_at: Option<DateTime<Utc>>,
     pub good_count: i64,
     pub stuck_count: i64,
+    /// The class this lesson was taught in; NULL for a run without a class.
+    pub class_id: Option<i64>,
+    pub class_name: Option<String>,
 }
 
 /// Runs whose lesson and unit still exist; callers add the ownership / id filters.
@@ -41,10 +46,12 @@ const RUN_SELECT: &str = "
            (SELECT COUNT(*) FROM record_events e
              WHERE e.lesson_run_id = r.id AND e.deleted_at IS NULL AND e.polarity = 'good') AS good_count,
            (SELECT COUNT(*) FROM record_events e
-             WHERE e.lesson_run_id = r.id AND e.deleted_at IS NULL AND e.polarity = 'stuck') AS stuck_count
+             WHERE e.lesson_run_id = r.id AND e.deleted_at IS NULL AND e.polarity = 'stuck') AS stuck_count,
+           r.class_id, c.name AS class_name
       FROM lesson_runs r
       JOIN lessons l ON l.id = r.lesson_id
       JOIN units u ON u.id = l.unit_id
+      LEFT JOIN classes c ON c.id = r.class_id
      WHERE l.deleted_at IS NULL AND u.deleted_at IS NULL";
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -197,15 +204,27 @@ async fn latest_plan(db: &PgPool, lesson_id: i64) -> sqlx::Result<Option<RunPlan
 
 // ---------------------------------------------------------------- runs
 
+#[derive(Debug, Default, Deserialize)]
+pub struct RunsQuery {
+    /// Only the runs taught in this class (must be the teacher's own, else 404).
+    #[serde(default)]
+    pub class_id: Option<i64>,
+}
+
 pub async fn list_mine(
     State(state): State<AppState>,
     teacher: AuthTeacher,
+    ApiQuery(q): ApiQuery<RunsQuery>,
 ) -> AppResult<Json<Vec<LessonRun>>> {
+    if let Some(class_id) = q.class_id {
+        owned_class(&state.db, class_id, teacher.id()).await?;
+    }
     let runs = sqlx::query_as(&format!(
-        "{RUN_SELECT} AND u.teacher_id = $1
+        "{RUN_SELECT} AND u.teacher_id = $1 AND ($2::bigint IS NULL OR r.class_id = $2)
           ORDER BY (r.ended_at IS NULL) DESC, r.started_at DESC, r.id DESC LIMIT 100"
     ))
     .bind(teacher.id())
+    .bind(q.class_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(runs))
@@ -215,32 +234,88 @@ pub async fn list_for_lesson(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiPath(lesson_id): ApiPath<i64>,
+    ApiQuery(q): ApiQuery<RunsQuery>,
 ) -> AppResult<Json<Vec<LessonRun>>> {
     owned_lesson(&state.db, lesson_id, teacher.id()).await?;
+    if let Some(class_id) = q.class_id {
+        owned_class(&state.db, class_id, teacher.id()).await?;
+    }
     let runs = sqlx::query_as(&format!(
-        "{RUN_SELECT} AND r.lesson_id = $1 ORDER BY r.started_at DESC, r.id DESC"
+        "{RUN_SELECT} AND r.lesson_id = $1 AND ($2::bigint IS NULL OR r.class_id = $2)
+          ORDER BY r.started_at DESC, r.id DESC"
     ))
     .bind(lesson_id)
+    .bind(q.class_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(runs))
 }
 
-/// 開始本節課. At most one open run per lesson (partial unique index).
+#[derive(Debug, Default, Deserialize)]
+pub struct StartRequest {
+    /// The class this lesson is taught in. Omitted or null: see [`start`].
+    #[serde(default)]
+    pub class_id: Option<i64>,
+}
+
+pub const MSG_CLASS_REQUIRED: &str = "這個單元有好幾個班級在用，請先選擇這節課是哪一班。";
+pub const MSG_UNIT_NOT_IN_CLASS: &str = "這個班級還沒有取用這個單元，請先在班級頁加入。";
+
+/// 開始本節課. At most one open run per lesson **and class** (partial unique index).
+///
+/// The class (docs/API.md Phase 1.4): with `class_id`, that class (it must be the teacher's,
+/// not archived, and use this lesson's unit). Without it: the unit's only class when exactly one
+/// class uses it; a run without a class when none does (never blocked); 409 when several do,
+/// because the client must say which one.
 pub async fn start(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiPath(lesson_id): ApiPath<i64>,
+    body: Bytes,
 ) -> AppResult<Json<LessonRun>> {
-    owned_lesson(&state.db, lesson_id, teacher.id()).await?;
+    let req: StartRequest = if body.iter().all(u8::is_ascii_whitespace) {
+        StartRequest::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| AppError::bad_request(format!("請求內容格式不正確：{e}")))?
+    };
+    let lesson = owned_lesson(&state.db, lesson_id, teacher.id()).await?;
+    let using: Vec<i64> = sqlx::query_scalar(
+        "SELECT c.id FROM class_units cu JOIN classes c ON c.id = cu.class_id
+          WHERE cu.unit_id = $1 AND cu.removed_at IS NULL AND c.archived_at IS NULL
+          ORDER BY c.position, c.id",
+    )
+    .bind(lesson.unit_id)
+    .fetch_all(&state.db)
+    .await?;
+    let class_id = match req.class_id {
+        Some(class_id) => {
+            if owned_class(&state.db, class_id, teacher.id())
+                .await?
+                .archived
+            {
+                return Err(AppError::Conflict(MSG_CLASS_ARCHIVED.into()));
+            }
+            if !using.contains(&class_id) {
+                return Err(AppError::Conflict(MSG_UNIT_NOT_IN_CLASS.into()));
+            }
+            Some(class_id)
+        }
+        None => match using.as_slice() {
+            [] => None,
+            [only] => Some(*only),
+            _ => return Err(AppError::Conflict(MSG_CLASS_REQUIRED.into())),
+        },
+    };
     let id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO lesson_runs (lesson_id, started_at, lesson_version_id)
-         VALUES ($1, now(), (SELECT id FROM lesson_versions WHERE lesson_id = $1
-                              ORDER BY version_no DESC LIMIT 1))
-         ON CONFLICT (lesson_id) WHERE ended_at IS NULL DO NOTHING
+        "INSERT INTO lesson_runs (lesson_id, class_id, started_at, lesson_version_id)
+         VALUES ($1, $2, now(), (SELECT id FROM lesson_versions WHERE lesson_id = $1
+                                  ORDER BY version_no DESC LIMIT 1))
+         ON CONFLICT (lesson_id, (COALESCE(class_id, 0))) WHERE ended_at IS NULL DO NOTHING
          RETURNING id",
     )
     .bind(lesson_id)
+    .bind(class_id)
     .fetch_optional(&state.db)
     .await?;
     let id =

@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 
 use crate::ai::schemas::IcapLevel;
 use crate::auth::AuthTeacher;
-use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::routes::{effective_class_profile, owned_lesson, owned_unit};
+use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
+use crate::routes::{owned_lesson, owned_unit, resolved_profile, ProfileSource, ResolvedProfile};
 use crate::AppState;
 
 pub const MAX_CORE_LINKS: usize = 3;
@@ -65,8 +65,19 @@ pub struct LessonDetail {
     pub core_focus_ids: Vec<i64>,
     pub siop_feature_ids: Vec<i64>,
     pub previous_next_change: Option<String>,
-    /// The lesson's class_description when non-empty, otherwise the unit's class_profile.
+    /// The class profile Manna would use: the lesson's class_description when non-empty,
+    /// otherwise (with `?class_id=`) the class's profile, otherwise the unit's class_profile,
+    /// otherwise (with `?class_id=`) the preference answer P6.
     pub effective_class_profile: String,
+    /// Which of those it is: `lesson`, `class`, `unit`, `preference` or `none`.
+    pub class_profile_source: ProfileSource,
+}
+
+/// `?class_id=`: the class the teacher is working in (optional).
+#[derive(Debug, Default, Deserialize)]
+pub struct ClassQuery {
+    #[serde(default)]
+    pub class_id: Option<i64>,
 }
 
 const LESSON_COLS: &str =
@@ -205,6 +216,8 @@ pub async fn selected_siop_ids(db: &sqlx::PgPool, lesson_id: i64) -> sqlx::Resul
 async fn load_detail(
     db: &sqlx::PgPool,
     id: i64,
+    teacher_id: i64,
+    class_id: Option<i64>,
     unit_class_profile: &str,
 ) -> AppResult<LessonDetail> {
     let lesson: Lesson =
@@ -217,8 +230,14 @@ async fn load_detail(
             .bind(id)
             .fetch_one(db)
             .await?;
-    let effective_class_profile =
-        effective_class_profile(&lesson.class_description, unit_class_profile);
+    let ResolvedProfile { text, source, .. } = resolved_profile(
+        db,
+        teacher_id,
+        class_id,
+        &lesson.class_description,
+        unit_class_profile,
+    )
+    .await?;
     Ok(LessonDetail {
         lesson,
         latest_version: latest_version(db, id).await?,
@@ -227,7 +246,8 @@ async fn load_detail(
         siop_feature_ids: selected_siop_ids(db, id).await?,
         // Phase 2 (「下次要改」 carry-forward).
         previous_next_change: None,
-        effective_class_profile,
+        effective_class_profile: text,
+        class_profile_source: source,
     })
 }
 
@@ -235,10 +255,18 @@ pub async fn detail(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiPath(id): ApiPath<i64>,
+    ApiQuery(q): ApiQuery<ClassQuery>,
 ) -> AppResult<Json<LessonDetail>> {
     let r = owned_lesson(&state.db, id, teacher.id()).await?;
     Ok(Json(
-        load_detail(&state.db, id, &r.unit_class_profile).await?,
+        load_detail(
+            &state.db,
+            id,
+            teacher.id(),
+            q.class_id,
+            &r.unit_class_profile,
+        )
+        .await?,
     ))
 }
 
@@ -269,9 +297,11 @@ pub async fn update(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiPath(id): ApiPath<i64>,
+    ApiQuery(q): ApiQuery<ClassQuery>,
     ApiJson(req): ApiJson<UpdateLesson>,
 ) -> AppResult<Json<LessonDetail>> {
     let r = owned_lesson(&state.db, id, teacher.id()).await?;
+    crate::routes::class_context(&state.db, q.class_id, teacher.id()).await?;
     let title = match req.title.as_deref().map(str::trim) {
         Some("") => return Err(AppError::bad_request("請輸入課例名稱。")),
         t => t.map(str::to_string),
@@ -300,7 +330,14 @@ pub async fn update(
     .execute(&state.db)
     .await?;
     Ok(Json(
-        load_detail(&state.db, id, &r.unit_class_profile).await?,
+        load_detail(
+            &state.db,
+            id,
+            teacher.id(),
+            q.class_id,
+            &r.unit_class_profile,
+        )
+        .await?,
     ))
 }
 

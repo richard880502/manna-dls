@@ -388,3 +388,151 @@ interface ClassProfileDefault {
 - 「完成課後補寫」：有改過但沒按「儲存這張書籤」的書籤，先逐張 `PUT …/review`，全部成功才 `POST /api/runs/:id/review/complete`；任何一張失敗就不完成。
 - 課例頁與課後補寫頁有未儲存的內容時，站內換頁先在頁面上確認（儲存後離開／留在這頁／不儲存，直接離開），關閉或重新整理分頁由瀏覽器提醒（`beforeunload`）。
 - 仍是教師按鈕觸發的存檔，「每次存檔產生新版本」不變；沒有改動時不會多存一個版本。
+
+---
+
+# Phase 1.4：班級與備課庫
+
+以下為**新增或變更**；未提到的端點維持原樣。Migration `0006_classes.sql`。
+
+## 模型
+
+```
+教師 ─┬─ 備課庫：單元設計（單元 ＋ 單元前 CoRe ＋ 課例與教案）   一份設計，可給多個班級用
+      └─ 班級（高一 3 班、高一 7 班…）
+            └─ 取用（class_units）：班級 ↔ 單元，多對多、班級內有順序、可附「這班的備註」
+                  └─ 上課紀錄（lesson_runs.class_id）：同一個課例在 A 班、B 班各有各的紀錄、書籤與補寫
+```
+
+- **備課庫**是教師自己已經準備好的範本集合。單元設計只有一份：在 A 班修改教案，B 班看到的是同一份（不做各班分支；各班差異先用「這班的備註」記下）。
+- **班級**只有名稱、年級、學校類型、課程名稱、班級特性、學年度與學期。**不存任何學生資料。** 班級只封存、不刪除。
+- **取用**：班級從備課庫取用單元。從班級移除單元是軟移除（`class_units.removed_at`），單元設計留在備課庫、在該班上過的紀錄也保留；重新加入會新增一筆取用紀錄。
+- **上課紀錄屬於班級**：`lesson_runs.class_id`。同一個課例、同一個班級同時只能有一節進行中的課；不同班級可以同時進行。
+- 「不同的課」指同一科目的不同單元（L1、L2…）。教選修等其他課程的教師，可在班級填選填的課程名稱（`course_label`）。
+
+## 型別
+
+```ts
+interface UnitClassRef { id: number; name: string; course_label: string; note: string; }  // note＝這個取用的「這班的備註」
+
+// Unit 新增（GET /api/units 即備課庫清單）
+interface Unit { /* 原欄位… */ classes: UnitClassRef[]; }   // 取用這個單元、未封存的班級，依教師的班級順序
+
+type ClassProfileOrigin = "teacher" | "preference" | "migration" | "none";
+// teacher＝建立時教師填的；preference＝第一個班級沿用偏好 P6；migration＝0006 由舊單元帶入；none＝空白
+
+type ClassNextAction =
+  | { kind: "resume_run"; run_id: number; lesson_id: number; lesson_title: string; unit_id: number; unit_title: string }  // 這班有進行中的課
+  | { kind: "start_lesson"; lesson_id: number; lesson_title: string; unit_id: number; unit_title: string }  // 依單元順序，這班第一個還沒上過的課例
+  | { kind: "plan_unit"; unit_id: number; unit_title: string }   // 下一個單元還沒有課例
+  | { kind: "add_unit" };                                         // 班級還沒有單元
+
+interface SchoolClass {
+  id: number; name: string;                 // 例：「高一 3 班」
+  grade: string;                            // 例：「高一」（可空）
+  school_track: SchoolTrack;                // 預設教師的學校類型
+  course_label: string;                     // 選填，例：「英文閱讀選修」
+  class_profile: string;                    // 班級特性（不含學生個資，上限同 P6：2,000 字）
+  class_profile_source: ClassProfileOrigin;
+  school_year: string; term: string;        // 選填，例：「115」「上學期」
+  position: number; created_at: string;
+  archived_at: string | null;               // 封存時間；null＝使用中
+  unit_count: number;                       // 目前取用的單元數
+  next_action: ClassNextAction | null;      // null＝取用的單元都上完了
+}
+
+interface ClassUnit {                       // 一個班級取用的一個單元
+  unit: Unit;
+  position: number; note: string; assigned_at: string;
+  lessons_total: number;
+  lessons_taught: number;                   // 在這個班級至少上過一次的課例數
+  last_run_at: string | null;               // 這個班級最近一次上這個單元的時間
+  next_lesson: { id: number; title: string } | null;   // 這個班級還沒上過的第一個課例
+}
+interface ClassDetail extends SchoolClass { units: ClassUnit[]; }   // 依班級內順序
+
+// LessonRun（與 RunDetail）新增
+interface LessonRun { /* 原欄位… */ class_id: number | null; class_name: string | null; }   // null＝沒有班級的上課紀錄
+
+// LessonDetail 新增
+type ClassProfileSourceUsed = "lesson" | "class" | "unit" | "preference" | "none";
+interface LessonDetail { /* 原欄位… */ class_profile_source: ClassProfileSourceUsed; }   // effective_class_profile 取自哪裡
+```
+
+## 端點
+
+教師只能存取自己的班級；別人的班級一律 404（包含把它當成 `class_id` 帶入其他端點）。
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/classes` | query：`include_archived?=true` | `SchoolClass[]`。依教師排的順序；預設不含已封存，帶 `include_archived=true` 時封存的排在最後 |
+| POST | `/api/classes` | `{ name: string; grade?; school_track?; course_label?; class_profile?; school_year?; term? }` | `SchoolClass`。`name` 必填（60 字內）。未帶 `school_track` 用教師的學校類型。未帶 `class_profile`：教師的**第一個班級**沿用偏好 P6（`preference`），之後的班級為空白（`none`）；有帶（含空字串）以請求為準（`teacher`） |
+| GET | `/api/classes/:id` | – | `ClassDetail`（已封存的也可以讀） |
+| PUT | `/api/classes/:id` | `{ name?; grade?; school_track?; course_label?; class_profile?; school_year?; term? }` | `SchoolClass`。只改有帶的欄位；變更的欄位名稱寫入 usage_logs（event=`class_updated`） |
+| POST | `/api/classes/:id/archive` | – | `SchoolClass`。封存：不出現在清單與單元的 `classes`，資料與上課紀錄都保留；重送不改變第一次的封存時間。**沒有刪除班級的端點** |
+| POST | `/api/classes/:id/unarchive` | – | `SchoolClass` |
+| PUT | `/api/classes/order` | `{ class_ids: number[] }` | `SchoolClass[]`（未封存）。列出的班級依序排在最前，沒列出的維持原相對順序排在後面 |
+| POST | `/api/classes/:id/units` | `{ unit_id: number; note?: string }` | `ClassDetail`。「從備課庫加入單元」：排在班級最後。已取用則不重複新增（有帶 `note` 時更新備註）。班級已封存 → 409 |
+| PUT | `/api/classes/:id/units/:unit_id` | `{ note: string }`（500 字內） | `ClassDetail`。這班的備註，例：「這班用基礎版」。未取用 → 404 |
+| DELETE | `/api/classes/:id/units/:unit_id` | – | `ClassDetail`。從這個班級移除（軟移除）；單元留在備課庫，這班上過的紀錄保留。未取用時不做事 |
+| PUT | `/api/classes/:id/units/order` | `{ unit_ids: number[] }` | `ClassDetail`。同班級排序規則；含未取用的單元 → 404 |
+| GET | `/api/units` | – | `Unit[]`（含 `classes`）＝備課庫清單 |
+| POST | `/api/units` | 原欄位＋`class_id?: number` | `Unit`。帶 `class_id` 時：單元建在備課庫，同時由該班級取用（一步完成）；未帶 `class_profile` 時單元的 `class_profile` 留空（來源 `none`），因為班級特性在班級上、不複製。未帶 `class_id` 時行為同 R3。班級已封存 → 409 |
+| POST | `/api/lessons/:id/runs` | `{ class_id?: number \| null }`（可不帶請求內容） | `LessonRun`。班級的決定見下方。同一課例在同一班級已有進行中的課 → 409 |
+| GET | `/api/runs` | query：`class_id?` | `LessonRun[]`。帶 `class_id` 只回該班級的上課紀錄 |
+| GET | `/api/lessons/:id/runs` | query：`class_id?` | 同上（該課例） |
+| GET／PUT | `/api/lessons/:id` | query：`class_id?` | `LessonDetail`。`effective_class_profile` 與 `class_profile_source` 依下方優先順序計算 |
+| POST | `/api/lessons/:id/suggestions` | `{ request_note?; class_id?: number }` | 同原本 |
+| POST | `/api/core/assist` | 原欄位＋`class_id?: number` | 同原本 |
+| POST | `/api/units/:id/material-focuses` | `{ material_id; class_id?: number }` | 同原本 |
+
+### 開始本節課時的班級
+
+`POST /api/lessons/:id/runs`：
+
+1. 有帶 `class_id`：必須是自己的班級（否則 404）、未封存、且有取用這個課例的單元（否則 409）。
+2. 沒帶（或 null）：看取用這個單元、未封存的班級數——
+   - **0 個**：建立沒有班級的上課紀錄（`class_id = null`）。不阻擋。
+   - **1 個**：預設就是那個班級。
+   - **多個**：409（訊息請教師選擇是哪一班），由前端先讓教師選好再帶 `class_id`。
+
+### AI 帶入的班級特性
+
+有帶 `class_id`（在班級情境中工作）時，班級特性的優先順序：
+
+**課例的班級描述（覆寫）＞ 班級的班級特性 ＞ 單元的 `class_profile`（舊資料）＞ 偏好 P6**
+
+沒帶 `class_id` 時維持原行為（課例描述，否則單元 `class_profile`；不使用 P6）。偏好 P6 另外只作為教師第一個班級的預設內容。
+
+`AiResult.context` 的班級特性項目標示實際用的是哪一段：
+
+| 情境 | label |
+|---|---|
+| 沒帶 `class_id` | `班級特性` |
+| 用班級的班級特性 | `班級特性（高一 3 班）`（班級名稱） |
+| 用課例的班級描述 | `班級特性（本課覆寫）` |
+| 用單元的舊設定 | `班級特性（單元設定）` |
+| 用偏好 P6 | `班級特性（備課偏好）` |
+
+每筆 AI 互動的輸入快照（`ai_interactions.input_snapshot`）多一個 `class_context: { class_id: number | null, class_profile_source }`。其餘紀錄（`ai_interactions`、`teacher_decisions`、`scaffold_events`、`usage_logs`）不變。
+
+## 舊資料搬遷（`0006_classes.sql`）
+
+對每一位**已經有單元**的教師：
+
+1. 建立一個預設班級「我的班級」：學校類型取教師的；班級特性取該教師**最近建立、未刪除、班級特性不是空白**的單元的 `class_profile`（來源 `migration`；都沒有則空白）。
+2. 該教師所有未刪除的單元都由「我的班級」取用，依建立時間由舊到新排序。
+3. 既有的上課紀錄（`lesson_runs`）都掛到「我的班級」。
+
+沒有單元的教師不會有預設班級；第一次進工作檯時會被邀請建立第一個班級（可略過，預填偏好 P6）。單元原本的 `class_profile` 原樣保留。
+
+## usage_logs 新事件
+
+`class_created`（`{class_id, class_profile_source}`）、`class_updated`（`{class_id, fields}`）、`class_archived`、`class_unarchived`、`class_unit_assigned`、`class_unit_removed`（`{class_id, unit_id}`）。
+
+## 前端
+
+- **工作檯**以班級為中心：班級卡片（名稱、課程名稱、單元數、下一步，例如「繼續：L3 倒裝句 第 2 節 → 開始本節課」）、「新增班級」、「備課庫」入口。沒有班級時邀請建立第一個班級（可略過）。
+- **班級頁** `/classes/:id`：班級特性（可改）、取用的單元（順序、這班的進度：上過的課例數／總數、最近一次上課）、「從備課庫加入單元」、「新增單元」（建立＋取用）、這班的備註、封存。
+- **備課庫** `/library`（`/plan` 亦同）：所有單元設計與取用它的班級、建立單元、加入班級。
+- **目前班級**：從班級進入單元或課例時，頁面顯示「目前班級：…」，可在取用這個單元的班級之間切換；存在瀏覽器的 sessionStorage（`manna.currentClass`）。從備課庫進入時清除；單元只有一個班級取用時自動視為該班。「開始本節課」用目前班級；沒有目前班級而單元有多個班級取用時，在頁面上請教師選。課堂紀錄頁與課後補寫頁顯示班級。Teach & Record 首頁依班級分組。

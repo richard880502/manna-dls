@@ -9,8 +9,9 @@ use serde_json::json;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences::{self, PrepRoute};
-use crate::routes::log_usage;
+use crate::routes::classes::{assign_unit, MSG_CLASS_ARCHIVED};
 use crate::routes::preferences::check_class_profile;
+use crate::routes::{log_usage, owned_class};
 use crate::settings;
 use crate::AppState;
 
@@ -26,6 +27,18 @@ pub struct Unit {
     /// Where the class profile came from when the unit was created (`teacher`, `previous_unit`,
     /// `preference`, `none`); NULL for units created before this was recorded.
     pub class_profile_source: Option<String>,
+    /// The (non-archived) classes this unit design is assigned to, in the teacher's class order.
+    pub classes: sqlx::types::Json<Vec<UnitClassRef>>,
+}
+
+/// A class that uses a unit design (docs/API.md Phase 1.4).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UnitClassRef {
+    pub id: i64,
+    pub name: String,
+    pub course_label: String,
+    /// The per-class note of this assignment.
+    pub note: String,
 }
 
 const UNIT_SELECT: &str = "
@@ -35,7 +48,13 @@ const UNIT_SELECT: &str = "
                       WHERE cv.unit_id = u.id AND cv.phase = 'pre'
                       ORDER BY cv.version_no DESC LIMIT 1), 'none') AS core_status,
            (SELECT COUNT(*) FROM lessons l WHERE l.unit_id = u.id AND l.deleted_at IS NULL) AS lesson_count,
-           u.prep_route, u.class_profile, u.class_profile_source
+           u.prep_route, u.class_profile, u.class_profile_source,
+           COALESCE((SELECT json_agg(json_build_object(
+                                'id', c.id, 'name', c.name, 'course_label', c.course_label,
+                                'note', cu.note) ORDER BY c.position, c.id)
+                       FROM class_units cu JOIN classes c ON c.id = cu.class_id
+                      WHERE cu.unit_id = u.id AND cu.removed_at IS NULL
+                        AND c.archived_at IS NULL), '[]'::json) AS classes
       FROM units u
      WHERE u.teacher_id = $1 AND u.deleted_at IS NULL";
 
@@ -63,6 +82,15 @@ async fn load(state: &AppState, teacher_id: i64, unit_id: i64) -> AppResult<Unit
         .ok_or_else(|| AppError::not_found("找不到這個單元。"))
 }
 
+/// The teacher's units among `ids` (any order).
+pub async fn load_many(db: &sqlx::PgPool, teacher_id: i64, ids: &[i64]) -> AppResult<Vec<Unit>> {
+    Ok(sqlx::query_as(&format!("{UNIT_SELECT} AND u.id = ANY($2)"))
+        .bind(teacher_id)
+        .bind(ids)
+        .fetch_all(db)
+        .await?)
+}
+
 pub async fn get_one(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -78,6 +106,9 @@ pub struct CreateUnit {
     pub prep_route: Option<PrepRoute>,
     #[serde(default)]
     pub class_profile: Option<String>,
+    /// Phase 1.4: create the unit in the library and assign it to this class in one step.
+    #[serde(default)]
+    pub class_id: Option<i64>,
 }
 
 /// Where a new unit's class profile came from (docs/API.md「班級特性沿用」).
@@ -168,6 +199,9 @@ pub async fn get_class_profile_default(
 /// Defaults (docs/API.md): prep_route from the preference `start_from` (else goal); class_profile
 /// from [`class_profile_default`]. An explicit value wins, an empty string too. With route
 /// choice disabled the route is always goal. The profile's source is stored with the unit.
+///
+/// With `class_id` (Phase 1.4) the unit is also assigned to that class, and an omitted
+/// `class_profile` stays empty (`none`): the class carries the profile, nothing is copied.
 pub async fn create(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -185,14 +219,24 @@ pub async fn create(
     } else {
         PrepRoute::Goal
     };
+    if let Some(class_id) = req.class_id {
+        if owned_class(&state.db, class_id, teacher.id())
+            .await?
+            .archived
+        {
+            return Err(AppError::Conflict(MSG_CLASS_ARCHIVED.into()));
+        }
+    }
     let (class_profile, source, source_unit_id) = match req.class_profile {
         Some(c) => (c.trim().to_string(), ClassProfileSource::Teacher, None),
+        None if req.class_id.is_some() => (String::new(), ClassProfileSource::None, None),
         None => {
             let d = class_profile_default(&state.db, teacher.id()).await?;
             (d.class_profile, d.source, d.source_unit.map(|u| u.id))
         }
     };
     check_class_profile(&class_profile)?;
+    let mut tx = state.db.begin().await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO units (teacher_id, title, prep_route, class_profile,
                             class_profile_source, class_profile_source_unit_id)
@@ -204,8 +248,12 @@ pub async fn create(
     .bind(&class_profile)
     .bind(source.as_str())
     .bind(source_unit_id)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await?;
+    if let Some(class_id) = req.class_id {
+        assign_unit(&mut tx, teacher.id(), class_id, id, None).await?;
+    }
+    tx.commit().await?;
     Ok(Json(load(&state, teacher.id(), id).await?))
 }
 
