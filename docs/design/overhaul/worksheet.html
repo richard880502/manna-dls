@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>學習單產生器 · Manna 設計稿</title>
+<link rel="stylesheet" href="mockup.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="home.html"><span class="star" aria-hidden="true"></span>Manna</a>
+  <nav aria-label="主要導覽"><a href="home.html">班級</a><a href="library.html">備課庫</a><a href="worksheet.html" aria-current="page">學習單</a></nav>
+  <a class="acct" href="#">T-2026-014 · 備課偏好</a>
+</header>
+<div class="ctx">
+  <div class="where"><p class="crumbs"><a href="class.html">高一 3 班</a> / <a href="unit.html">L3 The Umbrella Stand</a> / <a href="lesson-a-tasks.html">第 2 節 精讀與提問</a></p><h1>做一份學習單</h1></div>
+  <span class="saved">已自動儲存 14:40　<a href="#">版本紀錄</a></span>
+  <div class="actions"><a class="btn manna" href="lesson-chat.html"><span class="star" aria-hidden="true"></span>問資深教師</a></div>
+</div>
+<div class="split">
+  <section class="pane-material" aria-label="教材">
+    <div class="material-head"><span class="name">教材 · The Umbrella Stand（課文）</span><span class="small"><a href="#">收起</a></span></div>
+    <article class="material" lang="en" aria-label="教材原文">
+  <p class="m-title">The Umbrella Stand</p>
+  <p data-n="1">Every rainy morning, a row of yellow umbrellas waits outside Hsin-Ming Station. Nobody sells them. Nobody guards them. A small sign simply reads, “Take one. Bring it back when the sun comes out.”</p>
+  <p data-n="2">The stand was started by Mrs. Lin, a retired teacher who had once been caught in a storm without an umbrella. A stranger shared his with her that day. Not only did he walk her to the station, but he also <mark class="anno">refused to take anything in return</mark>. She never forgot it.<span class="anno-note"><b>我的注記</b>　學生常把 refuse 和 reject 搞混，想多一題辨析。<label><input type="checkbox" checked> 提供給 AI</label></span></p>
+  <p data-n="3">At first, her neighbors laughed at the idea. “The umbrellas will all be gone in a week,” they warned. In the first month, twelve of the thirty umbrellas did disappear. <mark class="anno">However, something unexpected followed.</mark> Not only did most of the umbrellas return, but new ones also began to appear: blue, green, even one with cartoon cats.<span class="anno-note"><b>我的注記</b>　轉折句。上次這裡停太久。<label><input type="checkbox"> 提供給 AI</label></span></p>
+  <p data-n="4">Today the stand holds more umbrellas than it did at the start. Mrs. Lin says trust is like an umbrella: it is only useful when it is open.</p>
+</article>
+    <p class="small muted" style="margin-top:12px">選取文字就能加注記。注記不會改動教材，也不會出現在學生版；勾了「提供給 AI」的才會被參考。</p>
+    <p class="src-ways"><span class="muted">加入其他素材：</span><a href="#">上傳檔案</a><a href="#">貼上文字</a><a href="#">貼上網址</a><a href="#">搜尋外部資源</a></p>
+  </section>
+  <main>
+    <p class="legend"><span>有 <span class="star" aria-hidden="true"></span> 的是依第 2 節教案先幫你選的。都可以改；全部不選也能產生，Manna 會依教材判斷。</span></p>
+
+    <section class="opt" aria-labelledby="o1"><h2 id="o1">素材類型</h2>
+      <div class="chips"><label class="chip pre"><input type="checkbox" checked><span>閱讀文本</span></label><label class="chip"><input type="checkbox"><span>聽力素材</span></label><label class="chip"><input type="checkbox"><span>影片素材</span></label><label class="chip"><input type="checkbox"><span>圖像素材</span></label><label class="chip"><input type="checkbox"><span>資料／數據</span></label></div>
+    </section>
+
+    <section class="opt" aria-labelledby="o2"><h2 id="o2">學生任務</h2>
+      <div>
+        <p class="sub">語言與內容學習</p><div class="chips"><label class="chip pre"><input type="checkbox" checked><span>理解內容</span></label><label class="chip"><input type="checkbox"><span>字彙練習</span></label><label class="chip"><input type="checkbox"><span>文法／句型練習</span></label></div>
+        <p class="sub">思考與資訊處理</p><div class="chips"><label class="chip pre"><input type="checkbox" checked><span>比較／分類</span></label><label class="chip pre"><input type="checkbox" checked><span>推論／預測</span></label><label class="chip"><input type="checkbox"><span>評估／提出理由</span></label><label class="chip"><input type="checkbox"><span>蒐集資料</span></label><label class="chip"><input type="checkbox"><span>整理／分析資料</span></label></div>
+        <p class="sub">互動與合作</p><div class="chips"><label class="chip"><input type="checkbox"><span>討論／分享</span></label><label class="chip"><input type="checkbox"><span>小組共同完成</span></label></div>
+        <p class="sub">表達與成果</p><div class="chips"><label class="chip"><input type="checkbox" checked><span>寫作</span></label><label class="chip"><input type="checkbox"><span>製作成果</span></label><label class="chip"><input type="checkbox"><span>成果發表</span></label></div>
+        <p class="sub">反思與評量</p><div class="chips"><label class="chip"><input type="checkbox"><span>學習反思</span></label><label class="chip"><input type="checkbox"><span>自我評量</span></label><label class="chip"><input type="checkbox"><span>同儕互評</span></label></div>
+      </div>
+    </section>
+
+    <section class="opt" aria-labelledby="o3"><h2 id="o3">作答方式</h2>
+      <div class="chips"><label class="chip"><input type="checkbox"><span>填空題</span></label><label class="chip"><input type="checkbox"><span>選擇題</span></label><label class="chip"><input type="checkbox"><span>是非題</span></label><label class="chip"><input type="checkbox"><span>配對題</span></label><label class="chip pre"><input type="checkbox" checked><span>簡答題</span></label><label class="chip pre"><input type="checkbox" checked><span>表格整理</span></label><label class="chip"><input type="checkbox"><span>圖像組織</span></label><label class="chip"><input type="checkbox" checked><span>段落寫作</span></label></div>
+    </section>
+
+    <section class="opt" aria-labelledby="o4"><h2 id="o4">產生設定</h2>
+      <div>
+        <div class="chips"><label class="chip pre"><input type="checkbox" checked><span>加入暖身活動</span></label><label class="chip pre"><input type="checkbox" checked><span>顯示學習目標</span></label><label class="chip"><input type="checkbox"><span>提供引導問題</span></label><label class="chip"><input type="checkbox"><span>顯示作答示例</span></label><label class="chip pre"><input type="checkbox" checked><span>提供字詞表</span></label><label class="chip pre"><input type="checkbox" checked><span>提供句型框架</span></label></div>
+        <p class="sub">產生基礎版／一般版／進階版</p><div class="chips"><label class="chip"><input type="checkbox" checked><span>基礎版</span></label><label class="chip"><input type="checkbox" checked><span>一般版</span></label><label class="chip"><input type="checkbox"><span>進階版</span></label></div>
+      </div>
+    </section>
+
+    <div class="gen-bar">
+      <label class="time">預計完成時間（分鐘）<input type="text" inputmode="numeric" value="25" aria-describedby="time-h"></label>
+      <span class="small muted" id="time-h">不填也可以</span>
+      <span class="grow"></span>
+      <a class="btn primary big" href="worksheet-result.html">產生學習單</a>
+    </div>
+    <p class="small muted" style="margin-top:12px">會同時產生學生版和教師參考版。Exit ticket 預設放在最後，之後可以關掉。</p>
+  </main>
+</div>
+</body>
+</html>
