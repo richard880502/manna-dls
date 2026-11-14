@@ -1,0 +1,98 @@
+{
+  "type": "object",
+  "properties": {
+    "estimated_minutes": {
+      "type": "integer"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "形成性評量",
+              "學生反思",
+              "蒐集問題"
+            ]
+          },
+          "prompt_en": {
+            "type": "string"
+          },
+          "answer_format": {
+            "type": "string",
+            "enum": [
+              "填空題",
+              "選擇題",
+              "是非題",
+              "配對題",
+              "簡答題",
+              "表格整理",
+              "圖像組織",
+              "段落寫作"
+            ]
+          },
+          "student_tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "理解內容",
+                "字彙練習",
+                "文法／句型練習",
+                "比較／分類",
+                "推論／預測",
+                "評估／提出理由",
+                "蒐集資料",
+                "整理／分析資料",
+                "討論／分享",
+                "小組共同完成",
+                "寫作",
+                "製作成果",
+                "成果發表",
+                "學習反思",
+                "自我評量",
+                "同儕互評"
+              ]
+            }
+          },
+          "objective_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sample_answer_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "item_id",
+          "purpose",
+          "prompt_en",
+          "answer_format",
+          "student_tasks",
+          "objective_refs",
+          "sample_answer_en"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "estimated_minutes",
+    "items"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,167 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": [
+        "基礎版",
+        "一般版",
+        "進階版"
+      ]
+    },
+    "title_en": {
+      "type": "string"
+    },
+    "student": {
+      "type": "object",
+      "properties": {
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "learning_objectives",
+                  "warm_up",
+                  "main_task",
+                  "exit_ticket"
+                ]
+              },
+              "source_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "heading_en": {
+                "type": "string"
+              },
+              "instructions_en": {
+                "type": "string"
+              },
+              "supports_en": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "answer_format": {
+                      "type": "string",
+                      "enum": [
+                        "填空題",
+                        "選擇題",
+                        "是非題",
+                        "配對題",
+                        "簡答題",
+                        "表格整理",
+                        "圖像組織",
+                        "段落寫作"
+                      ]
+                    },
+                    "prompt_en": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "item_id",
+                    "answer_format",
+                    "prompt_en",
+                    "options"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "source_id",
+              "heading_en",
+              "instructions_en",
+              "supports_en",
+              "items"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "sections"
+      ],
+      "additionalProperties": false
+    },
+    "teacher": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "item_id": {
+                "type": "string"
+              },
+              "answer_en": {
+                "type": "string"
+              },
+              "evidence": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "item_id",
+              "answer_en",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "teaching_notes_zh": {
+          "type": "string"
+        },
+        "version_note_zh": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "answers",
+        "teaching_notes_zh",
+        "version_note_zh"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "title_en",
+    "student",
+    "teacher"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,79 @@
+{
+  "type": "object",
+  "properties": {
+    "objectives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "objective_id": {
+            "type": "string"
+          },
+          "siop_type": {
+            "type": "string",
+            "enum": [
+              "內容目標",
+              "語言目標"
+            ]
+          },
+          "objective_zh": {
+            "type": "string"
+          },
+          "student_facing_en": {
+            "type": "string"
+          },
+          "reason_zh": {
+            "type": "string"
+          },
+          "paragraph_refs": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "link_status": {
+            "type": "string",
+            "enum": [
+              "linked",
+              "unlinked"
+            ]
+          },
+          "curriculum_links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "item_code": {
+                  "type": "string"
+                },
+                "why_zh": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "item_code",
+                "why_zh"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "objective_id",
+          "siop_type",
+          "objective_zh",
+          "student_facing_en",
+          "reason_zh",
+          "paragraph_refs",
+          "link_status",
+          "curriculum_links"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "objectives"
+  ],
+  "additionalProperties": false
+}
