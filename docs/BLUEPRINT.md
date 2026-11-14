@@ -97,6 +97,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | 帳號 | `identity_map`（research_id ↔ 姓名、Email；欄位加密） | 建（僅主持人可讀） |
 | 帳號 | `invite_codes`、`sessions`（權杖雜湊） | 建 |
 | 主線 | `units`、`lessons`、`lesson_versions`、`lesson_steps` | 建 |
+| 班級 | `classes`（名稱、年級、學校類型、課程名稱、班級特性；只封存不刪除；不存學生資料）、`class_units`（班級取用單元：多對多、有順序、可軟移除、這班的備註）；`lesson_runs.class_id` | 建（Phase 1.4，migration `0006_classes.sql`） |
 | CoRe | `core_versions`、`core_focuses`、`core_responses`、`core_assist_logs`、`lesson_core_links` | 建 |
 | SIOP | `siop_features`、`lesson_siop_focus` | 建（資料待主持人核准） |
 | AI | `ai_interactions`、`teacher_decisions`、`retrieval_logs`、`prompt_versions` | 建 |
@@ -108,6 +109,18 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | 其他 | `unit_materials`、`eval_sets`、`eval_runs`、`feedback`、`design_changes`、`expert_ratings` | 預留 |
 
 完整 ERD（主鍵、外鍵、基數、版本與刪除關係）放在 `docs/ERD.md`，由 migration 產生後補齊。
+
+### 階層（Phase 1.4：班級與備課庫）
+
+```
+教師 ─┬─ 備課庫：單元設計（單元 ＋ 單元前 CoRe ＋ 課例與教案版本）   一份設計，可給多個班級用
+      └─ 班級 ──（取用 class_units，多對多、有順序）── 單元設計
+            └─ 上課紀錄 lesson_runs（屬於一個班級）→ 書籤 record_events → 課後補寫
+```
+
+- 備課內容（CoRe、教案）屬於單元設計，不分班；教學紀錄（上課、書籤、補寫）分班。同一課例可在 A 班、B 班各上一次。
+- AI 帶入的班級特性：課例覆寫 ＞ 班級 ＞ 單元舊欄位 `class_profile` ＞ 偏好 P6（只在班級情境中）。
+- 舊資料：每位已有單元的教師得到預設班級「我的班級」，原有單元與上課紀錄都歸到它。合約見 [API.md](API.md)「Phase 1.4」。
 
 ## 6. API 清單（Phase 1）
 
@@ -139,7 +152,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 沿用交接版的導覽與視覺，改寫成 React：
 
 1. 登入（邀請碼）
-2. 工作檯：單元列表、目前進度
+2. 工作檯：班級卡片（單元數、下一步）、新增班級、備課庫入口；班級頁（班級特性、取用的單元與這班的進度）；備課庫（所有單元設計與使用它的班級）
 3. **CoRe**：重點 2–3 個 × Q1–Q8；每格「目前沒有想法」、內容來源；「需要協助」逐層展開
 4. **Study & Plan**：連結 CoRe 重點（旁列 CoRe 答案）、教案步驟（活動型態、ICAP）、RAG 建議卡（引用、採用／修訂／拒絕＋理由）、SIOP 提示、其他老師怎麼教
 5. **Teach & Record**（Phase 1.2）：開始本節課 → 課堂紀錄頁（兩顆大按鈕、加一句話、復原與更正、待同步筆數、手機 QR 遙控、子母畫面小視窗）→ 結束本節課並回顧 → 課後補寫；手機遙控器頁 `/remote` 不需登入
