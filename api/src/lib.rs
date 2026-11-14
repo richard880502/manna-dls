@@ -16,6 +16,7 @@ pub mod record;
 pub mod retrieval;
 pub mod routes;
 pub mod settings;
+pub mod vocabulary;
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router";
 import { useApp } from "../context/AppContext";
+import { can } from "../lib/permissions";
 import { DemoBanner, Loading } from "./common";
 import { OnboardingWizard } from "./prefs/OnboardingWizard";
 
@@ -31,6 +32,7 @@ const NAV: NavEntry[] = [
 function frameClass(pathname: string): string {
   if (/^\/runs\/\d+\/?$/.test(pathname)) return " is-console";
   if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin)/.test(pathname)) return " is-wide";
+  // 知識庫管理 is a list page: the default frame.
   if (pathname === "/worksheets" || pathname === "/preferences") return " is-narrow";
   return "";
 }
@@ -55,7 +57,9 @@ export function Layout() {
   const { pathname } = useLocation();
   const [topSlot, setTopSlot] = useState<HTMLElement | null>(null);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-  const needsOnboarding = preferencesStatus === "loaded" && preferences === null && !onboardingDismissed;
+  // The first-use survey is about lesson preparation: it does not stand in front of 知識庫管理.
+  const needsOnboarding =
+    preferencesStatus === "loaded" && preferences === null && !onboardingDismissed && pathname !== "/knowledge";
 
   useEffect(() => {
     try {
@@ -84,7 +88,12 @@ export function Layout() {
           ))}
         </nav>
         <div className="acct">
-          {teacher?.role === "pi" && (
+          {can(teacher, "manage_knowledge") && (
+            <Link to="/knowledge" aria-current={current(pathname === "/knowledge")}>
+              知識庫管理
+            </Link>
+          )}
+          {can(teacher, "administer") && (
             <Link to="/admin" aria-current={current(pathname === "/admin")}>
               後台管理
             </Link>

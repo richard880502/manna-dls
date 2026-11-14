@@ -1,32 +1,31 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { Link } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { ImportResult, PromptVersion, Role, SchoolTrack } from "../api/types";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { useApp } from "../context/AppContext";
 import { ROLE_LABELS, SCHOOL_TRACK_LABELS, formatDateTime } from "../lib/labels";
+import { can } from "../lib/permissions";
 
-const ROLES: Role[] = ["teacher", "pi", "ra", "rater", "engineer"];
+const ROLES: Role[] = ["teacher", "pi", "kb_manager", "ra", "rater", "engineer"];
 
 export function AdminPage() {
   const { teacher } = useApp();
-  if (teacher?.role !== "pi") {
+  if (!can(teacher, "administer")) {
     return <ErrorText message="這個頁面只開放給計畫主持人。" />;
   }
   return (
     <section className="admin-page">
       <div className="page-intro">
         <h1>後台管理</h1>
-        <p>建立邀請碼、維護提示詞版本、匯入知識庫與教師備課經驗。每次修改提示詞都會產生新版本。</p>
+        <p>
+          建立邀請碼、維護提示詞版本、匯入教師備課經驗。每次修改提示詞都會產生新版本。課綱條目與詞彙表在
+          <Link to="/knowledge">知識庫管理</Link>。
+        </p>
       </div>
       <PlatformSettings />
       <div className="admin-grid">
         <InviteForm />
-        <CsvImport
-          title="匯入知識庫條目"
-          columns="item_code,category,school_track,title,content,source_doc,source_version,source_page"
-          inputId="knowledge-csv"
-          upload={api.admin.importKnowledge}
-        />
         <CsvImport
           title="匯入教師備課經驗"
           columns="case_code,school_track,grade,topic,summary,details,approved"
@@ -144,7 +143,9 @@ function InviteForm() {
         onChange={(e) => setResearchId(e.target.value)}
         placeholder="例如：T-2026-001"
       />
-      <p className="field-hint">只填研究編號，不要填教師姓名或 Email。</p>
+      <p className="field-hint">
+        只填研究編號，不要填教師姓名或 Email。「知識庫管理員」只能管理課綱條目與詞彙表，看不到其他後台功能與其他教師的資料。
+      </p>
       <div className="two-fields">
         <div>
           <label className="field-label" htmlFor="invite-track">

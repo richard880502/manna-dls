@@ -31,7 +31,7 @@ DATABASE_URL=postgres://manna:manna@127.0.0.1:55432/manna AI_PROVIDER=fake \
 cd web && pnpm install && pnpm dev
 ```
 
-用 `ADMIN_BOOTSTRAP_CODE` 的值登入就是主持人帳號，可在後台建立教師邀請碼、匯入知識庫。
+用 `ADMIN_BOOTSTRAP_CODE` 的值登入就是主持人帳號，可在後台建立教師邀請碼，並在「知識庫管理」匯入課綱條目與詞彙表（資料不在 repo，匯入檔的產生方式見 `docs/API.md`「Phase 2.0：知識庫與詞彙」）。
 
 ## AI 供應商
 

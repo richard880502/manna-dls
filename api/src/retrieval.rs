@@ -10,6 +10,16 @@
 //!   its title (a title match counts twice: the title names what the item is about); ties are
 //!   broken by item_code. Items with no match are dropped.
 //! * The `embedding` column is reserved for hybrid search once an approved embedding model exists.
+//!
+//! Phase 2.0 (real 108 curriculum items):
+//! * `comprehensive` (綜合型高中) is a track of its own with its own 領綱; a teacher of any
+//!   track sees that track's items plus `both`.
+//! * The knowledge base holds every extracted curriculum item, including the elementary and
+//!   junior-high stages of the general 領綱 and the non-English subjects of the 外語群. By default
+//!   only senior-high (stage Ⅴ) items of English subjects are retrieved ([`CurriculumFilter`]);
+//!   the others are reachable by explicit filter or by exact code.
+//! * [`curriculum_by_codes`] returns the official text of cited codes. Curriculum text shown to
+//!   a teacher must always come from here, never from a model.
 
 use std::collections::HashSet;
 
@@ -117,7 +127,175 @@ pub struct KbItem {
     pub title: String,
     pub content: String,
     pub source_doc: String,
+    pub source_version: String,
     pub source_page: String,
+    /// The code as printed in the source (e.g. `3-Ⅴ-7`); empty for non-curriculum items.
+    pub official_code: String,
+    /// `learning_performance` | `learning_content` | empty.
+    pub item_kind: String,
+    pub strand_name: String,
+    pub stage: String,
+    pub subject: String,
+    pub advanced: bool,
+    pub recurring: bool,
+}
+
+/// Columns of [`KbItem`] in `knowledge_items`.
+const KB_COLUMNS: &str = "item_code, version, category, school_track, title, content, source_doc,
+    source_version, source_page, official_code, item_kind, strand_name, stage, subject, advanced,
+    recurring";
+
+/// 學習階段 of senior high school.
+pub const SENIOR_HIGH_STAGE: &str = "V";
+/// Subjects retrieved by default: the 語文領域 英語文 and the English subjects of the 外語群
+/// (英語 I–VII, 職場英文實務). Japanese and the business/computing subjects are left out.
+pub const ENGLISH_SUBJECTS: [&str; 3] = ["英語文", "英語", "職場"];
+/// Filter value meaning "do not filter".
+pub const ANY: &str = "all";
+
+/// Which curriculum items a search considers. `None` means the default scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CurriculumFilter {
+    /// `learning_performance` | `learning_content`; `None` = both.
+    pub kind: Option<String>,
+    /// 學習階段 (`II`–`V`), or [`ANY`]; `None` = senior high ([`SENIOR_HIGH_STAGE`]).
+    pub stage: Option<String>,
+    /// Subject as stored (e.g. `英語文`, `日語`), or [`ANY`]; `None` = [`ENGLISH_SUBJECTS`].
+    pub subject: Option<String>,
+}
+
+impl CurriculumFilter {
+    /// Items without a stage or subject (hand-written curriculum notes) are always in scope.
+    pub fn accepts(&self, item: &KbItem) -> bool {
+        let kind_ok = self.kind.as_deref().is_none_or(|k| item.item_kind == k);
+        let stage_ok = item.stage.is_empty()
+            || match self.stage.as_deref() {
+                None => item.stage == SENIOR_HIGH_STAGE,
+                Some(ANY) => true,
+                Some(s) => item.stage == normalize_code(s),
+            };
+        let subject_ok = item.subject.is_empty()
+            || match self.subject.as_deref() {
+                None => ENGLISH_SUBJECTS.contains(&item.subject.as_str()),
+                Some(ANY) => true,
+                Some(s) => item.subject == s,
+            };
+        kind_ok && stage_ok && subject_ok
+    }
+}
+
+/// Tracks whose items a teacher of `track` may be shown.
+pub fn tracks_for(track: &str) -> [&str; 2] {
+    [track, "both"]
+}
+
+/// Canonical form for comparing curriculum codes: no whitespace, no `*`/`◎` marks, Roman
+/// numeral characters (Ⅴ) as ASCII letters (V), every dash variant as `-`.
+pub fn normalize_code(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    for c in code.chars() {
+        match c {
+            'Ⅰ' => out.push('I'),
+            'Ⅱ' => out.push_str("II"),
+            'Ⅲ' => out.push_str("III"),
+            'Ⅳ' => out.push_str("IV"),
+            'Ⅴ' => out.push('V'),
+            'Ⅵ' => out.push_str("VI"),
+            'Ⅶ' => out.push_str("VII"),
+            '*' | '＊' | '◎' => {}
+            '－' | '‐' | '‑' | '–' | '—' => out.push('-'),
+            c if c.is_whitespace() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Orders codes the way a person reads them: `1-V-2` before `1-V-10`.
+fn natural_key(code: &str) -> Vec<(u8, u64, String)> {
+    let mut key = Vec::new();
+    let mut digits = String::new();
+    let mut text = String::new();
+    for c in code.chars() {
+        if c.is_ascii_digit() {
+            if !text.is_empty() {
+                key.push((1, 0, std::mem::take(&mut text)));
+            }
+            digits.push(c);
+        } else {
+            if !digits.is_empty() {
+                key.push((0, digits.parse().unwrap_or(u64::MAX), String::new()));
+                digits.clear();
+            }
+            text.push(c);
+        }
+    }
+    if !digits.is_empty() {
+        key.push((0, digits.parse().unwrap_or(u64::MAX), String::new()));
+    }
+    if !text.is_empty() {
+        key.push((1, 0, text));
+    }
+    key
+}
+
+/// An official curriculum item: category `curriculum` with the code printed in its source.
+/// Hand-written notes filed under `curriculum` (the seeded `DEMO-CUR-*` items, which say they
+/// are not curriculum text) have no official code and are never returned as curriculum.
+pub fn is_official_curriculum(item: &KbItem) -> bool {
+    item.category == "curriculum" && !item.official_code.is_empty()
+}
+
+/// Pure curriculum search over already-loaded items: applies `filter`, then ranks by `query`.
+/// An empty query (no usable token) lists the filtered items in code order with score 0.
+pub fn search_curriculum(
+    items: Vec<KbItem>,
+    filter: &CurriculumFilter,
+    query: &str,
+    top_k: usize,
+) -> Vec<Scored> {
+    let items: Vec<KbItem> = items
+        .into_iter()
+        .filter(|i| is_official_curriculum(i) && filter.accepts(i))
+        .collect();
+    if !tokenize(query).is_empty() {
+        return rank(query, items, top_k);
+    }
+    let mut listed: Vec<Scored> = items
+        .into_iter()
+        .map(|item| Scored {
+            item,
+            score: 0,
+            title_score: 0,
+        })
+        .collect();
+    listed.sort_by_cached_key(|s| natural_key(&s.item.item_code));
+    listed.truncate(top_k);
+    listed
+}
+
+/// Pure exact-code match after [`normalize_code`]. A code equal to an `item_code` (unique)
+/// always matches; a code equal to an `official_code` matches the items of `track` (plus
+/// `both`), or of every track when `track` is `None` — the same official code exists in several
+/// 領綱. Results follow the order of `codes`, without duplicates. No fuzzy matching.
+pub fn match_codes(items: &[KbItem], track: Option<&str>, codes: &[String]) -> Vec<KbItem> {
+    let in_track =
+        |item: &KbItem| track.is_none_or(|t| tracks_for(t).contains(&item.school_track.as_str()));
+    let mut out: Vec<KbItem> = Vec::new();
+    for code in codes {
+        let want = normalize_code(code);
+        if want.is_empty() {
+            continue;
+        }
+        for item in items.iter().filter(|i| is_official_curriculum(i)) {
+            let hit = normalize_code(&item.item_code) == want
+                || (in_track(item) && normalize_code(&item.official_code) == want);
+            if hit && !out.iter().any(|o| o.item_code == item.item_code) {
+                out.push(item.clone());
+            }
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,36 +336,84 @@ pub fn rank(query: &str, items: Vec<KbItem>, top_k: usize) -> Vec<Scored> {
     scored
 }
 
-/// Loads candidates for `track` and ranks them.
+async fn active_items(
+    db: &PgPool,
+    track: Option<&str>,
+    curriculum_only: bool,
+) -> sqlx::Result<Vec<KbItem>> {
+    let tracks: Option<Vec<&str>> = track.map(|t| tracks_for(t).to_vec());
+    sqlx::query_as(&format!(
+        "SELECT DISTINCT ON (item_code) {KB_COLUMNS}
+           FROM knowledge_items
+          WHERE retired_at IS NULL
+            AND ($1::text[] IS NULL OR school_track = ANY($1))
+            AND (NOT $2 OR category = 'curriculum')
+          ORDER BY item_code, version DESC"
+    ))
+    .bind(tracks)
+    .bind(curriculum_only)
+    .fetch_all(db)
+    .await
+}
+
+/// Loads candidates for `track` and ranks them (plan suggestions). Curriculum items outside the
+/// default scope (other stages, non-English subjects) are not candidates.
 pub async fn retrieve(
     db: &PgPool,
     track: &str,
     query: &str,
     top_k: usize,
 ) -> sqlx::Result<Vec<Scored>> {
-    let mut items: Vec<KbItem> = sqlx::query_as(
-        "SELECT DISTINCT ON (item_code)
-                item_code, version, category, school_track, title, content, source_doc, source_page
-           FROM knowledge_items
-          WHERE retired_at IS NULL AND school_track IN ($1, 'both')
-          ORDER BY item_code, version DESC",
-    )
-    .bind(track)
-    .fetch_all(db)
-    .await?;
+    let scope = CurriculumFilter::default();
+    let mut items: Vec<KbItem> = active_items(db, Some(track), false)
+        .await?
+        .into_iter()
+        .filter(|i| i.category != "curriculum" || scope.accepts(i))
+        .collect();
     let cases: Vec<KbItem> = sqlx::query_as(
         "SELECT case_code AS item_code, 1 AS version, 'teacher_case' AS category, school_track,
                 CASE WHEN topic = '' THEN summary ELSE topic END AS title,
                 summary || E'\n' || details AS content,
-                '教師備課經驗（非官方來源）' AS source_doc, '' AS source_page
+                '教師備課經驗（非官方來源）' AS source_doc, '' AS source_version,
+                '' AS source_page, '' AS official_code, '' AS item_kind, '' AS strand_name,
+                '' AS stage, '' AS subject, false AS advanced, false AS recurring
            FROM teacher_cases
-          WHERE approved AND in_rag AND school_track IN ($1, 'both')",
+          WHERE approved AND in_rag AND school_track = ANY($1)",
     )
-    .bind(track)
+    .bind(tracks_for(track).to_vec())
     .fetch_all(db)
     .await?;
     items.extend(cases);
     Ok(rank(query, items, top_k))
+}
+
+/// Curriculum items of `track` (plus `both`) matching `filter`, ranked by `query`; with an empty
+/// query, listed in code order.
+pub async fn retrieve_curriculum(
+    db: &PgPool,
+    track: &str,
+    filter: &CurriculumFilter,
+    query: &str,
+    top_k: usize,
+) -> sqlx::Result<Vec<Scored>> {
+    let items = active_items(db, Some(track), true).await?;
+    Ok(search_curriculum(items, filter, query, top_k))
+}
+
+/// Active curriculum items with exactly these codes (`item_code` such as `108-G-3-V-7`, or the
+/// official code such as `3-Ⅴ-7` / `3-V-7`; see [`match_codes`] for how `track` applies). Codes
+/// that match nothing are simply absent from the result: the caller must treat them as
+/// unsupported and never fill in a text.
+pub async fn curriculum_by_codes(
+    db: &PgPool,
+    track: Option<&str>,
+    codes: &[String],
+) -> sqlx::Result<Vec<KbItem>> {
+    if codes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let items = active_items(db, None, true).await?;
+    Ok(match_codes(&items, track, codes))
 }
 
 #[cfg(test)]
@@ -203,8 +429,206 @@ mod tests {
             title: title.into(),
             content: content.into(),
             source_doc: String::new(),
+            source_version: String::new(),
             source_page: String::new(),
+            official_code: String::new(),
+            item_kind: String::new(),
+            strand_name: String::new(),
+            stage: String::new(),
+            subject: String::new(),
+            advanced: false,
+            recurring: false,
         }
+    }
+
+    /// Synthetic curriculum row (not real curriculum text).
+    fn cur(
+        code: &str,
+        official: &str,
+        kind: &str,
+        stage: &str,
+        subject: &str,
+        text: &str,
+    ) -> KbItem {
+        KbItem {
+            category: "curriculum".into(),
+            school_track: "general".into(),
+            official_code: official.into(),
+            item_kind: kind.into(),
+            stage: stage.into(),
+            subject: subject.into(),
+            ..item(code, &format!("{official} 測試類別"), text)
+        }
+    }
+
+    fn fixtures() -> Vec<KbItem> {
+        vec![
+            cur(
+                "T-G-3-V-10",
+                "3-Ⅴ-10",
+                "learning_performance",
+                "V",
+                "英語文",
+                "能讀懂測試用的短文並找出主旨。",
+            ),
+            cur(
+                "T-G-3-V-2",
+                "◎3-Ⅴ-2",
+                "learning_performance",
+                "V",
+                "英語文",
+                "能讀懂測試用的句子。",
+            ),
+            cur(
+                "T-G-Ae-V-1",
+                "Ae-Ⅴ-1",
+                "learning_content",
+                "V",
+                "英語文",
+                "測試用的短文與故事。",
+            ),
+            cur(
+                "T-G-3-IV-1",
+                "3-Ⅳ-1",
+                "learning_performance",
+                "IV",
+                "英語文",
+                "能讀懂測試用的短文。",
+            ),
+            cur(
+                "T-JP-1",
+                "外語-技-日語I-A-a",
+                "learning_content",
+                "V",
+                "日語",
+                "測試用的日語短文閱讀。",
+            ),
+            KbItem {
+                school_track: "comprehensive".into(),
+                ..cur(
+                    "T-C-3-V-2",
+                    "3-Ⅴ-2",
+                    "learning_performance",
+                    "V",
+                    "英語文",
+                    "能讀懂測試用的句子（綜高）。",
+                )
+            },
+            item("T-GRM-1", "短文閱讀策略", "不是課綱條目"),
+            KbItem {
+                category: "curriculum".into(),
+                ..item(
+                    "T-NOTE-1",
+                    "示範學習表現：短文",
+                    "示範用的短文描述，不是課綱原文",
+                )
+            },
+        ]
+    }
+
+    fn codes(scored: &[Scored]) -> Vec<&str> {
+        scored.iter().map(|s| s.item.item_code.as_str()).collect()
+    }
+
+    #[test]
+    fn curriculum_search_defaults_to_senior_high_english() {
+        let r = search_curriculum(fixtures(), &CurriculumFilter::default(), "短文 閱讀", 10);
+        let got = codes(&r);
+        assert!(
+            got.contains(&"T-G-3-V-10") && got.contains(&"T-G-Ae-V-1"),
+            "{got:?}"
+        );
+        // junior-high stage, Japanese subject and non-curriculum items are out of scope
+        for out in ["T-G-3-IV-1", "T-JP-1", "T-GRM-1", "T-NOTE-1"] {
+            assert!(!got.contains(&out), "{out} in {got:?}");
+        }
+    }
+
+    #[test]
+    fn curriculum_search_filters_by_kind_stage_and_subject() {
+        let kind = CurriculumFilter {
+            kind: Some("learning_content".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            codes(&search_curriculum(fixtures(), &kind, "短文", 10)),
+            vec!["T-G-Ae-V-1"]
+        );
+        let stage = CurriculumFilter {
+            stage: Some("Ⅳ".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            codes(&search_curriculum(fixtures(), &stage, "短文", 10)),
+            vec!["T-G-3-IV-1"]
+        );
+        let subject = CurriculumFilter {
+            subject: Some("日語".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            codes(&search_curriculum(fixtures(), &subject, "短文", 10)),
+            vec!["T-JP-1"]
+        );
+        let all = CurriculumFilter {
+            stage: Some(ANY.into()),
+            subject: Some(ANY.into()),
+            ..Default::default()
+        };
+        assert_eq!(search_curriculum(fixtures(), &all, "短文", 10).len(), 4);
+    }
+
+    #[test]
+    fn curriculum_search_without_query_lists_in_natural_code_order() {
+        let r = search_curriculum(fixtures(), &CurriculumFilter::default(), "", 3);
+        assert_eq!(codes(&r), vec!["T-C-3-V-2", "T-G-3-V-2", "T-G-3-V-10"]);
+        assert!(r.iter().all(|s| s.score == 0));
+    }
+
+    #[test]
+    fn codes_are_normalized() {
+        assert_eq!(normalize_code(" ◎3-Ⅴ-7 "), "3-V-7");
+        assert_eq!(normalize_code("*Ae－Ⅳ-12"), "Ae-IV-12");
+        assert_eq!(normalize_code("外語-技-英語 Ⅱ-A-a"), "外語-技-英語II-A-a");
+    }
+
+    #[test]
+    fn exact_code_lookup_matches_item_code_or_official_code() {
+        let items = fixtures();
+        let by = |track: Option<&str>, codes: &[&str]| -> Vec<String> {
+            let codes: Vec<String> = codes.iter().map(|c| c.to_string()).collect();
+            match_codes(&items, track, &codes)
+                .into_iter()
+                .map(|i| i.item_code)
+                .collect()
+        };
+        assert_eq!(by(None, &["T-G-3-V-10"]), vec!["T-G-3-V-10"]);
+        // official code in either spelling; marks ignored; out-of-default-scope items included
+        assert_eq!(
+            by(None, &["3-V-10", "3-Ⅳ-1"]),
+            vec!["T-G-3-V-10", "T-G-3-IV-1"]
+        );
+        // an official code shared by two tracks: both without a track, one with it
+        assert_eq!(by(None, &["3-Ⅴ-2"]), vec!["T-G-3-V-2", "T-C-3-V-2"]);
+        assert_eq!(by(Some("comprehensive"), &["3-Ⅴ-2"]), vec!["T-C-3-V-2"]);
+        assert_eq!(by(Some("general"), &["◎3-V-2"]), vec!["T-G-3-V-2"]);
+        // a unique item_code is found whatever the track; another track's official code is not
+        assert_eq!(by(Some("vocational"), &["T-C-3-V-2"]), vec!["T-C-3-V-2"]);
+        assert!(by(Some("vocational"), &["3-V-2"]).is_empty());
+        // unknown codes and near misses return nothing: no fuzzy matching
+        assert!(by(None, &["3-V-1", "9-V-99", ""]).is_empty());
+        // items without an official code are not curriculum text
+        assert!(by(None, &["T-GRM-1", "T-NOTE-1"]).is_empty());
+        assert_eq!(
+            by(None, &["3-V-10", "T-G-3-V-10"]).len(),
+            1,
+            "no duplicates"
+        );
+    }
+
+    #[test]
+    fn tracks_include_shared_items() {
+        assert_eq!(tracks_for("comprehensive"), ["comprehensive", "both"]);
     }
 
     #[test]
