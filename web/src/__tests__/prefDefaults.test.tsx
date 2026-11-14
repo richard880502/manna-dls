@@ -17,7 +17,7 @@ import {
   openSection,
   preferences,
   renderApp,
-  savePlanButton,
+  settleAutosave,
   sectionToggle,
   signIn,
   step,
@@ -118,8 +118,7 @@ describe("preference: 差異化與時間安排 (differentiation)", () => {
       }),
     );
 
-    await user.click(savePlanButton());
-    await screen.findByText(/已儲存.*第 3 版/);
+    await settleAutosave(user);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     expect(saved.steps.map((s) => [s.duration_min, s.support_note, s.extension_note])).toEqual([
       [20, "", ""],

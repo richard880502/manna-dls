@@ -452,7 +452,9 @@ export type ScaffoldCode =
   | "SC-MATERIAL"
   | "SC-PREF"
   | "SC-CONTEXT"
-  | "SC-RECORD";
+  | "SC-RECORD"
+  | "SC-SOP-ANALYSIS"
+  | "SC-SOP-OBJECTIVES";
 export type ScaffoldAction = "show" | "expand" | "use" | "skip";
 
 export interface ScaffoldEventRequest {
@@ -651,4 +653,230 @@ export interface RemoteRun {
 export interface PairResponse {
   token: string;
   run: RemoteRun;
+}
+
+// ---------------------------------------------------------------- 課例 SOP（docs/API.md Phase 2.1）
+
+export type SopOrigin = "teacher" | "ai_adopted" | "ai_edited";
+/** 發現／整理／分析／比較／創造資訊 */
+export type InfoFunction = "discover" | "organize" | "analyze" | "compare" | "create";
+/** 形成性評量／學生反思／蒐集問題 */
+export type ExitKind = "formative" | "reflection" | "questions";
+export type ObjectiveType = "content" | "language";
+
+export interface SopParagraph {
+  /** 同一段文字在教材改版後沿用原 id */
+  id: string;
+  no: number;
+  text: string;
+}
+
+export interface SopMaterial {
+  id: number;
+  version_no: number;
+  title: string;
+  source_note: string;
+  text: string;
+  paragraphs: SopParagraph[];
+  word_count: number;
+  created_at: string;
+}
+
+export interface SopFeature {
+  id: string;
+  feature: string;
+  evidence: string;
+  explanation: string;
+}
+
+export interface SopParagraphAnalysis {
+  paragraph_id: string;
+  function: string;
+  summary: string;
+  features: SopFeature[];
+  origin: SopOrigin;
+}
+
+export interface SopLanguageFocus {
+  id: string;
+  kind: string;
+  item: string;
+  paragraph_id: string | null;
+  evidence: string;
+  note: string;
+}
+
+export interface SopAnalysis {
+  text_type: string;
+  main_idea: string;
+  structure: string;
+  overall_origin: SopOrigin;
+  language_focus: SopLanguageFocus[];
+  paragraphs: SopParagraphAnalysis[];
+}
+
+/** 條文與來源一律由伺服器依 item_code 從知識庫帶出 */
+export interface SopCurriculumLink {
+  item_code: string;
+  why: string;
+  title: string;
+  text: string;
+  category: string;
+  source_doc: string;
+  source_version: string;
+  source_page: string;
+}
+
+export interface SopObjective {
+  id: string;
+  type: ObjectiveType;
+  text: string;
+  student_facing_en: string;
+  reason: string;
+  paragraph_ids: string[];
+  links: SopCurriculumLink[];
+  link_status: "linked" | "unlinked";
+  origin: SopOrigin;
+}
+
+export interface SopParagraphGoal {
+  paragraph_id: string;
+  objective_ids: string[];
+  note: string;
+}
+
+/** 語言／教學／程序鷹架 */
+export interface SopScaffolds {
+  verbal: string;
+  instructional: string;
+  procedural: string;
+}
+
+export interface SopTask {
+  id: string;
+  function: InfoFunction | null;
+  text: string;
+  scaffolds: SopScaffolds;
+  origin: SopOrigin;
+}
+
+/** 一段，或合併數段，的問題或任務 */
+export interface SopTaskBlock {
+  id: string;
+  paragraph_ids: string[];
+  tasks: SopTask[];
+}
+
+export interface SopWarmupActivity {
+  id: string;
+  text: string;
+  scaffolds: SopScaffolds;
+  origin: SopOrigin;
+}
+
+export interface SopVocabularyItem {
+  id: string;
+  word: string;
+  note: string;
+  origin: SopOrigin;
+}
+
+export interface SopWarmup {
+  background: SopWarmupActivity[];
+  vocabulary: SopVocabularyItem[];
+}
+
+export interface SopExitItem {
+  id: string;
+  kind: ExitKind;
+  text: string;
+  origin: SopOrigin;
+}
+
+export interface SopContent {
+  analysis: SopAnalysis;
+  objectives: SopObjective[];
+  paragraph_goals: SopParagraphGoal[];
+  task_blocks: SopTaskBlock[];
+  warmup: SopWarmup;
+  exit_ticket: { items: SopExitItem[] };
+}
+
+export interface SopAnalysisSuggestion {
+  text_type: string;
+  main_idea: string;
+  structure: string;
+  language_focus: Array<{ kind: string; item: string; paragraph_id: string; evidence: string; note: string }>;
+  paragraphs: Array<{
+    paragraph_id: string;
+    paragraph_no: number;
+    function: string;
+    summary: string;
+    features: Array<{ feature: string; evidence: string; explanation: string }>;
+  }>;
+  /** 模型兩次都沒有交出的段落 */
+  missing_paragraph_ids: string[];
+  /** 因為不是原文連續片段而被拿掉的證據筆數 */
+  dropped_evidence: number;
+}
+
+export interface SopObjectiveSuggestion {
+  type: ObjectiveType;
+  text: string;
+  student_facing_en: string;
+  reason: string;
+  paragraph_ids: string[];
+  link_status: "linked" | "unlinked";
+  links: SopCurriculumLink[];
+}
+
+export interface SopObjectivesSuggestion {
+  objectives: SopObjectiveSuggestion[];
+  /** 這次提供給模型挑選的課綱條目數 */
+  curriculum_available: number;
+}
+
+export type SopJobKind = "analysis" | "objectives";
+
+export interface SopJob<T = unknown> {
+  id: number;
+  lesson_id: number;
+  kind: SopJobKind;
+  status: "running" | "done";
+  /** 給教師看的進度 */
+  phase: string;
+  started_at: string;
+  finished_at: string | null;
+  sop_version_no: number | null;
+  result: AiResult<T> | null;
+  /** 教師已經決定過的 item_index */
+  decided: number[];
+}
+
+export interface SopState {
+  lesson_id: number;
+  version_no: number | null;
+  versions_count: number;
+  saved_at: string | null;
+  material: SopMaterial | null;
+  content: SopContent;
+  /** 最新教案的「今天要教什麼？」 */
+  today_objective: string;
+  jobs: {
+    analysis: SopJob<SopAnalysisSuggestion> | null;
+    objectives: SopJob<SopObjectivesSuggestion> | null;
+  };
+}
+
+export interface SavedSop {
+  version_no: number;
+  versions_count: number;
+  saved_at: string;
+  content: SopContent;
+}
+
+export interface SaveSopMaterialRequest {
+  title?: string;
+  source_note?: string;
+  text: string;
 }

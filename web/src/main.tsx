@@ -11,6 +11,7 @@ import "./styles/shell.css";
 import "./styles/app.css";
 import "./styles/record.css";
 import "./styles/views.css";
+import "./styles/sop.css";
 
 // A data router (one splat route, the app keeps its own <Routes>) so pages can hold an
 // in-app navigation while they have unsaved changes (useBlocker).
