@@ -1,5 +1,5 @@
 /* Teach & Record (Phase 1.2): the record console, the phone remote, the PiP window and 課後補寫.
-   The console reuses the live-classroom frame from phase2.css; this file adds what only recording needs.
+   The console page layout (clock, the two big marks, the log) is in views.css; this file holds the parts recording needs.
    Two bookmarks, two tones: 順利 in the success green, 卡住 in the warning amber, each with its icon and word. */
 
 /* ================= the two big buttons ================= */

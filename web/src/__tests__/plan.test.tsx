@@ -13,7 +13,6 @@ import {
   savePlanButton,
   sectionToggle,
   signIn,
-  todayCard,
   type MockCall,
 } from "../test/mockApi";
 
@@ -110,9 +109,9 @@ describe("Study & Plan lesson page", () => {
     );
     const user = userEvent.setup();
     await openLesson();
-    expect(screen.getByText(/目前第 2 版（共 2 版）/)).toBeInTheDocument();
+    expect(screen.getByText(/已儲存 · 第 2 版/)).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("想請 Manna 特別注意什麼？（選填）"), "多一點口說");
+    await user.type(screen.getByLabelText("想請 Manna 特別注意什麼？"), "多一點口說");
     await user.click(screen.getByRole("button", { name: "請 Manna 提供建議" }));
 
     const first = within(await screen.findByRole("article", { name: "語意對比暖身" }));
@@ -135,7 +134,7 @@ describe("Study & Plan lesson page", () => {
     expect(screen.getByLabelText("步驟 2").querySelector("textarea")).toHaveValue(
       "語意對比暖身：先比較一般語序與倒裝句兩組句子，請學生說出共同語意。",
     );
-    expect(todayCard().getByText("尚未儲存")).toBeInTheDocument();
+    expect(screen.getByText("尚未儲存")).toBeInTheDocument();
     expect(sectionToggle("教學步驟")).toHaveAccessibleName("教學步驟（2）");
 
     // revise with edited text and a reason
@@ -170,7 +169,7 @@ describe("Study & Plan lesson page", () => {
 
     // teacher saves: a new version with ordered positions
     await user.click(savePlanButton());
-    expect(await screen.findByText(/已儲存為第 3 版/)).toBeInTheDocument();
+    expect(await screen.findByText(/已儲存.*第 3 版/)).toBeInTheDocument();
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     expect(saved.objective).toBe("學生能說明倒裝的語意功能");
     expect(saved.steps.map((s) => [s.position, s.activity_type, s.icap_level])).toEqual([
@@ -242,7 +241,7 @@ describe("Study & Plan lesson page", () => {
     await openLesson();
     expect(await screen.findByRole("button", { name: "AI 目前未開放" })).toBeDisabled();
     await user.click(savePlanButton());
-    expect(await screen.findByText(/已儲存為第 3 版/)).toBeInTheDocument();
+    expect(await screen.findByText(/已儲存.*第 3 版/)).toBeInTheDocument();
     expect(api.callsTo("POST", SUGGEST)).toHaveLength(0);
   });
 
@@ -257,25 +256,25 @@ describe("Study & Plan lesson page", () => {
     await openLesson();
     expect(screen.getByText("下次先給例句再請學生歸納")).toBeInTheDocument();
 
-    // Collapsed behind 「連結的 CoRe 重點（0）」 until the teacher opens it.
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAttribute("aria-expanded", "false");
+    // Collapsed behind 「單元想法的重點（0）」 until the teacher opens it.
+    expect(sectionToggle("單元想法的重點")).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("checkbox", { name: /學習重點 1/ })).not.toBeInTheDocument();
-    await openSection(user, "連結的 CoRe 重點");
+    await openSection(user, "單元想法的重點");
 
     await user.click(await screen.findByRole("checkbox", { name: /學習重點 1：倒裝句的語意功能/ }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/lessons/7/core-links")).toEqual({ focus_ids: [11] }));
     expect(await screen.findByText("能說明倒裝的語意")).toBeInTheDocument();
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（1）");
+    expect(sectionToggle("單元想法的重點")).toHaveAccessibleName("單元想法的重點（1）");
 
     await user.click(screen.getByRole("checkbox", { name: /學習重點 2：口語表達/ }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/lessons/7/core-links")).toEqual({ focus_ids: [11, 12] }));
     expect(screen.getAllByText("目前沒有想法").length).toBeGreaterThan(0);
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（2）");
+    expect(sectionToggle("單元想法的重點")).toHaveAccessibleName("單元想法的重點（2）");
 
     // Collapsing keeps the links (and the count).
-    await user.click(sectionToggle("連結的 CoRe 重點"));
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAttribute("aria-expanded", "false");
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（2）");
+    await user.click(sectionToggle("單元想法的重點"));
+    expect(sectionToggle("單元想法的重點")).toHaveAttribute("aria-expanded", "false");
+    expect(sectionToggle("單元想法的重點")).toHaveAccessibleName("單元想法的重點（2）");
   });
 
   it("reorders and removes steps before saving", async () => {
@@ -303,9 +302,9 @@ describe("Study & Plan lesson page", () => {
     await user.click(screen.getByRole("button", { name: "刪除步驟 3" }));
     // The steps section repeats 儲存教案 at its end.
     const stepsSection = within(screen.getByRole("region", { name: /^教學步驟/ }));
-    await user.click(stepsSection.getByRole("button", { name: "儲存教案（產生新版本）" }));
+    await user.click(stepsSection.getByRole("button", { name: "儲存教案" }));
 
-    await screen.findByText(/已儲存為第 3 版/);
+    await screen.findByText(/已儲存.*第 3 版/);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     const blankDiff = { duration_min: null, support_note: "", extension_note: "" };
     expect(saved.steps).toEqual([

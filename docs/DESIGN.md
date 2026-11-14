@@ -1,111 +1,125 @@
 # Design: Manna DLS
 
-The locked visual system for the web app (`web/`). Every screen reads it; change it on purpose. The source of truth for values is `web/src/styles/tokens.css`; this file says what each token is for and how the parts are put together. It follows the Hallmark design guidance ([Nutlope/hallmark](https://github.com/Nutlope/hallmark), MIT), adapted for an app used in Traditional Chinese.
+The visual system of the web app (`web/`). Every screen reads it; change it on purpose. The source of truth for values is `web/src/styles/tokens.css`; this file says what each token is for and how the parts are put together. The direction and the reasons are in [`DESIGN_OVERHAUL.md`](DESIGN_OVERHAUL.md); the approved mockups are in [`design/overhaul/`](design/overhaul/index.html), and before/after screenshots of what is built so far are in [`design/overhaul/implemented/`](design/overhaul/implemented/).
+
+**Status:** overhaul step 1 (shell and list pages) is in the app. The lesson page is interim until the seven-step SOP (step 2); the CoRe editor, 課後補寫, preferences and admin keep their layout and take the new tokens, heads and frameless panels.
 
 ## System
 
 - Genre: editorial, at app scope (screens someone works in, not pages someone reads once)
-- Shape: app screen, inside the existing shell (sidebar with nine destinations, a running head, panels)
-- Theme: custom. Vibe: "a calm research notebook in two inks"
-- Axes: light paper / roman serif heads / cool ink-blue accent. Posture: restrained, plus one seal colour with one job
-- Modes: light only (see "Not done" at the end)
+- Shape: a 56px top bar with three destinations; pages are a column of sections
+- Vibe: "a calm research notebook in two inks", with a third voice for print
+- Axes: light paper / serif heads / ink-blue accent. Posture: restrained, plus one gold with one job
+- Modes: light only (see "Not done")
 
-## The idea: two inks on one page
+## Principles (from the overhaul)
 
-Teachers write in blue-black ink (藍黑墨水): their own words, their actions, what they select. Whatever **Manna** (the AI) adds sits in **gold**, the colour of the project's star mascot, and always carries its sources: help entries, suggestion cards, material candidates, the source count, the 需要協助 button. A teacher can tell at a glance which words are theirs and which came from Manna. That matters for a research platform that records whether an answer was written by the teacher, after AI help, or adopted from an AI example.
-
-The signature object is the **CoRe ledger**: each learning focus is a ruled sheet of eight questions, Q1 to Q8 numbered in the left margin in the serif, the row being helped turning gold. The lesson page shows the linked focus's answers as the same ledger, set compact.
+1. **One view, one thing.** One filled button per view; everything else is an outline button or a text link.
+2. **Space, type size and hairlines part sections, not boxes.** Only three things are filled surfaces: what Manna suggests (gold), source material and worksheets (the print sheet, from step 2).
+3. **Three voices.** The teacher's own words and actions are ink blue. Whatever Manna (the AI) adds sits in gold and carries its sources. Source material is print: serif on the lightest sheet, paragraph numbers in the margin (step 2).
+4. **Nothing blocks.** No required fields; every step can be skipped; what the AI produces is only written in when the teacher says so.
+5. **The teacher's words.** No 「版本」「Phase」「RAG」「選用」 on controls; navigation and buttons are in Chinese. CoRe is called 「單元想法」, with CoRe in small print.
+6. **The class is context, not a field.** The class is the one the teacher came from; it appears once, in the breadcrumb. It is asked for in exactly one place: starting a lesson from the library when several classes use its unit.
 
 ## Tokens
 
-### Colour (OKLCH)
+### Colour
 
 | Token | Value | Job |
 | --- | --- | --- |
-| `--color-paper` | `oklch(97.8% 0.005 245)` | page and panel ground |
-| `--color-paper-2` | `oklch(95.4% 0.008 245)` | sidebar, neutral wells (題意說明, the teacher's own CoRe answers, step rows) |
-| `--color-paper-3` | `oklch(92.6% 0.011 245)` | hover on paper-2, progress tracks |
-| `--color-field` | `oklch(99.2% 0.002 245)` | inputs: the writing surface is the lightest thing on screen |
-| `--color-ink` | `oklch(25% 0.035 252)` | text and heads (15:1 on paper) |
-| `--color-ink-2` | `oklch(40% 0.03 250)` | secondary text, lead paragraphs |
-| `--color-muted` | `oklch(50% 0.022 250)` | hints, meta lines, placeholders (5.6:1 on paper) |
-| `--color-field-edge` | `oklch(61% 0.02 248)` | input borders (3:1 or better on every ground) |
-| `--color-rule` / `-strong` | `oklch(88.5% …)` / `oklch(80% …)` | hairlines / outlines of quiet controls |
-| `--color-accent` | `oklch(45% 0.1 245)` | the teacher's ink: the filled action, the current nav item, selection. Derived from the project's `#284b63` |
-| `--color-accent-text` / `-wash` / `-rule` | | links and accent labels / selected tiles / secondary button outline |
-| `--color-focus` | `oklch(50% 0.17 255)` | the focus ring, 5:1 on paper |
-| `--color-star` | `oklch(80% 0.13 86)` | the star mark (gold on ink) and the selected county on the map |
-| `--color-manna-wash` / `-wash-2` / `-rule` / `-ink` | | everything Manna produced: wells, chips, rules, labels (6.9:1) |
-| `--color-success`, `--color-warn-*`, `--color-error` (+ washes) | | saved / 順利, draft / demo banner / 卡住, errors |
+| `--color-paper` | `#f7f8fa` | the page |
+| `--color-paper-2` / `-3` | `#eef1f5` / `#e3e8ee` | neutral wells and quiet tags / hover, progress tracks |
+| `--color-field`, `--color-sheet` | `#fdfdfe` | inputs; the print sheet (material, worksheets) |
+| `--color-ink` | `#1c2533` | text and heads (14.5:1 on paper) |
+| `--color-ink-2` | `#465163` | secondary text, lead paragraphs (7.6:1) |
+| `--color-muted` | `#5a6677` | meta lines, hints, crumbs (5.5:1 on paper, 5.1:1 on paper-2) |
+| `--color-field-edge` | `#7d8796` | input and outline-button edges (3.4:1 or better) |
+| `--color-rule` / `-strong` | `#dde2e9` / `#b9c1cc` | hairlines between rows / the rule under a focal block or around an open form |
+| `--color-accent` (+ `-hover`, `-press`, `-ink`, `-text`) | `#2a5580` | the teacher's ink: the filled action, the current destination, links |
+| `--color-accent-wash` / `-wash-2` / `-rule` | `#e6eef6` / `#d5e2f0` / `#8fb0cf` | selected tiles / pressed / link underline |
+| `--color-focus` | `#1f5fd0` | the 3px focus ring (5.5:1 on paper) |
+| `--color-star` | `#e2b33a` | Manna's star |
+| `--color-manna-wash` / `-wash-2` / `-rule` / `-ink` | `#fbf3dc` / `#f4e6b8` / `#d9bd6a` / `#73500f` | everything Manna produced, and the button that asks her (ink on wash 6.6:1) |
+| `--color-success`, `--color-warn-ink`, `--color-error` (+ washes) | | 順利 and saved / 卡住 and the demo banner / errors (each 5.5:1 or better on its wash) |
 
 Rules: no colour literal outside `tokens.css`; never pure black or white as a surface; grey text never sits on a coloured surface; red and green never carry meaning alone (every state also has a word or an icon).
 
 ### Type
 
-Self-hosted with `@fontsource-variable` (pinned, `font-display: swap`, sliced by Unicode range so a page only downloads the characters it shows). No request leaves for a font CDN.
+Self-hosted with `@fontsource-variable` (pinned, `font-display: swap`, sliced by Unicode range). No request leaves for a font CDN.
 
 | Role | Face | Size / weight |
 | --- | --- | --- |
-| Heads (`h1` to `h4`), unit and suggestion titles, Q numbers, step numbers | Noto Serif TC (思源宋體), `--font-display` | 600 |
-| Everything else | Noto Sans TC (思源黑體), `--font-body` | 400, 600 for labels and buttons |
-| Machine identifiers only: knowledge-base item codes, invite codes, SHA, prompt templates | system mono, `--font-mono` | 400 |
+| Heads, row titles, Q numbers, the lesson clock | Noto Serif TC, `--font-display` | 600 |
+| Everything else | Noto Sans TC, `--font-body` | 400, 600 for labels and buttons |
+| Latin names beside CJK (CoRe), and from step 2 material and worksheets | Georgia, `--font-print` | 400 |
+| Machine identifiers only (codes, SHA, prompt templates) | system mono, `--font-mono` | 400 |
 
-Scale (fixed, ratio about 1.18, no fluid heads): `--text-sm` 14 · `--text-md` 16 · `--text-lg` 18 · `--text-xl` 21 · `--text-2xl` 25 · `--text-3xl` 30 (`--text-xs` 13 is for mono codes only).
+Scale (fixed): `--text-xs` 13 (tags) · `--text-sm` 14 (meta, hints) · `--text-md` 16 · `--text-lg` 18 (row titles, the big button) · `--text-xl` 21 (section heads) · `--text-2xl` 25 (page title on a phone) · `--text-3xl` 30 (page title) · `--text-clock` 44.
 
-CJK rules: body never under 16px; prose `line-height` 1.75 (`--leading-body`), UI 1.55, heads 1.3 (CJK glyphs fill the em box, so heads never go under 1.25); measure `--measure: 40em` (about 40 characters); no tracking on CJK, no uppercase anywhere; `line-break: strict` and `text-autospace` so Chinese and English sit apart cleanly; `text-wrap: balance` on heads and titles.
+Heads: `h1` is the page title (30px; 25px under 760px), one per page. `h2` is a section (21px). `h3` is a row title or a sub-block (18px). `h4` 16px.
+
+CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; measure `--measure: 40em`; no tracking, no uppercase; `line-break: strict`, `text-autospace`; `text-wrap: balance` on heads.
 
 ### Space, shape, depth, motion
 
-- **Space:** `--space-3xs` 2 · `2xs` 4 · `xs` 8 · `sm` 12 · `md` 16 · `lg` 24 · `xl` 32 · `2xl` 48 · `3xl` 64 · `4xl` 96. Panels pad `--card-pad` (24, 16 on a phone). Gutters `--gutter` 40 / 24 / 16.
-- **Radius:** `--radius-control` 8 (buttons, inputs, wells, tiles) · `--radius-card` 12 (panels) · `--radius-pill` (tags, status, steppers) · `--radius-sm` 6 (code chips).
-- **Depth:** borders, not shadows. A panel is paper plus a 1px `--color-rule` border. The only shadow is `--shadow-overlay`, on the 需要協助 sheet that opens over the bottom of a narrow screen.
-- **Motion:** state only. `--dur-micro` 120ms for colour, `--dur-short` 220ms for a disclosure chevron or a switch; `--ease-out`, `--ease-in-out`; only `transform`, `opacity` and colours move. Under `prefers-reduced-motion: reduce` everything ends at once.
-- **Layers:** `--z-sticky` (sidebar), `--z-sticky-nav` (demo banner), `--z-overlay` (help sheet, the leave confirm over `--color-scrim`).
+- **Space:** `--space-3xs` 2 … `--space-4xl` 96; sections of a page are `--space-section` apart (56, 40 on a phone). Gutters `--gutter` 40 / 16.
+- **Radius:** `--radius-control` 8 (buttons, inputs, wells) · `--radius-card` 12 (dialogs) · `--radius-mark` 16 (the two in-class buttons) · `--radius-pill` (tags).
+- **Depth:** space and hairlines. Shadows only on things that float: `--shadow-overlay` (the help sheet over a narrow screen) and `--shadow-dialog` (the choose-a-class dialog), over `--color-scrim`.
+- **Motion:** state only. `--dur-micro` 120ms for colour, `--dur-short` 220ms for a chevron; only `transform`, `opacity` and colours move. Under `prefers-reduced-motion: reduce` everything ends at once.
+- **Layers:** `--z-sticky` (top bar, bottom nav), `--z-sticky-nav` (demo banner), `--z-overlay` (dialogs, the leave confirm, the help sheet).
 
 ## Layout
 
-- Sidebar 16rem, sticky below the demo banner; under 60rem it becomes a top bar with a 選單 button.
-- Workspace content is capped at `--container` (75rem) and centred; at 1920 the gutters grow, nothing else does.
-- A running head on every screen: the stage (`01 · Study & Plan`) over the view title (`h1`). The page's own title is the larger `h2` below it.
-- Breakpoints: 60rem (shell) and 40rem (type, single column), plus 75rem where two working panels sit side by side (CoRe with 需要協助, the lesson page, admin, 課後補寫). The unit page stays one column so no short panel leaves an empty half beside a long one.
+- **Top bar** (`.top`, 56px, sticky under the demo banner): the star and 「Manna」, the three destinations (班級, 備課庫, 學習單), and at the right the account links (後台管理 for the project lead, 「研究編號 · 備課偏好」, 登出). Under 760px the three destinations move to a fixed bar at the bottom (60px) and the research ID drops out of the top bar.
+- A page that takes over the bar renders into its slot (`TopBarSlot`): during a lesson the bar shows only 「上課中 · 已同步」 and 「結束本節課」, and the bottom bar is gone, so nothing invites a stray tap.
+- **Frames** (`.workspace`): list pages 1040px; working pages with two columns (lesson, 單元想法, 課後補寫, admin) 1200px; the in-class console 880px; single-column text pages 800px.
+- **Breakpoints:** 760px (shell, rows, single column), 1100px (the lesson page's side column goes under the main one), plus the older 75rem / 60rem / 40rem inside screens not rebuilt yet.
 
 ## Components
 
-- **Buttons.** `primary-button`: filled accent, one per region. `secondary-button`: accent outline on field. `ghost-button`: neutral outline for utilities (remove, cancel, close, move). `small-button`: 32px, never wraps. `decision-button`: the choices recorded on an AI result (回答／略過, 採用／修訂／拒絕, ratings), `aria-pressed` shows the pick. 40px tall, 44px on touch screens. Disabled is three channels: opacity 0.55, `not-allowed`, the native attribute.
-- **Fields.** Label above (14px, 600), helper below in muted 14px, 1px `--color-field-edge` border that never changes width, the focus ring an inset outline. Selects keep native behaviour with a drawn chevron.
-- **Choice tiles** (`pref-option`, `route-option`, `siop-choice`): the native radio or checkbox stays visible; checked tiles take the accent wash and border; the ring sits on the tile.
-- **Panels** (`panel-card`): paper, 1px rule, radius 12. Inside a panel, parts are parted by hairlines or set in a well; never a bordered box inside a well, never a card inside a card.
-- **Manna content** (`help-entry`, `ai-suggestion`, `candidate-card`, `ai-status`): a gold well, no border; its sources sit under a gold hairline, item codes in mono chips; secondary text inside it is `--color-ink-2`, never the muted grey. A rejected suggestion turns neutral grey rather than fading.
-- **Ledger rows** (`core-cell`): hairline-ruled, Q number in the margin (inline on a phone), the row being helped in the gold wash, rows the prep route recommends first get an accent Q number and a 建議先寫 tag.
-- **Tags** (`soft-tag`, `status-pill`, `core-status-*`, `route-tag`, `source-count`): body face 14px, sentence case, pill, tinted by meaning.
-- **Notices:** a tinted well (`info` paper-2, `success`, `warn`), ink text, no side stripe.
-- **Meta line** (`.eyebrow`): 14px muted body face above a head, only where it carries a fact (stage, version, route, focus).
-- **Collapsible sections** (`plan-section`): on the lesson page, everything past the first view (「今天要教什麼？」 and 開始本節課) is a row inside one panel, parted by hairlines: a full-width toggle in the accent text with the drawn chevron, its label carrying the count (「教學步驟（3）」), an optional tag at the right (已選 2, 尚未儲存). The body stays mounted while closed (`hidden`), so nothing half-written is lost.
-- **Leave confirm** (`leave-confirm`): when a page with unsaved work is left, a panel over `--color-scrim` (`--z-overlay`) asks 儲存後離開 (filled) / 留在這頁 (focused first, also Escape) / 不儲存，直接離開. No shadow; never `window.confirm`.
-- **Carried-over text** (`profile-prefill`): text the teacher wrote elsewhere and the page reuses (the current class's profile on the unit page) sits in a paper-2 well with its source in one line above it and a link to where it is edited; it is the teacher's ink, never Manna gold.
-- **Classes** (`class-card`, `class-unit`, `class-context`, `class-chooser`): on the home page each class is its own panel (name in the serif, a count tag, the next step under a hairline, one filled action). A class's units are a numbered ledger with this class's progress and note. 目前班級 is one quiet 14px line under the page head (a link when one class uses the unit, a native select when several do). 「這節課是哪一班？」 opens in the page, in an accent wash under 開始本節課, never as a dialog.
-- **Teach & Record:** two big bookmark buttons (順利 green, 卡住 amber, each with its SVG icon and word), sync state as a status chip with a live dot, each logged bookmark one row with its corrections at the right end (stacked on a phone), the phone remote with buttons a third of the screen tall.
+- **Buttons.** `primary-button`: filled accent, **one per view** (`big-button` makes it 52px on teach-mode views: 「開始上課」). `secondary-button`: neutral outline on the field colour, for a form's own submit when the view's filled action is elsewhere. `text-link`: the default for everything else (bold; `is-plain` for utilities like 修改, 取消, 更多); on touch screens it gets a 44px box. `manna-button`: gold outline, only for asking Manna. `ghost-button`, `small-button`, `decision-button` remain inside screens not rebuilt yet. Disabled is three channels: opacity or muted colour, `not-allowed`, the native attribute.
+- **Ruled rows** (`.rows` > `.row`): the replacement for cards. A row is a title (serif 18px, a link), one quiet meta line (14px muted), and at the right a short fact with at most one or two text actions (`.side`). What a row opens in place (a note, the classes to assign) spans the row beneath it (`.row-more`). Ordered lists number their titles (`.num`). Under 760px the side drops under the title.
+- **Focal block** (`.next`): on the home and class pages, the next lesson: a quiet kicker (「接下來 · 高一 3 班」), the title as the page's `h1`, one sentence, and the filled 「開始上課」 with 「繼續備課」 as a text link. Closed by a strong rule.
+- **Page head** (`.page-head`, `.crumbs`, `.lead`, `.head-row`): crumbs in 14px muted, the `h1`, a lead paragraph; a `head-row` puts a section's one action at the right of its heading.
+- **Forms opened in place** (`.inline-form-block`): between two strong rules, no frame.
+- **Companion** (`.with-side` > `.companion`, `.ledger`): on the unit page, 單元想法 sits beside the lessons as a 320px column: a quiet progress line with CoRe in small print, the first five questions as a ledger (written ones in ink with an accent Q number, empty ones muted with 「寫一點」), and a link to all eight. It never gates anything.
+- **Dialog** (`.scrim` > `.dialog`, `.radio-rows`): only for 「這節課在哪一班上？」. Focus starts on the chosen class, Tab stays inside, Escape cancels, focus returns to the button that opened it.
+- **Fields.** Label above (14px, 600), helper below in muted 14px, a 1px `--color-field-edge` border that never changes width. Selects keep native behaviour with a drawn chevron.
+- **Manna content** (`help-entry`, `ai-suggestion`, `candidate-card`, `ai-status`, `manna-label`): a gold well, no border; it opens with the star and 「Manna」; its sources sit under a gold hairline; secondary text inside it is `--color-ink-2`. On the lesson page her panel sits in the side column, a step quieter than the plan.
+- **Collapsible sections** (`plan-section` inside `.plan-sections`): on the interim lesson page everything past the first view is a hairline row with a count (「教學步驟（3）」). The body stays mounted while closed.
+- **Saved state** (`.saved`): plain words at the right of a working page's head: 「尚未儲存」 or 「已儲存 14:32 · 第 3 版」. Buttons never mention versions.
+- **Panels** (`panel-card`): **retired.** Screens not rebuilt yet still carry the class; it is now only a block parted from the one before it by space and one hairline. Do not use it in new code. A page has at most one layer of filled surface.
+- **Tags** (`soft-tag`, `status-pill`, `record-pill`): 13px, only where they carry a fact (a mark's kind, a selection count). No 「選用」「可略過」 labels: what can be skipped is said once, in a sentence.
+- **Notices:** a tinted well (`info`, `success`, `warn`), ink text, no side stripe.
+- **Leave confirm** (`leave-confirm`): when a page with unsaved work is left, a dialog over the scrim asks 儲存後離開 / 留在這頁 (focused first, also Escape) / 不儲存，直接離開. Never `window.confirm`.
+- **In-class console:** the lesson title with the clock (44px serif, tabular figures) at its right; two big marks (順利 green, 卡住 amber; 2px outline, an icon, the word and a short caption; 200px tall, a quarter of the screen each on a phone); then what was marked, newest first, as ruled rows with quiet corrections.
 
 ## Do and don't
 
 Do:
 - Put every new colour, size and face into `tokens.css` first, then use the token.
+- Give each view exactly one `primary-button`; check it with the page's other actions demoted to `text-link`.
 - Mark anything the AI produced with the Manna gold, and show its sources next to it.
-- Keep one filled button per region; give every control `:focus-visible`, `:hover` (behind `@media (hover: hover)`), `:active` and `:disabled`.
-- Check new screens at 375px: no sideways scroll, controls 44px on touch.
+- Give every control `:focus-visible`, `:hover` (behind `@media (hover: hover)`), and a disabled state.
+- Check new screens from 320px to 1920px: no sideways scroll, controls 44px on touch.
 
 Don't:
-- Use tracked capitals, uppercase labels, or a label above a head that only names it.
-- Use emoji as icons (the rating buttons use SVG), gradients, glows, or shadows on panels.
+- Put a border around a section, or a card inside a card. Use space, a heading and hairlines.
+- Ask for the class on a page. It is context (principle 6).
+- Use system words on controls (版本, Phase, RAG, 選用), tracked capitals, or a label above a head that only names it.
+- Use emoji as icons, gradients, glows, or shadows on anything that does not float.
 - Use colour as the only signal, or grey text on a tinted surface.
 - Load fonts or anything else from a third-party CDN.
 - Animate `width`, `height`, `top`, `left` or `all`.
 
 ## Not done (yet)
 
-- **Dark mode.** Left out on purpose: the gold-on-wash Manna role, the map and the two record tones need their own re-derived pairs and a contrast pass in both modes; shipping it half-checked would be worse than not shipping it.
-- **Copy kept as found:** meta lines joined with `·`, `→` after three links (a test reads one), and the English labels on the Phase 2 static pages. These are copy decisions, not styling.
+- **Lesson SOP (step 2):** the seven steps (direction A) with the slide-in material viewer, auto-save in place of the 「儲存教案」 link, suggestions inside each step. Until then the lesson page keeps its first view and collapsed sections.
+- **學習單 (step 3)** and **AI 資深教師 (step 4):** the destination exists as an honest placeholder; the senior-teacher button is not in the app yet.
+- **Screens not rebuilt:** the 單元想法 (CoRe) editor, 課後補寫, 備課偏好, the first-use survey and admin still use their earlier layout (wells for steps and choices, `ghost-button` utilities, more than one filled button on the CoRe editor and admin).
+- **Dark mode.** Left out on purpose: the gold-on-wash Manna role and the two record tones need their own pairs and a contrast pass in both modes.
 
 ## Exports
 
-`web/src/styles/tokens.css` (tokens) · `base.css` (elements, focus, motion policy) · `components.css` · `shell.css` · `app.css` (screens) · `phase2.css` (static Phase 2 pages) · `record.css` (Teach & Record).
+`web/src/styles/tokens.css` (tokens) · `base.css` (elements, focus, motion policy) · `components.css` (controls, fields, tags, notices) · `shell.css` (demo banner, top bar, frames, sign-in) · `app.css` (unit page, 單元想法, lesson planning, preferences, admin) · `record.css` (the console's parts, 課後補寫, the phone remote) · `views.css` (rows, the focal block, page heads, text links, the dialog, the console layout; loaded last).

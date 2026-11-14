@@ -21,10 +21,10 @@ export const PREP_ROUTE_LABELS: Record<PrepRoute, string> = {
 };
 
 export const PREP_ROUTE_DESCRIPTIONS: Record<PrepRoute, string> = {
-  goal: "先寫 CoRe 的學習目標（Q1–Q3），再寫課例教案與看 Manna 的建議。",
-  material: "先貼上課文或教材，請 Manna 從教材提出候選學習重點，再寫 CoRe 與教案。",
-  student: "先寫班級特性與學生卡點，再寫 CoRe Q5、Q6，然後設計教案活動。",
-  activity: "先寫活動點子與教案步驟，再回頭連結 CoRe 重點、補寫 CoRe。",
+  goal: "先寫單元想法的學習目標（Q1–Q3），再寫課例教案與看 Manna 的建議。",
+  material: "先貼上課文或教材，請 Manna 從教材提出候選學習重點，再寫單元想法與教案。",
+  student: "先寫班級特性與學生卡點，再寫單元想法 Q5、Q6，然後設計教案活動。",
+  activity: "先寫活動點子與教案步驟，再回頭連結並補寫單元想法。",
 };
 
 /** CoRe questions emphasised first by a route (the other questions stay visible and editable). */

@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { CreateClassRequest, SchoolClass } from "../api/types";
+import type { CreateClassRequest, LessonRun, SchoolClass } from "../api/types";
 import { ClassForm, emptyClassValues } from "../components/classes/ClassForm";
+import { NextLesson, useStartInClass } from "../components/classes/NextLesson";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { useApp } from "../context/AppContext";
-import { classSubtitle, nextStep } from "../lib/classes";
-import { formatDate } from "../lib/labels";
+import { classSubtitle, focalClass, nextLine } from "../lib/classes";
+import { formatDate, formatShortDate } from "../lib/labels";
 
 const FIRST_CLASS_SKIPPED_KEY = "manna.firstClassSkipped";
+/** 「上完還沒補寫」 shows the latest few; the rest are on the records page. */
+const UNREVIEWED_SHOWN = 5;
 
 function loadSkipped(): boolean {
   try {
@@ -18,50 +21,84 @@ function loadSkipped(): boolean {
   }
 }
 
-function ClassCard({ item }: { item: SchoolClass }) {
+/** One class as a ruled row: its name, a quiet meta line, and what is next for it. */
+function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
   const { setCurrentClassId } = useApp();
-  const step = nextStep(item.id, item.next_action);
-  const subtitle = classSubtitle(item);
+  const { start, starting, error } = useStartInClass(item.id);
+  const next = item.next_action;
   // Following a class's next step means working in that class.
   const enter = () => setCurrentClassId(item.id);
+  const meta = [
+    classSubtitle(item, true),
+    item.unit_count === 0 ? "還沒有單元" : `${item.unit_count} 個單元`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <li className="class-card panel-card">
-      <div className="class-card-head">
-        <h4>
+    <li className="row">
+      <div>
+        <h3>
           <Link to={`/classes/${item.id}`} onClick={enter}>
             {item.name}
           </Link>
-        </h4>
-        <span className="soft-tag">{item.unit_count} 個單元</span>
+        </h3>
+        <p className="meta">{meta}</p>
       </div>
-      {subtitle && <p className="unit-meta">{subtitle}</p>}
-      <p className="class-card-next">
-        <span className="class-card-next-label">下一步</span>
-        {step.text}
+      <p className="side">
+        {next?.kind === "add_unit" ? (
+          <Link className="text-link" to={`/classes/${item.id}`} onClick={enter}>
+            從備課庫加入單元
+          </Link>
+        ) : (
+          <>
+            <span>{nextLine(next)}</span>
+            {/* The class the page leads with already has its action in the block above. */}
+            {next?.kind === "start_lesson" && !isFocal && (
+              <button
+                type="button"
+                className="text-link"
+                disabled={starting}
+                aria-label={`${item.name}：開始上課`}
+                onClick={() => void start(next.lesson_id)}
+              >
+                {starting ? "開始中…" : "開始上課"}
+              </button>
+            )}
+            {next?.kind === "resume_run" && !isFocal && (
+              <Link className="text-link" to={`/runs/${next.run_id}`} onClick={enter}>
+                回到課堂
+              </Link>
+            )}
+            {next?.kind === "plan_unit" && !isFocal && (
+              <Link className="text-link" to={`/units/${next.unit_id}`} onClick={enter}>
+                去備課
+              </Link>
+            )}
+          </>
+        )}
       </p>
-      <div className="class-card-actions">
-        <Link className="primary-button link-button" to={step.to} onClick={enter}>
-          {step.action}
-        </Link>
-        <Link className="secondary-button link-button" to={`/classes/${item.id}`} onClick={enter}>
-          班級頁
-        </Link>
-      </div>
+      {error && (
+        <div className="row-more">
+          <ErrorText message={error} />
+        </div>
+      )}
     </li>
   );
 }
 
 /**
- * 工作檯 (Phase 1.4): class-centred. Each class is a card with its next step; the design library
- * (備課庫) is one clear entry below. A teacher with no class yet is invited to create the first
- * one, prefilled from the preference survey (P6); the invitation can be skipped.
+ * 班級 (the home page, docs/DESIGN_OVERHAUL.md): one focal block, the next lesson of the class
+ * taught most recently, with 「開始上課」; then the classes as ruled rows; then the lessons that
+ * were taught but not written up yet. A teacher with no class is invited to create the first one,
+ * prefilled from the preference survey (P6); the invitation can be skipped.
  */
 export function HomePage() {
   const { teacher, preferences } = useApp();
   const navigate = useNavigate();
   const [classes, setClasses] = useState<SchoolClass[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [unitCount, setUnitCount] = useState<number | null>(null);
+  const [runs, setRuns] = useState<LessonRun[]>([]);
   const [adding, setAdding] = useState(false);
   const [skipped, setSkipped] = useState(loadSkipped);
   const [archiveError, setArchiveError] = useState<string | null>(null);
@@ -73,9 +110,9 @@ export function HomePage() {
       .then((list) => alive && setClasses(list))
       .catch((err: unknown) => alive && setLoadError(errorMessage(err)));
     api
-      .listUnits()
-      .then((units) => alive && setUnitCount(units.length))
-      // Only the count on the library entry; the entry works without it.
+      .listRuns()
+      .then((list) => alive && setRuns(list))
+      // Only which class leads the page and the 「還沒補寫」 list; the page works without them.
       .catch(() => undefined);
     return () => {
       alive = false;
@@ -87,6 +124,11 @@ export function HomePage() {
   const isFirst = classes !== null && classes.length === 0;
   const p6 = (preferences?.answers?.class_profile ?? "").trim();
   const track = teacher?.school_track ?? "general";
+
+  const focal = focalClass(active, runs);
+  const focalNext = focal?.next_action ?? null;
+  const lastTaught = focal ? runs.find((r) => r.class_id === focal.id && r.ended_at !== null) : undefined;
+  const unreviewed = runs.filter((r) => r.ended_at !== null && r.review_completed_at === null);
 
   function skip() {
     setSkipped(true);
@@ -119,55 +161,47 @@ export function HomePage() {
     }
   }
 
-  const libraryEntry = (
-    <section className="panel-card library-entry" aria-labelledby="library-entry-heading">
-      <div>
-        <h3 id="library-entry-heading">備課庫</h3>
-        <p>
-          你已經準備好的範本都在這裡：每個單元設計包含單元前 CoRe、課例與教案。一份設計可以給好幾個班級用。
-          {unitCount !== null && `目前有 ${unitCount} 個單元設計。`}
-        </p>
-      </div>
-      <Link className="secondary-button link-button" to="/library">
-        進入備課庫
-      </Link>
-    </section>
-  );
-
   return (
-    <section aria-labelledby="home-heading">
-      <div className="welcome-banner">
-        <p className="eyebrow warm">歡迎回來{teacher ? `，${teacher.research_id}` : ""}</p>
-        <h2 id="home-heading">今天要上哪一班？</h2>
-        <p>選一個班級，接著上次的進度；要準備新的單元，就到備課庫。每一步都可以略過，留白也不會被擋下。</p>
-      </div>
+    <>
+      {focal && focalNext && focalNext.kind !== "add_unit" ? (
+        <NextLesson
+          classId={focal.id}
+          kicker={`${focalNext.kind === "resume_run" ? "上課中" : "接下來"} · ${focal.name}`}
+          next={focalNext}
+          detail={
+            focalNext.kind === "resume_run"
+              ? "這節課還沒結束。"
+              : lastTaught
+                ? `上一節 ${formatShortDate(lastTaught.started_at)} 上完。`
+                : "這班還沒上過課。"
+          }
+          headingId="home-heading"
+        />
+      ) : (
+        <div className="page-head">
+          <h1 id="home-heading">班級</h1>
+          <p className="lead">每個班級有自己的進度與上課紀錄；單元在備課庫準備，一份可以給好幾個班用。</p>
+        </div>
+      )}
 
-      <section className="classes-panel" aria-labelledby="classes-heading">
-        <div className="section-heading">
-          <h3 id="classes-heading">我的班級</h3>
-          <div className="section-heading-actions">
-            {classes && <span className="status-pill">{active.length} 個班級</span>}
-            {classes && active.length > 0 && !adding && (
-              <button type="button" className="secondary-button" onClick={() => setAdding(true)}>
-                新增班級
-              </button>
-            )}
-          </div>
+      <section className="section" aria-labelledby="classes-heading">
+        <div className="head-row">
+          <h2 id="classes-heading">我的班級</h2>
+          {classes && active.length > 0 && !adding && (
+            <button type="button" className="text-link" onClick={() => setAdding(true)}>
+              新增班級
+            </button>
+          )}
         </div>
 
         {loadError && <ErrorText message={loadError} />}
         {!classes && !loadError && <Loading />}
 
         {classes && active.length === 0 && !skipped && (
-          <section className="panel-card first-class" aria-labelledby="first-class-heading">
-            <div className="card-heading">
-              <h4 id="first-class-heading">
-                {isFirst ? "先建立你的第一個班級" : "建立一個班級"}
-              </h4>
-              <span className="optional-label">可略過</span>
-            </div>
-            <p className="first-class-lead">
-              班級只需要一個名稱。之後每個班級會有自己的進度與上課紀錄，同一份單元設計可以給不同班級用。平台不存任何學生資料。
+          <section className="inline-form-block" aria-labelledby="first-class-heading">
+            <h3 id="first-class-heading">{isFirst ? "先建立你的第一個班級" : "建立一個班級"}</h3>
+            <p className="lead">
+              班級只需要一個名稱。之後每個班級會有自己的進度與上課紀錄，同一份單元可以給不同班級用。平台不存任何學生資料。
             </p>
             <ClassForm
               initial={emptyClassValues(track, isFirst ? p6 : "")}
@@ -180,17 +214,18 @@ export function HomePage() {
           </section>
         )}
         {classes && active.length === 0 && skipped && (
-          <div className="empty-preview first-class-skipped">
-            <p>還沒有班級。可以直接到備課庫準備單元，之後再建立班級。</p>
-            <button type="button" className="secondary-button" onClick={() => setSkipped(false)}>
+          <p className="empty-line">
+            還沒有班級。可以先到<Link to="/library">備課庫</Link>準備單元，之後再
+            <button type="button" className="text-link" onClick={() => setSkipped(false)}>
               新增班級
             </button>
-          </div>
+            。
+          </p>
         )}
 
         {adding && (
-          <section className="panel-card first-class" aria-labelledby="new-class-heading">
-            <h4 id="new-class-heading">新增班級</h4>
+          <section className="inline-form-block" aria-labelledby="new-class-heading">
+            <h3 id="new-class-heading">新增班級</h3>
             <ClassForm
               initial={emptyClassValues(track)}
               submitLabel="建立班級"
@@ -201,33 +236,87 @@ export function HomePage() {
         )}
 
         {active.length > 0 && (
-          <ul className="class-grid">
+          <ul className="rows">
             {active.map((c) => (
-              <ClassCard key={c.id} item={c} />
+              <ClassRow key={c.id} item={c} isFocal={c.id === focal?.id} />
             ))}
           </ul>
         )}
       </section>
 
-      {libraryEntry}
+      {unreviewed.length > 0 && (
+        <section className="section" aria-labelledby="unreviewed-heading">
+          <div className="head-row">
+            <h2 id="unreviewed-heading">上完還沒補寫</h2>
+            <Link className="text-link is-plain" to="/record">
+              全部上課紀錄
+            </Link>
+          </div>
+          <ul className="rows">
+            {unreviewed.slice(0, UNREVIEWED_SHOWN).map((r) => (
+              <li key={r.id} className="row">
+                <div>
+                  <h3>
+                    <Link to={`/runs/${r.id}/review`}>
+                      {r.class_name ? `${r.class_name}　` : ""}
+                      {r.unit_title}　{r.lesson_title}
+                    </Link>
+                  </h3>
+                  <p className="meta">
+                    {formatShortDate(r.started_at)} 上課 · 順利 {r.good_count} 次 · 卡住 {r.stuck_count} 次
+                  </p>
+                </div>
+                <p className="side">
+                  <Link
+                    className="text-link"
+                    to={`/runs/${r.id}/review`}
+                    aria-label={`補寫 ${r.class_name ?? ""} ${r.lesson_title}`}
+                  >
+                    補寫
+                  </Link>
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {classes && unreviewed.length === 0 && runs.length > 0 && (
+        <p className="page-foot">
+          <Link className="text-link is-plain" to="/record">
+            全部上課紀錄
+          </Link>
+        </p>
+      )}
 
       {archived.length > 0 && (
         <details className="archived-classes">
           <summary>已封存的班級（{archived.length}）</summary>
-          <ul className="archived-list">
+          <ul className="rows">
             {archived.map((c) => (
-              <li key={c.id}>
-                <Link to={`/classes/${c.id}`}>{c.name}</Link>
-                <span className="unit-meta">封存於 {formatDate(c.archived_at)}</span>
-                <button type="button" className="ghost-button small-button" onClick={() => void unarchive(c.id)}>
-                  取消封存
-                </button>
+              <li key={c.id} className="row">
+                <div>
+                  <h3>
+                    <Link to={`/classes/${c.id}`}>{c.name}</Link>
+                  </h3>
+                  <p className="meta">封存於 {formatDate(c.archived_at)}</p>
+                </div>
+                <p className="side">
+                  <button
+                    type="button"
+                    className="text-link is-plain"
+                    aria-label={`取消封存 ${c.name}`}
+                    onClick={() => void unarchive(c.id)}
+                  >
+                    取消封存
+                  </button>
+                </p>
               </li>
             ))}
           </ul>
           {archiveError && <Notice tone="warn">{archiveError}</Notice>}
         </details>
       )}
-    </section>
+    </>
   );
 }

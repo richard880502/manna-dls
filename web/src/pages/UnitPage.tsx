@@ -1,32 +1,46 @@
 import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { ApiError, api, errorMessage } from "../api/client";
-import type { Lesson, PrepRoute, Unit } from "../api/types";
-import { ClassContextBar } from "../components/classes/ClassContextBar";
+import type { Lesson, LessonRun, PrepRoute, Unit } from "../api/types";
 import { ErrorText, Loading, Notice, PrivacyHint } from "../components/common";
 import { MaterialsPanel } from "../components/unit/MaterialsPanel";
 import { RouteMenu } from "../components/unit/RouteMenu";
 import { RouteOptions } from "../components/unit/RouteOptions";
+import { UnitIdeas } from "../components/unit/UnitIdeas";
 import { useApp } from "../context/AppContext";
-import { useActiveClass } from "../lib/classes";
-import { CORE_STATUS_LABELS, formatDate } from "../lib/labels";
+import { usedByText, useActiveClass } from "../lib/classes";
+import { formatDate } from "../lib/labels";
 import { CLASS_PROFILE_MAX_CHARS, PREP_ROUTE_LABELS, effectiveRoute } from "../lib/preferences";
 
 const ROUTE_LOCKED_MESSAGE =
   "主持人目前把備課順序固定為「目標優先」，暫時不能切換備課菜單。每個畫面仍然都可以打開。";
 
-const CORE_ROUTE_HINTS: Record<PrepRoute, string> = {
-  goal: "建議先寫 Q1–Q3：學生要學會什麼、為什麼要學、這次先不教什麼。",
-  material: "從教材候選重點放進來的學習重點會出現在 CoRe，你可以修改或移除。",
-  student: "建議先寫 Q5、Q6：學生可能怎麼想或誤解、還有哪些因素會影響教學。",
-  activity: "可以先寫活動；寫完課例後再回來連結並補寫 CoRe。",
+const IDEAS_ROUTE_HINTS: Record<PrepRoute, string> = {
+  goal: "依你的備課順序，可以先寫 Q1–Q3：要學會什麼、為什麼重要、這次先不教什麼。",
+  material: "從教材候選重點放進來的學習重點會出現在單元想法，你可以修改或移除。",
+  student: "依你的備課順序，可以先寫 Q5、Q6：學生可能怎麼想、還有什麼會影響教學。",
+  activity: "可以先寫活動；寫完課例後再回來補單元想法。",
 };
 
+/** 「高一 3 班、高一 7 班上過」 for one lesson, from the teacher's finished runs. */
+function taughtBy(runs: LessonRun[], lessonId: number): string {
+  const mine = runs.filter((r) => r.lesson_id === lessonId && r.ended_at !== null);
+  if (mine.length === 0) return "還沒上";
+  const names = [...new Set(mine.map((r) => r.class_name).filter((n): n is string => !!n))];
+  return names.length > 0 ? `${names.join("、")}上過` : "上過";
+}
+
+/**
+ * 單元頁 (docs/DESIGN_OVERHAUL.md): the unit's lessons as ruled rows with one filled action
+ * (carry on with the next lesson), and 單元想法 (CoRe) beside them as a companion that never
+ * blocks. Materials, the class profile and the prep order follow as plain sections.
+ */
 export function UnitPage() {
   const unitId = Number(useParams().unitId);
   const { routeChoiceEnabled } = useApp();
   const [unit, setUnit] = useState<Unit | null>(null);
   const [lessons, setLessons] = useState<Lesson[] | null>(null);
+  const [runs, setRuns] = useState<LessonRun[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [materialsCount, setMaterialsCount] = useState<number | null>(null);
 
@@ -41,6 +55,7 @@ export function UnitPage() {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSaved, setProfileSaved] = useState(false);
 
+  const [addingLesson, setAddingLesson] = useState(false);
   const [title, setTitle] = useState("");
   const [lessonDate, setLessonDate] = useState("");
   const [classDescription, setClassDescription] = useState("");
@@ -59,6 +74,11 @@ export function UnitPage() {
       .catch((err: unknown) => {
         if (alive) setLoadError(errorMessage(err));
       });
+    api
+      .listRuns()
+      .then((list) => alive && setRuns(list))
+      // Only the quiet 「上過」 facts; the page works without them.
+      .catch(() => undefined);
     return () => {
       alive = false;
     };
@@ -129,6 +149,7 @@ export function UnitPage() {
       setTitle("");
       setLessonDate("");
       setClassDescription("");
+      setAddingLesson(false);
     } catch (err) {
       setCreateError(errorMessage(err));
     } finally {
@@ -139,122 +160,105 @@ export function UnitPage() {
   if (loadError) return <ErrorText message={loadError} />;
   if (!unit || !lessons) return <Loading />;
 
-  const routeCard = (
-    <section className="panel-card route-card" aria-labelledby="route-heading">
-      <div className="card-heading">
-        <h3 id="route-heading">{choiceEnabled ? `備課菜單：${PREP_ROUTE_LABELS[route]}` : "備課順序"}</h3>
-        {switching && <span className="status-pill">切換中…</span>}
-      </div>
-      <RouteMenu
-        route={route}
-        routeChoiceEnabled={choiceEnabled}
-        unit={unit}
-        lessons={lessons}
-        materialsCount={materialsCount}
-      />
-      {choiceEnabled && (
-        <details className="route-switch">
-          <summary>換一種備課菜單</summary>
-          <RouteOptions
-            name={`unit-${unit.id}-route`}
-            legend="切換備課菜單"
-            value={route}
-            onChange={(r) => void switchRoute(r)}
-            disabled={switching}
-            hint="切換只改變畫面順序與強調，已寫的內容都會保留。"
-          />
-        </details>
-      )}
-      {routeNotice && <Notice tone="success">{routeNotice}</Notice>}
-      <ErrorText message={routeError} />
-    </section>
+  // The lesson to carry on with: the first one not taught yet (in this class, when there is one).
+  const taught = new Set(
+    (runs ?? [])
+      .filter((r) => r.ended_at !== null && (!activeClass || r.class_id === activeClass.id))
+      .map((r) => r.lesson_id),
   );
+  const continueLesson = lessons.find((l) => !taught.has(l.id)) ?? lessons[lessons.length - 1] ?? null;
+  // With no lesson yet, the form is the page's one action; it is open without being asked for.
+  const lessonFormOpen = addingLesson || lessons.length === 0;
 
-  const coreCard = (
-    <section className="panel-card" aria-labelledby="unit-core-heading">
-      <div className="card-heading">
-        <h3 id="unit-core-heading">單元前 CoRe</h3>
-        <span className={`core-status core-status-${unit.core_status}`}>{CORE_STATUS_LABELS[unit.core_status]}</span>
-      </div>
-      <p>寫下這個單元 2–3 個最重要的學習重點，以及每個重點的八題思考。可以留白，也可以選「目前沒有想法」。</p>
-      <p className="field-hint route-hint">{CORE_ROUTE_HINTS[route]}</p>
-      <Link className="primary-button link-button" to={`/units/${unit.id}/core`}>
-        {unit.core_status === "none" ? "開始寫 CoRe" : "打開 CoRe"}
-      </Link>
-    </section>
-  );
-
-  const lessonsCard = (
-    <section className="panel-card" aria-labelledby="lessons-heading">
-      <div className="card-heading">
-        <h3 id="lessons-heading">課例</h3>
-        <span className="soft-tag">{lessons.length} 個課例</span>
-      </div>
+  const lessonsSection = (
+    <section aria-labelledby="lessons-heading">
+      <h2 id="lessons-heading">課例</h2>
       {route === "activity" && (
-        <p className="field-hint route-hint">活動優先：先在課例寫活動點子與教案步驟，再回頭連結 CoRe 重點。</p>
+        <p className="quiet-note">活動優先：先在課例寫活動點子與教案步驟，再回頭補單元想法。</p>
       )}
       {lessons.length === 0 ? (
-        <p className="empty-preview">還沒有課例。建立第一個課例開始備課。</p>
+        <p className="empty-line">還沒有課例。建立第一節課例開始備課。</p>
       ) : (
-        <ul className="lesson-list">
-          {lessons.map((lesson) => (
-            <li key={lesson.id}>
-              <Link to={`/lessons/${lesson.id}`}>
-                <strong>{lesson.title}</strong>
-                <span>
-                  {lesson.lesson_date ? formatDate(lesson.lesson_date) : "未設定日期"}
-                  {lesson.class_description ? ` · ${lesson.class_description}` : ""}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+        <ol className="rows">
+          {lessons.map((lesson, i) => {
+            const meta = [lesson.lesson_date ? formatDate(lesson.lesson_date) : "", lesson.class_description]
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <li key={lesson.id} className="row">
+                <div>
+                  <h3>
+                    <span className="num">{i + 1}</span>
+                    <Link to={`/lessons/${lesson.id}`}>{lesson.title}</Link>
+                  </h3>
+                  {meta && <p className="meta">{meta}</p>}
+                </div>
+                {runs && <p className="side">{taughtBy(runs, lesson.id)}</p>}
+              </li>
+            );
+          })}
+        </ol>
       )}
 
-      <form className="create-lesson-form" onSubmit={onCreate}>
-        <h4>建立新課例</h4>
-        <label className="field-label" htmlFor="lesson-title">
-          課例名稱
-        </label>
-        <input
-          id="lesson-title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="例如：第 2 節・句型練習"
-          disabled={creating}
-        />
-        <div className="two-fields">
-          <div>
-            <label className="field-label" htmlFor="lesson-date">
-              上課日期（選填）
-            </label>
-            <input
-              id="lesson-date"
-              type="date"
-              value={lessonDate}
-              onChange={(e) => setLessonDate(e.target.value)}
-              disabled={creating}
-            />
+      {lessonFormOpen ? (
+        <form className="inline-form-block create-lesson-form" onSubmit={onCreate} aria-labelledby="new-lesson-heading">
+          <h3 id="new-lesson-heading">新增一節課例</h3>
+          <label className="field-label" htmlFor="lesson-title">
+            課例名稱
+          </label>
+          <input
+            id="lesson-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="例如：第 2 節・句型練習"
+            disabled={creating}
+          />
+          <div className="two-fields">
+            <div>
+              <label className="field-label" htmlFor="lesson-date">
+                上課日期（可以不填）
+              </label>
+              <input
+                id="lesson-date"
+                type="date"
+                value={lessonDate}
+                onChange={(e) => setLessonDate(e.target.value)}
+                disabled={creating}
+              />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="lesson-class">
+                這節課的班級描述（可以不填）
+              </label>
+              <input
+                id="lesson-class"
+                value={classDescription}
+                onChange={(e) => setClassDescription(e.target.value)}
+                placeholder={activeClass ? "留白則沿用班級的班級特性" : "留白則沿用單元的班級特性"}
+                disabled={creating}
+              />
+            </div>
           </div>
-          <div>
-            <label className="field-label" htmlFor="lesson-class">
-              班級描述（選填）
-            </label>
-            <input
-              id="lesson-class"
-              value={classDescription}
-              onChange={(e) => setClassDescription(e.target.value)}
-              placeholder={activeClass ? "留白則沿用班級的班級特性" : "留白則沿用單元的班級特性"}
-              disabled={creating}
-            />
+          <PrivacyHint />
+          <ErrorText message={createError} />
+          <div className="button-row">
+            <button className={lessons.length === 0 ? "primary-button" : "secondary-button"} type="submit" disabled={creating}>
+              {creating ? "建立中…" : "建立課例"}
+            </button>
+            {addingLesson && lessons.length > 0 && (
+              <button type="button" className="text-link is-plain" disabled={creating} onClick={() => setAddingLesson(false)}>
+                取消
+              </button>
+            )}
           </div>
-        </div>
-        <PrivacyHint />
-        <ErrorText message={createError} />
-        <button className="primary-button" type="submit" disabled={creating}>
-          {creating ? "建立中…" : "建立課例"}
-        </button>
-      </form>
+        </form>
+      ) : (
+        <p className="after-rows">
+          <button type="button" className="text-link" onClick={() => setAddingLesson(true)}>
+            新增一節課例
+          </button>
+        </p>
+      )}
     </section>
   );
 
@@ -294,59 +298,57 @@ export function UnitPage() {
     </>
   );
 
-  // In a class context the profile is the class's (edited on the class page); the unit's own
-  // profile is legacy text, used only when the class has none.
-  const classProfileCard = activeClass && (
-    <section
-      className={`panel-card class-profile-card${route === "student" ? " is-route-first" : ""}`}
-      aria-labelledby="class-profile-heading"
-    >
-      <div className="card-heading">
-        <h3 id="class-profile-heading">{route === "student" ? "班級特性與學生卡點" : "班級特性"}</h3>
-      </div>
-      <div className="profile-prefill">
-        <div className="profile-prefill-head">
-          <div>
-            <span className="field-label">{activeClass.name}的班級特性</span>
-            <p className="field-hint">在這個班級備課時，Manna 的每次 AI 協助都會帶入（課例可以另外覆寫）。</p>
-          </div>
-          <Link className="ghost-button small-button link-button" to={`/classes/${activeClass.id}`}>
+  // In a class the profile is the class's (edited on the class page); the unit's own profile is
+  // legacy text, used only when the class has none.
+  const profileSection = (
+    <section className="section" aria-labelledby="class-profile-heading">
+      <div className="head-row">
+        <h2 id="class-profile-heading">{route === "student" ? "班級特性與學生卡點" : "班級特性"}</h2>
+        {activeClass && (
+          <Link className="text-link is-plain" to={`/classes/${activeClass.id}`}>
             到班級頁修改
           </Link>
-        </div>
-        <p className="profile-prefill-text">
-          {activeClass.class_profile ||
-            (unit.class_profile
-              ? "這個班級還沒有寫班級特性，目前沿用下面「這個單元的班級特性」。"
-              : "這個班級還沒有寫班級特性。")}
-        </p>
+        )}
       </div>
-      {(unit.class_profile || profileDirty) && (
-        <details className="unit-profile-legacy" open={!activeClass.class_profile}>
-          <summary>這個單元另外寫的班級特性（班級沒有寫時才使用）</summary>
+      {activeClass ? (
+        <>
+          <p className="quiet-note">{activeClass.name}的班級特性。在這個班級備課時，Manna 提建議都會參考（課例可以另外覆寫）。</p>
+          <p className={activeClass.class_profile ? "lead" : "empty-line"}>
+            {activeClass.class_profile ||
+              (unit.class_profile
+                ? "這個班級還沒有寫班級特性，目前沿用下面「這個單元的班級特性」。"
+                : "這個班級還沒有寫班級特性。")}
+          </p>
+          {(unit.class_profile || profileDirty) && (
+            <details className="unit-profile-legacy" open={!activeClass.class_profile}>
+              <summary>這個單元另外寫的班級特性（班級沒有寫時才使用）</summary>
+              {unitProfileFields}
+            </details>
+          )}
+        </>
+      ) : unit.classes.length > 1 ? (
+        // Opened from the library: several classes use it, so there is no one profile to show.
+        <>
+          <p className="quiet-note">
+            {unit.classes.length} 個班級在用這個單元，班級特性寫在各班的班級頁；從班級進來備課時，Manna 會參考那一班的。
+          </p>
+          {(unit.class_profile || profileDirty) && (
+            <details className="unit-profile-legacy">
+              <summary>這個單元另外寫的班級特性（班級沒有寫時才使用）</summary>
+              {unitProfileFields}
+            </details>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="quiet-note">單元內的課例會沿用這段描述（課例可以另外覆寫），Manna 提建議都會參考。</p>
           {unitProfileFields}
-        </details>
+        </>
       )}
     </section>
   );
 
-  const profileCard = classProfileCard || (
-    <section
-      className={`panel-card class-profile-card${route === "student" ? " is-route-first" : ""}`}
-      aria-labelledby="class-profile-heading"
-    >
-      <div className="card-heading">
-        <h3 id="class-profile-heading">{route === "student" ? "班級特性與學生卡點" : "班級特性"}</h3>
-        <span className="optional-label">選填</span>
-      </div>
-      <p className="field-hint">
-        單元內的課例會沿用這段描述（課例可以另外覆寫），Manna 的每次 AI 協助都會自動帶入。
-      </p>
-      {unitProfileFields}
-    </section>
-  );
-
-  const materialsCard = (
+  const materialsSection = (
     <MaterialsPanel
       unitId={unit.id}
       classId={activeClass?.id ?? null}
@@ -356,52 +358,85 @@ export function UnitPage() {
     />
   );
 
-  const grid = (
-    <div className={`unit-grid${route === "activity" ? " is-lessons-first" : ""}`}>
-      {route === "activity" ? (
-        <>
-          {lessonsCard}
-          {coreCard}
-        </>
-      ) : (
-        <>
-          {coreCard}
-          {lessonsCard}
-        </>
+  const routeSection = (
+    <section className="section route-card" aria-labelledby="route-heading">
+      <div className="head-row">
+        <h2 id="route-heading">{choiceEnabled ? `備課菜單：${PREP_ROUTE_LABELS[route]}` : "備課順序"}</h2>
+        {switching && <span className="quiet-note">切換中…</span>}
+      </div>
+      <RouteMenu
+        route={route}
+        unit={unit}
+        lessons={lessons}
+        materialsCount={materialsCount}
+      />
+      {choiceEnabled && (
+        <details className="route-switch">
+          <summary>換一種備課菜單</summary>
+          <RouteOptions
+            name={`unit-${unit.id}-route`}
+            legend="切換備課菜單"
+            value={route}
+            onChange={(r) => void switchRoute(r)}
+            disabled={switching}
+            hint="切換只改變畫面順序與強調，已寫的內容都會保留。"
+          />
+        </details>
       )}
-    </div>
+      {routeNotice && <Notice tone="success">{routeNotice}</Notice>}
+      <ErrorText message={routeError} />
+    </section>
   );
 
+  // The prep route only changes the order below the lessons: what it puts first comes first.
   const ORDER: Record<PrepRoute, string[]> = {
-    goal: ["grid", "profile", "materials"],
-    material: ["materials", "grid", "profile"],
-    student: ["profile", "grid", "materials"],
-    activity: ["grid", "profile", "materials"],
+    goal: ["profile", "materials"],
+    material: ["materials", "profile"],
+    student: ["profile", "materials"],
+    activity: ["profile", "materials"],
   };
-  const blocks: Record<string, ReactNode> = { grid, profile: profileCard, materials: materialsCard };
+  const blocks: Record<string, ReactNode> = { profile: profileSection, materials: materialsSection };
 
   return (
-    <section aria-labelledby="unit-heading">
-      <p className="breadcrumb">
+    <>
+      <p className="crumbs">
         {activeClass ? (
-          <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+          <>
+            <Link to="/">班級</Link> / <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+          </>
         ) : (
           <Link to="/library">備課庫</Link>
         )}{" "}
         / {unit.title}
       </p>
-      <div className="page-intro">
-        <p className="eyebrow warm">Unit{choiceEnabled ? ` · ${PREP_ROUTE_LABELS[route]}` : ""}</p>
-        <h2 id="unit-heading">{unit.title}</h2>
+      <div className="head-row page-head">
+        <div>
+          <h1 id="unit-heading">{unit.title}</h1>
+          <p className="lead">
+            {usedByText(unit.classes)}
+            {unit.classes.length === 0 && (
+              <>
+                。<Link to="/library">到備課庫加到班級</Link>
+              </>
+            )}
+          </p>
+        </div>
+        {continueLesson && (
+          <Link className="primary-button link-button" to={`/lessons/${continueLesson.id}`}>
+            繼續備課：{continueLesson.title}
+          </Link>
+        )}
       </div>
-      <ClassContextBar unit={unit} />
 
-      <div className="unit-stack">
-        {routeCard}
-        {ORDER[route].map((key) => (
-          <Fragment key={key}>{blocks[key]}</Fragment>
-        ))}
+      <div className="with-side">
+        {lessonsSection}
+        <UnitIdeas unit={unit} hint={IDEAS_ROUTE_HINTS[route]} />
       </div>
-    </section>
+
+      {ORDER[route].map((key) => (
+        <Fragment key={key}>{blocks[key]}</Fragment>
+      ))}
+      {routeSection}
+    </>
   );
 }

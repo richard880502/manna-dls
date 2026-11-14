@@ -20,7 +20,7 @@ interface PlanSectionProps {
  * closed, so half-written fields and loaded lists survive a collapse; `hidden` keeps it out of
  * view and out of the accessibility tree.
  */
-export function PlanSection({ id, title, count, tag, open, onToggle, level = 4, children }: PlanSectionProps) {
+export function PlanSection({ id, title, count, tag, open, onToggle, level = 3, children }: PlanSectionProps) {
   const label = typeof count === "number" ? `${title}（${count}）` : title;
   const Heading = level === 3 ? "h3" : "h4";
   return (

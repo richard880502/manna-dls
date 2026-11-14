@@ -70,12 +70,12 @@ export function CoreLinksPanel({
       <ErrorText message={error} />
       {backfillHint && (
         <p className="field-hint route-hint">
-          寫完活動後，勾選 1–3 個相關的學習重點，再 <Link to={`/units/${unitId}/core`}>回頭補寫 CoRe →</Link>
+          寫完活動後，勾選 1–3 個相關的學習重點，再 <Link to={`/units/${unitId}/core`}>回頭補寫單元想法</Link>
         </p>
       )}
       {focuses && focuses.length === 0 && (
         <p className="empty-preview">
-          這個單元的 CoRe 還沒有學習重點。可以略過，或先到 <Link to={`/units/${unitId}/core`}>單元 CoRe</Link> 補寫。
+          這個單元的單元想法還沒有學習重點。可以略過，或先到 <Link to={`/units/${unitId}/core`}>單元想法</Link> 補寫。
         </p>
       )}
       {focuses && focuses.length > 0 && (
@@ -96,8 +96,8 @@ export function CoreLinksPanel({
               </label>
             ))}
           </fieldset>
-          <div className="core-answers" aria-label="相關 CoRe 答案">
-            {linkedFocuses.length === 0 && <p className="field-hint">勾選後，相關的 CoRe 答案會顯示在這裡供參考。</p>}
+          <div className="core-answers" aria-label="相關的單元想法">
+            {linkedFocuses.length === 0 && <p className="field-hint">勾選後，相關的單元想法會顯示在這裡供參考。</p>}
             {linkedFocuses.map((f) => (
               <details key={f.id} className="source-detail core-answer-block" open>
                 <summary>{f.big_idea || "（未命名的學習重點）"}</summary>

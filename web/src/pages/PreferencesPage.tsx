@@ -51,8 +51,8 @@ export function PreferencesPage() {
   return (
     <section aria-labelledby="prefs-heading">
       <div className="page-intro">
-        <p className="eyebrow warm">我的備課偏好 · {versionLabel}</p>
-        <h2 id="prefs-heading">我的備課偏好</h2>
+        <p className="eyebrow">{versionLabel}</p>
+        <h1 id="prefs-heading">我的備課偏好</h1>
         <p>
           這些回答決定新單元的預設備課菜單、預設展開哪些輔助，以及 AI 建議的長度。偏好只改「預設」，不會隱藏任何功能；每次儲存都會保留舊版本。
         </p>
@@ -65,7 +65,7 @@ export function PreferencesPage() {
       {!loaded ? (
         <Loading />
       ) : (
-        <div className="panel-card form-card prefs-form">
+        <div className="form-card prefs-form">
           {questions.map((q) => (
             <PreferenceField key={q.id} question={q} answers={answers} onChange={change} disabled={saving} />
           ))}

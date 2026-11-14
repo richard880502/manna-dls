@@ -36,7 +36,7 @@ describe("admin page (pi)", () => {
     const user = userEvent.setup();
     renderApp("/admin");
 
-    expect(await screen.findByRole("heading", { name: "後台管理", level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "後台管理", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /後台管理/ })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("研究編號"), "T-2026-009");
@@ -92,7 +92,8 @@ describe("admin page (pi)", () => {
 
     // the rest of the app follows the new setting without a reload
     await user.click(screen.getByRole("link", { name: "備課庫" }));
-    await screen.findByLabelText("建立新單元");
+    await user.click(await screen.findByRole("button", { name: "新增單元" }));
+    await screen.findByLabelText("單元名稱");
     expect(screen.queryByRole("radio", { name: /教材優先/ })).not.toBeInTheDocument();
   });
 

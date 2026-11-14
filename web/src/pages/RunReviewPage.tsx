@@ -342,25 +342,31 @@ export function RunReviewPage() {
 
   return (
     <section aria-labelledby="review-heading">
-      <p className="breadcrumb">
-        <Link to="/record">Teach &amp; Record</Link> / <Link to={`/lessons/${detail.lesson_id}`}>{detail.lesson_title}</Link>{" "}
-        / 課後補寫
+      <p className="crumbs">
+        {detail.class_id ? (
+          <>
+            <Link to="/">班級</Link> / <Link to={`/classes/${detail.class_id}`}>{detail.class_name}</Link>
+          </>
+        ) : (
+          <Link to="/record">上課紀錄</Link>
+        )}{" "}
+        / <Link to={`/lessons/${detail.lesson_id}`}>{detail.lesson_title}</Link> / 課後補寫
       </p>
-      <div className="page-intro">
-        <p className="eyebrow warm">
+      <div className="page-head">
+        <p className="kicker">
           課後補寫 · {detail.class_name ? `${detail.class_name} · ` : ""}
           {formatDateTime(detail.started_at)}
           {detail.ended_at ? ` – ${formatClock(detail.ended_at, false)}` : "（進行中）"}
         </p>
-        <h2 id="review-heading">{detail.lesson_title}</h2>
-        <p>
-          書籤依時間排列，旁邊是本課最新的教案步驟。每張書籤的欄位都可以留白；沒有書籤，也可以直接完成。
+        <h1 id="review-heading">{detail.lesson_title}</h1>
+        <p className="lead">
+          書籤依時間排列，旁邊是這節課的教案步驟。每張書籤的欄位都可以留白；沒有書籤，也可以直接完成。
         </p>
       </div>
 
       {open && (
         <Notice tone="warn">
-          本節課還在進行中。<Link to={`/runs/${runId}`}>回到課堂紀錄</Link>
+          本節課還在進行中。<Link to={`/runs/${runId}`}>回到課堂</Link>
           <button type="button" className="ghost-button small-button review-end" onClick={() => void endNow()} disabled={busy}>
             結束本節課
           </button>
@@ -370,10 +376,10 @@ export function RunReviewPage() {
       <SyncStatus state={state} onRetry={() => void sync.retry()} />
 
       <div className="review-layout">
-        <aside className="panel-card review-plan" aria-labelledby="plan-steps-heading">
+        <aside className="review-plan" aria-labelledby="plan-steps-heading">
           <div className="card-heading">
-            <h3 id="plan-steps-heading">教案步驟</h3>
-            {detail.plan && <span className="soft-tag">第 {detail.plan.version_no} 版</span>}
+            <h2 id="plan-steps-heading">教案步驟</h2>
+            {detail.plan && <span className="quiet-note">第 {detail.plan.version_no} 版</span>}
           </div>
           {detail.plan?.objective && <p className="review-objective">目標：{detail.plan.objective}</p>}
           {steps.length === 0 ? (
@@ -395,7 +401,7 @@ export function RunReviewPage() {
 
         <div className="review-cards">
           <div className="card-heading">
-            <h3>書籤</h3>
+            <h2>書籤</h2>
             <span className="soft-tag">
               順利 {events.filter((e) => e.polarity === "good").length} · 卡住{" "}
               {events.filter((e) => e.polarity === "stuck").length}
@@ -419,7 +425,7 @@ export function RunReviewPage() {
         </div>
       </div>
 
-      <section className="panel-card review-complete" aria-label="完成課後補寫">
+      <section className="review-complete" aria-label="完成課後補寫">
         {detail.review_completed_at ? (
           <Notice tone="success">
             已在 {formatDateTime(detail.review_completed_at)} 完成課後補寫。之後仍可回來修改。
@@ -438,7 +444,7 @@ export function RunReviewPage() {
           </p>
         )}
         <p className="field-hint">
-          沒有填寫的欄位都可以留白，不會影響完成。下一步：Reflect &amp; Progress（Phase 2 規劃中）。
+          沒有填寫的欄位都可以留白，不會影響完成。
         </p>
         <ErrorText message={actionError} />
       </section>

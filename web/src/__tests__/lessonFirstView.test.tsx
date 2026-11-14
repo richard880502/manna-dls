@@ -65,12 +65,12 @@ function routes(extra: Record<string, unknown> = {}) {
 
 async function openLesson() {
   const rendered = renderApp("/lessons/7");
-  expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 2 })).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
   return rendered;
 }
 
 const objectiveField = () => screen.getByRole("textbox", { name: "今天要教什麼？" });
-const startButton = () => todayCard().getByRole("button", { name: "開始本節課" });
+const startButton = () => todayCard().getByRole("button", { name: "開始上課" });
 const callIndex = (api: ReturnType<typeof mockApi>, method: string, path: string) =>
   api.calls.findIndex((c) => c.method === method && c.path === path);
 
@@ -85,11 +85,11 @@ describe("lesson page first view (R1)", () => {
     const start = startButton();
     expect(today.getAllByRole("textbox")).toEqual([objective]);
     expect(objective.compareDocumentPosition(start) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(today.getByText("按「開始本節課」時，尚未儲存的內容會先存成新版本。課中不呼叫 AI。")).toBeInTheDocument();
+    expect(today.getByText("開始上課時會先幫你儲存。上課中不會呼叫 AI。")).toBeInTheDocument();
 
     // CoRe links, steps and the other aids: collapsed, with counts, after the start button.
     for (const [title, label] of [
-      ["連結的 CoRe 重點", "連結的 CoRe 重點（0）"],
+      ["單元想法的重點", "單元想法的重點（0）"],
       ["教學步驟", "教學步驟（0）"],
       ["本課背景", "本課背景：班級特性與我的範例"],
     ] as const) {
@@ -153,8 +153,8 @@ describe("lesson page first view (R1)", () => {
     expect(screen.getByLabelText("步驟 2")).toBeInTheDocument();
     expect(objectiveField()).toHaveValue("學生能說明倒裝的語意功能");
     // Linked focuses are counted before the section is opened.
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAccessibleName("連結的 CoRe 重點（1）");
-    expect(sectionToggle("連結的 CoRe 重點")).toHaveAttribute("aria-expanded", "false");
+    expect(sectionToggle("單元想法的重點")).toHaveAccessibleName("單元想法的重點（1）");
+    expect(sectionToggle("單元想法的重點")).toHaveAttribute("aria-expanded", "false");
   });
 
   it("past runs sit in a collapsed 上課紀錄與課後補寫 section; with a run in progress the button resumes it", async () => {
@@ -166,13 +166,13 @@ describe("lesson page first view (R1)", () => {
     );
     const user = userEvent.setup();
     await openLesson();
-    const resume = await todayCard().findByRole("button", { name: "回到課堂紀錄" });
+    const resume = await todayCard().findByRole("button", { name: "回到課堂" });
     expect(sectionToggle("上課紀錄與課後補寫")).toHaveAccessibleName("上課紀錄與課後補寫（1）");
     await openSection(user, "上課紀錄與課後補寫");
     expect(screen.getByRole("link", { name: /順利 2 · 卡住 1 · 課後補寫/ })).toHaveAttribute("href", "/runs/8/review");
 
     await user.click(resume);
-    expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.callsTo("POST", START)).toHaveLength(0);
   });
 });
@@ -186,10 +186,10 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
 
     // The reported case: type the objective, do not press 儲存教案, press 開始本節課.
     await user.type(objectiveField(), "學生能用 Never 開頭寫倒裝句");
-    expect(todayCard().getByText("尚未儲存")).toBeInTheDocument();
+    expect(screen.getByText("尚未儲存")).toBeInTheDocument();
     await user.click(startButton());
 
-    expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.callsTo("POST", VERSIONS)).toHaveLength(1);
     expect(api.lastBody("POST", VERSIONS)).toEqual({ objective: "學生能用 Never 開頭寫倒裝句", steps: [] });
     expect(api.callsTo("POST", START)).toHaveLength(1);
@@ -211,9 +211,9 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
 
     expect(await todayCard().findByText("教案沒有儲存成功，所以還沒開始上課：伺服器暫時發生問題")).toBeInTheDocument();
     expect(api.callsTo("POST", START)).toHaveLength(0);
-    expect(screen.getByRole("heading", { name: "第 1 課：Not only… but also", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
     expect(objectiveField()).toHaveValue("目標");
-    expect(todayCard().getByText("尚未儲存")).toBeInTheDocument();
+    expect(screen.getByText("尚未儲存")).toBeInTheDocument();
   });
 
   it("starts without a new version when nothing changed", async () => {
@@ -222,7 +222,7 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
     const user = userEvent.setup();
     await openLesson();
     await user.click(startButton());
-    expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.callsTo("POST", VERSIONS)).toHaveLength(0);
     expect(api.callsTo("POST", START)).toHaveLength(1);
   });
@@ -241,7 +241,7 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
     await user.type(screen.getByLabelText("本課班級描述（覆寫單元設定）"), "今天只有半班");
     await user.click(startButton());
 
-    expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.lastBody("PUT", "/api/lessons/7")).toEqual({ class_description: "今天只有半班", my_example: "" });
     expect(callIndex(api, "PUT", "/api/lessons/7")).toBeLessThan(callIndex(api, "POST", START));
     expect(api.callsTo("POST", VERSIONS)).toHaveLength(0);
@@ -256,7 +256,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     const { router } = await openLesson();
     await user.type(objectiveField(), "還沒存的目標");
 
-    await user.click(screen.getByRole("link", { name: "工作檯" }));
+    await user.click(screen.getByRole("link", { name: "班級" }));
     const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
     expect(dialog.getByText("離開這頁，尚未儲存的教案或本課背景就會遺失。")).toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "留在這頁" })).toHaveFocus();
@@ -271,7 +271,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: "工作檯" }));
+    await user.click(screen.getByRole("link", { name: "班級" }));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "不儲存，直接離開" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(api.callsTo("POST", VERSIONS)).toHaveLength(0);
@@ -283,7 +283,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     const user = userEvent.setup();
     const { router } = await openLesson();
     await user.type(objectiveField(), "要存的目標");
-    await user.click(screen.getByRole("link", { name: "工作檯" }));
+    await user.click(screen.getByRole("link", { name: "班級" }));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "儲存後離開" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(api.lastBody("POST", VERSIONS)).toEqual({ objective: "要存的目標", steps: [] });
@@ -295,7 +295,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     const user = userEvent.setup();
     const { router } = await openLesson();
     await user.type(objectiveField(), "目標");
-    await user.click(screen.getByRole("link", { name: "工作檯" }));
+    await user.click(screen.getByRole("link", { name: "班級" }));
     const dialog = within(await screen.findByRole("alertdialog"));
     await user.click(dialog.getByRole("button", { name: "儲存後離開" }));
     expect(await dialog.findByText("沒有儲存成功，所以還沒離開：伺服器暫時發生問題")).toBeInTheDocument();
@@ -318,10 +318,10 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     await user.type(objectiveField(), "目標");
     expect(unload()).toBe(true);
 
-    await user.click(todayCard().getByRole("button", { name: "儲存教案（產生新版本）" }));
-    expect(await todayCard().findByText(/已儲存為第 1 版/)).toBeInTheDocument();
+    await user.click(todayCard().getByRole("button", { name: "儲存教案" }));
+    expect(await screen.findByText(/已儲存.*第 1 版/)).toBeInTheDocument();
     expect(unload()).toBe(false);
-    await user.click(screen.getByRole("link", { name: "工作檯" }));
+    await user.click(screen.getByRole("link", { name: "班級" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
