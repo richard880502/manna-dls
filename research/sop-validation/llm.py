@@ -91,6 +91,10 @@ def chat(
         body["temperature"] = temperature
     out: dict = {}
     for attempt in range(1, retries + 2):
+        if attempt > 1:
+            # The gateway caches identical requests (an identical retry comes back in <1 s with the
+            # same failure), and runaway output tends to repeat at the same temperature: change it.
+            body["temperature"] = round((temperature or 0.0) + 0.15 * (attempt - 1), 2)
         t0 = time.time()
         err, text, parsed, usage, finish = None, "", None, {}, None
         try:
@@ -126,8 +130,8 @@ def chat(
         with open(DATA / "runs" / log, "a") as f:
             f.write(json.dumps({"tag": tag, "ts": time.time(), "schema_name": schema_name,
                                 "system": system, "user": user, **out}, ensure_ascii=False) + "\n")
-        if err is None or err == "max_tokens":
-            break
+        if err is None or (err == "max_tokens" and attempt >= 2):
+            break                      # max_tokens (runaway output) gets exactly one retry
         time.sleep(5 * attempt)  # back off on transport / API errors
     return out
 

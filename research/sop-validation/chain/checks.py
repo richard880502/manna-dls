@@ -326,7 +326,10 @@ def check_exit(out: dict, objective_ids: list[str], exit_minutes: int, task_prom
 
 
 # ------------------------------------------------------------------ (g) worksheet
-ANSWER_MARKERS = re.compile(r"\b(answer key|answers?\s*:|correct answer|\(correct\)|✓|✔)", re.I)
+# "Example answer:" inside a worked example (on a different question) is a legitimate scaffold, so a bare
+# "answer:" is not treated as a marker
+# (a tick is not a marker either: "check (✓) your choice" is a normal instruction)
+ANSWER_MARKERS = re.compile(r"(\banswer key\b|\bcorrect answers?\b|\(correct\))", re.I)
 
 
 def student_strings(ws: dict) -> list[str]:
@@ -353,6 +356,7 @@ def check_worksheet(ws: dict, version: str, block_ids: list[str], known_item_ids
     def section_text_without_options(s):
         return norm(" ".join([s["heading_en"], s["instructions_en"], *s["supports_en"]] + [it["prompt_en"] for it in s["items"]])).lower()
     sec_of = {it["item_id"]: section_text_without_options(s) for s, it in s_items}
+    own_prompt = {it["item_id"]: norm(it["prompt_en"]).lower() for _, it in s_items}
 
     def leaked(a):
         ans = norm(a["answer_en"]).lower().rstrip(".")
@@ -361,7 +365,11 @@ def check_worksheet(ws: dict, version: str, block_ids: list[str], known_item_ids
             return True
         if fmt[iid] in ("選擇題", "配對題") and words(ans) < 4:
             return True
-        if words(ans) >= 4 or (fmt[iid] == "填空題" and len(ans) >= 5):
+        if fmt[iid] == "填空題":
+            # a word bank that lists the answer among other words is a scaffold, not a leak:
+            # only the item's own prompt must not contain the answer
+            return not (len(ans) >= 4 and ans in own_prompt.get(iid, "")) or f"{iid}: '{a['answer_en']}' appears in its own prompt"
+        if words(ans) >= 4:
             return ans not in sec_of.get(iid, "") or f"{iid}: '{a['answer_en']}' appears in student section"
         return True
 
@@ -407,7 +415,9 @@ def check_worksheet(ws: dict, version: str, block_ids: list[str], known_item_ids
 def check_versions(sheets: dict[str, dict]) -> list[Check]:
     """Cross-version check (spec §5.4): same objectives and core tasks; support decreases."""
     def supports(ws):
-        return sum(len(s["supports_en"]) for s in ws["student"]["sections"])
+        # amount of support text (characters): the number of entries is not comparable because the
+        # model sometimes merges all steps into one entry and sometimes lists them separately
+        return sum(len(x) for s in ws["student"]["sections"] if s["kind"] in ("warm_up", "main_task") for x in s["supports_en"])
 
     def blocks(ws):
         return [s["source_id"] for s in ws["student"]["sections"] if s["kind"] == "main_task"]
@@ -420,6 +430,6 @@ def check_versions(sheets: dict[str, dict]) -> list[Check]:
     return [
         one("versions_share_core_blocks", True, all(b == bl[0] for b in bl), str(bl)),
         one("support_decreases_basic_to_advanced", True, sup == sorted(sup, reverse=True) and (len(sup) < 2 or sup[0] > sup[-1]),
-            f"supports per version {dict(zip(have, sup))}"),
+            f"support characters per version {dict(zip(have, sup))}"),
         one("versions_actually_differ", True, len(set(texts)) == len(texts), "two versions are identical"),
     ]

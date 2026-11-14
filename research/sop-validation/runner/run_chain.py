@@ -32,6 +32,7 @@ from labels import ANSWER_FORMATS, SCAFFOLD_TYPES, STUDENT_TASKS, VERSIONS  # no
 from llm import chat  # noqa: E402
 
 REPLAY: dict[str, dict] | None = None     # tag -> logged call (set by --rescore)
+RETRY_FAILED_G = False                    # set by --retry-failed-g
 MINUTES = 50
 EXIT_MINUTES = 5
 ITEM_BUDGET = 12
@@ -178,18 +179,29 @@ def chain(p: dict, run_dir: Path, variant: str, reuse_dir: Path | None, steps: s
     known = {it["item_id"] for b in t["blocks"] for it in b["items"]}
     passage = "\n".join(paras)
     sheets = {}
-    if "g" in steps:
+    if "g" in steps or RETRY_FAILED_G:
         for ver in VERSIONS:
+            if RETRY_FAILED_G:
+                prev = load_step(run_dir, pid, f"g-{ver}")
+                if not prev or prev["output"] is not None:
+                    continue
             vg = {**base, "version": ver, "generation_settings": "、".join(SETTINGS),
                   "objectives_section_rule": "learning_objectives（顯示學習目標，放在最前面）→ ",
                   "objectives_detail": objectives_detail(o), "warmup_json": json.dumps(w, ensure_ascii=False),
                   "tasks_json": json.dumps(t, ensure_ascii=False), "scaffolds_json": json.dumps(re_["output"], ensure_ascii=False),
                   "exit_json": json.dumps(rf["output"], ensure_ascii=False)}
+            if RETRY_FAILED_G:
+                # the step produced no usable JSON (runaway output hit max_tokens and the identical retry was
+                # served from the gateway cache): regenerate once as attempt 2 with a different temperature
+                system, user_t = load_prompt("sop_worksheet")
+                chat(render(system, vg), render(user_t, vg), SC.ALL["sop_worksheet"], "sop_worksheet",
+                     tag=f"{run_dir.name}:{pid}:g-{ver}:a2", log=log, temperature=0.35)
+                continue
             rg = run_step(run_dir, pid, f"g-{ver}", "sop_worksheet", vg,
                           lambda s, ver=ver: C.check_worksheet(s, ver, block_ids, known, passage, True), log)
             if rg["output"] is not None:
                 sheets[ver] = rg["output"]
-        if sheets:
+        if sheets and not RETRY_FAILED_G:
             cv = C.check_versions(sheets)
             (run_dir / pid / "g-versions.json").write_text(json.dumps(
                 {"run": run_dir.name, "passage": pid, "step": "g-versions", "checks": [c.to_dict() for c in cv],
@@ -207,20 +219,29 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--rescore", action="store_true",
                     help="no API calls: recompute all checks from the call log of this run (after changing checks.py)")
+    ap.add_argument("--retry-failed-g", action="store_true",
+                    help="regenerate (as attempt 2) only the worksheet versions that produced no JSON; then run --rescore")
     a = ap.parse_args()
+    global REPLAY, RETRY_FAILED_G
+    if a.retry_failed_g:
+        RETRY_FAILED_G = True
+        a.steps = ""                      # steps a-f are loaded from disk
+        cfg = json.loads((DATA / "runs" / "chain" / a.run / "config.json").read_text())
+        a.variant, a.reuse = cfg.get("variant", a.variant), cfg.get("reuse", a.reuse)
+        a.passages = a.passages or cfg.get("passages")
     if a.rescore:
-        global REPLAY
         REPLAY = {}
         for line in open(DATA / "runs" / f"chain-{a.run}.jsonl"):
             c = json.loads(line)
             REPLAY[c["tag"]] = c       # later lines (API-level retries) overwrite earlier ones
     run_dir = DATA / "runs" / "chain" / a.run
     run_dir.mkdir(parents=True, exist_ok=True)
-    if not a.rescore:
+    if not a.rescore and not a.retry_failed_g:
         (run_dir / "config.json").write_text(json.dumps(vars(a), ensure_ascii=False))
-    else:
+    elif a.rescore:
         cfg = json.loads((run_dir / "config.json").read_text())
         a.variant, a.reuse = cfg.get("variant", a.variant), cfg.get("reuse", a.reuse)
+        a.passages = a.passages or cfg.get("passages")
     ps = [p for p in load_passages() if not a.passages or p["id"] in a.passages]
     reuse = DATA / "runs" / "chain" / a.reuse if a.reuse else None
     with ThreadPoolExecutor(a.workers) as ex:

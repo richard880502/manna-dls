@@ -37,6 +37,7 @@ prompts, schemas, the de-identified design rules, one original test passage and 
 | `vocab/analyze.py` | Deterministic CEEC level analysis of worksheet text (no LLM). |
 | `runner/run_chain.py` | Runs steps (a)–(g) on the validation passages; one repair attempt per step. |
 | `runner/report.py`, `runner/show.py` | Result tables / per-step log. |
+| `runner/call_stats.py` | Totals over the call logs (failures by kind, cache hits, longest output). |
 | `runner/ablation_codes.py` | Step (b) without the curriculum list (hallucinated-code rate). |
 | `passages/manifest.json` | Validation passages: three are pointers (worksheet id + line numbers + hash) into the local worksheet extraction, one is an original passage stored here. |
 
@@ -65,6 +66,8 @@ $PY runner/run_chain.py --run r1
 $PY runner/run_chain.py --run r2
 $PY runner/run_chain.py --run r1-rules --variant rules --reuse r1 --passages P2 P4
 $PY runner/run_chain.py --run r2-rules --variant rules --reuse r2 --passages P2 P4
+$PY runner/run_chain.py --run r1 --retry-failed-g   # regenerate only worksheet versions that returned no JSON
+$PY runner/run_chain.py --run r1 --rescore          # no API calls: recompute checks from the call log after editing checks.py
 $PY runner/report.py r1 r2
 $PY runner/report.py r1-rules r2-rules --compare r1 r2
 $PY runner/ablation_codes.py --base r1 --repeat 2

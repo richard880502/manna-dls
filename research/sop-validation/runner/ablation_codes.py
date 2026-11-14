@@ -68,7 +68,7 @@ def main() -> None:
                 "curriculum_items": "（本次未提供清單）"}
         for k in range(a.repeat):
             r = chat(system, render(user_t, vars), schema, "sop_objectives_nolist", tag=f"ablation:{p['id']}:{k}",
-                     log="ablation.jsonl", temperature=0.2, max_tokens=6000)
+                     log="ablation.jsonl", temperature=0.2 + 0.1 * k, max_tokens=6000)   # vary: the gateway caches identical requests
             if not r["ok"]:
                 print(p["id"], k, "error", r["error"])
                 continue
