@@ -14,7 +14,7 @@ interface NavEntry {
 
 const NAV: NavEntry[] = [
   { to: "/", label: "工作檯", symbol: "⌂", end: true },
-  { to: "/plan", label: "Study & Plan", symbol: "▤" },
+  { to: "/library", label: "備課庫", symbol: "▤" },
   { to: "/record", label: "Teach & Record", symbol: "▣" },
   { to: "/reflect", label: "Reflect & Progress", symbol: "⌁" },
   { to: "/share", label: "Share & Connect", symbol: "♧" },
@@ -26,7 +26,7 @@ const NAV: NavEntry[] = [
 /** One stroke icon set for the sidebar (20px grid, 1.6 stroke, currentColor). Unknown paths keep their text symbol. */
 const NAV_ICON_PATHS: Record<string, string> = {
   "/": "M3.5 9.2 10 4l6.5 5.2V16a1 1 0 0 1-1 1h-3.25v-4.5h-4.5V17H4.5a1 1 0 0 1-1-1z",
-  "/plan": "M10 5.6C8.4 4.5 6.3 4 3.5 4v11.2c2.8 0 4.9.5 6.5 1.6 1.6-1.1 3.7-1.6 6.5-1.6V4c-2.8 0-4.9.5-6.5 1.6zm0 0v11.2",
+  "/library": "M10 5.6C8.4 4.5 6.3 4 3.5 4v11.2c2.8 0 4.9.5 6.5 1.6 1.6-1.1 3.7-1.6 6.5-1.6V4c-2.8 0-4.9.5-6.5 1.6zm0 0v11.2",
   "/record": "M6 3.5h8a1 1 0 0 1 1 1v12.3l-5-3.1-5 3.1V4.5a1 1 0 0 1 1-1z",
   "/reflect": "M15.8 8.5A6 6 0 1 0 16 11.5M16.2 4.2v4.3h-4.3",
   "/share": "M7.5 9.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 16.5c0-2.6 2-4.5 4.5-4.5s4.5 1.9 4.5 4.5M13.5 9.5a2 2 0 1 0 0-4M14 12.2c1.8.3 3 1.9 3 4.3",
@@ -48,7 +48,8 @@ function NavIcon({ to, symbol }: { to: string; symbol: string }) {
 
 function viewTitle(pathname: string): { eyebrow: string; title: string } {
   if (pathname === "/") return { eyebrow: "Manna DLS · Phase 1 AI 備課", title: "教師工作檯" };
-  if (pathname === "/plan") return { eyebrow: "01 · Study & Plan", title: "Study & Plan｜單元與課例" };
+  if (pathname === "/library" || pathname === "/plan") return { eyebrow: "01 · Study & Plan", title: "備課庫｜單元設計" };
+  if (/^\/classes\/\d+/.test(pathname)) return { eyebrow: "工作檯", title: "班級" };
   if (/^\/units\/\d+\/core/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "單元前 CoRe" };
   if (/^\/units\/\d+/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "單元與課例" };
   if (/^\/lessons\/\d+/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "課例備課" };
@@ -134,7 +135,9 @@ export function Layout() {
                 to={item.to}
                 end={item.end}
                 onClick={() => setMenuOpen(false)}
-                className={({ isActive }) => `nav-item${isActive ? " is-active" : ""}`}
+                className={({ isActive }) =>
+                  `nav-item${isActive || (item.to === "/library" && location.pathname === "/plan") ? " is-active" : ""}`
+                }
               >
                 <span className="nav-symbol" aria-hidden="true">
                   <NavIcon to={item.to} symbol={item.symbol} />

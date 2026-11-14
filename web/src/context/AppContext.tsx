@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ApiError, api, setUnauthorizedHandler } from "../api/client";
 import type { AppConfig, Preferences, Teacher } from "../api/types";
-import { clearToken, loadToken, saveToken } from "../lib/storage";
+import { clearToken, loadCurrentClass, loadToken, saveCurrentClass, saveToken } from "../lib/storage";
 
 interface AppContextValue {
   config: AppConfig | null;
@@ -19,6 +19,12 @@ interface AppContextValue {
   /** "loaded" with preferences === null means the first-use survey has not been done. */
   preferencesStatus: "idle" | "loading" | "loaded" | "error";
   setPreferences: (prefs: Preferences) => void;
+  /**
+   * 目前班級: the class the teacher is working in (set by entering a class, cleared by entering
+   * the library). Pages only honour it when that class uses the unit on screen.
+   */
+  currentClassId: number | null;
+  setCurrentClassId: (classId: number | null) => void;
   patchConfig: (change: Partial<AppConfig>) => void;
   login: (code: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -39,6 +45,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Teacher id the preferences were fetched for (null = not fetched yet). */
   const [prefsFor, setPrefsFor] = useState<number | null>(null);
   const [prefsError, setPrefsError] = useState(false);
+  const [currentClassId, setCurrentClassState] = useState<number | null>(() => loadCurrentClass());
+
+  const setCurrentClassId = useCallback((classId: number | null) => {
+    saveCurrentClass(classId);
+    setCurrentClassState(classId);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -59,6 +71,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTeacher(null);
     setAuthChecked(true);
     setSessionNotice(notice);
+    saveCurrentClass(null);
+    setCurrentClassState(null);
   }, []);
 
   useEffect(() => {
@@ -174,6 +188,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       preferences: currentPreferences,
       preferencesStatus,
       setPreferences,
+      currentClassId,
+      setCurrentClassId,
       patchConfig,
       login,
       logout,
@@ -189,6 +205,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currentPreferences,
       preferencesStatus,
       setPreferences,
+      currentClassId,
+      setCurrentClassId,
       patchConfig,
       login,
       logout,

@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, useState, type Ref } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { LessonDetail } from "../../api/types";
+import { profileSourceText } from "../../lib/classes";
 import { MY_EXAMPLE_MAX_CHARS } from "../../lib/preferences";
 import { ErrorText, Notice } from "../common";
 
@@ -13,6 +14,8 @@ export interface LessonContextHandle {
 interface LessonContextCardProps {
   lesson: LessonDetail;
   unitProfile: string;
+  /** 目前班級 (null: no class context). */
+  activeClass?: { id: number; name: string } | null;
   onSaved: (detail: LessonDetail) => void;
   /** Reports unsaved edits. Pass a stable function. */
   onDirtyChange?: (dirty: boolean) => void;
@@ -24,7 +27,14 @@ interface LessonContextCardProps {
  * 「更多備課工具」. Both are sent to Manna with every suggestion request; 我的範例 stays in this
  * lesson only.
  */
-export function LessonContextCard({ lesson, unitProfile, onSaved, onDirtyChange, ref }: LessonContextCardProps) {
+export function LessonContextCard({
+  lesson,
+  unitProfile,
+  activeClass = null,
+  onSaved,
+  onDirtyChange,
+  ref,
+}: LessonContextCardProps) {
   const [classDescription, setClassDescription] = useState(lesson.class_description ?? "");
   const [myExample, setMyExample] = useState(lesson.my_example ?? "");
   const [dirty, setDirty] = useState(false);
@@ -44,10 +54,11 @@ export function LessonContextCard({ lesson, unitProfile, onSaved, onDirtyChange,
     setError(null);
     setSaved(false);
     try {
-      const detail = await api.updateLesson(lesson.id, {
-        class_description: classDescription.trim(),
-        my_example: myExample,
-      });
+      const detail = await api.updateLesson(
+        lesson.id,
+        { class_description: classDescription.trim(), my_example: myExample },
+        activeClass?.id,
+      );
       onSaved(detail);
       setClassDescription(detail.class_description ?? classDescription.trim());
       setMyExample(detail.my_example ?? myExample);
@@ -68,19 +79,27 @@ export function LessonContextCard({ lesson, unitProfile, onSaved, onDirtyChange,
   return (
     <div className="lesson-context-card">
       <div className="effective-profile" aria-label="目前生效的班級特性">
-        <span>目前生效的班級特性{overridden ? "（本課覆寫）" : "（沿用單元設定）"}</span>
-        <p>{effective || "尚未設定。可以在單元頁或下面填寫。"}</p>
+        <span>
+          目前生效的班級特性（
+          {overridden
+            ? "本課覆寫"
+            : activeClass
+              ? profileSourceText(lesson.class_profile_source, activeClass.name)
+              : "沿用單元設定"}
+          ）
+        </span>
+        <p>{effective || (activeClass ? "尚未設定。可以在班級頁或下面填寫。" : "尚未設定。可以在單元頁或下面填寫。")}</p>
       </div>
 
       <label className="field-label" htmlFor="lesson-class-override">
-        本課班級描述（覆寫單元設定）
+        {activeClass ? "本課班級描述（覆寫班級的班級特性）" : "本課班級描述（覆寫單元設定）"}
       </label>
       <textarea
         id="lesson-class-override"
         rows={2}
         value={classDescription}
         disabled={saving}
-        placeholder="留白則沿用單元的班級特性"
+        placeholder={activeClass ? "留白則沿用班級的班級特性" : "留白則沿用單元的班級特性"}
         onChange={(e) => {
           setClassDescription(e.target.value);
           setDirty(true);

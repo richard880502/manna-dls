@@ -31,3 +31,29 @@ export function clearToken(): void {
 }
 
 export const TOKEN_STORAGE_KEY = TOKEN_KEY;
+
+// 目前班級 (the class the teacher is working in): per tab, so two tabs can be in two classes.
+const CURRENT_CLASS_KEY = "manna.currentClass";
+let memoryClass: number | null = null;
+
+export function loadCurrentClass(): number | null {
+  try {
+    const raw = window.sessionStorage.getItem(CURRENT_CLASS_KEY);
+    const id = raw === null ? NaN : Number(raw);
+    return Number.isInteger(id) && id > 0 ? id : null;
+  } catch {
+    return memoryClass;
+  }
+}
+
+export function saveCurrentClass(classId: number | null): void {
+  memoryClass = classId;
+  try {
+    if (classId === null) window.sessionStorage.removeItem(CURRENT_CLASS_KEY);
+    else window.sessionStorage.setItem(CURRENT_CLASS_KEY, String(classId));
+  } catch {
+    // ignore: memory copy is used instead
+  }
+}
+
+export const CURRENT_CLASS_STORAGE_KEY = CURRENT_CLASS_KEY;

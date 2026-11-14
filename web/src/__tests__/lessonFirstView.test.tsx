@@ -34,6 +34,8 @@ const run: LessonRun = {
   review_completed_at: null,
   good_count: 0,
   stuck_count: 0,
+  class_id: null,
+  class_name: null,
 };
 const runDetail: RunDetail = { ...run, events: [], plan: null, remotes: [] };
 
@@ -264,7 +266,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     expect(objectiveField()).toHaveValue("還沒存的目標");
 
     // Escape stays too.
-    await user.click(screen.getAllByRole("link", { name: "Study & Plan" })[0] as HTMLElement);
+    await user.click(screen.getAllByRole("link", { name: "備課庫" })[0] as HTMLElement);
     await screen.findByRole("alertdialog");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();

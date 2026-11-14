@@ -8,6 +8,7 @@ Object.defineProperty(window, "scrollTo", { value: () => undefined, writable: tr
 beforeEach(() => {
   try {
     window.localStorage.clear();
+    window.sessionStorage.clear();
   } catch {
     // ignore
   }

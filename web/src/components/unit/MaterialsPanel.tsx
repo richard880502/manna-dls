@@ -19,6 +19,8 @@ interface CandidateState {
 
 interface MaterialsPanelProps {
   unitId: number;
+  /** 目前班級: its profile goes into Manna's context. */
+  classId?: number | null;
   /** Material-first route: shown first and expanded. Otherwise collapsed but always openable. */
   emphasized: boolean;
   /** Called after a candidate was put into the CoRe draft (teacher-initiated). */
@@ -27,7 +29,7 @@ interface MaterialsPanelProps {
 }
 
 /** 教材優先：貼上教材 → 請 Manna 從教材提出候選學習重點 → 由教師決定是否放進 CoRe. */
-export function MaterialsPanel({ unitId, emphasized, onCoreChanged, onCountChange }: MaterialsPanelProps) {
+export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onCountChange }: MaterialsPanelProps) {
   const { aiEnabled } = useApp();
   /** null = follow the route default (open when material-first); true/false once the teacher toggles. */
   const [openToggle, setOpenToggle] = useState<boolean | null>(null);
@@ -124,7 +126,7 @@ export function MaterialsPanel({ unitId, emphasized, onCoreChanged, onCountChang
     setCandidateError(null);
     logScaffold("SC-MATERIAL", "expand", { trigger: "request" });
     try {
-      const res = await api.materialFocuses(unitId, materialId);
+      const res = await api.materialFocuses(unitId, materialId, classId);
       setResult(res);
       if (res.status === "shown") logScaffold("SC-MATERIAL", "show", { trigger: "candidates" });
     } catch (err) {

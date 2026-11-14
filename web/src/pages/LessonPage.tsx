@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { LessonDetail, LessonRun, LessonStep, Unit } from "../api/types";
+import { ClassContextBar } from "../components/classes/ClassContextBar";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { CasesPanel } from "../components/plan/CasesPanel";
@@ -13,6 +14,7 @@ import { SiopPanel } from "../components/plan/SiopPanel";
 import { StepsEditor, hasDiffData, newStep, type EditableStep } from "../components/plan/StepsEditor";
 import { SuggestionsPanel } from "../components/plan/SuggestionsPanel";
 import { useApp } from "../context/AppContext";
+import { profileSourceText, useActiveClass } from "../lib/classes";
 import { formatDate, formatDateTime } from "../lib/labels";
 import { effectiveRoute, hasHardest } from "../lib/preferences";
 import { startOrResumeRun } from "../lib/runs";
@@ -69,6 +71,10 @@ export function LessonPage() {
   const [runs, setRuns] = useState<LessonRun[] | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  /** 這節課是哪一班？ shown when several classes use the unit and none is the current class. */
+  const [choosingClass, setChoosingClass] = useState(false);
+  const { classes: unitClasses, active: activeClass, choose: chooseClass } = useActiveClass(unit);
+  const activeClassId = activeClass?.id ?? null;
 
   const [open, setOpen] = useState<OpenSections>(ALL_CLOSED);
   const [linkedCount, setLinkedCount] = useState(0);
@@ -120,6 +126,32 @@ export function LessonPage() {
       alive = false;
     };
   }, [lessonId]);
+
+  // In a class context the effective class profile is the class's (unless the lesson overrides it).
+  const lessonLoaded = lesson !== null;
+  useEffect(() => {
+    if (!lessonLoaded || activeClassId === null) return;
+    let alive = true;
+    api
+      .getLesson(lessonId, activeClassId)
+      .then((detail) => {
+        if (!alive) return;
+        setLesson((prev) =>
+          prev
+            ? {
+                ...prev,
+                effective_class_profile: detail.effective_class_profile ?? prev.effective_class_profile,
+                class_profile_source: detail.class_profile_source,
+              }
+            : prev,
+        );
+      })
+      // The page works without it: only the displayed profile would be the unit's.
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [lessonId, lessonLoaded, activeClassId]);
 
   const markEdited = useCallback(() => {
     editSeq.current += 1;
@@ -217,8 +249,18 @@ export function LessonPage() {
     return null;
   }
 
-  /** 開始本節課 (or 回到課堂紀錄): unsaved changes are saved first; if that fails, nothing starts. */
-  async function start() {
+  /**
+   * 開始本節課 (or 回到課堂紀錄): unsaved changes are saved first; if that fails, nothing starts.
+   * The run belongs to `classId` (default: the current class). When several classes use the unit
+   * and none is current, the page asks which class first.
+   */
+  async function start(classId: number | null = activeClassId) {
+    if (classId === null && unitClasses.length > 1) {
+      setChoosingClass(true);
+      setStartError(null);
+      return;
+    }
+    setChoosingClass(false);
     const seq = editSeq.current;
     setStarting(true);
     setStartError(null);
@@ -230,8 +272,8 @@ export function LessonPage() {
       return;
     }
     try {
-      const current = runs?.find((r) => r.ended_at === null);
-      const runId = current ? current.id : await startOrResumeRun(lessonId);
+      const current = runs?.find((r) => r.ended_at === null && (r.class_id ?? null) === classId);
+      const runId = current ? current.id : await startOrResumeRun(lessonId, classId);
       // Everything is saved, unless the teacher typed while it was saving: then the guard asks.
       if (editSeq.current === seq) guard.release();
       navigate(`/runs/${runId}`);
@@ -248,10 +290,15 @@ export function LessonPage() {
   const activityFirst = route === "activity";
   const effectiveProfile =
     lesson.effective_class_profile ?? (lesson.class_description || unit?.class_profile || "");
-  const openRun = runs?.find((r) => r.ended_at === null);
+  // The open run of the class in play; a lesson can be open in another class at the same time.
+  const openRunIn = (classId: number | null) =>
+    runs?.find((r) => r.ended_at === null && (r.class_id ?? null) === classId);
+  const openRun = openRunIn(activeClassId);
   const pastRuns = (runs ?? []).filter((r) => r.ended_at !== null);
 
-  const suggestions = <SuggestionsPanel lessonId={lesson.id} onAppendStep={appendStep} pinned={ragOnTop} />;
+  const suggestions = (
+    <SuggestionsPanel lessonId={lesson.id} classId={activeClassId} onAppendStep={appendStep} pinned={ragOnTop} />
+  );
 
   const today = (
     <section className="panel-card lesson-today" aria-labelledby="today-heading">
@@ -285,7 +332,38 @@ export function LessonPage() {
           {saving && !starting ? "儲存中…" : "儲存教案（產生新版本）"}
         </button>
       </div>
-      <p className="field-hint">按「開始本節課」時，尚未儲存的內容會先存成新版本。課中不呼叫 AI。</p>
+      {choosingClass && (
+        <div className="class-chooser" role="group" aria-labelledby="class-chooser-heading">
+          <p className="field-label" id="class-chooser-heading">
+            這節課是哪一班？
+          </p>
+          <p className="field-hint">這個單元有 {unitClasses.length} 個班級在用，上課紀錄會記在你選的班級。</p>
+          <div className="class-chooser-options">
+            {unitClasses.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="secondary-button"
+                disabled={starting}
+                onClick={() => {
+                  chooseClass(c.id);
+                  void start(c.id);
+                }}
+              >
+                {c.name}
+                {openRunIn(c.id) ? "（上課中）" : ""}
+              </button>
+            ))}
+            <button type="button" className="ghost-button" disabled={starting} onClick={() => setChoosingClass(false)}>
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+      <p className="field-hint">
+        {activeClass ? `上課紀錄會記在「${activeClass.name}」。` : ""}
+        按「開始本節課」時，尚未儲存的內容會先存成新版本。課中不呼叫 AI。
+      </p>
       {savedMessage && <Notice tone="success">{savedMessage}</Notice>}
       <ErrorText message={saveError} />
       <ErrorText message={startError} />
@@ -352,8 +430,12 @@ export function LessonPage() {
   return (
     <section aria-labelledby="lesson-heading">
       <p className="breadcrumb">
-        <Link to="/plan">Study &amp; Plan</Link> / <Link to={`/units/${lesson.unit_id}`}>{unit?.title ?? "單元"}</Link> /{" "}
-        {lesson.title}
+        {activeClass ? (
+          <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+        ) : (
+          <Link to="/library">備課庫</Link>
+        )}{" "}
+        / <Link to={`/units/${lesson.unit_id}`}>{unit?.title ?? "單元"}</Link> / {lesson.title}
       </p>
       <div className="page-intro">
         <p className="eyebrow warm">
@@ -362,9 +444,16 @@ export function LessonPage() {
         <h2 id="lesson-heading">{lesson.title}</h2>
         <p>
           {lesson.lesson_date ? `上課日期 ${formatDate(lesson.lesson_date)}` : "未設定上課日期"}
-          {effectiveProfile ? ` · 班級特性：${effectiveProfile}` : ""}
+          {effectiveProfile
+            ? ` · 班級特性${
+                activeClass && lesson.class_profile_source
+                  ? `（${profileSourceText(lesson.class_profile_source, activeClass.name)}）`
+                  : ""
+              }：${effectiveProfile}`
+            : ""}
         </p>
       </div>
+      <ClassContextBar unit={unit} />
 
       {lesson.previous_next_change && (
         <Notice tone="warn">
@@ -422,6 +511,7 @@ export function LessonPage() {
                 ref={contextRef}
                 lesson={lesson}
                 unitProfile={unit?.class_profile ?? ""}
+                activeClass={activeClass}
                 onDirtyChange={setContextDirty}
                 onSaved={(detail) =>
                   setLesson((prev) =>
@@ -431,6 +521,7 @@ export function LessonPage() {
                           class_description: detail.class_description ?? prev.class_description,
                           my_example: detail.my_example ?? prev.my_example,
                           effective_class_profile: detail.effective_class_profile ?? prev.effective_class_profile,
+                          class_profile_source: detail.class_profile_source ?? prev.class_profile_source,
                         }
                       : prev,
                   )

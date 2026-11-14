@@ -4,9 +4,11 @@ import { DemoBanner, ErrorText, Loading } from "./components/common";
 import { Layout } from "./components/Layout";
 import { AppProvider, useApp } from "./context/AppContext";
 import { AdminPage } from "./pages/AdminPage";
+import { ClassPage } from "./pages/ClassPage";
 import { CorePage } from "./pages/CorePage";
-import { HomePage, PlanIndexPage } from "./pages/HomePage";
+import { HomePage } from "./pages/HomePage";
 import { LessonPage } from "./pages/LessonPage";
+import { LibraryPage } from "./pages/LibraryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PreferencesPage } from "./pages/PreferencesPage";
 import { RecordIndexPage } from "./pages/RecordIndexPage";
@@ -64,7 +66,10 @@ export function AppRoutes() {
         }
       >
         <Route index element={<HomePage />} />
-        <Route path="plan" element={<PlanIndexPage />} />
+        <Route path="classes/:classId" element={<ClassPage />} />
+        <Route path="library" element={<LibraryPage />} />
+        {/* The library used to be the Study & Plan index; old links keep working. */}
+        <Route path="plan" element={<LibraryPage />} />
         <Route path="units/:unitId" element={<UnitPage />} />
         <Route path="units/:unitId/core" element={<CorePage />} />
         <Route path="lessons/:lessonId" element={<LessonPage />} />

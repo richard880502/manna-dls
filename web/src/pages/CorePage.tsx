@@ -13,8 +13,10 @@ import type {
 } from "../api/types";
 import { ErrorText, Loading, Notice, PrivacyHint } from "../components/common";
 import { CoreCell } from "../components/core/CoreCell";
+import { ClassContextBar } from "../components/classes/ClassContextBar";
 import { HelpPanel, type HelpState } from "../components/core/HelpPanel";
 import { useApp } from "../context/AppContext";
+import { useActiveClass } from "../lib/classes";
 import {
   CORE_PRE_QUESTION,
   FALLBACK_QUESTIONS,
@@ -48,6 +50,7 @@ export function CorePage() {
   const { aiEnabled, routeChoiceEnabled } = useApp();
 
   const [unit, setUnit] = useState<Unit | null>(null);
+  const { active: activeClass } = useActiveClass(unit);
   const [questions, setQuestions] = useState<CoreQuestion[]>(FALLBACK_QUESTIONS);
   const [meta, setMeta] = useState<VersionMeta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -230,7 +233,13 @@ export function CorePage() {
       return;
     }
     try {
-      const result = await api.coreAssist({ unit_id: unitId, focus_id: focus.id, question_id: q, level });
+      const result = await api.coreAssist({
+        unit_id: unitId,
+        focus_id: focus.id,
+        question_id: q,
+        level,
+        ...(activeClass ? { class_id: activeClass.id } : {}),
+      });
       setHelpFor(key, (h) => ({
         ...h,
         loading: false,
@@ -363,7 +372,12 @@ export function CorePage() {
   return (
     <section aria-labelledby="core-heading">
       <p className="breadcrumb">
-        <Link to="/plan">Study &amp; Plan</Link> / <Link to={`/units/${unitId}`}>{unit?.title ?? "單元"}</Link> / 單元前 CoRe
+        {activeClass ? (
+          <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+        ) : (
+          <Link to="/library">備課庫</Link>
+        )}{" "}
+        / <Link to={`/units/${unitId}`}>{unit?.title ?? "單元"}</Link> / 單元前 CoRe
       </p>
       <div className="page-intro">
         <p className="eyebrow warm">
@@ -374,6 +388,7 @@ export function CorePage() {
         <p className="core-pre-question">{CORE_PRE_QUESTION}</p>
         <p className="field-hint">八題全部可以留白，不設必填；隨時會自動存草稿。</p>
       </div>
+      <ClassContextBar unit={unit} />
 
       {unit && (
         <Notice>
