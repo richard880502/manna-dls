@@ -3,6 +3,7 @@ import type {
   ContentSource,
   DecisionReason,
   DeviceType,
+  ItemTrack,
   Handling,
   IcapLevel,
   Polarity,
@@ -16,11 +17,18 @@ import type {
 export const SCHOOL_TRACK_LABELS: Record<SchoolTrack, string> = {
   general: "普高",
   vocational: "技高",
+  comprehensive: "綜高",
+};
+
+export const ITEM_TRACK_LABELS: Record<ItemTrack, string> = {
+  ...SCHOOL_TRACK_LABELS,
+  both: "各類型共用",
 };
 
 export const ROLE_LABELS: Record<Role, string> = {
   teacher: "教師",
   pi: "主持人",
+  kb_manager: "知識庫管理員",
   ra: "研究助理",
   rater: "評分者",
   engineer: "工程師",

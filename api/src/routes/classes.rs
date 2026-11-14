@@ -310,7 +310,7 @@ fn check_track(track: &str) -> AppResult<()> {
     if valid_track(track) {
         Ok(())
     } else {
-        Err(AppError::bad_request("學校類型必須是普高或技高。"))
+        Err(AppError::bad_request("學校類型必須是普高、技高或綜高。"))
     }
 }
 

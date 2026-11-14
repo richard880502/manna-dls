@@ -7,6 +7,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { ClassPage } from "./pages/ClassPage";
 import { CorePage } from "./pages/CorePage";
 import { HomePage } from "./pages/HomePage";
+import { KnowledgePage } from "./pages/KnowledgePage";
 import { LessonPage } from "./pages/LessonPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -78,6 +79,7 @@ export function AppRoutes() {
         <Route path="worksheets" element={<WorksheetsPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

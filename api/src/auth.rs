@@ -51,11 +51,53 @@ pub fn normalize_code(code: &str) -> String {
 }
 
 pub fn valid_track(s: &str) -> bool {
-    matches!(s, "general" | "vocational")
+    matches!(s, "general" | "vocational" | "comprehensive")
 }
 
 pub fn valid_role(s: &str) -> bool {
-    matches!(s, "teacher" | "pi" | "ra" | "rater" | "engineer")
+    matches!(
+        s,
+        "teacher" | "pi" | "kb_manager" | "ra" | "rater" | "engineer"
+    )
+}
+
+/// What an account may do beyond its own lesson preparation. Handlers ask for a capability
+/// ([`AuthTeacher::require`]); which roles hold it is decided only in [`role_can`], so a new
+/// capability (e.g. material management) is one enum variant and one match arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capability {
+    /// Invites, prompt versions, platform settings, teacher-case import: anything touching
+    /// identities, research data or AI behaviour.
+    Administer,
+    /// Import, retire and browse the knowledge base (curriculum items) and the vocabulary list.
+    ManageKnowledge,
+}
+
+impl Capability {
+    pub const ALL: [Capability; 2] = [Capability::Administer, Capability::ManageKnowledge];
+
+    /// Name used in `GET /api/me` (`capabilities`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Capability::Administer => "administer",
+            Capability::ManageKnowledge => "manage_knowledge",
+        }
+    }
+
+    fn denied(self) -> &'static str {
+        match self {
+            Capability::Administer => "只有計畫主持人可以使用這個功能。",
+            Capability::ManageKnowledge => "只有計畫主持人或知識庫管理員可以使用這個功能。",
+        }
+    }
+}
+
+/// The permission table (docs/API.md「角色與權限」).
+pub fn role_can(role: &str, capability: Capability) -> bool {
+    match capability {
+        Capability::Administer => role == "pi",
+        Capability::ManageKnowledge => matches!(role, "pi" | "kb_manager"),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -77,14 +119,19 @@ impl AuthTeacher {
     pub fn track(&self) -> &str {
         &self.0.school_track
     }
-    pub fn require_pi(&self) -> AppResult<()> {
-        if self.0.role == "pi" {
+    pub fn can(&self, capability: Capability) -> bool {
+        role_can(&self.0.role, capability)
+    }
+    /// 403 unless this account's role holds `capability`.
+    pub fn require(&self, capability: Capability) -> AppResult<()> {
+        if self.can(capability) {
             Ok(())
         } else {
-            Err(AppError::Forbidden(
-                "只有計畫主持人可以使用這個功能。".into(),
-            ))
+            Err(AppError::Forbidden(capability.denied().into()))
         }
+    }
+    pub fn require_pi(&self) -> AppResult<()> {
+        self.require(Capability::Administer)
     }
 }
 
@@ -230,13 +277,36 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> AppRes
     Ok(Json(json!({ "ok": true })))
 }
 
-pub async fn me(teacher: AuthTeacher) -> Json<Teacher> {
-    Json(teacher.0)
+/// The signed-in account plus the capabilities its role holds.
+pub async fn me(teacher: AuthTeacher) -> Json<serde_json::Value> {
+    let capabilities: Vec<&str> = Capability::ALL
+        .into_iter()
+        .filter(|c| teacher.can(*c))
+        .map(Capability::name)
+        .collect();
+    let mut body = serde_json::to_value(&teacher.0).unwrap_or_default();
+    body["capabilities"] = serde_json::json!(capabilities);
+    Json(body)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_table() {
+        use Capability::*;
+        for role in ["teacher", "ra", "rater", "engineer", "unknown"] {
+            assert!(
+                !role_can(role, Administer) && !role_can(role, ManageKnowledge),
+                "{role}"
+            );
+        }
+        assert!(role_can("pi", Administer) && role_can("pi", ManageKnowledge));
+        assert!(role_can("kb_manager", ManageKnowledge));
+        assert!(!role_can("kb_manager", Administer));
+        assert!(valid_role("kb_manager") && !valid_role("admin"));
+    }
 
     #[test]
     fn sha256_is_hex_of_digest() {

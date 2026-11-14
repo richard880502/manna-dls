@@ -31,7 +31,7 @@ describe("admin page (pi)", () => {
         ...(call.body as object),
       }),
       "POST /api/admin/invites": { code: "ABCD-EFGH" },
-      "POST /api/admin/knowledge/import": { imported: 2, sha256: "deadbeef" },
+      "POST /api/admin/teacher-cases/import": { imported: 2, sha256: "deadbeef" },
     });
     const user = userEvent.setup();
     renderApp("/admin");
@@ -61,14 +61,41 @@ describe("admin page (pi)", () => {
     );
     expect(await screen.findByText(/v3/)).toBeInTheDocument();
 
-    const csv = "item_code,category,school_track,title,content,source_doc,source_version,source_page\nA,b,general,t,c,d,v,1\n";
-    const knowledge = within(screen.getByRole("region", { name: "匯入知識庫條目" }));
-    await user.upload(knowledge.getByLabelText("選擇 CSV 檔案"), new File([csv], "kb.csv", { type: "text/csv" }));
-    await user.click(knowledge.getByRole("button", { name: "匯入" }));
-    expect(await knowledge.findByText(/已匯入 2 筆/)).toBeInTheDocument();
-    const upload = api.callsTo("POST", "/api/admin/knowledge/import")[0];
+    const csv = "case_code,school_track,grade,topic,summary,details,approved\nC-1,both,高二,閱讀,摘要,細節,true\n";
+    const cases = within(screen.getByRole("region", { name: "匯入教師備課經驗" }));
+    await user.upload(cases.getByLabelText("選擇 CSV 檔案"), new File([csv], "cases.csv", { type: "text/csv" }));
+    await user.click(cases.getByRole("button", { name: "匯入" }));
+    expect(await cases.findByText(/已匯入 2 筆/)).toBeInTheDocument();
+    const upload = api.callsTo("POST", "/api/admin/teacher-cases/import")[0];
     expect(upload?.headers["Content-Type"]).toBe("text/csv");
     expect(upload?.rawBody).toBe(csv);
+
+    // the knowledge base has its own page; the PI reaches it from the bar and from here
+    expect(screen.queryByRole("region", { name: "匯入知識庫條目" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "知識庫管理" }).length).toBeGreaterThan(0);
+  });
+
+  it("lets the PI invite a 知識庫管理員 and a comprehensive-school teacher", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/me": pi,
+      "GET /api/admin/settings": { route_choice_enabled: true },
+      "GET /api/admin/prompts": [],
+      "POST /api/admin/invites": { code: "KBKB-1234" },
+    });
+    const user = userEvent.setup();
+    renderApp("/admin");
+    await user.type(await screen.findByLabelText("研究編號"), "KB-2026-001");
+    await user.selectOptions(screen.getByLabelText("學校類型"), "綜高");
+    await user.selectOptions(screen.getByLabelText("角色"), "知識庫管理員");
+    await user.click(screen.getByRole("button", { name: "建立邀請碼" }));
+    expect(await screen.findByText("KBKB-1234")).toBeInTheDocument();
+    expect(api.lastBody("POST", "/api/admin/invites")).toEqual({
+      research_id: "KB-2026-001",
+      school_track: "comprehensive",
+      role: "kb_manager",
+    });
   });
 
   it("toggles route_choice_enabled (自選備課菜單) for the whole platform", async () => {

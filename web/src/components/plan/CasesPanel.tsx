@@ -7,7 +7,8 @@ import { ErrorText } from "../common";
 const TRACK_LABELS: Record<TeacherCase["school_track"], string> = {
   general: "普高",
   vocational: "技高",
-  both: "普高・技高",
+  comprehensive: "綜高",
+  both: "各類型共用",
 };
 
 interface CasesPanelProps {
