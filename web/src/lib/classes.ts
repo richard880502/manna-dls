@@ -1,5 +1,5 @@
-// 班級與備課庫 (Phase 1.4): the current class of a unit, and the words for a class's next step.
-import type { ClassNextAction, ClassProfileSourceUsed, SchoolClass, Unit, UnitClassRef } from "../api/types";
+// 班級與備課庫 (Phase 1.4): the class a unit or lesson is worked on in, and the words for a class's next lesson.
+import type { ClassNextAction, ClassProfileSourceUsed, LessonRun, SchoolClass, Unit, UnitClassRef } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { SCHOOL_TRACK_LABELS } from "./labels";
 
@@ -12,14 +12,16 @@ export interface ActiveClass {
   /** The classes that use this unit (empty while the unit loads). */
   classes: UnitClassRef[];
   /**
-   * 目前班級 for this unit: the class the teacher came from when it uses this unit; otherwise
-   * the unit's only class; otherwise null (several classes use it and none was chosen, or none uses it).
+   * The class in play for this unit: the class the teacher came from when it uses this unit;
+   * otherwise the unit's only class; otherwise null (several classes use it and the teacher came
+   * from the library, or none uses it). It is never asked for on the page: the class is context,
+   * shown once in the breadcrumb (docs/DESIGN_OVERHAUL.md, principle 6).
    */
   active: UnitClassRef | null;
   choose: (classId: number | null) => void;
 }
 
-/** The class context of a unit, lesson or CoRe page. */
+/** The class context of a unit, lesson or 單元想法 page. */
 export function useActiveClass(unit: Pick<Unit, "classes"> | null | undefined): ActiveClass {
   const { currentClassId, setCurrentClassId } = useApp();
   const classes = unit?.classes ?? [];
@@ -39,35 +41,53 @@ export function classSubtitle(
     .join(" · ");
 }
 
-export interface NextStep {
-  /** What is next, e.g. 「繼續：L3 倒裝句 第 2 節」. */
-  text: string;
-  /** The button, e.g. 「開始本節課」. */
-  action: string;
-  to: string;
+/** 「高一 3 班、高一 7 班在用」 / 「還沒有班級在用」. */
+export function usedByText(classes: Array<Pick<UnitClassRef, "name">>): string {
+  return classes.length === 0 ? "還沒有班級在用" : `${classes.map((c) => c.name).join("、")}在用`;
 }
 
-/** The home card's next step for a class (docs/API.md Phase 1.4, `ClassNextAction`). */
-export function nextStep(classId: number, next: ClassNextAction | null): NextStep {
-  if (!next) return { text: "取用的單元都上過了", action: "看這個班級", to: `/classes/${classId}` };
+/** Unit title, a full-width space, lesson title: the lesson a class is about to have. */
+export function nextLessonTitle(next: Extract<ClassNextAction, { lesson_title: string }>): string {
+  return `${next.unit_title}　${next.lesson_title}`;
+}
+
+/** One quiet line saying what is next for a class (the right-hand side of a class row). */
+export function nextLine(next: ClassNextAction | null): string {
+  if (!next) return "取用的單元都上過了";
   switch (next.kind) {
     case "resume_run":
-      return {
-        text: `上課中：${next.unit_title} ${next.lesson_title}`,
-        action: "回到課堂紀錄",
-        to: `/runs/${next.run_id}`,
-      };
+      return `上課中：${next.lesson_title}`;
     case "start_lesson":
-      return {
-        text: `繼續：${next.unit_title} ${next.lesson_title}`,
-        action: "開始本節課",
-        to: `/lessons/${next.lesson_id}`,
-      };
+      return `下一節：${next.lesson_title}`;
     case "plan_unit":
-      return { text: `下一個單元「${next.unit_title}」還沒有課例`, action: "去備課", to: `/units/${next.unit_id}` };
+      return `「${next.unit_title}」還沒有課例`;
     case "add_unit":
-      return { text: "還沒有單元", action: "從備課庫加入單元", to: `/classes/${classId}` };
+      return "還沒有單元";
   }
+}
+
+/** Whether a class has a lesson to teach now (to start, or already open). */
+export function hasLessonNext(
+  next: ClassNextAction | null,
+): next is Extract<ClassNextAction, { lesson_title: string }> {
+  return next !== null && (next.kind === "start_lesson" || next.kind === "resume_run");
+}
+
+/**
+ * The class whose next lesson the home page leads with. A class with a lesson in progress comes
+ * first. Otherwise, there being no timetable, it is the class taught most recently that has a
+ * lesson to teach (`runs` come newest first); failing that, the first class with one; failing
+ * that, the first class with a unit to plan.
+ */
+export function focalClass(classes: SchoolClass[], runs: LessonRun[]): SchoolClass | null {
+  const inClass = classes.find((c) => c.next_action?.kind === "resume_run");
+  if (inClass) return inClass;
+  const ready = classes.filter((c) => hasLessonNext(c.next_action));
+  for (const run of runs) {
+    const taught = ready.find((c) => c.id === run.class_id);
+    if (taught) return taught;
+  }
+  return ready[0] ?? classes.find((c) => c.next_action?.kind === "plan_unit") ?? null;
 }
 
 /** Where the class profile Manna uses comes from, in the teacher's words. */

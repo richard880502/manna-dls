@@ -11,6 +11,7 @@ import {
   openSection,
   renderApp,
   respond,
+  schoolClass,
   signIn,
   step,
   todayCard,
@@ -78,7 +79,7 @@ function scaffolds(api: ReturnType<typeof mockApi>) {
 
 async function openConsole() {
   renderApp("/runs/9");
-  expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
 }
 
 afterEach(() => {
@@ -104,7 +105,7 @@ describe("Teach & Record console", () => {
     // Fixed SVG icons, not emoji.
     const good = screen.getByRole("button", { name: "順利" });
     expect(good.querySelector("svg")).not.toBeNull();
-    expect(good.textContent).toBe("順利");
+    expect(good).toHaveAccessibleName("順利");
 
     const before = Date.now();
     await user.click(good);
@@ -122,7 +123,7 @@ describe("Teach & Record console", () => {
     expect(window.localStorage.getItem(QUEUE_KEY)).toBeNull();
     expect(server.events.size).toBe(1);
     expect(screen.getByText(/^已記下：順利/)).toBeInTheDocument();
-    expect(screen.getByText("順利 1 · 卡住 0")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "這節課記了 1 次" })).toBeInTheDocument();
 
     // Scaffold: console shown, first tap used (once).
     await user.click(screen.getByRole("button", { name: "卡住" }));
@@ -157,7 +158,7 @@ describe("Teach & Record console", () => {
     // Every create sent so far carries one of the same two device ids: retries never mint new ones.
     const ids = new Set(opsSent(api).map((o) => o.device_event_id));
     expect(ids.size).toBe(2);
-    expect(screen.getByText("順利 1 · 卡住 1")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "這節課記了 2 次" })).toBeInTheDocument();
   });
 
   it("a response lost after the server stored the tap does not duplicate it", async () => {
@@ -285,10 +286,10 @@ describe("Teach & Record console", () => {
     });
     const user = userEvent.setup();
     await openConsole();
-    await user.click(screen.getByRole("button", { name: "結束本節課並回顧" }));
+    await user.click(screen.getByRole("button", { name: "結束本節課" }));
     expect(api.callsTo("POST", "/api/runs/9/end")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "確定結束並回顧" }));
-    expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/runs/9/end")).toHaveLength(1);
     expect(await screen.findByRole("heading", { name: "教案步驟" })).toBeInTheDocument();
   });
@@ -406,7 +407,7 @@ describe("課後補寫", () => {
     });
     const user = userEvent.setup();
     renderApp("/runs/9/review");
-    expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
 
     // Plan steps alongside; bookmarks in device-time order.
     const plan = within(screen.getByRole("complementary", { name: "教案步驟" }));
@@ -632,32 +633,46 @@ describe("starting a run", () => {
     expect(await screen.findByRole("button", { name: "上課紀錄與課後補寫（1）" })).toBeInTheDocument();
     await openSection(user, "上課紀錄與課後補寫");
     expect(await screen.findByText(/順利 2 · 卡住 1 · 課後補寫/)).toBeInTheDocument();
-    await user.click(todayCard().getByRole("button", { name: "開始本節課" }));
-    expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+    await user.click(todayCard().getByRole("button", { name: "開始上課" }));
+    expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/lessons/7/runs")).toHaveLength(1);
   });
 
-  it("the Teach & Record page starts a run for a chosen lesson and resumes on 409", async () => {
+  it("開始上課 on the home page starts in that class, and resumes on 409 when the lesson is already open", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
-      "GET /api/runs": [run({ id: 5, lesson_title: "第 0 課", ended_at: "2026-11-10T02:00:00Z", review_completed_at: "2026-11-10T03:00:00Z" })],
-      "GET /api/units/1/lessons": [
-        { id: 7, unit_id: 1, title: "第 1 課：Not only… but also", lesson_date: null, class_description: "", created_at: "", my_example: "" },
+      "GET /api/classes": [
+        schoolClass({
+          id: 3,
+          next_action: { kind: "start_lesson", lesson_id: 7, lesson_title: "第 1 課", unit_id: 1, unit_title: "倒裝句單元" },
+        }),
       ],
+      "GET /api/runs": [run({ id: 5, lesson_title: "第 0 課", ended_at: "2026-11-10T02:00:00Z", review_completed_at: "2026-11-10T03:00:00Z" })],
       "POST /api/lessons/7/runs": respond(409, { error: { code: "conflict", message: "這節課已經開始了" } }),
-      "GET /api/lessons/7/runs": [run()],
+      "GET /api/lessons/7/runs": [run({ class_id: 3, class_name: "高一 3 班" })],
       "GET /api/runs/9": runDetail(),
     });
     const user = userEvent.setup();
-    renderApp("/record");
-    expect(await screen.findByRole("heading", { name: "課中書籤與課後補寫" })).toBeInTheDocument();
-    expect(screen.getByText(/已完成補寫/)).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("單元"), "倒裝句單元");
-    await user.selectOptions(await screen.findByLabelText("課例"), "第 1 課：Not only… but also");
-    await user.click(screen.getByRole("button", { name: "開始本節課" }));
-    expect(await screen.findByRole("heading", { name: "按一下就記下這一刻" })).toBeInTheDocument();
+    renderApp("/");
+    await user.click(await screen.findByRole("button", { name: "開始上課" }));
+    expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
+    expect(api.lastBody("POST", "/api/lessons/7/runs")).toEqual({ class_id: 3 });
     expect(api.callsTo("GET", "/api/lessons/7/runs")).toHaveLength(1);
+  });
+
+  it("the records page lists past lessons and offers no second way to start one", async () => {
+    signIn();
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/runs": [run({ id: 5, lesson_title: "第 0 課", ended_at: "2026-11-10T02:00:00Z", review_completed_at: "2026-11-10T03:00:00Z" })],
+    });
+    renderApp("/record");
+    expect(await screen.findByRole("heading", { name: "上課紀錄", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText(/已補寫/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^回顧/ })).toHaveAttribute("href", "/runs/5/review");
+    expect(screen.queryByRole("button", { name: /開始上課/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 });
 

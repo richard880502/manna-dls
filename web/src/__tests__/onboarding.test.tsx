@@ -24,8 +24,8 @@ describe("first-use survey (初次使用設定)", () => {
     renderApp("/");
 
     expect(await screen.findByRole("heading", { name: "先認識你的備課習慣" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "初次使用設定", level: 1 })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "教師工作檯" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "先認識你的備課習慣", level: 1 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "班級" })).not.toBeInTheDocument();
     expect(screen.getByText(/第 1 \/ 6 題/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上一步" })).toBeDisabled();
 
@@ -64,7 +64,7 @@ describe("first-use survey (初次使用設定)", () => {
       skipped: false,
       source: "onboarding",
     });
-    expect(await screen.findByRole("heading", { name: "教師工作檯" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "先認識你的備課習慣" })).not.toBeInTheDocument();
   });
 
@@ -95,7 +95,7 @@ describe("first-use survey (初次使用設定)", () => {
       skipped: true,
       source: "onboarding",
     });
-    expect(await screen.findByRole("heading", { name: "教師工作檯" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
   });
 
   it("uses the built-in questions (with the P6 privacy hint) when the question endpoint fails", async () => {
@@ -119,14 +119,14 @@ describe("first-use survey (初次使用設定)", () => {
     renderApp("/");
     await screen.findByRole("heading", { name: "先認識你的備課習慣" });
     await user.click(screen.getByRole("button", { name: "略過" }));
-    expect(await screen.findByRole("heading", { name: "教師工作檯" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
   });
 
   it("does not show the wizard when preferences already exist (including a skipped version)", async () => {
     signIn();
     mockApi(baseRoutes({}, preferences({}, { skipped: true })));
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "教師工作檯" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "先認識你的備課習慣" })).not.toBeInTheDocument();
   });
 });
@@ -148,7 +148,7 @@ describe("我的備課偏好 page", () => {
     renderApp("/preferences");
 
     expect(await screen.findByText(/目前第 3 版/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /我的備課偏好/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /備課偏好/ })).toBeInTheDocument();
     expect(await screen.findByRole("radio", { name: "10 年以上" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "找合適素材" })).toBeChecked();
     expect(screen.getByLabelText(/我的班級特性/)).toHaveValue("高二");
@@ -171,7 +171,7 @@ describe("我的備課偏好 page", () => {
       skipped: false,
       source: "settings",
     });
-    expect(await screen.findByText(/已儲存為第 4 版/)).toBeInTheDocument();
+    expect(await screen.findByText(/已儲存.*第 4 版/)).toBeInTheDocument();
     expect(screen.getByText(/目前第 4 版/)).toBeInTheDocument();
   });
 });

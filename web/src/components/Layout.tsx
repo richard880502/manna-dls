@@ -1,79 +1,61 @@
-import { useEffect, useState } from "react";
-import { NavLink, Outlet, useLocation } from "react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Link, Outlet, useLocation, useOutletContext } from "react-router";
 import { useApp } from "../context/AppContext";
-import { ROLE_LABELS, SCHOOL_TRACK_LABELS } from "../lib/labels";
 import { DemoBanner, Loading } from "./common";
 import { OnboardingWizard } from "./prefs/OnboardingWizard";
 
 interface NavEntry {
   to: string;
   label: string;
-  symbol: string;
-  end?: boolean;
+  /** Which paths count as being inside this destination. */
+  match: (pathname: string) => boolean;
 }
 
+/** The whole navigation (docs/DESIGN_OVERHAUL.md section 2): three destinations, nothing unbuilt. */
 const NAV: NavEntry[] = [
-  { to: "/", label: "工作檯", symbol: "⌂", end: true },
-  { to: "/library", label: "備課庫", symbol: "▤" },
-  { to: "/record", label: "Teach & Record", symbol: "▣" },
-  { to: "/reflect", label: "Reflect & Progress", symbol: "⌁" },
-  { to: "/share", label: "Share & Connect", symbol: "♧" },
-  { to: "/profile", label: "履歷頁", symbol: "▥" },
-  { to: "/community", label: "社群動能地圖", symbol: "⌖" },
-  { to: "/preferences", label: "我的備課偏好", symbol: "✎" },
+  {
+    to: "/",
+    label: "班級",
+    match: (p) => p === "/" || p.startsWith("/classes") || p.startsWith("/runs") || p === "/record",
+  },
+  {
+    to: "/library",
+    label: "備課庫",
+    match: (p) => p === "/library" || p === "/plan" || p.startsWith("/units") || p.startsWith("/lessons"),
+  },
+  { to: "/worksheets", label: "學習單", match: (p) => p.startsWith("/worksheets") },
 ];
 
-/** One stroke icon set for the sidebar (20px grid, 1.6 stroke, currentColor). Unknown paths keep their text symbol. */
-const NAV_ICON_PATHS: Record<string, string> = {
-  "/": "M3.5 9.2 10 4l6.5 5.2V16a1 1 0 0 1-1 1h-3.25v-4.5h-4.5V17H4.5a1 1 0 0 1-1-1z",
-  "/library": "M10 5.6C8.4 4.5 6.3 4 3.5 4v11.2c2.8 0 4.9.5 6.5 1.6 1.6-1.1 3.7-1.6 6.5-1.6V4c-2.8 0-4.9.5-6.5 1.6zm0 0v11.2",
-  "/record": "M6 3.5h8a1 1 0 0 1 1 1v12.3l-5-3.1-5 3.1V4.5a1 1 0 0 1 1-1z",
-  "/reflect": "M15.8 8.5A6 6 0 1 0 16 11.5M16.2 4.2v4.3h-4.3",
-  "/share": "M7.5 9.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 16.5c0-2.6 2-4.5 4.5-4.5s4.5 1.9 4.5 4.5M13.5 9.5a2 2 0 1 0 0-4M14 12.2c1.8.3 3 1.9 3 4.3",
-  "/profile": "M4.5 4.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM7.5 10.5a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5zM5.3 13.3c.5-1.1 1.2-1.6 2.2-1.6s1.7.5 2.2 1.6M12 8.5h2.5M12 11h2.5",
-  "/community": "M10 17s-5.2-4.5-5.2-8.7a5.2 5.2 0 0 1 10.4 0C15.2 12.5 10 17 10 17zm0-6.8a1.9 1.9 0 1 0 0-3.8 1.9 1.9 0 0 0 0 3.8z",
-  "/preferences": "M4 6h6.5M14.5 6H16M4 14h1.5M9.5 14H16M12.5 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM7.5 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
-  "/admin": "M4.5 4h11a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 7h11a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1zM6.5 6.5h.01M6.5 13.5h.01",
-};
-
-function NavIcon({ to, symbol }: { to: string; symbol: string }) {
-  const d = NAV_ICON_PATHS[to];
-  if (!d) return <>{symbol}</>;
-  return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d={d} />
-    </svg>
-  );
+/** Working pages with two columns get the wider frame; the in-class console a narrower one. */
+function frameClass(pathname: string): string {
+  if (/^\/runs\/\d+\/?$/.test(pathname)) return " is-console";
+  if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin)/.test(pathname)) return " is-wide";
+  if (pathname === "/worksheets" || pathname === "/preferences") return " is-narrow";
+  return "";
 }
 
-function viewTitle(pathname: string): { eyebrow: string; title: string } {
-  if (pathname === "/") return { eyebrow: "Manna DLS · Phase 1 AI 備課", title: "教師工作檯" };
-  if (pathname === "/library" || pathname === "/plan") return { eyebrow: "01 · Study & Plan", title: "備課庫｜單元設計" };
-  if (/^\/classes\/\d+/.test(pathname)) return { eyebrow: "工作檯", title: "班級" };
-  if (/^\/units\/\d+\/core/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "單元前 CoRe" };
-  if (/^\/units\/\d+/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "單元與課例" };
-  if (/^\/lessons\/\d+/.test(pathname)) return { eyebrow: "01 · Study & Plan", title: "課例備課" };
-  if (pathname === "/record") return { eyebrow: "02 · Teach & Record", title: "Teach & Record｜課中書籤" };
-  if (/^\/runs\/\d+\/review/.test(pathname)) return { eyebrow: "02 · Teach & Record", title: "課後補寫" };
-  if (/^\/runs\/\d+/.test(pathname)) return { eyebrow: "02 · Teach & Record", title: "課堂紀錄" };
-  if (pathname === "/reflect") return { eyebrow: "03 · Reflect & Progress", title: "Reflect & Progress｜精彩片段回顧" };
-  if (pathname === "/share") return { eyebrow: "04 · Share & Connect", title: "Share & Connect｜我不孤單" };
-  if (pathname === "/profile") return { eyebrow: "Professional Profile", title: "教師專業履歷" };
-  if (pathname === "/community") return { eyebrow: "Community pulse", title: "社群動能地圖" };
-  if (pathname === "/admin") return { eyebrow: "主持人後台", title: "後台管理" };
-  if (pathname === "/preferences") return { eyebrow: "Settings", title: "我的備課偏好" };
-  return { eyebrow: "Manna DLS", title: "Manna DLS" };
+interface ShellContext {
+  topSlot: HTMLElement | null;
+}
+
+/**
+ * Lets a page take over the top bar: what it renders here replaces the navigation and the account
+ * links (the in-class console shows 「上課中」 and 「結束本節課」 instead). Outside the shell, for
+ * example in a page rendered on its own, the content stays in the page.
+ */
+export function TopBarSlot({ children }: { children: ReactNode }) {
+  const context = useOutletContext<ShellContext | null>();
+  if (context == null) return <div className="top-slot-inline">{children}</div>;
+  return context.topSlot ? createPortal(children, context.topSlot) : null;
 }
 
 export function Layout() {
-  const { teacher, logout, config, preferences, preferencesStatus } = useApp();
-  const location = useLocation();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const { teacher, logout, preferences, preferencesStatus } = useApp();
+  const { pathname } = useLocation();
+  const [topSlot, setTopSlot] = useState<HTMLElement | null>(null);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const needsOnboarding = preferencesStatus === "loaded" && preferences === null && !onboardingDismissed;
-  const { eyebrow, title } = needsOnboarding
-    ? { eyebrow: "Manna DLS · 第一次使用", title: "初次使用設定" }
-    : viewTitle(location.pathname);
 
   useEffect(() => {
     try {
@@ -81,117 +63,51 @@ export function Layout() {
     } catch {
       // jsdom / old browsers
     }
-  }, [location.pathname]);
+  }, [pathname]);
 
-  const nav = teacher?.role === "pi" ? [...NAV, { to: "/admin", label: "後台管理", symbol: "⚙" }] : NAV;
+  const current = (active: boolean) => (active ? ("page" as const) : undefined);
 
   return (
     <>
       <DemoBanner />
-      <div className="app-shell">
-        <aside className={`sidebar${menuOpen ? " is-open" : ""}`} aria-label="主要導覽">
-          <div className="sidebar-top">
-            <div className="brand">
-              <div className="brand-mark star-mascot" aria-label="Manna 星星娃娃">
-                ★
-              </div>
-              <div>
-                <div className="brand-name">Manna DLS</div>
-                <div className="brand-sub">AI 賦能英文教師專業學習</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              className="menu-toggle"
-              aria-expanded={menuOpen}
-              aria-controls="main-nav"
-              onClick={() => setMenuOpen((v) => !v)}
-            >
-              {menuOpen ? "收合選單" : "選單"}
-            </button>
-          </div>
-
-          {teacher && (
-            <div className="teacher-card">
-              <div className="avatar" aria-hidden="true">
-                {teacher.research_id.slice(0, 1).toUpperCase()}
-              </div>
-              <div>
-                <strong>{teacher.research_id}</strong>
-                <span>
-                  {SCHOOL_TRACK_LABELS[teacher.school_track]}英文{ROLE_LABELS[teacher.role]}
-                </span>
-              </div>
-              <span className="privacy-dot" title="資料治理已啟用">
-                ●
-              </span>
-            </div>
+      <header className="top">
+        <Link className="brand" to="/" aria-label="Manna 首頁">
+          <span className="star" aria-hidden="true" />
+          Manna
+        </Link>
+        <div className="top-slot" ref={setTopSlot} />
+        <nav className="top-nav" aria-label="主要導覽">
+          {NAV.map((item) => (
+            <Link key={item.to} to={item.to} aria-current={current(item.match(pathname))}>
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+        <div className="acct">
+          {teacher?.role === "pi" && (
+            <Link to="/admin" aria-current={current(pathname === "/admin")}>
+              後台管理
+            </Link>
           )}
-
-          <nav className="nav-list" id="main-nav" aria-label="DLS 工作流程">
-            {nav.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                onClick={() => setMenuOpen(false)}
-                className={({ isActive }) =>
-                  `nav-item${isActive || (item.to === "/library" && location.pathname === "/plan") ? " is-active" : ""}`
-                }
-              >
-                <span className="nav-symbol" aria-hidden="true">
-                  <NavIcon to={item.to} symbol={item.symbol} />
-                </span>
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-
-          <section className="side-panel" aria-label="Phase 1 範圍">
-            <div className="panel-label">本輪平台範圍</div>
-            <div className="cycle-title">Phase 1：AI 備課與課堂紀錄</div>
-            <div className="stage-mini">
-              <span className="stage-item done">
-                <b>●</b>
-                <span>單元前 CoRe</span>
-              </span>
-              <span className="stage-item done">
-                <b>●</b>
-                <span>課例備課（RAG、SIOP）</span>
-              </span>
-              <span className="stage-item done">
-                <b>●</b>
-                <span>課中書籤、課後補寫</span>
-              </span>
-              <span className="stage-item">
-                <b>—</b>
-                <span>反思（Phase 2）</span>
-              </span>
-            </div>
-            {config && !config.ai_enabled && <p className="side-note">AI 功能目前未開放</p>}
-          </section>
-
-          <button type="button" className="logout-button" onClick={() => void logout()}>
+          <Link to="/preferences" aria-current={current(pathname === "/preferences")}>
+            {teacher && <span className="acct-id">{teacher.research_id} · </span>}
+            備課偏好
+          </Link>
+          <button type="button" className="acct-logout" onClick={() => void logout()}>
             登出
           </button>
-        </aside>
+        </div>
+      </header>
 
-        <main className="workspace">
-          <header className="topbar">
-            <div>
-              <div className="eyebrow">{eyebrow}</div>
-              <h1>{title}</h1>
-            </div>
-          </header>
-          {preferencesStatus === "loading" ? (
-            <Loading label="正在載入你的備課偏好…" />
-          ) : needsOnboarding ? (
-            <OnboardingWizard onDismiss={() => setOnboardingDismissed(true)} />
-          ) : (
-            <Outlet />
-          )}
-        </main>
-      </div>
+      <main className={`workspace${frameClass(pathname)}`}>
+        {preferencesStatus === "loading" ? (
+          <Loading label="正在載入你的備課偏好…" />
+        ) : needsOnboarding ? (
+          <OnboardingWizard onDismiss={() => setOnboardingDismissed(true)} />
+        ) : (
+          <Outlet context={{ topSlot } satisfies ShellContext} />
+        )}
+      </main>
     </>
   );
 }

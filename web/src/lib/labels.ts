@@ -175,3 +175,18 @@ export function formatDate(value: string | null | undefined): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
 }
+
+/** 「11/12」: a date in a meta line, where the year only adds noise. */
+export function formatShortDate(value: string | null | undefined): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+/** 單元想法 (CoRe) in a meta line: how far the teacher has got, never a requirement. */
+export const UNIT_IDEAS_STATUS: Record<Unit["core_status"], string> = {
+  none: "單元想法還沒寫",
+  draft: "單元想法寫了一些",
+  completed: "單元想法寫好了",
+};

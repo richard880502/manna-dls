@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { LessonDetail, LessonRun, LessonStep, Unit } from "../api/types";
-import { ClassContextBar } from "../components/classes/ClassContextBar";
+import { StartClassDialog } from "../components/classes/StartClassDialog";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { CasesPanel } from "../components/plan/CasesPanel";
@@ -14,8 +14,8 @@ import { SiopPanel } from "../components/plan/SiopPanel";
 import { StepsEditor, hasDiffData, newStep, type EditableStep } from "../components/plan/StepsEditor";
 import { SuggestionsPanel } from "../components/plan/SuggestionsPanel";
 import { useApp } from "../context/AppContext";
-import { profileSourceText, useActiveClass } from "../lib/classes";
-import { formatDate, formatDateTime } from "../lib/labels";
+import { useActiveClass } from "../lib/classes";
+import { formatClock, formatDate } from "../lib/labels";
 import { effectiveRoute, hasHardest } from "../lib/preferences";
 import { startOrResumeRun } from "../lib/runs";
 import { logScaffold, usePreferenceScaffold } from "../lib/scaffold";
@@ -44,10 +44,12 @@ const ALL_CLOSED: OpenSections = { links: false, steps: false, context: false, s
 const SECTION_SCAFFOLD: Partial<Record<SectionKey, "SC-SIOP" | "SC-CASES">> = { siop: "SC-SIOP", cases: "SC-CASES" };
 
 /**
- * 課例備課 (docs/UX_REVIEW.md R1, R2). The first view asks one thing, 「今天要教什麼？」, with
- * 「開始本節課」 right below it. CoRe links, teaching steps and the other aids are collapsed
- * sections with counts; the steps open by default only when the lesson already has steps.
- * Starting saves unsaved plan changes first, and leaving with unsaved changes asks first.
+ * 課例頁, interim until the seven-step SOP (docs/DESIGN_OVERHAUL.md step 2). Behaviour is the one
+ * from docs/UX_REVIEW.md R1–R3: the first view asks one thing, 「今天要教什麼？」, with the page's
+ * one filled action, 「開始上課」, right below it; everything else is a collapsed row with a count;
+ * starting saves unsaved changes first, and leaving with unsaved changes asks first.
+ * The class is never asked for on the page: it is the class the teacher came from, and only when
+ * a lesson is started from the library while several classes use its unit does a dialog ask once.
  */
 export function LessonPage() {
   const lessonId = Number(useParams().lessonId);
@@ -64,14 +66,14 @@ export function LessonPage() {
   const editSeq = useRef(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  /** When the plan was last saved in this visit (shown as a time; null: not saved in this visit). */
+  const [savedAt, setSavedAt] = useState<string | null>(null);
   const [versionNo, setVersionNo] = useState<number | null>(null);
-  const [versionsCount, setVersionsCount] = useState(0);
 
   const [runs, setRuns] = useState<LessonRun[] | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  /** 這節課是哪一班？ shown when several classes use the unit and none is the current class. */
+  /** 「這節課在哪一班上？」: open when several classes use the unit and the teacher came from the library. */
   const [choosingClass, setChoosingClass] = useState(false);
   const { classes: unitClasses, active: activeClass, choose: chooseClass } = useActiveClass(unit);
   const activeClassId = activeClass?.id ?? null;
@@ -111,7 +113,6 @@ export function LessonPage() {
         setLinkedCount(detail.core_focus_ids.length);
         setSiopSelected(detail.siop_feature_ids.length);
         setVersionNo(detail.latest_version?.version_no ?? null);
-        setVersionsCount(detail.versions_count);
         api
           .getUnit(detail.unit_id)
           .then((u) => alive && setUnit(u))
@@ -127,7 +128,7 @@ export function LessonPage() {
     };
   }, [lessonId]);
 
-  // In a class context the effective class profile is the class's (unless the lesson overrides it).
+  // In a class the effective class profile is the class's (unless the lesson overrides it).
   const lessonLoaded = lesson !== null;
   useEffect(() => {
     if (!lessonLoaded || activeClassId === null) return;
@@ -156,7 +157,6 @@ export function LessonPage() {
   const markEdited = useCallback(() => {
     editSeq.current += 1;
     setDirty(true);
-    setSavedMessage(null);
   }, []);
 
   const onObjective = useCallback(
@@ -201,7 +201,7 @@ export function LessonPage() {
     logScaffold("SC-PREF", next ? "expand" : "skip", { trigger: "manual:differentiation" });
   }
 
-  /** Saves the plan (objective + steps) as a new version. Resolves to an error message, or null. */
+  /** Saves the plan (objective + steps); the server keeps it as a new version. Resolves to an error message, or null. */
   async function savePlan(): Promise<string | null> {
     const seq = editSeq.current;
     setSaving(true);
@@ -220,9 +220,8 @@ export function LessonPage() {
     try {
       const version = await api.saveLessonVersion(lessonId, { objective, steps: payloadSteps });
       setVersionNo(version.version_no);
-      setVersionsCount((n) => Math.max(n + 1, version.version_no));
       if (editSeq.current === seq) setDirty(false);
-      setSavedMessage(`已儲存為第 ${version.version_no} 版（${formatDateTime(version.created_at)}）。`);
+      setSavedAt(version.created_at);
       return null;
     } catch (err) {
       return errorMessage(err);
@@ -250,9 +249,9 @@ export function LessonPage() {
   }
 
   /**
-   * 開始本節課 (or 回到課堂紀錄): unsaved changes are saved first; if that fails, nothing starts.
-   * The run belongs to `classId` (default: the current class). When several classes use the unit
-   * and none is current, the page asks which class first.
+   * 開始上課 (or 回到課堂): unsaved changes are saved first; if that fails, nothing starts.
+   * The run belongs to `classId` (default: the class in play). When several classes use the unit
+   * and none is in play, the dialog asks which class, once.
    */
   async function start(classId: number | null = activeClassId) {
     if (classId === null && unitClasses.length > 1) {
@@ -260,13 +259,13 @@ export function LessonPage() {
       setStartError(null);
       return;
     }
-    setChoosingClass(false);
     const seq = editSeq.current;
     setStarting(true);
     setStartError(null);
     setSaveError(null);
     const failed = await saveAll();
     if (failed) {
+      setChoosingClass(false);
       setStartError(`教案沒有儲存成功，所以還沒開始上課：${failed}`);
       setStarting(false);
       return;
@@ -278,6 +277,7 @@ export function LessonPage() {
       if (editSeq.current === seq) guard.release();
       navigate(`/runs/${runId}`);
     } catch (err) {
+      setChoosingClass(false);
       setStartError(errorMessage(err));
       setStarting(false);
     }
@@ -288,31 +288,28 @@ export function LessonPage() {
 
   const route = effectiveRoute(routeChoiceEnabled, unit?.prep_route);
   const activityFirst = route === "activity";
-  const effectiveProfile =
-    lesson.effective_class_profile ?? (lesson.class_description || unit?.class_profile || "");
   // The open run of the class in play; a lesson can be open in another class at the same time.
-  const openRunIn = (classId: number | null) =>
-    runs?.find((r) => r.ended_at === null && (r.class_id ?? null) === classId);
-  const openRun = openRunIn(activeClassId);
+  const openRun = runs?.find((r) => r.ended_at === null && (r.class_id ?? null) === activeClassId);
   const pastRuns = (runs ?? []).filter((r) => r.ended_at !== null);
+  const unsaved = dirty || contextDirty;
+
+  // Saving in plain words; the version number stays, quietly, for whoever looks for it.
+  const savedLine = unsaved
+    ? "尚未儲存"
+    : versionNo === null
+      ? "還沒寫教案"
+      : `${savedAt ? `已儲存 ${formatClock(savedAt, false)}` : "已儲存"} · 第 ${versionNo} 版`;
 
   const suggestions = (
     <SuggestionsPanel lessonId={lesson.id} classId={activeClassId} onAppendStep={appendStep} pinned={ragOnTop} />
   );
 
   const today = (
-    <section className="panel-card lesson-today" aria-labelledby="today-heading">
-      <div className="card-heading">
-        <h3 id="today-heading">
-          <label htmlFor="lesson-objective">今天要教什麼？</label>
-        </h3>
-        {dirty ? (
-          <span className="status-pill">尚未儲存</span>
-        ) : (
-          versionNo !== null && <span className="saved-label">● 第 {versionNo} 版</span>
-        )}
-      </div>
-      <p className="field-hint" id="lesson-objective-hint">
+    <section className="lesson-today" aria-labelledby="today-heading">
+      <h2 id="today-heading">
+        <label htmlFor="lesson-objective">今天要教什麼？</label>
+      </h2>
+      <p className="quiet-note" id="lesson-objective-hint">
         一句話就夠；留白也可以直接開始上課。
       </p>
       <textarea
@@ -325,46 +322,22 @@ export function LessonPage() {
         placeholder="例如：學生能比較一般語序與句首倒裝，並用一句話說明倒裝的語意功能。"
       />
       <div className="today-actions">
-        <button type="button" className="primary-button" onClick={() => void start()} disabled={starting || saving}>
-          {starting ? "開始中…" : openRun ? "回到課堂紀錄" : "開始本節課"}
+        <button
+          type="button"
+          className="primary-button big-button"
+          onClick={() => void start()}
+          disabled={starting || saving}
+        >
+          {starting ? "開始中…" : openRun ? "回到課堂" : "開始上課"}
         </button>
-        <button type="button" className="secondary-button" onClick={() => void onSave()} disabled={saving || starting}>
-          {saving && !starting ? "儲存中…" : "儲存教案（產生新版本）"}
+        <button type="button" className="text-link" onClick={() => void onSave()} disabled={saving || starting}>
+          {saving && !starting ? "儲存中…" : "儲存教案"}
         </button>
       </div>
-      {choosingClass && (
-        <div className="class-chooser" role="group" aria-labelledby="class-chooser-heading">
-          <p className="field-label" id="class-chooser-heading">
-            這節課是哪一班？
-          </p>
-          <p className="field-hint">這個單元有 {unitClasses.length} 個班級在用，上課紀錄會記在你選的班級。</p>
-          <div className="class-chooser-options">
-            {unitClasses.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className="secondary-button"
-                disabled={starting}
-                onClick={() => {
-                  chooseClass(c.id);
-                  void start(c.id);
-                }}
-              >
-                {c.name}
-                {openRunIn(c.id) ? "（上課中）" : ""}
-              </button>
-            ))}
-            <button type="button" className="ghost-button" disabled={starting} onClick={() => setChoosingClass(false)}>
-              取消
-            </button>
-          </div>
-        </div>
-      )}
-      <p className="field-hint">
+      <p className="quiet-note">
         {activeClass ? `上課紀錄會記在「${activeClass.name}」。` : ""}
-        按「開始本節課」時，尚未儲存的內容會先存成新版本。課中不呼叫 AI。
+        開始上課時會先幫你儲存。上課中不會呼叫 AI。
       </p>
-      {savedMessage && <Notice tone="success">{savedMessage}</Notice>}
       <ErrorText message={saveError} />
       <ErrorText message={startError} />
     </section>
@@ -373,7 +346,7 @@ export function LessonPage() {
   const linksSection = (
     <PlanSection
       id="links"
-      title="連結的 CoRe 重點"
+      title="單元想法的重點"
       count={linkedCount}
       open={open.links}
       onToggle={() => toggleSection("links")}
@@ -389,16 +362,9 @@ export function LessonPage() {
   );
 
   const stepsSection = (
-    <PlanSection
-      id="steps"
-      title="教學步驟"
-      count={steps.length}
-      tag={dirty && !open.steps ? <span className="status-pill">尚未儲存</span> : null}
-      open={open.steps}
-      onToggle={() => toggleSection("steps")}
-    >
+    <PlanSection id="steps" title="教學步驟" count={steps.length} open={open.steps} onToggle={() => toggleSection("steps")}>
       {activityFirst && (
-        <p className="field-hint route-hint">活動優先：先寫活動點子與教學步驟，寫完再連結 CoRe 重點。</p>
+        <p className="quiet-note">活動優先：先寫活動點子與教學步驟，寫完再連結單元想法的重點。</p>
       )}
       <StepsEditor
         steps={steps}
@@ -409,14 +375,13 @@ export function LessonPage() {
       />
       <div className="plan-save-row">
         <button type="button" className="secondary-button" onClick={() => void onSave()} disabled={saving || starting}>
-          {saving && !starting ? "儲存中…" : "儲存教案（產生新版本）"}
+          {saving && !starting ? "儲存中…" : "儲存教案"}
         </button>
-        {dirty && <span className="status-pill">尚未儲存</span>}
       </div>
     </PlanSection>
   );
 
-  // Activity-first: write the steps, then link CoRe focuses. Keys keep sections mounted on reorder.
+  // Activity-first: write the steps, then link the unit's focuses. Keys keep sections mounted on reorder.
   const prepOrder: Array<[string, ReactNode]> = activityFirst
     ? [
         ["steps", stepsSection],
@@ -428,32 +393,26 @@ export function LessonPage() {
       ];
 
   return (
-    <section aria-labelledby="lesson-heading">
-      <p className="breadcrumb">
-        {activeClass ? (
-          <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
-        ) : (
-          <Link to="/library">備課庫</Link>
-        )}{" "}
-        / <Link to={`/units/${lesson.unit_id}`}>{unit?.title ?? "單元"}</Link> / {lesson.title}
-      </p>
-      <div className="page-intro">
-        <p className="eyebrow warm">
-          課例備課 · {versionNo !== null ? `目前第 ${versionNo} 版（共 ${versionsCount} 版）` : "尚未儲存教案"}
-        </p>
-        <h2 id="lesson-heading">{lesson.title}</h2>
-        <p>
-          {lesson.lesson_date ? `上課日期 ${formatDate(lesson.lesson_date)}` : "未設定上課日期"}
-          {effectiveProfile
-            ? ` · 班級特性${
-                activeClass && lesson.class_profile_source
-                  ? `（${profileSourceText(lesson.class_profile_source, activeClass.name)}）`
-                  : ""
-              }：${effectiveProfile}`
-            : ""}
+    <>
+      <div className="head-row page-head lesson-head">
+        <div>
+          <p className="crumbs">
+            {activeClass ? (
+              <>
+                <Link to="/">班級</Link> / <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+              </>
+            ) : (
+              <Link to="/library">備課庫</Link>
+            )}{" "}
+            / <Link to={`/units/${lesson.unit_id}`}>{unit?.title ?? "單元"}</Link>
+          </p>
+          <h1 id="lesson-heading">{lesson.title}</h1>
+          {lesson.lesson_date && <p className="lead">上課日期 {formatDate(lesson.lesson_date)}</p>}
+        </div>
+        <p className="saved" role="status">
+          {savedLine}
         </p>
       </div>
-      <ClassContextBar unit={unit} />
 
       {lesson.previous_next_change && (
         <Notice tone="warn">
@@ -467,104 +426,111 @@ export function LessonPage() {
           {today}
           {ragOnTop && suggestions}
 
-          <section className="panel-card lesson-prep" aria-labelledby="prep-heading">
-            <div className="card-heading">
-              <h3 id="prep-heading">想多準備一點？</h3>
-              <span className="optional-label">都可略過</span>
+          <section className="section lesson-prep" aria-labelledby="prep-heading">
+            <h2 id="prep-heading">想多準備一點？</h2>
+            <p className="quiet-note">下面每一項都可以略過。</p>
+            <div className="plan-sections">
+              {prepOrder.map(([key, node]) => (
+                <Fragment key={key}>{node}</Fragment>
+              ))}
+              {pastRuns.length > 0 && (
+                <PlanSection
+                  id="runs"
+                  title="上課紀錄與課後補寫"
+                  count={pastRuns.length}
+                  open={open.runs}
+                  onToggle={() => toggleSection("runs")}
+                >
+                  <PastRuns runs={pastRuns} />
+                </PlanSection>
+              )}
             </div>
-            {prepOrder.map(([key, node]) => (
-              <Fragment key={key}>{node}</Fragment>
-            ))}
           </section>
-
-          {pastRuns.length > 0 && (
-            <section className="panel-card lesson-runs">
-              <PlanSection
-                id="runs"
-                level={3}
-                title="上課紀錄與課後補寫"
-                count={pastRuns.length}
-                open={open.runs}
-                onToggle={() => toggleSection("runs")}
-              >
-                <PastRuns runs={pastRuns} />
-              </PlanSection>
-            </section>
-          )}
         </div>
 
         <div className="lesson-side">
           {!ragOnTop && suggestions}
-          <section className="panel-card lesson-tools" aria-labelledby="tools-heading">
-            <div className="card-heading">
-              <h3 id="tools-heading">更多備課工具</h3>
-              <span className="optional-label">選用</span>
-            </div>
-            <PlanSection
-              id="context"
-              title="本課背景：班級特性與我的範例"
-              tag={contextDirty ? <span className="status-pill">尚未儲存</span> : null}
-              open={open.context}
-              onToggle={() => toggleSection("context")}
-            >
-              <LessonContextCard
-                ref={contextRef}
-                lesson={lesson}
-                unitProfile={unit?.class_profile ?? ""}
-                activeClass={activeClass}
-                onDirtyChange={setContextDirty}
-                onSaved={(detail) =>
-                  setLesson((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          class_description: detail.class_description ?? prev.class_description,
-                          my_example: detail.my_example ?? prev.my_example,
-                          effective_class_profile: detail.effective_class_profile ?? prev.effective_class_profile,
-                          class_profile_source: detail.class_profile_source ?? prev.class_profile_source,
-                        }
-                      : prev,
-                  )
-                }
-              />
-            </PlanSection>
-            {siopCount !== 0 && (
+          <section className="lesson-tools" aria-labelledby="tools-heading">
+            <h2 id="tools-heading">更多備課工具</h2>
+            <div className="plan-sections">
               <PlanSection
-                id="siop"
-                title="SIOP 提示"
-                count={siopCount}
-                tag={siopSelected > 0 ? <span className="soft-tag">已選 {siopSelected}</span> : null}
-                open={open.siop}
-                onToggle={() => toggleSection("siop")}
+                id="context"
+                title="本課背景：班級特性與我的範例"
+                open={open.context}
+                onToggle={() => toggleSection("context")}
               >
-                <SiopPanel
-                  lessonId={lesson.id}
-                  initialSelected={lesson.siop_feature_ids}
-                  onLoaded={setSiopCount}
-                  onSelectedChange={onSiopSelected}
+                <LessonContextCard
+                  ref={contextRef}
+                  lesson={lesson}
+                  unitProfile={unit?.class_profile ?? ""}
+                  activeClass={activeClass}
+                  onDirtyChange={setContextDirty}
+                  onSaved={(detail) =>
+                    setLesson((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            class_description: detail.class_description ?? prev.class_description,
+                            my_example: detail.my_example ?? prev.my_example,
+                            effective_class_profile: detail.effective_class_profile ?? prev.effective_class_profile,
+                            class_profile_source: detail.class_profile_source ?? prev.class_profile_source,
+                          }
+                        : prev,
+                    )
+                  }
                 />
               </PlanSection>
-            )}
-            {casesCount !== 0 && (
-              <PlanSection
-                id="cases"
-                title="其他老師怎麼教"
-                count={casesCount}
-                open={open.cases}
-                onToggle={() => toggleSection("cases")}
-              >
-                <CasesPanel onLoaded={setCasesCount} />
-              </PlanSection>
-            )}
+              {siopCount !== 0 && (
+                <PlanSection
+                  id="siop"
+                  title="SIOP 提示"
+                  count={siopCount}
+                  tag={siopSelected > 0 ? <span className="soft-tag">已選 {siopSelected}</span> : null}
+                  open={open.siop}
+                  onToggle={() => toggleSection("siop")}
+                >
+                  <SiopPanel
+                    lessonId={lesson.id}
+                    initialSelected={lesson.siop_feature_ids}
+                    onLoaded={setSiopCount}
+                    onSelectedChange={onSiopSelected}
+                  />
+                </PlanSection>
+              )}
+              {casesCount !== 0 && (
+                <PlanSection
+                  id="cases"
+                  title="其他老師怎麼教"
+                  count={casesCount}
+                  open={open.cases}
+                  onToggle={() => toggleSection("cases")}
+                >
+                  <CasesPanel onLoaded={setCasesCount} />
+                </PlanSection>
+              )}
+            </div>
           </section>
         </div>
       </div>
+
+      {choosingClass && (
+        <StartClassDialog
+          classes={unitClasses}
+          runs={runs ?? []}
+          starting={starting}
+          onStart={(classId) => {
+            chooseClass(classId);
+            void start(classId);
+          }}
+          onCancel={() => setChoosingClass(false)}
+        />
+      )}
 
       <LeaveConfirm
         guard={guard}
         message="離開這頁，尚未儲存的教案或本課背景就會遺失。"
         onSave={saveAll}
       />
-    </section>
+    </>
   );
 }

@@ -44,13 +44,14 @@ describe("prep route (備課菜單) on unit creation and the unit page", () => {
     const user = userEvent.setup();
     renderApp("/plan");
 
+    await user.click(await screen.findByRole("button", { name: "新增單元" }));
     expect(await screen.findByRole("radio", { name: /教材優先/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /目標優先/ })).not.toBeChecked();
-    await user.type(screen.getByLabelText("建立新單元"), "新單元");
+    await user.type(screen.getByLabelText("單元名稱"), "新單元");
     await user.click(screen.getByRole("button", { name: "建立單元" }));
 
     await waitFor(() => expect(api.lastBody("POST", "/api/units")).toEqual({ title: "新單元", prep_route: "material" }));
-    expect(await screen.findByRole("heading", { name: "新單元", level: 2 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "新單元", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "備課菜單：教材優先" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "下一步：貼上課文或教材" })).toBeInTheDocument();
     // material-first: the material area is open on the first screen
@@ -70,9 +71,10 @@ describe("prep route (備課菜單) on unit creation and the unit page", () => {
     const user = userEvent.setup();
     renderApp("/plan");
 
+    await user.click(await screen.findByRole("button", { name: "新增單元" }));
     expect(await screen.findByRole("radio", { name: /目標優先/ })).toBeChecked();
     await user.click(screen.getByRole("radio", { name: /活動優先/ }));
-    await user.type(screen.getByLabelText("建立新單元"), "活動單元");
+    await user.type(screen.getByLabelText("單元名稱"), "活動單元");
     await user.click(screen.getByRole("button", { name: "建立單元" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/units")).toEqual({ title: "活動單元", prep_route: "activity" }));
     expect(await screen.findByRole("button", { name: "下一步：建立課例，先寫活動點子" })).toBeInTheDocument();
@@ -127,17 +129,18 @@ describe("prep route (備課菜單) on unit creation and the unit page", () => {
     const user = userEvent.setup();
     renderApp("/plan");
 
-    await screen.findByLabelText("建立新單元");
+    await user.click(await screen.findByRole("button", { name: "新增單元" }));
+    await screen.findByLabelText("單元名稱");
     await waitFor(() => expect(api.callsTo("GET", "/api/config")).toHaveLength(1));
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    await user.type(screen.getByLabelText("建立新單元"), "固定順序單元");
+    await user.type(screen.getByLabelText("單元名稱"), "固定順序單元");
     await user.click(screen.getByRole("button", { name: "建立單元" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/units")).toEqual({ title: "固定順序單元" }));
 
     expect(await screen.findByRole("heading", { name: "備課順序" })).toBeInTheDocument();
     expect(screen.queryByText("換一種備課菜單")).not.toBeInTheDocument();
     expect(screen.queryByText(/備課菜單：/)).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "下一步：寫單元前 CoRe（先寫 Q1–Q3）" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "下一步：寫單元想法（先寫 Q1–Q3）" })).toHaveAttribute(
       "href",
       "/units/3/core",
     );
@@ -200,10 +203,10 @@ describe("prep route (備課菜單) on unit creation and the unit page", () => {
     renderApp("/lessons/7");
     expect(await screen.findByText(/活動優先：先寫活動點子與教學步驟/)).toBeInTheDocument();
     const plan = sectionToggle("教學步驟");
-    const links = sectionToggle("連結的 CoRe 重點");
+    const links = sectionToggle("單元想法的重點");
     expect(plan.compareDocumentPosition(links) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await openSection(user, "連結的 CoRe 重點");
-    expect(await screen.findByRole("link", { name: "回頭補寫 CoRe →" })).toHaveAttribute("href", "/units/1/core");
+    await openSection(user, "單元想法的重點");
+    expect(await screen.findByRole("link", { name: "回頭補寫單元想法" })).toHaveAttribute("href", "/units/1/core");
   });
 });
 
@@ -325,7 +328,7 @@ describe("material-first: candidate focuses from pasted material", () => {
     await user.click(item.getByRole("button", { name: "請 Manna 從教材提出候選學習重點" }));
     const first = within(await screen.findByRole("article", { name: "用倒裝句強調人物的兩項優點" }));
     await user.click(first.getByRole("button", { name: "放進我的學習重點" }));
-    expect(await first.findByText(/CoRe 已有 3 個學習重點/)).toBeInTheDocument();
+    expect(await first.findByText(/單元想法已有 3 個學習重點/)).toBeInTheDocument();
     expect(api.callsTo("PUT", DRAFT)).toHaveLength(0);
     expect(api.callsTo("POST", "/api/ai/77/decision")).toHaveLength(0);
   });

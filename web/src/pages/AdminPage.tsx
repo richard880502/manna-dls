@@ -15,8 +15,7 @@ export function AdminPage() {
   return (
     <section className="admin-page">
       <div className="page-intro">
-        <p className="eyebrow warm">主持人</p>
-        <h2>後台管理</h2>
+        <h1>後台管理</h1>
         <p>建立邀請碼、維護提示詞版本、匯入知識庫與教師備課經驗。每次修改提示詞都會產生新版本。</p>
       </div>
       <PlatformSettings />
@@ -81,7 +80,7 @@ function PlatformSettings() {
   return (
     <section className="panel-card admin-settings" aria-labelledby="settings-heading">
       <div className="card-heading">
-        <h3 id="settings-heading">平台設定</h3>
+        <h2 id="settings-heading">平台設定</h2>
         {enabled !== null && <span className="soft-tag">{enabled ? "自選備課菜單：開放" : "固定順序"}</span>}
       </div>
       {enabled === null && !error && <Loading />}
@@ -135,7 +134,7 @@ function InviteForm() {
 
   return (
     <form className="panel-card" onSubmit={onSubmit} aria-labelledby="invite-heading">
-      <h3 id="invite-heading">建立邀請碼</h3>
+      <h2 id="invite-heading">建立邀請碼</h2>
       <label className="field-label" htmlFor="invite-research-id">
         研究編號
       </label>
@@ -230,7 +229,7 @@ function CsvImport({
 
   return (
     <section className="panel-card" aria-labelledby={`${inputId}-heading`}>
-      <h3 id={`${inputId}-heading`}>{title}</h3>
+      <h2 id={`${inputId}-heading`}>{title}</h2>
       <p className="field-hint">
         CSV（UTF-8），欄位：<code>{columns}</code>
       </p>
@@ -279,7 +278,7 @@ function PromptsEditor() {
   return (
     <section className="panel-card prompts-panel" aria-labelledby="prompts-heading">
       <div className="card-heading">
-        <h3 id="prompts-heading">提示詞版本</h3>
+        <h2 id="prompts-heading">提示詞版本</h2>
         <span className="soft-tag">每個 key 的最新版</span>
       </div>
       <ErrorText message={error} />

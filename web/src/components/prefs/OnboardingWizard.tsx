@@ -49,10 +49,10 @@ export function OnboardingWizard({ onDismiss }: { onDismiss: () => void }) {
         <p className="eyebrow warm">
           初次使用設定 · 第 {index + 1} / {total} 題
         </p>
-        <h2 id="onboarding-heading">先認識你的備課習慣</h2>
+        <h1 id="onboarding-heading">先認識你的備課習慣</h1>
         <p>
           約 3 分鐘。你的回答只用來調整預設的備課順序、預設展開的輔助與 AI 建議的詳細程度；所有功能都還是能手動打開。
-          可以略過，之後隨時在「我的備課偏好」修改。
+          可以略過，之後隨時在「備課偏好」修改。
         </p>
       </div>
 

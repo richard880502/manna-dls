@@ -15,9 +15,8 @@ import { RecordIndexPage } from "./pages/RecordIndexPage";
 import { RemotePage } from "./pages/RemotePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
 import { RunReviewPage } from "./pages/RunReviewPage";
-import { CommunityPage } from "./pages/static/CommunityPage";
-import { ProfilePage, ReflectPage, SharePage } from "./pages/static/StaticPages";
 import { UnitPage } from "./pages/UnitPage";
+import { WorksheetsPage } from "./pages/WorksheetsPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { token, teacher, authChecked, authError, retryAuth, logout } = useApp();
@@ -34,7 +33,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
       <>
         <DemoBanner />
         <div className="login-shell">
-          <section className="login-card panel-card">
+          <section className="login-card">
             <ErrorText message={authError ?? "無法取得登入資訊，請稍後再試。"} />
             <div className="button-row">
               <button type="button" className="primary-button" onClick={retryAuth}>
@@ -68,7 +67,7 @@ export function AppRoutes() {
         <Route index element={<HomePage />} />
         <Route path="classes/:classId" element={<ClassPage />} />
         <Route path="library" element={<LibraryPage />} />
-        {/* The library used to be the Study & Plan index; old links keep working. */}
+        {/* Old links keep working: /plan was the library; removed pages fall through to home. */}
         <Route path="plan" element={<LibraryPage />} />
         <Route path="units/:unitId" element={<UnitPage />} />
         <Route path="units/:unitId/core" element={<CorePage />} />
@@ -76,10 +75,7 @@ export function AppRoutes() {
         <Route path="record" element={<RecordIndexPage />} />
         <Route path="runs/:runId" element={<RunConsolePage />} />
         <Route path="runs/:runId/review" element={<RunReviewPage />} />
-        <Route path="reflect" element={<ReflectPage />} />
-        <Route path="share" element={<SharePage />} />
-        <Route path="profile" element={<ProfilePage />} />
-        <Route path="community" element={<CommunityPage />} />
+        <Route path="worksheets" element={<WorksheetsPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

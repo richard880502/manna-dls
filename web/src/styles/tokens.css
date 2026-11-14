@@ -1,86 +1,80 @@
-/* Hallmark v2.0.0 (guidance only, no scripts run) | genre: editorial | shape: app screen | scope: app | redesign: full, inside the existing shell
- * theme: custom | idea: "two inks on one page: the teacher writes in blue-black; whatever Manna adds sits in gold and carries its sources" | vibe: "a calm research notebook in two inks"
- * paper: cool off-white | ink: blue-black (藍黑墨水) | accent: slate ink-blue, from the project's #284b63 | seal: Manna gold, from the star mascot | faces: Noto Serif TC (heads), Noto Sans TC (body), system mono (codes only)
- * posture: restrained, plus one seal colour with one job (Manna provenance) | axes: light/roman-serif/cool | modes: light only
- * signature: the CoRe ledger, eight questions numbered in the margin of each learning focus
- * pre-emit critique: P4 H4 E4 S4 R4 V3 | weakest: V, the project's sidebar-plus-panels skeleton stays; the two-ink rule and the ledger carry the difference
- * kept as found (copy, tests or another branch read them): meta lines above heads that carry a fact (version, route, stage), "·" inside those lines, "→" in three links
- * sweep: manual walk of gates.md section 4 (0 colour or face literals past this file, no tracked caps, no transition: all, focus-visible on every control, no sideways scroll 320 to 1920 at the widths checked)
- * nudges: 0.1em/0.2em to centre native radios and checkboxes on their first line, -1px to seat the tab underline on the rule
- * finish-review: subagent, fix, 8 findings: 5 resolved (lesson ledger, unit empty half, record log rows, grey on gold, focus tab), 3 partial (sync chip stays above the buttons, help sheet 58dvh, CJK head wraps at narrow widths)
- * Source of truth for docs/DESIGN.md. Every colour, face, size, space, radius, shadow, duration and layer below; nothing literal past this file. */
+/* Tokens: the source of truth for docs/DESIGN.md. Every colour, face, size, space, radius, shadow,
+ * duration and layer is named here; nothing literal past this file.
+ * Idea: two inks on one page. The teacher writes in ink blue; whatever Manna adds sits in gold and
+ * carries its sources. A third voice, the source material, is set as print (docs/DESIGN_OVERHAUL.md).
+ * Values follow the approved overhaul mockups (docs/design/overhaul/mockup.css); the contrast pairs
+ * listed in DESIGN_OVERHAUL.md section 5 were computed on these values. */
 
 :root {
   color-scheme: light;
 
-  /* ---------- colour: paper and ink (tinted toward the ink hue 245) ---------- */
-  --color-paper: oklch(97.8% 0.005 245);
-  --color-paper-2: oklch(95.4% 0.008 245);
-  --color-paper-3: oklch(92.6% 0.011 245);
-  --color-field: oklch(99.2% 0.002 245);
-  --color-ink: oklch(25% 0.035 252);
-  --color-ink-2: oklch(40% 0.03 250);
-  --color-muted: oklch(50% 0.022 250);
-  --color-field-edge: oklch(61% 0.02 248);
-  --color-rule: oklch(88.5% 0.012 245);
-  --color-rule-strong: oklch(80% 0.016 245);
+  /* ---------- colour: paper and ink ---------- */
+  --color-paper: #f7f8fa; /* the page */
+  --color-paper-2: #eef1f5; /* neutral wells, quiet tags */
+  --color-paper-3: #e3e8ee; /* hover on paper-2, progress tracks */
+  --color-field: #fdfdfe; /* inputs: the lightest thing on screen */
+  --color-sheet: #fdfdfe; /* material and worksheet sheets (the print voice) */
+  --color-ink: #1c2533;
+  --color-ink-2: #465163;
+  --color-muted: #5a6677;
+  --color-field-edge: #7d8796; /* input and quiet-button outlines (3:1 or better) */
+  --color-rule: #dde2e9;
+  --color-rule-strong: #b9c1cc;
 
   /* ---------- colour: the teacher's ink (actions, selection, links) ---------- */
-  --color-accent: oklch(45% 0.1 245);
-  --color-accent-hover: oklch(39% 0.095 245);
-  --color-accent-press: oklch(35% 0.09 245);
-  --color-accent-ink: oklch(98.6% 0.004 245);
-  --color-accent-text: oklch(43% 0.1 245);
-  --color-accent-wash: oklch(94% 0.024 240);
-  --color-accent-wash-2: oklch(90% 0.04 240);
-  --color-accent-rule: oklch(72% 0.07 242);
-  --color-focus: oklch(50% 0.17 255);
+  --color-accent: #2a5580;
+  --color-accent-hover: #204568;
+  --color-accent-press: #1a3956;
+  --color-accent-ink: #fbfcfe;
+  --color-accent-text: #2a5580;
+  --color-accent-wash: #e6eef6;
+  --color-accent-wash-2: #d5e2f0;
+  --color-accent-rule: #8fb0cf;
+  --color-focus: #1f5fd0;
 
   /* ---------- colour: Manna's gold (anything the AI contributed) ---------- */
-  --color-star: oklch(80% 0.13 86);
-  --color-manna-wash: oklch(96.6% 0.03 90);
-  --color-manna-wash-2: oklch(93.4% 0.045 88);
-  --color-manna-rule: oklch(84% 0.07 86);
-  --color-manna-ink: oklch(45% 0.085 70);
+  --color-star: #e2b33a;
+  --color-manna-wash: #fbf3dc;
+  --color-manna-wash-2: #f4e6b8;
+  --color-manna-rule: #d9bd6a;
+  --color-manna-ink: #73500f;
 
   /* ---------- colour: states ---------- */
-  --color-success: oklch(46% 0.09 155);
-  --color-success-wash: oklch(95.2% 0.03 155);
-  --color-success-rule: oklch(74% 0.08 155);
-  --color-warn-ink: oklch(45% 0.1 55);
-  --color-warn-wash: oklch(95.6% 0.03 70);
-  --color-warn-rule: oklch(80% 0.09 65);
-  --color-error: oklch(50% 0.16 28);
-  --color-error-wash: oklch(95.6% 0.02 28);
-
-  /* ---------- colour: the Phase 2 map (static demo) ---------- */
-  --color-map-land: oklch(90% 0.012 245);
-  --color-map-land-hover: oklch(84% 0.018 245);
-  --color-map-marker: oklch(52% 0.03 248);
+  --color-success: #2c6a4c;
+  --color-success-wash: #e4f2ea;
+  --color-success-rule: #8fbfa5;
+  --color-warn-ink: #8a5410;
+  --color-warn-wash: #fbeed8;
+  --color-warn-rule: #e0b878;
+  --color-error: #a13a2c;
+  --color-error-wash: #fbe9e5;
 
   /* ---------- type ---------- */
   --font-display: "Noto Serif TC Variable", "Noto Serif TC", "Songti TC", "PMingLiU", Georgia, serif;
   --font-body: "Noto Sans TC Variable", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  /* The print voice: source material and worksheets (used from overhaul step 2 on). */
+  --font-print: Georgia, "Times New Roman", "Noto Serif TC Variable", "Songti TC", serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --weight-regular: 400;
   --weight-strong: 600;
 
   /* Fixed app scale, ratio about 1.18 from a 16px body. No fluid heads. */
-  --text-xs: 0.8125rem; /* 13px: mono codes only */
-  --text-sm: 0.875rem; /* 14px: labels, hints, meta, chips */
+  --text-xs: 0.8125rem; /* 13px: tags, mono codes */
+  --text-sm: 0.875rem; /* 14px: labels, hints, meta */
   --text-md: 1rem; /* 16px: body, inputs, buttons */
-  --text-lg: 1.125rem; /* 18px: item titles, the big idea */
-  --text-xl: 1.3125rem; /* 21px: panel heads (h3), the view title (h1) */
+  --text-lg: 1.125rem; /* 18px: row titles, the big action */
+  --text-xl: 1.3125rem; /* 21px: section heads (h2) */
   --text-2xl: 1.5625rem; /* 25px: page title on a phone */
-  --text-3xl: 1.875rem; /* 30px: page title (h2) */
+  --text-3xl: 1.875rem; /* 30px: page title (h1) */
+  --text-clock: 2.75rem; /* 44px: the lesson clock */
 
   --leading-tight: 1.3; /* CJK heads: glyphs fill the em box, so never under 1.25 */
   --leading-ui: 1.55; /* labels, controls, short lines */
   --leading-body: 1.75; /* CJK prose and answers */
   --measure: 40em; /* about 40 CJK characters, or 75 Latin */
 
-  /* ---------- space (one rhythm; 32px added for app density) ---------- */
+  /* ---------- space ---------- */
   --space-3xs: 0.125rem; /* 2 */
   --space-2xs: 0.25rem; /* 4 */
   --space-xs: 0.5rem; /* 8 */
@@ -89,24 +83,27 @@
   --space-lg: 1.5rem; /* 24 */
   --space-xl: 2rem; /* 32 */
   --space-2xl: 3rem; /* 48 */
+  --space-section: 3.5rem; /* 56: between the sections of a page */
   --space-3xl: 4rem; /* 64 */
   --space-4xl: 6rem; /* 96 */
 
   /* ---------- shape ---------- */
   --radius-sm: 0.375rem; /* 6: code chips, inset wells in a well */
   --radius-control: 0.5rem; /* 8: buttons, inputs, wells, choice tiles */
-  --radius-card: 0.75rem; /* 12: panels */
+  --radius-card: 0.75rem; /* 12: dialogs */
+  --radius-mark: 1rem; /* 16: the two big in-class buttons */
   --radius-pill: 999px; /* tags, status, steppers */
   --rule-hair: 1px;
 
-  /* ---------- elevation: borders do the work; one shadow, for the bottom sheet only ---------- */
-  --shadow-overlay: 0 -0.5rem 1.5rem oklch(25% 0.03 250 / 0.16);
-  /* Behind the 「還有沒儲存的內容」 confirm: dims the page, never a colour of its own. */
-  --color-scrim: oklch(25% 0.035 252 / 0.42);
+  /* ---------- elevation: space and hairlines do the work; shadows only on things that float ---------- */
+  --shadow-overlay: 0 -0.5rem 1.5rem rgb(28 37 51 / 0.16); /* the help sheet over a narrow screen */
+  --shadow-dialog: 0 0.75rem 2.5rem rgb(28 37 51 / 0.25); /* the choose-a-class dialog */
+  --color-scrim: rgb(28 37 51 / 0.38);
 
   /* ---------- controls ---------- */
   --control-h: 2.5rem; /* 40 */
   --control-h-sm: 2rem; /* 32 */
+  --control-h-lg: 3.25rem; /* 52: the one big action of a teach-mode view */
   --hit: 2.75rem; /* 44 */
 
   /* ---------- motion: state only, never decoration ---------- */
@@ -122,8 +119,11 @@
   --z-overlay: 400;
 
   /* ---------- layout ---------- */
-  --sidebar-w: 16rem;
-  --container: 75rem;
+  --top-h: 3.5rem; /* 56: the top bar, which is the whole navigation */
+  --bottom-nav-h: 3.75rem; /* 60: the same three items at the bottom of a phone */
+  --container: 65rem; /* 1040: list pages */
+  --container-wide: 75rem; /* 1200: working pages with two columns */
+  --container-console: 55rem; /* 880: the in-class console */
   --gutter: 2.5rem;
   --card-pad: var(--space-lg);
   --banner-h: 0rem;
@@ -134,15 +134,10 @@
   --banner-h: 2.5rem;
 }
 
-@media (max-width: 60rem) {
-  :root {
-    --gutter: 1.5rem;
-  }
-}
-
-@media (max-width: 40rem) {
+@media (max-width: 47.5rem) {
   :root {
     --gutter: 1rem;
     --card-pad: var(--space-md);
+    --space-section: 2.5rem;
   }
 }

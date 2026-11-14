@@ -112,11 +112,11 @@ export function mockApi(routes: Record<string, RouteValue>) {
 
 // ---------- lesson page helpers ----------
 
-/** The lesson page's first view: 今天要教什麼？ and 開始本節課. */
+/** The lesson page first view: 今天要教什麼？ and 開始上課. */
 export const todayCard = () => within(screen.getByRole("region", { name: "今天要教什麼？" }));
 
 /** 儲存教案 on the first view (the open steps section repeats it at its end). */
-export const savePlanButton = () => todayCard().getByRole("button", { name: "儲存教案（產生新版本）" });
+export const savePlanButton = () => todayCard().getByRole("button", { name: "儲存教案" });
 
 /** The toggle of a collapsible lesson-page section, by the start of its label (e.g. "SIOP 提示"). */
 export const sectionToggle = (title: string) =>

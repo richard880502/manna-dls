@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import type { Lesson, PrepRoute, Unit } from "../../api/types";
-import { PREP_ROUTE_DESCRIPTIONS, PREP_ROUTE_LABELS } from "../../lib/preferences";
+import { PREP_ROUTE_DESCRIPTIONS } from "../../lib/preferences";
 
 interface MenuStep {
   key: string;
@@ -41,7 +41,7 @@ export function routeSteps(
           focusId: "materials-heading",
           done: coreStarted,
         },
-        { key: "core", label: "寫單元前 CoRe", to: coreUrl, done: coreStarted },
+        { key: "core", label: "寫單元想法", to: coreUrl, done: coreStarted },
         lessonStep,
       ];
     case "student":
@@ -52,7 +52,7 @@ export function routeSteps(
           focusId: "unit-class-profile",
           done: !!unit.class_profile?.trim(),
         },
-        { key: "core", label: "寫 CoRe Q5、Q6（學生可能怎麼想、影響教學的因素）", to: coreUrl, done: coreStarted },
+        { key: "core", label: "寫單元想法 Q5、Q6（學生可能怎麼想、影響教學的因素）", to: coreUrl, done: coreStarted },
         lessonStep,
       ];
     case "activity":
@@ -62,16 +62,16 @@ export function routeSteps(
           : { key: "lesson", label: "建立課例，先寫活動點子", focusId: "lesson-title", done: false },
         {
           key: "links",
-          label: "在課例頁連結 1–3 個 CoRe 學習重點",
+          label: "在課例頁連結 1–3 個單元想法的學習重點",
           ...(firstLesson ? { to: `/lessons/${firstLesson.id}` } : { focusId: "lesson-title" }),
           done: false,
         },
-        { key: "core", label: "回頭補寫單元前 CoRe", to: coreUrl, done: unit.core_status === "completed" },
+        { key: "core", label: "回頭補寫單元想法", to: coreUrl, done: unit.core_status === "completed" },
       ];
     case "goal":
     default:
       return [
-        { key: "core", label: "寫單元前 CoRe（先寫 Q1–Q3）", to: coreUrl, done: coreStarted },
+        { key: "core", label: "寫單元想法（先寫 Q1–Q3）", to: coreUrl, done: coreStarted },
         lessonStep,
       ];
   }
@@ -79,14 +79,13 @@ export function routeSteps(
 
 interface RouteMenuProps {
   route: PrepRoute;
-  routeChoiceEnabled: boolean;
   unit: Unit;
   lessons: Lesson[];
   materialsCount: number | null;
 }
 
 /** 備課菜單：the ordered steps for the unit's prep route with one clear 「下一步」. */
-export function RouteMenu({ route, routeChoiceEnabled, unit, lessons, materialsCount }: RouteMenuProps) {
+export function RouteMenu({ route, unit, lessons, materialsCount }: RouteMenuProps) {
   const steps = routeSteps(route, unit, lessons, materialsCount);
   // For the activity route the lesson stays "next" until the teacher moves on; other routes advance by state.
   const next = steps.find((s) => !s.done) ?? steps[steps.length - 1];
@@ -94,7 +93,6 @@ export function RouteMenu({ route, routeChoiceEnabled, unit, lessons, materialsC
   return (
     <div className="route-menu">
       <div>
-        <p className="eyebrow warm">{routeChoiceEnabled ? `備課菜單 · ${PREP_ROUTE_LABELS[route]}` : "備課順序"}</p>
         <p className="route-menu-description">{PREP_ROUTE_DESCRIPTIONS[route]}</p>
       </div>
       {next && <StepAction step={next} primary prefix="下一步：" />}
@@ -115,7 +113,7 @@ export function RouteMenu({ route, routeChoiceEnabled, unit, lessons, materialsC
 }
 
 function StepAction({ step, primary = false, prefix = "" }: { step: MenuStep; primary?: boolean; prefix?: string }) {
-  const className = primary ? "primary-button link-button route-next" : "route-step-link";
+  const className = primary ? "secondary-button link-button route-next" : "route-step-link";
   if (step.to) {
     return (
       <Link className={className} to={step.to}>

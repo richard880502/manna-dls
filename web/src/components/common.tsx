@@ -14,9 +14,6 @@ export function DemoBanner() {
   );
 }
 
-export function Phase2Tag() {
-  return <span className="phase2-tag">Phase 2 規劃中（靜態展示）</span>;
-}
 
 export function ErrorText({ message }: { message: string | null | undefined }) {
   if (!message) return null;

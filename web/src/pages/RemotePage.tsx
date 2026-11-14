@@ -181,7 +181,7 @@ export function RemotePage() {
     return (
       <RemoteShell title="尚未配對">
         <ErrorText message={error} />
-        <p>請在電腦的「Teach &amp; Record」課堂紀錄頁按「用手機當遙控器」，再用相機掃描 QR Code。</p>
+        <p>請在電腦的上課畫面按「用手機當遙控器」，再用相機掃描 QR Code。</p>
       </RemoteShell>
     );
   }

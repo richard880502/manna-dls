@@ -13,7 +13,6 @@ import type {
 } from "../api/types";
 import { ErrorText, Loading, Notice, PrivacyHint } from "../components/common";
 import { CoreCell } from "../components/core/CoreCell";
-import { ClassContextBar } from "../components/classes/ClassContextBar";
 import { HelpPanel, type HelpState } from "../components/core/HelpPanel";
 import { useApp } from "../context/AppContext";
 import { useActiveClass } from "../lib/classes";
@@ -35,7 +34,7 @@ const ROUTE_CORE_NOTES: Record<PrepRoute, string> = {
   goal: "建議先寫標示「建議先寫」的 Q1–Q3：學生要學會什麼、為什麼要學、這次先不教什麼。其他題可以之後再補。",
   material: "從教材候選重點放進來的學習重點會出現在這裡；你可以改寫、移除，或自己新增。",
   student: "建議先寫標示「建議先寫」的 Q5、Q6：學生可能怎麼想或誤解、還有哪些因素會影響教學。",
-  activity: "活動優先：可以先在課例寫活動，連結 CoRe 重點後再回來補寫這裡。",
+  activity: "活動優先：可以先在課例寫活動，連結單元想法的重點後再回來補寫這裡。",
 };
 
 export const AUTOSAVE_DELAY_MS = 1500;
@@ -336,14 +335,14 @@ export function CorePage() {
     const saved = await saveNow();
     if (!saved) {
       setCompleting(false);
-      setCompleteError("草稿尚未儲存成功，請稍後再按一次「完成單元前 CoRe」。");
+      setCompleteError("草稿尚未儲存成功，請稍後再按一次「完成單元想法」。");
       return;
     }
     try {
       const version = await api.completeCore(unitId);
       setMeta(version);
       setCompleteMessage(
-        `已完成單元前 CoRe${version.completed_at ? `（${formatDateTime(version.completed_at)}）` : ""}。之後仍可回來修改。`,
+        `已完成單元想法${version.completed_at ? `（${formatDateTime(version.completed_at)}）` : ""}。之後仍可回來修改。`,
       );
     } catch (err) {
       setCompleteError(errorMessage(err));
@@ -371,24 +370,26 @@ export function CorePage() {
 
   return (
     <section aria-labelledby="core-heading">
-      <p className="breadcrumb">
+      <p className="crumbs">
         {activeClass ? (
-          <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+          <>
+            <Link to="/">班級</Link> / <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+          </>
         ) : (
           <Link to="/library">備課庫</Link>
         )}{" "}
-        / <Link to={`/units/${unitId}`}>{unit?.title ?? "單元"}</Link> / 單元前 CoRe
+        / <Link to={`/units/${unitId}`}>{unit?.title ?? "單元"}</Link> / 單元想法
       </p>
-      <div className="page-intro">
-        <p className="eyebrow warm">
-          單元前 CoRe · 第 {meta.version_no} 版 ·{" "}
-          {meta.completed_at ? `已完成（${formatDateTime(meta.completed_at)}）` : "草稿"}
-        </p>
-        <h2 id="core-heading">{unit?.title ?? "單元前 CoRe"}</h2>
+      <div className="page-head">
+        <h1 id="core-heading">
+          單元想法 <small className="en">CoRe</small>
+        </h1>
         <p className="core-pre-question">{CORE_PRE_QUESTION}</p>
-        <p className="field-hint">八題全部可以留白，不設必填；隨時會自動存草稿。</p>
+        <p className="quiet-note">
+          八題都可以留白，想到再寫；會自動儲存。
+          {meta.completed_at ? `已在 ${formatDateTime(meta.completed_at)} 標為寫好。` : ""}
+        </p>
       </div>
-      <ClassContextBar unit={unit} />
 
       {unit && (
         <Notice>
@@ -506,7 +507,7 @@ export function CorePage() {
                 儲存草稿
               </button>
               <button type="button" className="primary-button" onClick={() => void complete()} disabled={completing}>
-                {completing ? "處理中…" : "完成單元前 CoRe"}
+                {completing ? "處理中…" : "完成單元想法"}
               </button>
             </div>
             {completeMessage && <Notice tone="success">{completeMessage}</Notice>}

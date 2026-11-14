@@ -76,11 +76,11 @@ export function PipControl({ children }: { children: ReactNode }) {
   return (
     <div className="pip-control">
       {pipWindow ? (
-        <button type="button" className="secondary-button" onClick={() => pipWindow.close()}>
+        <button type="button" className="text-link is-plain" onClick={() => pipWindow.close()}>
           關閉子母畫面小視窗
         </button>
       ) : (
-        <button type="button" className="secondary-button" onClick={() => setConfirming(true)} disabled={confirming}>
+        <button type="button" className="text-link is-plain" onClick={() => setConfirming(true)} disabled={confirming}>
           子母畫面小視窗
         </button>
       )}
@@ -89,7 +89,7 @@ export function PipControl({ children }: { children: ReactNode }) {
           <strong id="pip-warning-title">鏡像投影會被學生看到</strong>
           <p>如果電腦畫面是「鏡像」投影到教室螢幕，小視窗也會一起出現。建議改用「延伸」螢幕，或用手機遙控。</p>
           <div className="button-row">
-            <button type="button" className="primary-button" onClick={() => void open()}>
+            <button type="button" className="secondary-button" onClick={() => void open()}>
               仍要開啟
             </button>
             <button type="button" className="ghost-button" onClick={() => setConfirming(false)}>

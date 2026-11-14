@@ -64,11 +64,11 @@ export function SuggestionsPanel({ lessonId, classId, onAppendStep, pinned = fal
   const output = result?.status === "shown" ? result.output : null;
 
   return (
-    <section className={`panel-card suggestion-card${pinned ? " is-pinned" : ""}`} aria-labelledby="rag-heading">
-      <div className="card-heading">
+    <section className={`suggestion-card${pinned ? " is-pinned" : ""}`} aria-labelledby="rag-heading">
+      <div className="head-row">
         <div>
-          <p className="eyebrow warm">Manna · RAG</p>
-          <h3 id="rag-heading">備課建議</h3>
+          <p className="manna-label"><span className="star" aria-hidden="true" />Manna</p>
+          <h2 id="rag-heading">備課建議</h2>
         </div>
         <div className="card-heading-tags">
           {pinned && <span className="optional-label">依你的備課偏好置頂</span>}
@@ -78,7 +78,7 @@ export function SuggestionsPanel({ lessonId, classId, onAppendStep, pinned = fal
       <p className="field-hint">每項建議都附知識庫引用；採用、修訂或拒絕由你決定，也可以完全不使用。</p>
 
       <label className="field-label" htmlFor="rag-note">
-        想請 Manna 特別注意什麼？（選填）
+        想請 Manna 特別注意什麼？
       </label>
       <textarea
         id="rag-note"
@@ -92,7 +92,7 @@ export function SuggestionsPanel({ lessonId, classId, onAppendStep, pinned = fal
       <div className="button-row">
         <button
           type="button"
-          className="primary-button"
+          className="manna-button"
           onClick={() => void requestSuggestions()}
           disabled={loading || !aiEnabled}
         >
@@ -287,7 +287,7 @@ export function SuggestionCard({ index, suggestion, sources, interactionId, onAp
               <div className="button-row">
                 <button
                   type="button"
-                  className="primary-button"
+                  className="secondary-button"
                   disabled={sending || !revisedText.trim()}
                   onClick={() => void decide("revise")}
                 >

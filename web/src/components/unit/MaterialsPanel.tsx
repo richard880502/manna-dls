@@ -152,7 +152,7 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
       if (existing.length >= MAX_FOCUSES) {
         setCandidateError({
           index,
-          message: `CoRe 已有 ${MAX_FOCUSES} 個學習重點。請先到 CoRe 移除一個，再放進這個候選重點。`,
+          message: `單元想法已有 ${MAX_FOCUSES} 個學習重點。請先到單元想法移除一個，再放進這個候選重點。`,
         });
         return;
       }
@@ -179,15 +179,15 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
 
   return (
     <section
-      className={`panel-card materials-panel${emphasized ? " is-route-first" : ""}`}
+      className={`section materials-panel${emphasized ? " is-route-first" : ""}`}
       aria-labelledby="materials-heading"
     >
-      <div className="card-heading">
+      <div className="head-row">
         <div>
-          <p className="eyebrow warm">教材優先 · Manna</p>
-          <h3 id="materials-heading" tabIndex={-1}>
+          
+          <h2 id="materials-heading" tabIndex={-1}>
             單元教材與候選學習重點
-          </h3>
+          </h2>
         </div>
         <button
           type="button"
@@ -209,7 +209,7 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
       {open && (
         <div id="materials-body">
           <p className="field-hint">
-            教材只用於這個單元；刪除時會實際刪除原文。Manna 只會提出「候選」學習重點，要不要放進 CoRe 由你決定。
+            教材只用於這個單元；刪除時會實際刪除原文。Manna 只會提出「候選」學習重點，要不要放進單元想法由你決定。
           </p>
 
           {loadError && <ErrorText message={loadError} />}
@@ -276,7 +276,7 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
           {!aiEnabled && materials && materials.length > 0 && <AiUnavailableNote />}
 
           <form className="material-form" onSubmit={onSave}>
-            <h4>貼上教材文字</h4>
+            <h3>貼上教材文字</h3>
             <label className="field-label" htmlFor="material-filename">
               教材名稱（選填）
             </label>
@@ -303,27 +303,27 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
               {text.length.toLocaleString()} / {MATERIAL_MAX_CHARS.toLocaleString()} 字。請不要貼上含學生姓名或個人資料的內容。
             </p>
             <ErrorText message={saveError} />
-            <button className="primary-button" type="submit" disabled={saving}>
+            <button className="secondary-button" type="submit" disabled={saving}>
               {saving ? "儲存中…" : "儲存教材"}
             </button>
           </form>
 
           {(requesting || result || requestError) && (
             <div className="candidates" aria-live="polite">
-              <h4>
+              <h3>
                 Manna 從教材提出的候選學習重點
                 {requestMaterial ? `（${requestMaterial.filename || "未命名教材"}）` : ""}
-              </h4>
+              </h3>
               {requesting && <p className="loading-text">Manna 閱讀教材中…</p>}
               <ErrorText message={requestError} />
               {result && result.status !== "shown" && <AiStatusMessage status={result.status} message={result.message} />}
               {result?.status === "shown" && candidates.length === 0 && (
                 <div className="ai-status" role="status">
-                  教材內容不足以提出候選重點。你可以多貼一些教材，或直接到 CoRe 自己寫。
+                  教材內容不足以提出候選重點。你可以多貼一些教材，或直接到單元想法自己寫。
                 </div>
               )}
               {candidates.length > 0 && (
-                <p className="field-hint">每個候選都附上教材原文段落。不會自動放進 CoRe；按「放進我的學習重點」才會加入，之後仍可修改或移除。</p>
+                <p className="field-hint">每個候選都附上教材原文段落。不會自動放進單元想法；按「放進我的學習重點」才會加入，之後仍可修改或移除。</p>
               )}
               {candidates.map((c, index) => {
                 const state = candidateState[index];
@@ -369,7 +369,7 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
                     )}
                     {state?.status === "adopted" && (
                       <p className="field-hint appended-note">
-                        已加入 CoRe 草稿。<Link to={`/units/${unitId}/core`}>打開 CoRe 繼續寫八題 →</Link>
+                        已加入單元想法。<Link to={`/units/${unitId}/core`}>打開單元想法繼續寫八題</Link>
                       </p>
                     )}
                     {candidateError?.index === index && <ErrorText message={candidateError.message} />}
@@ -379,7 +379,7 @@ export function MaterialsPanel({ unitId, classId, emphasized, onCoreChanged, onC
               {result && <AiContextPanel items={result.context} />}
               {Object.values(candidateState).some((s) => s.status === "adopted") && (
                 <Notice tone="success">
-                  下一步：<Link to={`/units/${unitId}/core`}>到 CoRe 寫這些學習重點的八題</Link>
+                  下一步：<Link to={`/units/${unitId}/core`}>到單元想法寫這些學習重點的八題</Link>
                 </Notice>
               )}
             </div>

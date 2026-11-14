@@ -169,7 +169,7 @@ describe("CoRe page", () => {
     );
   });
 
-  it("「完成單元前 CoRe」 works with every answer blank", async () => {
+  it("「完成單元想法」 works with every answer blank", async () => {
     signIn();
     const api = mockApi(
       coreRoutes({
@@ -181,11 +181,11 @@ describe("CoRe page", () => {
     const user = userEvent.setup();
     renderApp("/units/1/core");
 
-    const button = await screen.findByRole("button", { name: "完成單元前 CoRe" });
+    const button = await screen.findByRole("button", { name: "完成單元想法" });
     expect(button).toBeEnabled();
     await user.click(button);
 
-    expect(await screen.findByText(/已完成單元前 CoRe/)).toBeInTheDocument();
+    expect(await screen.findByText(/已完成單元想法/)).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/units/1/core/complete")).toHaveLength(1);
     const body = api.lastBody("PUT", DRAFT) as CoreDraftRequest;
     expect(Object.values(body.focuses[0]!.responses).every((r) => r?.status === "blank")).toBe(true);

@@ -17,13 +17,12 @@ describe("login", () => {
     await user.type(screen.getByLabelText("邀請碼"), "  INVITE-42 ");
     await user.click(screen.getByRole("button", { name: "登入" }));
 
-    expect(await screen.findByRole("heading", { name: "教師工作檯" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/auth/login")[0]?.body).toEqual({ code: "INVITE-42" });
     expect(window.localStorage.getItem(TOKEN_STORAGE_KEY)).toBe("tok-123");
 
-    await waitFor(() => expect(api.callsTo("GET", "/api/units").length).toBeGreaterThan(0));
-    expect(api.callsTo("GET", "/api/units")[0]?.headers.Authorization).toBe("Bearer tok-123");
-    expect(await screen.findByText(/目前有 1 個單元設計/)).toBeInTheDocument();
+    await waitFor(() => expect(api.callsTo("GET", "/api/classes").length).toBeGreaterThan(0));
+    expect(api.callsTo("GET", "/api/classes")[0]?.headers.Authorization).toBe("Bearer tok-123");
 
     // logout clears the token and returns to the login page
     await user.click(screen.getByRole("button", { name: "登出" }));
@@ -70,7 +69,7 @@ describe("demo banner", () => {
     signIn();
     mockApi(baseRoutes({ demo_mode: true }));
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "教師工作檯" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
     expect(await screen.findByText("示範環境：請勿輸入真實教師或學生資料")).toBeInTheDocument();
   });
 
