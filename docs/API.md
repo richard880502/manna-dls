@@ -543,3 +543,187 @@ interface LessonDetail { /* 原欄位… */ class_profile_source: ClassProfileSo
 - **班級只問一次**：從首頁或班級頁按「開始上課」直接帶該班的 `class_id`。只有從備課庫進到課例、而單元有多個班級取用時，按「開始上課」才跳出「這節課在哪一班上？」對話框（預設選這節課正在上的班，其次是還沒上過這一節的班）。單元沒有班級取用時照舊建立沒有班級的上課紀錄。伺服器不接受「多個班級取用卻不指定班級」（409），所以對話框沒有「不記在任何班級」的選項。
 - **上課紀錄** `/record`：所有上課紀錄依班級分組（含沒有班級的），只供補寫與回顧；不再從這裡開始上課。上課畫面與課後補寫頁顯示班級。
 - 已移除的頁面（`/reflect`、`/share`、`/profile`、`/community`）一律導回首頁；`/worksheets` 是「學習單產生器開發中」的說明頁，沒有任何功能。
+
+---
+
+# Phase 2.1：課例 SOP（七步備課；改版第 2 步）
+
+以下為**新增或變更**；未提到的端點維持原樣。Migration `0008_lesson_sop.sql`。依據：《學習單產生器：教師選項與 SOP 整合規格》§1–§3、§8、§9.5，`docs/DESIGN_OVERHAUL.md` 方向 A，`docs/LLM_VALIDATION.md`。
+
+## 與既有教案的關係
+
+- **既有教案（`lesson_versions`：`objective` ＋ `lesson_steps`）不變**，仍是「今天要教什麼？」與教學步驟，也仍是上課與課後補寫使用的教案（`lesson_runs.lesson_version_id`、書籤的活動歸屬）。舊課例不需要任何 SOP 內容就能開啟、編輯、開始上課。
+- **課例 SOP 是另一份、獨立版本化的文件**（`lesson_sop_versions`）。沒有任何欄位必填；沒有 SOP 內容的課例 `GET …/sop` 回傳空白文件。
+- **舊的單一目標不自動改寫成 SOP 目標**：舊欄位沒有區分內容目標與語言目標，規格 §2.1(7)、§9.5 也不允許自動寫入。`GET …/sop` 會把最新教案的 `objective` 放在 `today_objective`；第 3 步把它顯示成「你在『今天要教什麼？』寫的」，由教師一鍵放進內容目標或語言目標（來源記為 `teacher`）。AI 推薦目標時也會把它當作教師已寫的內容帶入。
+- 開始上課時另外記下當時的 SOP 版本（`lesson_runs.lesson_sop_version_id`，可為 null），供研究追溯。
+
+## 模型
+
+```ts
+type SopOrigin = "teacher" | "ai_adopted" | "ai_edited";
+type InfoFunction = "discover" | "organize" | "analyze" | "compare" | "create";   // 發現／整理／分析／比較／創造資訊
+type ExitKind = "formative" | "reflection" | "questions";                         // 形成性評量／學生反思／蒐集問題
+
+interface SopParagraph { id: string; no: number; text: string }   // id 例如 "p3"：同一段文字在教材改版後沿用原 id
+interface SopMaterial {
+  id: number; version_no: number; title: string; source_note: string; text: string;
+  paragraphs: SopParagraph[]; word_count: number; created_at: string;
+}
+
+interface SopFeature { id: string; feature: string; evidence: string; explanation: string }
+interface SopParagraphAnalysis {
+  paragraph_id: string; function: string; summary: string; features: SopFeature[]; origin: SopOrigin;
+}
+interface SopLanguageFocus { id: string; kind: string; item: string; paragraph_id: string | null; evidence: string; note: string }
+interface SopAnalysis {
+  text_type: string; main_idea: string; structure: string; overall_origin: SopOrigin;
+  language_focus: SopLanguageFocus[]; paragraphs: SopParagraphAnalysis[];
+}
+
+interface SopCurriculumLink {
+  item_code: string; why: string;
+  // 以下一律由伺服器依 item_code 從 knowledge_items 帶出；用戶端送來的值會被忽略
+  title: string; text: string; category: string; source_doc: string; source_version: string; source_page: string;
+}
+interface SopObjective {
+  id: string; type: "content" | "language"; text: string; student_facing_en: string; reason: string;
+  paragraph_ids: string[]; links: SopCurriculumLink[];
+  link_status: "linked" | "unlinked";      // 由伺服器依 links 是否為空決定
+  origin: SopOrigin;
+}
+
+interface SopParagraphGoal { paragraph_id: string; objective_ids: string[]; note: string }       // 第 4 步
+interface SopScaffolds { verbal: string; instructional: string; procedural: string }              // 語言／教學／程序鷹架
+interface SopTask { id: string; function: InfoFunction | null; text: string; scaffolds: SopScaffolds; origin: SopOrigin }
+interface SopTaskBlock { id: string; paragraph_ids: string[]; tasks: SopTask[] }                  // 一段或合併數段
+interface SopWarmup {
+  background: Array<{ id: string; text: string; scaffolds: SopScaffolds; origin: SopOrigin }>;    // 喚醒背景知識
+  vocabulary: Array<{ id: string; word: string; note: string; origin: SopOrigin }>;               // 關鍵字彙
+}
+interface SopExitTicket { items: Array<{ id: string; kind: ExitKind; text: string; origin: SopOrigin }> }
+
+interface SopContent {
+  analysis: SopAnalysis; objectives: SopObjective[]; paragraph_goals: SopParagraphGoal[];
+  task_blocks: SopTaskBlock[]; warmup: SopWarmup; exit_ticket: SopExitTicket;
+}
+
+interface SopState {
+  lesson_id: number;
+  version_no: number | null;         // null：還沒有任何 SOP 版本
+  versions_count: number;
+  saved_at: string | null;
+  material: SopMaterial | null;
+  content: SopContent;               // 沒有版本時是空白文件
+  today_objective: string;           // 最新教案的 objective（見上）
+  jobs: { analysis: SopJob | null; objectives: SopJob | null };   // 各自最新一次的 AI 工作
+}
+```
+
+所有欄位都可留白或省略（省略＝空字串／空陣列）。`id` 由用戶端產生（文件內唯一即可，≤ 40 字元）。指到已不存在段落的 `paragraph_id` 會被保留（教師改教材不會默默刪掉分析或任務），前端標示為「原段落已變更」。
+
+## 教材與段落
+
+- 教材目前只收貼上的文字（≤ 50,000 字）。**段落由程式切分**：有空行時以空行分段（段內換行視為空白），沒有空行時每一行一段；空白段落略過。
+- 段落 `id` 穩定：新教材中文字（空白正規化後）與前一版相同的段落沿用原 `id`，其餘給新的 `p<n>`（同一課例內不重複使用）。`no` 是目前的順序（從 1）。
+- 教材與 SOP 內容分開存：教材只在文字、標題或來源說明改變時才多一列（`lesson_sop_materials`，只增不改），SOP 版本以 `material_id` 指向它，所以自動儲存不會重複存整篇教材。
+
+## 端點
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/lessons/:id/sop` | – | `SopState` |
+| PUT | `/api/lessons/:id/sop/material` | `{ title?, source_note?, text }` | `SopState`。教材有變才新增教材列，並產生一個指向它的新 SOP 版本（內容不變）；完全相同時不產生版本。`text` 空白＝移除教材（SOP 內容保留） |
+| PUT | `/api/lessons/:id/sop` | `{ content: SopContent }` | `{ version_no, versions_count, saved_at, content }`（`content` 是正規化後的結果：課綱條文與來源已由資料庫帶出）。與最新版本相同時不產生新版本。課綱連結的 `item_code` 在知識庫找不到 → 400（已停用的條目仍可讀，教師先前存的連結不會因此存不了） |
+| GET | `/api/lessons/:id/sop/versions` | – | `Array<{ version_no, created_at, material_version_no: number \| null }>`，新到舊 |
+| GET | `/api/lessons/:id/sop/versions/:version_no` | – | `SopState`（該版本；`jobs` 皆為 null） |
+| GET | `/api/curriculum` | `?q=`（關鍵字，可空） | `Array<SopCurriculumLink>`（`why` 為空）：教師學校類型適用的課綱條目，依關鍵字排序，最多 20 筆；供教師自己連結，不呼叫 AI |
+| POST | `/api/lessons/:id/sop/analysis` | `{ class_id? }` | 202 `SopJob`：逐段教材分析（第 2 步） |
+| POST | `/api/lessons/:id/sop/objectives` | `{ class_id? }` | 202 `SopJob`：SIOP 內容／語言目標推薦＋課綱連結（第 3 步） |
+| GET | `/api/sop-jobs/:id` | – | `SopJob` |
+
+版本只增不改（append-only）；`version_no` 每個課例從 1 連號。所有端點只能存取自己的課例（其他人的回 404）。
+
+## AI：只有驗證過的兩步
+
+```ts
+interface SopJob {
+  id: number; lesson_id: number; kind: "analysis" | "objectives";
+  status: "running" | "done";
+  phase: string;                       // 給教師看的進度，例如「正在讀教材」「補上缺少的段落」
+  started_at: string; finished_at: string | null;
+  sop_version_no: number | null;       // 這次工作讀的是哪一版 SOP
+  result: AiResult<SopAnalysisSuggestion | SopObjectivesSuggestion> | null;   // done 時才有
+  decided: number[];                   // 教師已經決定過的 item_index（重新整理後不再顯示）
+}
+
+interface SopAnalysisSuggestion {
+  text_type: string; main_idea: string; structure: string;
+  language_focus: Array<{ kind: string; item: string; paragraph_id: string; evidence: string; note: string }>;
+  paragraphs: Array<{ paragraph_id: string; paragraph_no: number; function: string; summary: string;
+                      features: Array<{ feature: string; evidence: string; explanation: string }> }>;
+  missing_paragraph_ids: string[];     // 模型兩次都沒有交出的段落（教師可以自己寫）
+  dropped_evidence: number;            // 因為不是原文連續片段而被拿掉的證據筆數
+}
+interface SopObjectivesSuggestion {
+  objectives: Array<{ type: "content" | "language"; text: string; student_facing_en: string; reason: string;
+                      paragraph_ids: string[]; link_status: "linked" | "unlinked"; links: SopCurriculumLink[] }>;
+  curriculum_available: number;        // 這次提供給模型挑選的課綱條目數（0＝知識庫沒有適用條目）
+}
+```
+
+### 長時間呼叫：背景工作＋輪詢
+
+一次呼叫實測 15–50 秒、偶爾 200 秒，加上一次修復就可能超過 nginx 的 180 秒 proxy 逾時，所以**不在 HTTP 請求裡等模型**：`POST` 只建立 `lesson_sop_jobs` 一列、啟動背景工作並立刻回 202；前端每 2 秒 `GET /api/sop-jobs/:id`，顯示 `phase` 與已經過的秒數，教師可以繼續做別的步驟。
+
+- 同一課例、同一種工作還在跑時再 `POST`，回傳同一個工作（不重複呼叫模型）。
+- 每次模型呼叫仍受 `AI_TIMEOUT_SECS` 限制（國網中心模型建議設 120 以上）；一個工作最多兩次呼叫。
+- 伺服器重啟會讓進行中的工作中斷：`running` 超過 `2 × AI_TIMEOUT_SECS + 60` 秒的工作在下次讀取時結束為 `error`。
+- AI 關閉時 `POST` 仍回 202，工作立即 `done`、`result.status = "disabled"`。
+- 工作讀的是**已儲存**的最新 SOP 版本；前端在送出前會先把未儲存的修改存好。
+
+### 共同規則（依 `docs/LLM_VALIDATION.md`）
+
+- 一次只產生一步；每次呼叫都帶 `max_tokens`（分析 6000、目標 4000）與 `temperature`。
+- 閘道會快取完全相同的請求，所以**修復呼叫一定改變請求**：temperature 0.2 → 0.6，並附上未通過的檢查；教師重按「再試一次」時 temperature 也會依該課例先前的工作次數遞增。
+- 每次模型呼叫各寫一列 `ai_interactions`（`module` = `sop_analysis`／`sop_objectives`，第 2 次的 `retry_of` 指向第 1 次），含 prompt 版本、鷹架、檢查結果；輸入快照中的教材只留字數與雜湊（與單元教材相同的規則）。教師看到的是程式整理後的結果，整理了什麼記在最後一列的 `check_results.repairs`。
+- 教師的決定沿用 `POST /api/ai/:interaction_id/decision`（`adopt`／`revise`／`reject`，`revise` 帶 `revised_content`）。`item_index`：分析＝0 是全文（文體、主旨、結構、語言重點），n 是第 n 段；目標＝建議陣列的索引（從 0）。
+- AI 的內容**只有教師按了才寫入**：採用是前端把建議放進 `SopContent`（`origin` = `ai_adopted` 或 `ai_edited`）再照常儲存；伺服器不會把 AI 輸出寫進 SOP。
+- Prompt key（`0008` 預先建立 v1，可在後台改版）：`sop_passage_analysis`、`sop_objectives`。鷹架：`SC-SOP-ANALYSIS`、`SC-SOP-OBJECTIVES`（皆為 `content_design_support`）。
+
+### (a) 逐段教材分析 `sop_passage_analysis`
+
+1. 程式把教材編號為 `[P1]…[Pn]` 後送出。沒有教材時兩個 `POST` 都回 400；教材超過 40 段時分析回 400（長陣列容易提早結束，請教師先貼這節課要讀的部分）。
+2. 檢查：段落編號是否每段各一筆；每筆寫作特色與語言重點的 `evidence` 是否為**該段原文的連續片段**（空白與引號正規化後的子字串；含「...」拼接的不算）；中文欄位是否為中文。
+3. 有缺段或有證據不合格 → 第 2 次呼叫只要求這些段落重做（附原因）。合併兩次結果後，仍不合格的證據**整筆拿掉**（`dropped_evidence`），仍缺的段落列在 `missing_paragraph_ids`。
+4. 至少有一段可用就 `shown`；完全沒有可用內容 `blocked`。
+
+### (b) SIOP 目標與課綱連結 `sop_objectives`
+
+1. 可連結的條目由 `curriculum::items_for_track` 取得：`knowledge_items` 中 `category = 'curriculum'`、適用教師學校類型、未停用的最新版本；超過 150 條時以教材與教師目標為關鍵字取前 150 條。清單（代碼｜類別｜條文）放進 prompt。
+2. 檢查：內容目標與語言目標都要有；`item_code` 必須在清單內；目標不可照抄條文（中文二字組重疊 ≥ 80%）；`objective_zh` 為中文、`student_facing_en` 為英文且以 "I can" 開頭。
+3. 未通過 → 第 2 次呼叫（附原因）。之後仍不在清單內的代碼**拿掉**，該目標若因此沒有連結就標 `unlinked`；仍照抄條文或語言不符的目標拿掉；仍缺一種目標類型 → `blocked`。
+4. `link_status` 一律由程式依剩下的連結決定。**條文、來源、版本、頁碼一律依代碼從資料庫帶出**（`SopCurriculumLink`），模型寫的條文不會顯示。沒有任何適用條目時仍會呼叫模型，所有目標都是 `unlinked`（前端顯示「尚未完成課綱連結」）。
+5. 教師已寫的目標與「今天要教什麼？」會放進 prompt，請模型不要重複；推薦永遠是另外列出，不會改動教師的目標。
+
+### 測試用假模型（`AI_PROVIDER=fake`）新增的標記（寫在教材文字裡）
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_SOP_STOP_EARLY` | 分析第 1 次只交前 2 段；第 2 次補齊 |
+| `FAKE_SOP_STOP_ALWAYS` | 兩次都不交第 3 段以後 → `missing_paragraph_ids` |
+| `FAKE_SOP_SPLICE` | 第 1 次有一筆以「...」拼接的證據；第 2 次改正 |
+| `FAKE_SOP_SPLICE_ALWAYS` | 兩次都拼接 → 該筆證據被拿掉 |
+| `FAKE_SOP_INVENT` | 目標第 1 次引用清單外的代碼；第 2 次改正 |
+| `FAKE_SOP_INVENT_ALWAYS` | 兩次都引用清單外的代碼 → 連結被拿掉、標 `unlinked` |
+| `FAKE_SOP_UNLINKED` | 所有目標都不連結 |
+| `FAKE_SOP_ONE_TYPE` | 只交內容目標 → `blocked` |
+| `FAKE_SLOW` | 每次呼叫多等 3 秒（看進度畫面用） |
+
+既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_REFUSAL` 照舊。
+
+## 前端
+
+- 課例頁改為七步工作區：左側進度列（760px 以下收成一行「第 n 步，共 7 步　看全部步驟」），中間一次一步；進度列最上方是「本節概要」（今天要教什麼？、開始上課、教學步驟與其他備課工具，即原本的首屏與收合區）。還沒有 SOP 內容的課例開在「本節概要」，有內容的開在上次停留的步驟。
+- 自動儲存：SOP 與教案（今天要教什麼？＋教學步驟）在停止輸入約 1.5 秒後各自存成新版本；頁首顯示「儲存中…／已自動儲存 14:32／沒有存到」。沒有「儲存教案」按鈕。離開頁面、開始上課、請 Manna 分析之前會先把還沒存的內容存好；存不成功時照舊在頁面上確認。
+- 第 2–7 步右上的「對照教材」從左側滑出教材（印刷樣式、段落編號），可與步驟並排。
+- 「開始上課」在每一步的頁首都在，從不檢查 SOP 是否完成。

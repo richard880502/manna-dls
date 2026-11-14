@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::{clip, LlmRequest, LlmResponse, ProviderError};
 
 pub fn build_body(model: &str, req: &LlmRequest) -> Value {
-    json!({
+    let mut body = json!({
         "model": model,
         "messages": [
             { "role": "system", "content": req.system },
@@ -15,7 +15,14 @@ pub fn build_body(model: &str, req: &LlmRequest) -> Value {
             "type": "json_schema",
             "json_schema": { "name": req.schema_name, "schema": req.schema, "strict": true }
         }
-    })
+    });
+    if let Some(max_tokens) = req.max_tokens {
+        body["max_tokens"] = json!(max_tokens);
+    }
+    if let Some(temperature) = req.temperature {
+        body["temperature"] = json!(temperature);
+    }
+    body
 }
 
 pub fn endpoint(base_url: &str) -> String {
@@ -89,6 +96,8 @@ mod tests {
             schema: json!({"type": "object"}),
             fake_context: json!({}),
             attempt: 1,
+            max_tokens: None,
+            temperature: None,
         };
         let b = build_body("nchc-model", &req);
         assert_eq!(b["messages"][0]["role"], "system");
@@ -100,6 +109,17 @@ mod tests {
         );
         assert_eq!(b["response_format"]["json_schema"]["strict"], true);
         assert_eq!(endpoint("http://h/v1/"), "http://h/v1/chat/completions");
+        // Neither is sent unless the caller sets it.
+        assert!(b.get("max_tokens").is_none());
+        assert!(b.get("temperature").is_none());
+        let bounded = LlmRequest {
+            max_tokens: Some(6000),
+            temperature: Some(0.5),
+            ..req
+        };
+        let b = build_body("nchc-model", &bounded);
+        assert_eq!(b["max_tokens"], 6000);
+        assert_eq!(b["temperature"], 0.5);
     }
 
     #[test]

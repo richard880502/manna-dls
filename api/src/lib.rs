@@ -8,6 +8,7 @@ pub mod auth;
 pub mod checks;
 pub mod config;
 pub mod core_questions;
+pub mod curriculum;
 pub mod db;
 pub mod error;
 pub mod preferences;
@@ -16,6 +17,7 @@ pub mod record;
 pub mod retrieval;
 pub mod routes;
 pub mod settings;
+pub mod sop;
 
 use std::path::PathBuf;
 use std::sync::Arc;

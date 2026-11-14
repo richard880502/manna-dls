@@ -413,6 +413,8 @@ pub async fn suggest(
             })).collect::<Vec<_>>(),
         }),
         attempt: 1,
+        max_tokens: None,
+        temperature: None,
     };
     let outcome = pipeline::run(
         &state,

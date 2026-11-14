@@ -301,6 +301,8 @@ pub async fn material_focuses(
         schema: schemas::material_focuses_schema(),
         fake_context: json!({ "task": "material_focuses", "material_text": text }),
         attempt: 1,
+        max_tokens: None,
+        temperature: None,
     };
     let outcome = pipeline::run(
         &state,

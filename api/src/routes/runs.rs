@@ -308,9 +308,13 @@ pub async fn start(
         },
     };
     let id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO lesson_runs (lesson_id, class_id, started_at, lesson_version_id)
-         VALUES ($1, $2, now(), (SELECT id FROM lesson_versions WHERE lesson_id = $1
-                                  ORDER BY version_no DESC LIMIT 1))
+        "INSERT INTO lesson_runs (lesson_id, class_id, started_at, lesson_version_id,
+                                  lesson_sop_version_id)
+         VALUES ($1, $2, now(),
+                 (SELECT id FROM lesson_versions WHERE lesson_id = $1
+                   ORDER BY version_no DESC LIMIT 1),
+                 (SELECT id FROM lesson_sop_versions WHERE lesson_id = $1
+                   ORDER BY version_no DESC LIMIT 1))
          ON CONFLICT (lesson_id, (COALESCE(class_id, 0))) WHERE ended_at IS NULL DO NOTHING
          RETURNING id",
     )

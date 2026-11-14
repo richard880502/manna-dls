@@ -26,6 +26,12 @@ pub struct LlmRequest {
     pub fake_context: Value,
     /// 1 for the first call, 2 for the single regeneration.
     pub attempt: i32,
+    /// Upper bound for the output. The OpenAI-compatible gateway hangs on a runaway output
+    /// when none is set (docs/LLM_VALIDATION.md section 2); `None` keeps the provider's default.
+    pub max_tokens: Option<u32>,
+    /// OpenAI-compatible provider only. A retry must differ from the first request (the
+    /// gateway caches identical ones), so the SOP stages raise it on the repair call.
+    pub temperature: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

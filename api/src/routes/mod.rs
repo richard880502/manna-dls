@@ -9,6 +9,7 @@ pub mod materials;
 pub mod preferences;
 pub mod remote;
 pub mod runs;
+pub mod sop;
 pub mod suggestions;
 pub mod units;
 
@@ -81,6 +82,14 @@ pub fn api_router() -> Router<AppState> {
         .route("/siop", get(lessons::list_siop))
         .route("/lessons/{id}/siop", put(lessons::set_siop))
         .route("/lessons/{id}/suggestions", post(suggestions::suggest))
+        .route("/lessons/{id}/sop", get(sop::get).put(sop::put))
+        .route("/lessons/{id}/sop/material", put(sop::put_material))
+        .route("/lessons/{id}/sop/versions", get(sop::versions))
+        .route("/lessons/{id}/sop/versions/{version_no}", get(sop::version))
+        .route("/lessons/{id}/sop/analysis", post(sop::start_analysis))
+        .route("/lessons/{id}/sop/objectives", post(sop::start_objectives))
+        .route("/sop-jobs/{id}", get(sop::job))
+        .route("/curriculum", get(sop::curriculum_search))
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
         .route("/scaffold-events", post(feedback::scaffold_event))
         .route("/teacher-cases", get(feedback::teacher_cases))
