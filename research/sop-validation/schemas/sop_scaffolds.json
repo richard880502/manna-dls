@@ -1,0 +1,130 @@
+{
+  "type": "object",
+  "properties": {
+    "scaffolds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "verbal": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "改述或重述",
+                    "思考放聲",
+                    "提示與追問",
+                    "透過上下文解釋詞義",
+                    "引導問題",
+                    "字詞表",
+                    "句型框架",
+                    "作答示例"
+                  ]
+                },
+                "content_en": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "content_en"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "instructional": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "圖像組織",
+                    "部分完成的大綱或內容",
+                    "調整文本",
+                    "標示關鍵概念或字彙"
+                  ]
+                },
+                "content_en": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "content_en"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "procedural": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "清楚的分步指示及完成順序",
+                    "個別或小組指導安排",
+                    "策略性配對或分組",
+                    "逐步減少支持"
+                  ]
+                },
+                "steps_en": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "kind",
+                "steps_en"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "fading": {
+            "type": "object",
+            "properties": {
+              "basic_zh": {
+                "type": "string"
+              },
+              "standard_zh": {
+                "type": "string"
+              },
+              "advanced_zh": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "basic_zh",
+              "standard_zh",
+              "advanced_zh"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "target",
+          "verbal",
+          "instructional",
+          "procedural",
+          "fading"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "scaffolds"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "P1",
+    "source": "worksheet",
+    "worksheet_id": "W227",
+    "sha256_prefix": "b5310fcf58a151a8",
+    "lines": [47, 48, 49, 50, 51],
+    "note": "supplementary expository reading embedded in a Book 1 worksheet (easier)",
+    "grade": "高一",
+    "student_info": "高一普通班 36 人，程度中等偏弱，約三分之一學生遇到長文容易放棄；多數人習慣老師逐句講解。",
+    "vocab_min_level": 3
+  },
+  {
+    "id": "P2",
+    "source": "worksheet",
+    "worksheet_id": "W145",
+    "sha256_prefix": "a9bb415a867ef0db",
+    "lines": [58, 62, 65, 68, 71],
+    "note": "Book 4 textbook reading, problem-solution expository text (medium)",
+    "grade": "高二",
+    "student_info": "高二普通班 34 人，程度中等；能回答找資訊的題目，但不太會說明段落之間的關係。",
+    "vocab_min_level": 4
+  },
+  {
+    "id": "P3",
+    "source": "worksheet",
+    "worksheet_id": "W083",
+    "sha256_prefix": "fffdb44ffc31d0c7",
+    "lines": [42, 44, 45, 47, 48, 50, 51, 53, 54],
+    "note": "authentic magazine excerpt used as extension reading, 9 paragraphs (harder)",
+    "grade": "高三",
+    "student_info": "高三社會組 32 人，程度中上，正在準備學測；閱讀速度尚可，但遇到資訊密集的說明文抓不到重點。",
+    "vocab_min_level": 5
+  },
+  {
+    "id": "P4",
+    "source": "original",
+    "file": "passages/original_repair_club.txt",
+    "note": "original narrative/problem-solution passage written for this validation (not from any worksheet), about 340 words",
+    "grade": "高一",
+    "student_info": "高一普通班 35 人，程度中等；喜歡討論但寫作時常只寫一兩句。",
+    "vocab_min_level": 3
+  }
+]

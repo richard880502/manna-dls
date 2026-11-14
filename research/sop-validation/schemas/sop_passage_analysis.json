@@ -1,0 +1,113 @@
+{
+  "type": "object",
+  "properties": {
+    "text_type": {
+      "type": "string",
+      "enum": [
+        "記敘文",
+        "描寫文",
+        "說明文",
+        "論說文",
+        "討論文",
+        "其他"
+      ]
+    },
+    "main_idea_zh": {
+      "type": "string"
+    },
+    "structure_zh": {
+      "type": "string"
+    },
+    "paragraphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "paragraph_no": {
+            "type": "integer"
+          },
+          "function_zh": {
+            "type": "string"
+          },
+          "summary_zh": {
+            "type": "string"
+          },
+          "writing_features": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "feature_zh": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "string"
+                },
+                "explanation_zh": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "feature_zh",
+                "evidence",
+                "explanation_zh"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "paragraph_no",
+          "function_zh",
+          "summary_zh",
+          "writing_features"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "language_focus": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "字彙",
+              "句型",
+              "篇章標記"
+            ]
+          },
+          "item": {
+            "type": "string"
+          },
+          "paragraph_no": {
+            "type": "integer"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "note_zh": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "item",
+          "paragraph_no",
+          "evidence",
+          "note_zh"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "text_type",
+    "main_idea_zh",
+    "structure_zh",
+    "paragraphs",
+    "language_focus"
+  ],
+  "additionalProperties": false
+}

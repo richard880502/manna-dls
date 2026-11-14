@@ -1,0 +1,161 @@
+{
+  "type": "object",
+  "properties": {
+    "background_activities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title_en": {
+            "type": "string"
+          },
+          "instructions_en": {
+            "type": "string"
+          },
+          "prompts_en": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "student_tasks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "理解內容",
+                "字彙練習",
+                "文法／句型練習",
+                "比較／分類",
+                "推論／預測",
+                "評估／提出理由",
+                "蒐集資料",
+                "整理／分析資料",
+                "討論／分享",
+                "小組共同完成",
+                "寫作",
+                "製作成果",
+                "成果發表",
+                "學習反思",
+                "自我評量",
+                "同儕互評"
+              ]
+            }
+          },
+          "answer_format": {
+            "type": "string",
+            "enum": [
+              "填空題",
+              "選擇題",
+              "是非題",
+              "配對題",
+              "簡答題",
+              "表格整理",
+              "圖像組織",
+              "段落寫作"
+            ]
+          },
+          "purpose_zh": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title_en",
+          "instructions_en",
+          "prompts_en",
+          "student_tasks",
+          "answer_format",
+          "purpose_zh"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "key_vocabulary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "word": {
+            "type": "string"
+          },
+          "paragraph_no": {
+            "type": "integer"
+          },
+          "context_sentence": {
+            "type": "string"
+          },
+          "student_friendly_definition_en": {
+            "type": "string"
+          },
+          "why_zh": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "word",
+          "paragraph_no",
+          "context_sentence",
+          "student_friendly_definition_en",
+          "why_zh"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "vocabulary_activity": {
+      "type": "object",
+      "properties": {
+        "title_en": {
+          "type": "string"
+        },
+        "instructions_en": {
+          "type": "string"
+        },
+        "answer_format": {
+          "type": "string",
+          "enum": [
+            "填空題",
+            "選擇題",
+            "是非題",
+            "配對題",
+            "簡答題",
+            "表格整理",
+            "圖像組織",
+            "段落寫作"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "prompt_en": {
+                "type": "string"
+              },
+              "answer_en": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "prompt_en",
+              "answer_en"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "title_en",
+        "instructions_en",
+        "answer_format",
+        "items"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "background_activities",
+    "key_vocabulary",
+    "vocabulary_activity"
+  ],
+  "additionalProperties": false
+}

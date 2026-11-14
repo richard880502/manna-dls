@@ -1,0 +1,138 @@
+{
+  "source": "268 of 270 teacher-made worksheets (2 could not be classified), labelled by gemma-4-31B-it from extracted text; see docs/LLM_VALIDATION.md for accuracy of the labels. Percentages are shares of worksheets unless stated.",
+  "caveats": [
+    "Labels come from text only (layout, images and drawn organisers are invisible), and long handouts were truncated in the middle for 32 worksheets.",
+    "The collection is dominated by one publisher (龍騰 57%) and by a few prolific designers, so the rules describe this collection, not all teachers.",
+    "has_warm_up and has_learning_objectives are over-called by the model compared with keyword signals; treat those shares as upper bounds."
+  ],
+  "rules": [
+    {
+      "id": "DR-01",
+      "area": "任務順序",
+      "rule": "閱讀型學習單採讀前→讀中→讀後三段：以暖身或找資訊的活動開始，以學生產出（寫作／口說）結束。",
+      "evidence": "閱讀型 221 份中 82% 以暖身或發現資訊開始、66% 以創造資訊結束；全體最後一個區塊最常見為寫作（81 份）。",
+      "use_in": ["sop_paragraph_tasks", "sop_worksheet"],
+      "auto_check": "section_order_warmup_first_exit_last; last_block_is_higher_order"
+    },
+    {
+      "id": "DR-02",
+      "area": "資訊處理功能",
+      "rule": "功能有進程：發現資訊最早出現，分析與整理居中，比較較晚，創造資訊在後段。",
+      "evidence": "各功能首次出現的相對位置中位數（0=開頭，1=結尾）：發現 0.00、分析 0.16、整理 0.45、比較 0.55、創造 0.75。",
+      "use_in": ["sop_paragraph_tasks"],
+      "auto_check": "blocks_in_paragraph_order (order) + at_least_3_info_functions"
+    },
+    {
+      "id": "DR-03",
+      "area": "資訊處理功能",
+      "rule": "一份學習單至少用到 3 種資訊處理功能；比較資訊最少被使用，需要時要刻意設計。",
+      "evidence": "86% 的學習單用到 ≥3 種功能（230/268）；發現 91%、創造 87%、分析 86%、整理 72%、比較 30%。",
+      "use_in": ["sop_paragraph_tasks"],
+      "auto_check": "at_least_3_info_functions"
+    },
+    {
+      "id": "DR-04",
+      "area": "任務順序",
+      "rule": "讀中活動以段落為單位（一段或相鄰數段一個區塊），一份學習單 4–7 個活動區塊。",
+      "evidence": "區塊數中位數 6（四分位 4–7）；以 Paragraph N 為標題的區塊超過 60 個。",
+      "use_in": ["sop_paragraph_tasks"],
+      "auto_check": "all_paragraphs_covered; item_count_within_budget"
+    },
+    {
+      "id": "DR-05",
+      "area": "作答方式",
+      "rule": "以填空題、簡答題、選擇題為主幹，搭配表格整理、配對題或圖像組織；是非題少用；一份約 3 種形式。",
+      "evidence": "填空 95%、簡答 68%、選擇 63%、配對 16%、表格整理 12%、圖像組織 8%、段落寫作 4%、是非 2%；每份形式數中位數 3。",
+      "use_in": ["sop_paragraph_tasks", "sop_worksheet"],
+      "auto_check": "answer_format_variety_3"
+    },
+    {
+      "id": "DR-06",
+      "area": "作答方式",
+      "rule": "整理資訊、比較資訊的區塊優先使用表格整理或圖像組織，並先給欄位或示範一格。",
+      "evidence": "表格整理與配對題在整理／比較功能的區塊中占比最高（各 6–8%），在發現／分析區塊僅 2–3%；圖像組織鷹架出現在 28% 的學習單。",
+      "use_in": ["sop_paragraph_tasks", "sop_scaffolds"],
+      "auto_check": null
+    },
+    {
+      "id": "DR-07",
+      "area": "鷹架",
+      "rule": "語言鷹架以句型框架與作答示例為主，其次是引導問題與字詞表。",
+      "evidence": "句型框架 72%、作答示例 68%、引導問題 48%、提示與追問 46%、字詞表 40%、上下文解釋詞義 17%。",
+      "use_in": ["sop_scaffolds"],
+      "auto_check": "kinds_from_spec_sets"
+    },
+    {
+      "id": "DR-08",
+      "area": "鷹架",
+      "rule": "教學鷹架以標示關鍵字彙／概念為主，圖像組織與部分完成的大綱用在整理與寫作任務。",
+      "evidence": "標示關鍵概念或字彙 83%、圖像組織 28%、部分完成的大綱或內容 19%、調整文本 12%。",
+      "use_in": ["sop_scaffolds"],
+      "auto_check": "kinds_from_spec_sets"
+    },
+    {
+      "id": "DR-09",
+      "area": "鷹架",
+      "rule": "幾乎每份都有清楚的分步指示；配對／分組安排寫在步驟裡；教師很少在同一份學習單上明示「逐步減少支持」。",
+      "evidence": "分步指示 90%、個別或小組安排 18%、策略性配對或分組 7.5%、逐步減少支持 0%。",
+      "use_in": ["sop_scaffolds"],
+      "auto_check": "each_target_has_procedural"
+    },
+    {
+      "id": "DR-10",
+      "area": "暖身",
+      "rule": "暖身用標題預測、個人經驗提問、圖片／引言／影片或先備字彙，不需先讀完課文即可作答。",
+      "evidence": "閱讀型學習單 82% 有讀前活動（模型標註，全體為 70%；全體以關鍵字比對僅 45% 命中，實際比例介於兩者之間）。常見標題：Before you read、Pre-reading、Quick Think、Warm-up。",
+      "use_in": ["sop_warmup"],
+      "auto_check": "background_1_2_activities"
+    },
+    {
+      "id": "DR-11",
+      "area": "字彙",
+      "rule": "字彙在語境中處理：語塊／搭配詞、從上下文推測、引導式翻譯，而非只列中英對照表。",
+      "evidence": "Translation practice、Meaning chunks、搭配詞練習等標題共 50 個以上區塊；純字彙型學習單占 9%。",
+      "use_in": ["sop_warmup"],
+      "auto_check": "context_sentence_verbatim"
+    },
+    {
+      "id": "DR-12",
+      "area": "讀後任務",
+      "rule": "讀後的創造任務與文本結構或主題直接連結（仿寫結構、延伸到個人經驗或在地議題），並提供句型框架。",
+      "evidence": "「閱讀理解→寫作」是第三常見的活動轉換（60 次）；寫作任務出現在 74% 的學習單，但完整段落寫作僅 4%，多為有框架的短寫。",
+      "use_in": ["sop_paragraph_tasks"],
+      "auto_check": "last_block_is_higher_order"
+    },
+    {
+      "id": "DR-13",
+      "area": "互動",
+      "rule": "需要討論或合作的步驟要明寫對象與方式，並附討論用語。",
+      "evidence": "討論／分享 30%；小組共同完成 1.5%（教師多用兩人討論，少有分工產出）。",
+      "use_in": ["sop_scaffolds"],
+      "auto_check": null
+    },
+    {
+      "id": "DR-14",
+      "area": "收尾",
+      "rule": "教師自製學習單很少有 Exit ticket 或學習反思；有的話多為自評量表或策略反思。規格預設加入 Exit ticket 是新增價值，題數要少。",
+      "evidence": "有收尾反思／自評者 19%（閱讀型 14%）；最後一個區塊是反思自評者 25 份。",
+      "use_in": ["sop_exit_ticket"],
+      "auto_check": "item_count_2_4"
+    },
+    {
+      "id": "DR-15",
+      "area": "版本與教師版",
+      "rule": "分級版本、學習目標與參考答案在現有學習單中少見，是產生器的新增價值，沒有可直接仿照的教師慣例。",
+      "evidence": "同份區分難度 14%、列出學習目標 ≤25%、附參考答案 9%。",
+      "use_in": ["sop_worksheet"],
+      "auto_check": "support_decreases_basic_to_advanced"
+    },
+    {
+      "id": "DR-16",
+      "area": "指示語言",
+      "rule": "指示語以英文為主，與規格「學習單一律英文」一致；但有約兩成學習單使用中文或中英混合指示，多見於基礎字彙／文法講義。",
+      "evidence": "英文 82%、中英混合 12%、中文 7%。",
+      "use_in": ["sop_worksheet"],
+      "auto_check": "student_version_english_only"
+    }
+  ]
+}
