@@ -4,6 +4,7 @@ import type {
   AiResult,
   ApiErrorBody,
   AppConfig,
+  ClassDetail,
   ClassProfileDefault,
   CoreAssistOutput,
   CoreAssistRequest,
@@ -11,6 +12,7 @@ import type {
   CoreLinksResponse,
   CoreQuestion,
   CoreVersion,
+  CreateClassRequest,
   CreateLessonRequest,
   CreateMaterialRequest,
   CreatePromptRequest,
@@ -43,6 +45,7 @@ import type {
   SaveLessonVersionRequest,
   SavePreferencesRequest,
   ScaffoldEventRequest,
+  SchoolClass,
   SiopFeature,
   SuggestionsRequest,
   SyncResponse,
@@ -50,6 +53,7 @@ import type {
   TeacherCase,
   Unit,
   UnitMaterial,
+  UpdateClassRequest,
   UpdateLessonRequest,
   UpdateUnitRequest,
 } from "./types";
@@ -163,7 +167,10 @@ async function request<T>(method: string, path: string, options: RequestOptions 
 const get = <T>(path: string, query?: Record<string, string | undefined>) =>
   request<T>("GET", path, { query });
 const post = <T>(path: string, json?: unknown) => request<T>("POST", path, { json: json ?? {} });
-const put = <T>(path: string, json: unknown) => request<T>("PUT", path, { json });
+const put = <T>(path: string, json: unknown, query?: Record<string, string | undefined>) =>
+  request<T>("PUT", path, { json, query });
+/** `?class_id=` for requests made in a class context. */
+const classQuery = (classId?: number | null) => (classId ? { class_id: String(classId) } : undefined);
 const del = <T>(path: string) => request<T>("DELETE", path);
 
 export const api = {
@@ -191,8 +198,32 @@ export const api = {
   /** 實際刪除原文與切塊 */
   deleteMaterial: (unitId: number, materialId: number) =>
     del<OkResponse>(`/units/${unitId}/materials/${materialId}`),
-  materialFocuses: (unitId: number, materialId: number) =>
-    post<AiResult<MaterialFocusesOutput>>(`/units/${unitId}/material-focuses`, { material_id: materialId }),
+  materialFocuses: (unitId: number, materialId: number, classId?: number | null) =>
+    post<AiResult<MaterialFocusesOutput>>(`/units/${unitId}/material-focuses`, {
+      material_id: materialId,
+      ...(classId ? { class_id: classId } : {}),
+    }),
+
+  // 班級與備課庫（Phase 1.4）
+  listClasses: (includeArchived = false) =>
+    get<SchoolClass[]>("/classes", includeArchived ? { include_archived: "true" } : undefined),
+  createClass: (body: CreateClassRequest) => post<SchoolClass>("/classes", body),
+  getClass: (classId: number) => get<ClassDetail>(`/classes/${classId}`),
+  updateClass: (classId: number, body: UpdateClassRequest) => put<SchoolClass>(`/classes/${classId}`, body),
+  /** 封存（不刪除） */
+  archiveClass: (classId: number) => post<SchoolClass>(`/classes/${classId}/archive`),
+  unarchiveClass: (classId: number) => post<SchoolClass>(`/classes/${classId}/unarchive`),
+  reorderClasses: (classIds: number[]) => put<SchoolClass[]>("/classes/order", { class_ids: classIds }),
+  /** 從備課庫加入單元（已取用則不重複） */
+  assignUnit: (classId: number, unitId: number, note?: string) =>
+    post<ClassDetail>(`/classes/${classId}/units`, { unit_id: unitId, ...(note !== undefined ? { note } : {}) }),
+  updateClassUnit: (classId: number, unitId: number, note: string) =>
+    put<ClassDetail>(`/classes/${classId}/units/${unitId}`, { note }),
+  /** 從這個班級移除（單元留在備課庫，上課紀錄保留） */
+  unassignUnit: (classId: number, unitId: number) => del<ClassDetail>(`/classes/${classId}/units/${unitId}`),
+  reorderClassUnits: (classId: number, unitIds: number[]) =>
+    put<ClassDetail>(`/classes/${classId}/units/order`, { unit_ids: unitIds }),
+
   coreQuestions: () => get<CoreQuestion[]>("/core/questions"),
   getCore: (unitId: number) => get<CoreVersion>(`/units/${unitId}/core`),
   saveCoreDraft: (unitId: number, body: CoreDraftRequest) =>
@@ -202,9 +233,10 @@ export const api = {
   listLessons: (unitId: number) => get<Lesson[]>(`/units/${unitId}/lessons`),
   createLesson: (unitId: number, body: CreateLessonRequest) =>
     post<Lesson>(`/units/${unitId}/lessons`, body),
-  getLesson: (lessonId: number) => get<LessonDetail>(`/lessons/${lessonId}`),
-  updateLesson: (lessonId: number, body: UpdateLessonRequest) =>
-    put<LessonDetail>(`/lessons/${lessonId}`, body),
+  getLesson: (lessonId: number, classId?: number | null) =>
+    get<LessonDetail>(`/lessons/${lessonId}`, classQuery(classId)),
+  updateLesson: (lessonId: number, body: UpdateLessonRequest, classId?: number | null) =>
+    put<LessonDetail>(`/lessons/${lessonId}`, body, classQuery(classId)),
   saveLessonVersion: (lessonId: number, body: SaveLessonVersionRequest) =>
     post<LessonVersion>(`/lessons/${lessonId}/versions`, body),
   setCoreLinks: (lessonId: number, focusIds: number[]) =>
@@ -220,10 +252,11 @@ export const api = {
   listTeacherCases: (q?: string) => get<TeacherCase[]>("/teacher-cases", { q }),
 
   // Teach & Record
-  listRuns: () => get<LessonRun[]>("/runs"),
+  listRuns: (classId?: number | null) => get<LessonRun[]>("/runs", classQuery(classId)),
   listLessonRuns: (lessonId: number) => get<LessonRun[]>(`/lessons/${lessonId}/runs`),
-  /** 開始本節課（已有進行中的課 → 409） */
-  startRun: (lessonId: number) => post<LessonRun>(`/lessons/${lessonId}/runs`),
+  /** 開始本節課（同一班已有進行中的課 → 409；單元有多個班級而沒帶班級 → 409） */
+  startRun: (lessonId: number, classId?: number | null) =>
+    post<LessonRun>(`/lessons/${lessonId}/runs`, classId ? { class_id: classId } : {}),
   getRun: (runId: number) => get<RunDetail>(`/runs/${runId}`),
   /** 結束本節課並回顧 */
   endRun: (runId: number) => post<LessonRun>(`/runs/${runId}/end`),

@@ -109,7 +109,7 @@ export function RunConsolePage() {
       <section aria-labelledby="run-heading">
         {breadcrumb}
         <div className="page-intro">
-          <p className="eyebrow warm">課堂紀錄 · 已結束</p>
+          <p className="eyebrow warm">課堂紀錄 · {detail.class_name ? `${detail.class_name} · ` : ""}已結束</p>
           <h2 id="run-heading">{detail.lesson_title}</h2>
         </div>
         <Notice tone="info">
@@ -135,6 +135,7 @@ export function RunConsolePage() {
             </span>
             <strong id="run-heading">{detail.lesson_title}</strong>
             <small className="unit-meta">
+              {detail.class_name ? `${detail.class_name} · ` : ""}
               {detail.unit_title} · {formatClock(detail.started_at, false)} 開始
             </small>
           </div>

@@ -91,7 +91,7 @@ describe("admin page (pi)", () => {
     expect(toggle).not.toBeChecked();
 
     // the rest of the app follows the new setting without a reload
-    await user.click(screen.getByRole("link", { name: /Study & Plan/ }));
+    await user.click(screen.getByRole("link", { name: "備課庫" }));
     await screen.findByLabelText("建立新單元");
     expect(screen.queryByRole("radio", { name: /教材優先/ })).not.toBeInTheDocument();
   });

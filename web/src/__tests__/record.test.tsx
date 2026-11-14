@@ -32,6 +32,8 @@ const run = (overrides: Partial<LessonRun> = {}): LessonRun => ({
   review_completed_at: null,
   good_count: 0,
   stuck_count: 0,
+  class_id: null,
+  class_name: null,
   ...overrides,
 });
 

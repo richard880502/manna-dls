@@ -348,7 +348,8 @@ export function RunReviewPage() {
       </p>
       <div className="page-intro">
         <p className="eyebrow warm">
-          課後補寫 · {formatDateTime(detail.started_at)}
+          課後補寫 · {detail.class_name ? `${detail.class_name} · ` : ""}
+          {formatDateTime(detail.started_at)}
           {detail.ended_at ? ` – ${formatClock(detail.ended_at, false)}` : "（進行中）"}
         </p>
         <h2 id="review-heading">{detail.lesson_title}</h2>

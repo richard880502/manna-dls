@@ -492,6 +492,7 @@ async fn units_are_assigned_to_classes_many_to_many() {
     };
     assert_eq!(class_names(&find(u1)), vec!["高一 3 班", "高一 7 班"]);
     assert_eq!(find(u1)["classes"][1]["note"], "這班用基礎版");
+    assert_eq!(find(u1)["classes"][1]["class_profile"], "");
     assert_eq!(class_names(&find(u2)), vec!["高一 3 班"]);
 
     // Assigning again is idempotent (no second row); a note in the request updates the note.
@@ -566,6 +567,24 @@ async fn units_are_assigned_to_classes_many_to_many() {
     assert_eq!(class_names(&u3), vec!["高一 7 班"]);
     assert_eq!(u3["class_profile"], "");
     assert_eq!(u3["class_profile_source"], "none");
+    // The same without a class: once a teacher has classes, nothing is carried over (R3 retired).
+    app.put(
+        &format!("/api/units/{u1}"),
+        Some(&t),
+        json!({ "class_profile": "單元舊描述" }),
+    )
+    .await;
+    let (_, d) = app.get("/api/units/class-profile-default", Some(&t)).await;
+    assert_eq!(
+        d,
+        json!({ "class_profile": "", "source": "none", "source_unit": null })
+    );
+    let (_, u4) = app
+        .post("/api/units", Some(&t), json!({ "title": "L6 只放備課庫" }))
+        .await;
+    assert_eq!(u4["class_profile"], "");
+    assert_eq!(u4["class_profile_source"], "none");
+    assert_eq!(u4["classes"], json!([]));
     let (_, detail) = app.get(&format!("/api/classes/{b}"), Some(&t)).await;
     assert_eq!(unit_ids(&detail), vec![u1, u3["id"].as_i64().unwrap()]);
 

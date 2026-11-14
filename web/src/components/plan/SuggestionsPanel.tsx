@@ -26,12 +26,14 @@ const DECIDED_LABELS: Record<PlanDecision, string> = {
 
 interface SuggestionsPanelProps {
   lessonId: number;
+  /** 目前班級: its profile goes into Manna's context. */
+  classId?: number | null;
   onAppendStep: (step: Omit<EditableStep, "key">) => void;
   /** Moved to the top of the lesson page because of the teacher's preference (P3 找合適素材). */
   pinned?: boolean;
 }
 
-export function SuggestionsPanel({ lessonId, onAppendStep, pinned = false }: SuggestionsPanelProps) {
+export function SuggestionsPanel({ lessonId, classId, onAppendStep, pinned = false }: SuggestionsPanelProps) {
   const { aiEnabled } = useApp();
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,7 +47,10 @@ export function SuggestionsPanel({ lessonId, onAppendStep, pinned = false }: Sug
     logScaffold("SC-RAG", "expand", { trigger: "request" });
     try {
       const trimmed = note.trim();
-      const res = await api.requestSuggestions(lessonId, trimmed ? { request_note: trimmed } : {});
+      const res = await api.requestSuggestions(lessonId, {
+        ...(trimmed ? { request_note: trimmed } : {}),
+        ...(classId ? { class_id: classId } : {}),
+      });
       setResult(res);
       setRequestId((n) => n + 1);
       if (res.status === "shown") logScaffold("SC-RAG", "show", { trigger: "suggestions" });

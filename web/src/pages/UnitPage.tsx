@@ -2,11 +2,13 @@ import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "r
 import { Link, useParams } from "react-router";
 import { ApiError, api, errorMessage } from "../api/client";
 import type { Lesson, PrepRoute, Unit } from "../api/types";
+import { ClassContextBar } from "../components/classes/ClassContextBar";
 import { ErrorText, Loading, Notice, PrivacyHint } from "../components/common";
 import { MaterialsPanel } from "../components/unit/MaterialsPanel";
 import { RouteMenu } from "../components/unit/RouteMenu";
 import { RouteOptions } from "../components/unit/RouteOptions";
 import { useApp } from "../context/AppContext";
+import { useActiveClass } from "../lib/classes";
 import { CORE_STATUS_LABELS, formatDate } from "../lib/labels";
 import { CLASS_PROFILE_MAX_CHARS, PREP_ROUTE_LABELS, effectiveRoute } from "../lib/preferences";
 
@@ -62,6 +64,7 @@ export function UnitPage() {
     };
   }, [unitId]);
 
+  const { active: activeClass } = useActiveClass(unit);
   const choiceEnabled = routeChoiceEnabled && !routeLocked;
   const route = effectiveRoute(choiceEnabled, unit?.prep_route);
 
@@ -241,7 +244,7 @@ export function UnitPage() {
               id="lesson-class"
               value={classDescription}
               onChange={(e) => setClassDescription(e.target.value)}
-              placeholder="留白則沿用單元的班級特性"
+              placeholder={activeClass ? "留白則沿用班級的班級特性" : "留白則沿用單元的班級特性"}
               disabled={creating}
             />
           </div>
@@ -255,18 +258,8 @@ export function UnitPage() {
     </section>
   );
 
-  const profileCard = (
-    <section
-      className={`panel-card class-profile-card${route === "student" ? " is-route-first" : ""}`}
-      aria-labelledby="class-profile-heading"
-    >
-      <div className="card-heading">
-        <h3 id="class-profile-heading">{route === "student" ? "班級特性與學生卡點" : "班級特性"}</h3>
-        <span className="optional-label">選填</span>
-      </div>
-      <p className="field-hint">
-        單元內的課例會沿用這段描述（課例可以另外覆寫），Manna 的每次 AI 協助都會自動帶入。
-      </p>
+  const unitProfileFields = (
+    <>
       <label className="field-label" htmlFor="unit-class-profile">
         {route === "student" ? "班級特性、學生最近卡住的地方" : "這個單元的班級特性"}
       </label>
@@ -298,12 +291,65 @@ export function UnitPage() {
       </div>
       {profileSaved && <Notice tone="success">已儲存班級特性。</Notice>}
       <ErrorText message={profileError} />
+    </>
+  );
+
+  // In a class context the profile is the class's (edited on the class page); the unit's own
+  // profile is legacy text, used only when the class has none.
+  const classProfileCard = activeClass && (
+    <section
+      className={`panel-card class-profile-card${route === "student" ? " is-route-first" : ""}`}
+      aria-labelledby="class-profile-heading"
+    >
+      <div className="card-heading">
+        <h3 id="class-profile-heading">{route === "student" ? "班級特性與學生卡點" : "班級特性"}</h3>
+      </div>
+      <div className="profile-prefill">
+        <div className="profile-prefill-head">
+          <div>
+            <span className="field-label">{activeClass.name}的班級特性</span>
+            <p className="field-hint">在這個班級備課時，Manna 的每次 AI 協助都會帶入（課例可以另外覆寫）。</p>
+          </div>
+          <Link className="ghost-button small-button link-button" to={`/classes/${activeClass.id}`}>
+            到班級頁修改
+          </Link>
+        </div>
+        <p className="profile-prefill-text">
+          {activeClass.class_profile ||
+            (unit.class_profile
+              ? "這個班級還沒有寫班級特性，目前沿用下面「這個單元的班級特性」。"
+              : "這個班級還沒有寫班級特性。")}
+        </p>
+      </div>
+      {(unit.class_profile || profileDirty) && (
+        <details className="unit-profile-legacy" open={!activeClass.class_profile}>
+          <summary>這個單元另外寫的班級特性（班級沒有寫時才使用）</summary>
+          {unitProfileFields}
+        </details>
+      )}
+    </section>
+  );
+
+  const profileCard = classProfileCard || (
+    <section
+      className={`panel-card class-profile-card${route === "student" ? " is-route-first" : ""}`}
+      aria-labelledby="class-profile-heading"
+    >
+      <div className="card-heading">
+        <h3 id="class-profile-heading">{route === "student" ? "班級特性與學生卡點" : "班級特性"}</h3>
+        <span className="optional-label">選填</span>
+      </div>
+      <p className="field-hint">
+        單元內的課例會沿用這段描述（課例可以另外覆寫），Manna 的每次 AI 協助都會自動帶入。
+      </p>
+      {unitProfileFields}
     </section>
   );
 
   const materialsCard = (
     <MaterialsPanel
       unitId={unit.id}
+      classId={activeClass?.id ?? null}
       emphasized={route === "material"}
       onCountChange={setMaterialsCount}
       onCoreChanged={() => setUnit((u) => (u && u.core_status === "none" ? { ...u, core_status: "draft" } : u))}
@@ -337,12 +383,18 @@ export function UnitPage() {
   return (
     <section aria-labelledby="unit-heading">
       <p className="breadcrumb">
-        <Link to="/plan">Study &amp; Plan</Link> / {unit.title}
+        {activeClass ? (
+          <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+        ) : (
+          <Link to="/library">備課庫</Link>
+        )}{" "}
+        / {unit.title}
       </p>
       <div className="page-intro">
         <p className="eyebrow warm">Unit{choiceEnabled ? ` · ${PREP_ROUTE_LABELS[route]}` : ""}</p>
         <h2 id="unit-heading">{unit.title}</h2>
       </div>
+      <ClassContextBar unit={unit} />
 
       <div className="unit-stack">
         {routeCard}

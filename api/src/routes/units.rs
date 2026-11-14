@@ -37,6 +37,7 @@ pub struct UnitClassRef {
     pub id: i64,
     pub name: String,
     pub course_label: String,
+    pub class_profile: String,
     /// The per-class note of this assignment.
     pub note: String,
 }
@@ -51,7 +52,7 @@ const UNIT_SELECT: &str = "
            u.prep_route, u.class_profile, u.class_profile_source,
            COALESCE((SELECT json_agg(json_build_object(
                                 'id', c.id, 'name', c.name, 'course_label', c.course_label,
-                                'note', cu.note) ORDER BY c.position, c.id)
+                                'class_profile', c.class_profile, 'note', cu.note) ORDER BY c.position, c.id)
                        FROM class_units cu JOIN classes c ON c.id = cu.class_id
                       WHERE cu.unit_id = u.id AND cu.removed_at IS NULL
                         AND c.archived_at IS NULL), '[]'::json) AS classes
@@ -154,10 +155,25 @@ pub struct ClassProfileDefault {
 
 /// R3 / D2: the teacher's most recently created, non-deleted unit with a non-empty class
 /// profile; only a teacher without one falls back to the preference answer P6.
+///
+/// Phase 1.4: once the teacher has a class, the profile lives on the class and nothing is
+/// carried over into new units (`none`).
 pub async fn class_profile_default(
     db: &sqlx::PgPool,
     teacher_id: i64,
 ) -> AppResult<ClassProfileDefault> {
+    let has_classes: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM classes WHERE teacher_id = $1)")
+            .bind(teacher_id)
+            .fetch_one(db)
+            .await?;
+    if has_classes {
+        return Ok(ClassProfileDefault {
+            class_profile: String::new(),
+            source: ClassProfileSource::None,
+            source_unit: None,
+        });
+    }
     let previous: Option<(i64, String, String)> = sqlx::query_as(
         "SELECT id, title, class_profile FROM units
           WHERE teacher_id = $1 AND deleted_at IS NULL AND btrim(class_profile) <> ''
@@ -200,8 +216,8 @@ pub async fn get_class_profile_default(
 /// from [`class_profile_default`]. An explicit value wins, an empty string too. With route
 /// choice disabled the route is always goal. The profile's source is stored with the unit.
 ///
-/// With `class_id` (Phase 1.4) the unit is also assigned to that class, and an omitted
-/// `class_profile` stays empty (`none`): the class carries the profile, nothing is copied.
+/// With `class_id` (Phase 1.4) the unit is also assigned to that class. Once the teacher has
+/// any class, an omitted `class_profile` stays empty (`none`): the class carries the profile.
 pub async fn create(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -229,7 +245,6 @@ pub async fn create(
     }
     let (class_profile, source, source_unit_id) = match req.class_profile {
         Some(c) => (c.trim().to_string(), ClassProfileSource::Teacher, None),
-        None if req.class_id.is_some() => (String::new(), ClassProfileSource::None, None),
         None => {
             let d = class_profile_default(&state.db, teacher.id()).await?;
             (d.class_profile, d.source, d.source_unit.map(|u| u.id))

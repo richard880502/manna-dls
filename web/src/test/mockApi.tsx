@@ -3,6 +3,8 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { vi } from "vitest";
 import type {
   AppConfig,
+  ClassDetail,
+  ClassUnit,
   CoreFocus,
   CoreQuestion,
   CoreResponse,
@@ -12,8 +14,10 @@ import type {
   PreferenceAnswers,
   Preferences,
   QuestionId,
+  SchoolClass,
   Teacher,
   Unit,
+  UnitClassRef,
 } from "../api/types";
 import { QUESTION_IDS } from "../api/types";
 import { App } from "../App";
@@ -156,9 +160,57 @@ export const unit: Unit = {
   prep_route: "goal",
   class_profile: "",
   class_profile_source: null,
+  classes: [],
 };
 
 export const unitWith = (overrides: Partial<Unit> = {}): Unit => ({ ...unit, ...overrides });
+
+// ---------- classes (Phase 1.4) ----------
+
+export const schoolClass = (overrides: Partial<SchoolClass> = {}): SchoolClass => ({
+  id: 3,
+  name: "高一 3 班",
+  grade: "高一",
+  school_track: "general",
+  course_label: "",
+  class_profile: "三班：不太敢開口",
+  class_profile_source: "teacher",
+  school_year: "",
+  term: "",
+  position: 1,
+  created_at: "2026-11-10T08:00:00Z",
+  archived_at: null,
+  unit_count: 1,
+  next_action: null,
+  ...overrides,
+});
+
+/** A class as a unit lists it (`Unit.classes`). */
+export const classRef = (c: SchoolClass, note = ""): UnitClassRef => ({
+  id: c.id,
+  name: c.name,
+  course_label: c.course_label,
+  class_profile: c.class_profile,
+  note,
+});
+
+export const classUnit = (u: Unit, overrides: Partial<ClassUnit> = {}): ClassUnit => ({
+  unit: u,
+  position: 1,
+  note: "",
+  assigned_at: "2026-11-10T08:00:00Z",
+  lessons_total: u.lesson_count,
+  lessons_taught: 0,
+  last_run_at: null,
+  next_lesson: null,
+  ...overrides,
+});
+
+export const classDetail = (c: SchoolClass, units: ClassUnit[]): ClassDetail => ({
+  ...c,
+  unit_count: units.length,
+  units,
+});
 
 export const preferences = (
   answers: Partial<PreferenceAnswers> = {},
@@ -258,6 +310,7 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     "GET /api/preferences/questions": { question_set_version: 1, questions: preferenceQuestions },
     "GET /api/units": [unit],
     "GET /api/units/1": unit,
+    "GET /api/classes": [],
     "GET /api/core/questions": questions,
   };
 }

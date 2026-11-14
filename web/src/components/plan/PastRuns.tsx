@@ -9,7 +9,10 @@ export function PastRuns({ runs }: { runs: LessonRun[] }) {
       {runs.map((r) => (
         <li key={r.id}>
           <Link to={`/runs/${r.id}/review`}>
-            <strong>{formatDateTime(r.started_at)}</strong>
+            <strong>
+              {formatDateTime(r.started_at)}
+              {r.class_name ? <span className="run-unit"> · {r.class_name}</span> : null}
+            </strong>
             <span>
               順利 {r.good_count} · 卡住 {r.stuck_count} · {r.review_completed_at ? "已完成補寫" : "課後補寫"}
             </span>

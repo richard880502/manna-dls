@@ -413,7 +413,7 @@ interface ClassProfileDefault {
 ## 型別
 
 ```ts
-interface UnitClassRef { id: number; name: string; course_label: string; note: string; }  // note＝這個取用的「這班的備註」
+interface UnitClassRef { id: number; name: string; course_label: string; class_profile: string; note: string; }  // note＝這個取用的「這班的備註」
 
 // Unit 新增（GET /api/units 即備課庫清單）
 interface Unit { /* 原欄位… */ classes: UnitClassRef[]; }   // 取用這個單元、未封存的班級，依教師的班級順序
@@ -477,7 +477,8 @@ interface LessonDetail { /* 原欄位… */ class_profile_source: ClassProfileSo
 | DELETE | `/api/classes/:id/units/:unit_id` | – | `ClassDetail`。從這個班級移除（軟移除）；單元留在備課庫，這班上過的紀錄保留。未取用時不做事 |
 | PUT | `/api/classes/:id/units/order` | `{ unit_ids: number[] }` | `ClassDetail`。同班級排序規則；含未取用的單元 → 404 |
 | GET | `/api/units` | – | `Unit[]`（含 `classes`）＝備課庫清單 |
-| POST | `/api/units` | 原欄位＋`class_id?: number` | `Unit`。帶 `class_id` 時：單元建在備課庫，同時由該班級取用（一步完成）；未帶 `class_profile` 時單元的 `class_profile` 留空（來源 `none`），因為班級特性在班級上、不複製。未帶 `class_id` 時行為同 R3。班級已封存 → 409 |
+| POST | `/api/units` | 原欄位＋`class_id?: number` | `Unit`。帶 `class_id` 時：單元建在備課庫，同時由該班級取用（一步完成）；班級已封存 → 409。**教師只要有任何班級**，未帶 `class_profile` 時單元的 `class_profile` 就留空（來源 `none`）：班級特性在班級上，不再沿用上一個單元（R3 的沿用只適用於還沒有班級的教師） |
+| GET | `/api/units/class-profile-default` | – | 教師有任何班級時一律回 `{ class_profile: "", source: "none", source_unit: null }` |
 | POST | `/api/lessons/:id/runs` | `{ class_id?: number \| null }`（可不帶請求內容） | `LessonRun`。班級的決定見下方。同一課例在同一班級已有進行中的課 → 409 |
 | GET | `/api/runs` | query：`class_id?` | `LessonRun[]`。帶 `class_id` 只回該班級的上課紀錄 |
 | GET | `/api/lessons/:id/runs` | query：`class_id?` | 同上（該課例） |

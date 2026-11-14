@@ -76,7 +76,78 @@ export interface Unit {
   class_profile: string;
   /** Where the class profile came from when the unit was created; null for older units. */
   class_profile_source: ClassProfileSource | null;
+  /** 取用這個單元、未封存的班級（依教師的班級順序）。 */
+  classes: UnitClassRef[];
 }
+
+/** 取用某個單元的班級；note＝這個取用的「這班的備註」。 */
+export interface UnitClassRef {
+  id: number;
+  name: string;
+  course_label: string;
+  class_profile: string;
+  note: string;
+}
+
+// ---- Phase 1.4：班級與備課庫 ----
+
+export type ClassProfileOrigin = "teacher" | "preference" | "migration" | "none";
+
+export type ClassNextAction =
+  | { kind: "resume_run"; run_id: number; lesson_id: number; lesson_title: string; unit_id: number; unit_title: string }
+  | { kind: "start_lesson"; lesson_id: number; lesson_title: string; unit_id: number; unit_title: string }
+  | { kind: "plan_unit"; unit_id: number; unit_title: string }
+  | { kind: "add_unit" };
+
+export interface SchoolClass {
+  id: number;
+  name: string;
+  grade: string;
+  school_track: SchoolTrack;
+  course_label: string;
+  class_profile: string;
+  class_profile_source: ClassProfileOrigin;
+  school_year: string;
+  term: string;
+  position: number;
+  created_at: string;
+  /** null＝使用中 */
+  archived_at: string | null;
+  unit_count: number;
+  /** null＝取用的單元都上完了 */
+  next_action: ClassNextAction | null;
+}
+
+export interface ClassUnit {
+  unit: Unit;
+  position: number;
+  note: string;
+  assigned_at: string;
+  lessons_total: number;
+  /** 在這個班級至少上過一次的課例數 */
+  lessons_taught: number;
+  last_run_at: string | null;
+  next_lesson: { id: number; title: string } | null;
+}
+
+export interface ClassDetail extends SchoolClass {
+  units: ClassUnit[];
+}
+
+export interface CreateClassRequest {
+  name: string;
+  grade?: string;
+  school_track?: SchoolTrack;
+  course_label?: string;
+  class_profile?: string;
+  school_year?: string;
+  term?: string;
+}
+
+export type UpdateClassRequest = Partial<CreateClassRequest>;
+
+/** effective_class_profile 取自哪裡 */
+export type ClassProfileSourceUsed = "lesson" | "class" | "unit" | "preference" | "none";
 
 /** teacher = sent on create; previous_unit / preference = carried-over default; none = empty. */
 export type ClassProfileSource = "teacher" | "previous_unit" | "preference" | "none";
@@ -153,8 +224,10 @@ export interface LessonDetail extends Lesson {
   core_focus_ids: number[];
   siop_feature_ids: number[];
   previous_next_change: string | null;
-  /** 課例 class_description 非空時用它，否則用單元 class_profile */
+  /** 課例 class_description 非空時用它，否則（帶 class_id 時）班級的班級特性，否則單元 class_profile */
   effective_class_profile: string;
+  /** effective_class_profile 取自哪裡 */
+  class_profile_source?: ClassProfileSourceUsed;
 }
 
 export interface Source {
@@ -253,6 +326,8 @@ export interface CreateUnitRequest {
   title: string;
   prep_route?: PrepRoute;
   class_profile?: string;
+  /** 建在備課庫，同時由這個班級取用 */
+  class_id?: number;
 }
 
 export interface UpdateUnitRequest {
@@ -306,6 +381,7 @@ export interface CoreAssistRequest {
   focus_id: number;
   question_id: QuestionId;
   level: AssistLevel;
+  class_id?: number;
 }
 
 export interface CreateLessonRequest {
@@ -345,6 +421,7 @@ export interface LessonSiopResponse {
 
 export interface SuggestionsRequest {
   request_note?: string;
+  class_id?: number;
 }
 
 export type DecisionKind = "adopt" | "revise" | "reject" | "answer" | "skip";
@@ -469,6 +546,9 @@ export interface LessonRun {
   review_completed_at: string | null;
   good_count: number;
   stuck_count: number;
+  /** 這節課是哪一班上的；null＝沒有班級的上課紀錄 */
+  class_id: number | null;
+  class_name: string | null;
 }
 
 export interface RecordEvent {
