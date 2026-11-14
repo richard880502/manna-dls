@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel a run on main: a cancelled run would skip its deployment.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Saving Actions minutes (private repo, 2,000 free minutes/month per account):
 #   * jobs run only when their part of the repo changed (docs-only changes run nothing);
@@ -33,6 +34,10 @@ jobs:
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          # On main, compare against the `deploy` branch (what is live), not just
+          # the last push: app changes from earlier merges still get deployed even
+          # when the latest merge is docs-only or an earlier run was cancelled.
+          base: ${{ github.event_name == 'push' && 'deploy' || '' }}
           filters: |
             web:
               - 'web/**'
