@@ -1,0 +1,6 @@
+[package]
+name = "extract-probe"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+manna-api = { path = "../../api" }  # copy this folder to research/worksheet-template/extract first
