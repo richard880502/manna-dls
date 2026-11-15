@@ -220,7 +220,7 @@ async fn section_call(
         job_id,
         StepCall {
             vars,
-            schema: section_out_schema(),
+            schema: section_out_schema(ctx.item_count),
             fake_context,
             max_tokens: SECTION_MAX_TOKENS,
         },
