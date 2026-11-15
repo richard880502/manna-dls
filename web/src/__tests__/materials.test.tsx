@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { Material, MaterialAnnotation, MaterialDetail, MaterialLibrary } from "../api/types";
 import { MaterialViewer } from "../components/material/MaterialViewer";
-import { segmentsFor } from "../lib/materials";
+import { segmentsFor, snapToWords } from "../lib/materials";
 import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
 
 const P1 = "Mrs. Lin put an umbrella stand outside her shop.";
@@ -427,5 +427,16 @@ describe("MaterialViewer as a side-by-side pane", () => {
       ["h", []],
     ]);
     expect(segmentsFor("abc", [{ id: 1, start: 2, end: 99 }]).map((s) => s.text)).toEqual(["ab", "c"]);
+  });
+
+  it("a drag that lands inside a word takes the whole word", () => {
+    const text = "Mrs. Lin put an umbrella stand outside her shop.";
+    const snap = (a: string, b: string) => {
+      const r = snapToWords(text, { start: text.indexOf(a), end: text.indexOf(b) + b.length });
+      return text.slice(r.start, r.end);
+    };
+    expect(snap("rella", "stand ou")).toBe("umbrella stand outside");
+    expect(snap(" umbrella", "stand ")).toBe("umbrella stand");
+    expect(snap("Lin", "Lin")).toBe("Lin");
   });
 });

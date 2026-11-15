@@ -27,6 +27,16 @@ services:
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}
+      # Material files (docs/API.md「Phase 2.2」, docs/BLUEPRINT.md §13.3). s3 = the Coolify
+      # MinIO service in the same project (internal network only, private bucket without
+      # versioning). Until it exists this stays "none": uploads are refused with a clear message,
+      # pasted text and links still work. Keys are set in Coolify, never in this file.
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-none}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       # Set by Coolify for each deployment; reported by /api/health.
       SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
     ports:

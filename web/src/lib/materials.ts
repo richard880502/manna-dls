@@ -202,11 +202,28 @@ export function selectionInParagraph(root: HTMLElement | null): TextSelection | 
   if (holders.length === 0) return null;
   if (holders.length > 1) return "multi";
   const holder = holders[0] as HTMLElement;
-  const { start, end } = clampToElement(range, holder);
   const full = holder.textContent ?? "";
+  const { start, end } = snapToWords(full, clampToElement(range, holder));
   const text = full.slice(start, end);
   if (text.trim() === "") return null;
   return { paragraph_id: holder.dataset.pid ?? "", start, end, text };
+}
+
+const WORD_CHAR = /[A-Za-z0-9'’-]/;
+
+/**
+ * A selection that starts or ends inside an English word takes the whole word (a mouse drag
+ * rarely lands exactly on a word boundary). Spaces at either end are dropped.
+ */
+export function snapToWords(text: string, range: { start: number; end: number }): { start: number; end: number } {
+  let { start, end } = range;
+  const isWord = (i: number) => i >= 0 && i < text.length && WORD_CHAR.test(text[i] ?? "");
+  while (start < end && /\s/.test(text[start] ?? "")) start += 1;
+  while (end > start && /\s/.test(text[end - 1] ?? "")) end -= 1;
+  if (start >= end) return range;
+  while (isWord(start - 1) && isWord(start)) start -= 1;
+  while (isWord(end - 1) && isWord(end)) end += 1;
+  return { start, end };
 }
 
 /** The part of `range` that lies inside `el`, as offsets into `el`'s text. */

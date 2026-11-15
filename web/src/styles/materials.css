@@ -233,6 +233,17 @@ mark.anno.is-focused {
   overflow-wrap: anywhere;
 }
 
+.material-media-title {
+  font-family: var(--font-print);
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+/* In 備課庫 the panel lies over the list (there is no step to sit beside). */
+.materials-section .material-viewer {
+  box-shadow: var(--shadow-overlay);
+}
+
 /* ================= the viewer as a side-by-side pane ================= */
 .material-split {
   display: flex;

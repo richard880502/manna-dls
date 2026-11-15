@@ -423,6 +423,9 @@ export function MaterialContent({ materialId, material: given, annotate = true }
           <span className="field-hint">外部網址，會在新分頁開啟。Manna 只記下連結，沒有擷取網頁內容。</span>
         </p>
       )}
+      {material.paragraphs.length === 0 && material.kind !== "link" && material.title && (
+        <p className="material-media-title">{material.title}</p>
+      )}
       <MediaPreview material={material} />
 
       {material.text_status === "no_text" && material.kind === "document" && (
