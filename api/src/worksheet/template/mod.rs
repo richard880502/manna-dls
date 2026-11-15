@@ -645,20 +645,43 @@ pub fn plan_blocks(t: &WsTemplate, paragraphs: usize) -> (Vec<Target>, Vec<Strin
     (targets, notices)
 }
 
-/// A block title for a paragraph: `[n]` is replaced by the number, and a title that still does
-/// not name it gets it in front.
+/// A block title for a paragraph, always in one form: 「Paragraph n: …」 (「第 n 段：…」 for a
+/// Chinese template). The model numbers paragraphs in many ways (`[n]`, `[2]`, `2 `, `Para 2`,
+/// `Paragraph 2`, `第 2 段`), so any leading number or paragraph label is removed before the
+/// canonical prefix is added.
 pub fn title_for(title: &str, paragraph: Option<usize>, instruction_language: &str) -> String {
     let title = title.trim();
     let Some(n) = paragraph else {
         return title.to_string();
     };
-    let replaced = title.replace("[n]", &n.to_string());
-    if replaced.contains(&n.to_string()) {
-        replaced
-    } else if instruction_language == "中文" {
-        format!("第 {n} 段：{replaced}")
+    static LEADING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)^\s*(?:(?:paragraphs?|para\.?|p\.?)\s*(?:\[\s*(?:n|\d+)\s*\]|\d+)|第\s*(?:\[\s*(?:n|\d+)\s*\]|\d+)\s*段|\[\s*(?:n|\d+)\s*\]|\(\s*\d+\s*\)|\d+)\s*[:：.\-–)]?\s*",
+        )
+        .expect("valid regex")
+    });
+    let mut rest = title.to_string();
+    // Strip repeated labels such as "[2] Paragraph 2:".
+    for _ in 0..3 {
+        let stripped = LEADING.replace(&rest, "").to_string();
+        if stripped == rest {
+            break;
+        }
+        rest = stripped;
+    }
+    let rest = rest.replace("[n]", &n.to_string());
+    let rest = rest.trim_matches(|c: char| c.is_whitespace() || ":：-–.".contains(c));
+    let prefix = if instruction_language == "中文" {
+        format!("第 {n} 段")
     } else {
-        format!("Paragraph {n}: {replaced}")
+        format!("Paragraph {n}")
+    };
+    if rest.is_empty() {
+        prefix
+    } else if instruction_language == "中文" {
+        format!("{prefix}：{rest}")
+    } else {
+        format!("{prefix}: {rest}")
     }
 }
 
@@ -842,7 +865,29 @@ mod tests {
             "Paragraph 2: Details"
         );
         assert_eq!(title_for("細節", Some(2), "中文"), "第 2 段：細節");
-        assert_eq!(title_for("Para 4 notes", Some(4), "英文"), "Para 4 notes");
+        assert_eq!(
+            title_for("Para 4 notes", Some(4), "英文"),
+            "Paragraph 4: notes"
+        );
+        // The forms gemma produced in the real-model run all become one form.
+        for raw in [
+            "1 Paragraph Analysis",
+            "[1] Paragraph Analysis",
+            "Paragraph 1 Paragraph Analysis",
+            "[n] Paragraph Analysis",
+            "Paragraph [n]: Paragraph Analysis",
+        ] {
+            assert_eq!(
+                title_for(raw, Some(1), "英文"),
+                "Paragraph 1: Paragraph Analysis",
+                "{raw}"
+            );
+        }
+        assert_eq!(
+            title_for("第 [n] 段 字彙", Some(2), "中文"),
+            "第 2 段：字彙"
+        );
+        assert_eq!(title_for("[n]", Some(5), "英文"), "Paragraph 5");
         assert_eq!(title_for(" Wrap up ", None, "英文"), "Wrap up");
     }
 
