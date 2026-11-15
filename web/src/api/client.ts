@@ -13,7 +13,9 @@ import type {
   CoreQuestion,
   CoreVersion,
   CreateClassRequest,
+  CreateAnnotationRequest,
   CreateLessonRequest,
+  CreateLibraryMaterialRequest,
   CreateMaterialRequest,
   CreatePromptRequest,
   CreateUnitRequest,
@@ -36,6 +38,11 @@ import type {
   LessonSiopResponse,
   LessonVersion,
   LoginResponse,
+  MaterialAnnotation,
+  MaterialDeleted,
+  MaterialDetail,
+  MaterialFileLink,
+  MaterialLibrary,
   MaterialFocusesOutput,
   OkResponse,
   Page,
@@ -69,7 +76,9 @@ import type {
   TeacherCase,
   Unit,
   UnitMaterial,
+  UpdateAnnotationRequest,
   UpdateClassRequest,
+  UpdateLibraryMaterialRequest,
   UpdateLessonRequest,
   UpdateUnitRequest,
   VocabularyAnalysis,
@@ -119,6 +128,8 @@ interface RequestOptions {
   json?: unknown;
   text?: string;
   contentType?: string;
+  /** multipart/form-data (file uploads); the browser sets the boundary header itself. */
+  form?: FormData;
   query?: Record<string, string | undefined>;
   /** Skip the global 401 handler (used by login and the phone remote). */
   skipAuthHandler?: boolean;
@@ -142,8 +153,10 @@ async function request<T>(method: string, path: string, options: RequestOptions 
   const token = options.token !== undefined ? options.token : loadToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  let body: string | undefined;
-  if (options.text !== undefined) {
+  let body: string | FormData | undefined;
+  if (options.form !== undefined) {
+    body = options.form;
+  } else if (options.text !== undefined) {
     body = options.text;
     headers["Content-Type"] = options.contentType ?? "text/plain";
   } else if (options.json !== undefined) {
@@ -293,6 +306,34 @@ export const api = {
   startSopJob: (lessonId: number, kind: SopJobKind, classId?: number | null) =>
     post<SopJob>(`/lessons/${lessonId}/sop/${kind}`, classId ? { class_id: classId } : {}),
   getSopJob: (jobId: number) => get<SopJob>(`/sop-jobs/${jobId}`),
+
+  // ---- 教材庫與注記（Phase 2.2）
+  /** 自己的教材、用量與上傳限制；帶 lessonId 時只列連到那個課例的教材 */
+  listLibraryMaterials: (lessonId?: number) =>
+    get<MaterialLibrary>("/materials", lessonId ? { lesson_id: String(lessonId) } : undefined),
+  getLibraryMaterial: (id: number) => get<MaterialDetail>(`/materials/${id}`),
+  /** 貼上文字或加入網址 */
+  createLibraryMaterial: (body: CreateLibraryMaterialRequest) => post<MaterialDetail>("/materials", body),
+  /** 上傳檔案（multipart）；後端檢查副檔名、內容、大小與用量 */
+  uploadLibraryMaterial: (file: File, fields: { title?: string; source_note?: string; lesson_id?: number } = {}) => {
+    const form = new FormData();
+    if (fields.title) form.append("title", fields.title);
+    if (fields.source_note) form.append("source_note", fields.source_note);
+    if (fields.lesson_id) form.append("lesson_id", String(fields.lesson_id));
+    form.append("file", file, file.name);
+    return request<MaterialDetail>("POST", "/materials/upload", { form });
+  },
+  updateLibraryMaterial: (id: number, body: UpdateLibraryMaterialRequest) =>
+    put<MaterialDetail>(`/materials/${id}`, body),
+  /** 永久刪除：原檔、擷取文字、段落與注記一併刪除 */
+  deleteLibraryMaterial: (id: number) => del<MaterialDeleted>(`/materials/${id}`),
+  /** 給 img／audio／video 用的短時效連結（指向本站 API，不是儲存空間） */
+  materialFileLink: (id: number) => post<MaterialFileLink>(`/materials/${id}/file-link`),
+  listAnnotations: (materialId: number) => get<MaterialAnnotation[]>(`/materials/${materialId}/annotations`),
+  createAnnotation: (materialId: number, body: CreateAnnotationRequest) =>
+    post<MaterialAnnotation>(`/materials/${materialId}/annotations`, body),
+  updateAnnotation: (id: number, body: UpdateAnnotationRequest) => put<MaterialAnnotation>(`/annotations/${id}`, body),
+  deleteAnnotation: (id: number) => del<{ deleted: boolean }>(`/annotations/${id}`),
 
   // Teach & Record
   listRuns: (classId?: number | null) => get<LessonRun[]>("/runs", classQuery(classId)),

@@ -19,6 +19,9 @@ pub enum AppError {
     NotFound(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    /// A dependency this request needs is not there (file storage not configured or down).
+    #[error("unavailable: {0}")]
+    Unavailable(String),
     #[error("internal: {0:#}")]
     Internal(#[from] anyhow::Error),
 }
@@ -40,6 +43,7 @@ impl AppError {
             Self::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            Self::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
             Self::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
     }
@@ -81,7 +85,8 @@ impl IntoResponse for AppError {
             | Self::Unauthorized(m)
             | Self::Forbidden(m)
             | Self::NotFound(m)
-            | Self::Conflict(m) => m.clone(),
+            | Self::Conflict(m)
+            | Self::Unavailable(m) => m.clone(),
         };
         (
             status,

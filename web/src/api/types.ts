@@ -4,7 +4,7 @@ export type SchoolTrack = "general" | "vocational" | "comprehensive";
 /** kb_manager（知識庫管理員）管理課綱條目與詞彙表，沒有主持人的其他權限。 */
 export type Role = "teacher" | "pi" | "kb_manager" | "ra" | "rater" | "engineer";
 /** 角色擁有的權限（GET /api/me 的 capabilities）。 */
-export type Capability = "administer" | "manage_knowledge";
+export type Capability = "administer" | "manage_knowledge" | "use_materials";
 /** 知識庫條目與教師備課經驗的適用類型；both＝各類型共用。 */
 export type ItemTrack = SchoolTrack | "both";
 export type QuestionId = "Q1" | "Q2" | "Q3" | "Q4" | "Q5" | "Q6" | "Q7" | "Q8";
@@ -314,6 +314,8 @@ export interface AppConfig {
   ai_provider: string;
   ai_model: string;
   route_choice_enabled: boolean;
+  /** 教材庫能不能上傳檔案（後端有設定儲存空間）；貼上文字不受影響 */
+  uploads_enabled?: boolean;
 }
 
 export interface LoginRequest {
@@ -923,8 +925,11 @@ export interface SopParagraph {
   id: string;
   no: number;
   text: string;
+  /** PDF 才有：這一段從第幾頁開始 */
+  page?: number;
 }
 
+/** 課例第 1 步的教材：教材庫裡的一份教材（Phase 2.2）。`version_no` 是教材的修訂次數 */
 export interface SopMaterial {
   id: number;
   version_no: number;
@@ -934,6 +939,14 @@ export interface SopMaterial {
   paragraphs: SopParagraph[];
   word_count: number;
   created_at: string;
+  kind?: MaterialKind;
+  origin?: MaterialOrigin;
+  url?: string | null;
+  filename?: string | null;
+  has_file?: boolean;
+  text_status?: MaterialTextStatus;
+  text_truncated?: boolean;
+  page_count?: number | null;
 }
 
 export interface SopFeature {
@@ -1115,6 +1128,8 @@ export interface SopState {
   versions_count: number;
   saved_at: string | null;
   material: SopMaterial | null;
+  /** 這個版本原本有教材，教師後來把它刪除了（顯示「教材已刪除」） */
+  material_deleted?: boolean;
   content: SopContent;
   /** 最新教案的「今天要教什麼？」 */
   today_objective: string;
@@ -1131,8 +1146,136 @@ export interface SavedSop {
   content: SopContent;
 }
 
+/** 貼上文字：`{ title, source_note, text }`；從教材庫選：`{ material_id }`；從課例移除：`{ material_id: null }` */
 export interface SaveSopMaterialRequest {
+  material_id?: number | null;
   title?: string;
   source_note?: string;
+  text?: string;
+}
+
+// ---------------------------------------------------------------- Phase 2.2：教材與注記
+
+export type MaterialKind = "text" | "document" | "image" | "audio" | "video" | "link";
+export type MaterialOrigin = "paste" | "upload" | "url";
+/** ready：有文字可讀、可注記；no_text：文件沒有文字層（掃描檔）；failed：讀不出來；not_applicable：圖片、影音、網址 */
+export type MaterialTextStatus = "ready" | "no_text" | "failed" | "not_applicable";
+
+export interface MaterialLessonUse {
+  lesson_id: number;
+  lesson_title: string;
+  unit_title: string;
+}
+
+export interface Material {
+  id: number;
+  kind: MaterialKind;
+  origin: MaterialOrigin;
+  title: string;
+  source_note: string;
+  url: string | null;
+  filename: string | null;
+  content_type: string | null;
+  size_bytes: number;
+  sha256: string | null;
+  has_file: boolean;
+  text_status: MaterialTextStatus;
+  text_truncated: boolean;
+  page_count: number | null;
+  paragraph_count: number;
+  word_count: number;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+  lessons: MaterialLessonUse[];
+  worksheet_count: number;
+  annotation_count: number;
+}
+
+export interface MaterialDetail extends Material {
   text: string;
+  paragraphs: SopParagraph[];
+}
+
+export interface MaterialFileRule {
+  ext: string;
+  kind: MaterialKind;
+  max_bytes: number;
+}
+
+export interface MaterialLibrary {
+  materials: Material[];
+  usage: { used_bytes: number; quota_bytes: number; count: number; max_count: number };
+  limits: { files: MaterialFileRule[]; max_pasted_chars: number; max_note_chars: number };
+  storage: "s3" | "fs" | "none";
+  uploads_enabled: boolean;
+}
+
+export interface CreateLibraryMaterialRequest {
+  kind: "text" | "link";
+  title?: string;
+  source_note?: string;
+  text?: string;
+  url?: string;
+  lesson_id?: number;
+}
+
+export interface UpdateLibraryMaterialRequest {
+  title?: string;
+  source_note?: string;
+  text?: string;
+  url?: string;
+}
+
+export interface MaterialDeleted {
+  deleted: boolean;
+  annotations: number;
+  lessons: number[];
+}
+
+export interface MaterialFileLink {
+  url: string;
+  expires_at: string;
+}
+
+export type AnchorStatus = "ok" | "moved" | "lost";
+
+/** 注記現在在教材的哪裡；`lost`＝找不到原本標的文字，需要重新確認位置 */
+export interface AnnotationAnchor {
+  status: AnchorStatus;
+  paragraph_id: string | null;
+  paragraph_no: number | null;
+  /** 段落文字中的位置（UTF-16，與瀏覽器選取相同） */
+  start: number | null;
+  end: number | null;
+}
+
+export interface MaterialAnnotation {
+  id: number;
+  material_id: number;
+  quote: string;
+  note: string;
+  share_with_ai: boolean;
+  hidden: boolean;
+  anchor: AnnotationAnchor;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnotationPosition {
+  paragraph_id: string;
+  start: number;
+  end: number;
+}
+
+export interface CreateAnnotationRequest extends AnnotationPosition {
+  note?: string;
+  share_with_ai?: boolean;
+}
+
+export interface UpdateAnnotationRequest {
+  note?: string;
+  share_with_ai?: boolean;
+  hidden?: boolean;
+  anchor?: AnnotationPosition;
 }

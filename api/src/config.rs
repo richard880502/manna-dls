@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::embedding::EmbeddingConfig;
+use crate::storage::StorageConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiProviderKind {
@@ -73,6 +74,8 @@ pub struct Config {
     pub demo_mode: bool,
     pub admin_bootstrap_code: Option<String>,
     pub rag_top_k: usize,
+    /// Where material files are kept (`STORAGE_BACKEND`, docs/API.md Phase 2.2).
+    pub storage: StorageConfig,
     /// Embeddings for hybrid retrieval. Never fails: a bad setting disables embeddings.
     pub embedding: EmbeddingConfig,
 }
@@ -90,6 +93,7 @@ impl std::fmt::Debug for Config {
             .field("openai_compat_base_url", &self.openai_compat_base_url)
             .field("demo_mode", &self.demo_mode)
             .field("rag_top_k", &self.rag_top_k)
+            .field("storage", &self.storage)
             .field("embedding", &self.embedding)
             .finish_non_exhaustive()
     }
@@ -219,6 +223,8 @@ impl Config {
             demo_mode,
             admin_bootstrap_code: get("ADMIN_BOOTSTRAP_CODE").map(|c| c.trim().to_string()),
             rag_top_k,
+            // Never an error: a broken storage configuration only turns uploads off.
+            storage: StorageConfig::from_lookup(get),
             embedding: EmbeddingConfig::from_lookup(get),
         })
     }
@@ -239,6 +245,7 @@ impl Config {
             demo_mode: false,
             admin_bootstrap_code: None,
             rag_top_k: 8,
+            storage: StorageConfig::none(),
             embedding: EmbeddingConfig::disabled(),
         }
     }

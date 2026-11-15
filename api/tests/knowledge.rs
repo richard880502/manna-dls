@@ -92,14 +92,17 @@ async fn roles_and_permissions() {
 
     let (_, me) = app.get("/api/me", Some(&manager)).await;
     assert_eq!(me["role"], "kb_manager");
-    assert_eq!(me["capabilities"], json!(["manage_knowledge"]));
+    assert_eq!(
+        me["capabilities"],
+        json!(["manage_knowledge", "use_materials"])
+    );
     let (_, me) = app.get("/api/me", Some(&pi)).await;
     assert_eq!(
         me["capabilities"],
-        json!(["administer", "manage_knowledge"])
+        json!(["administer", "manage_knowledge", "use_materials"])
     );
     let (_, me) = app.get("/api/me", Some(&teacher)).await;
-    assert_eq!(me["capabilities"], json!([]));
+    assert_eq!(me["capabilities"], json!(["use_materials"]));
 
     // Knowledge management: PI and kb_manager yes, teacher 403, anonymous 401.
     let csv = curriculum_csv();

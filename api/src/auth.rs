@@ -71,16 +71,25 @@ pub enum Capability {
     Administer,
     /// Import, retire and browse the knowledge base (curriculum items) and the vocabulary list.
     ManageKnowledge,
+    /// The account's own material library: upload, paste, annotate, delete. Held by every role
+    /// today (everyone can prepare lessons); kept as a capability so it can be narrowed, for
+    /// example during a pilot, in one place.
+    UseMaterials,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 2] = [Capability::Administer, Capability::ManageKnowledge];
+    pub const ALL: [Capability; 3] = [
+        Capability::Administer,
+        Capability::ManageKnowledge,
+        Capability::UseMaterials,
+    ];
 
     /// Name used in `GET /api/me` (`capabilities`).
     pub fn name(self) -> &'static str {
         match self {
             Capability::Administer => "administer",
             Capability::ManageKnowledge => "manage_knowledge",
+            Capability::UseMaterials => "use_materials",
         }
     }
 
@@ -88,6 +97,7 @@ impl Capability {
         match self {
             Capability::Administer => "只有計畫主持人可以使用這個功能。",
             Capability::ManageKnowledge => "只有計畫主持人或知識庫管理員可以使用這個功能。",
+            Capability::UseMaterials => "這個帳號不能使用教材庫。",
         }
     }
 }
@@ -97,6 +107,7 @@ pub fn role_can(role: &str, capability: Capability) -> bool {
     match capability {
         Capability::Administer => role == "pi",
         Capability::ManageKnowledge => matches!(role, "pi" | "kb_manager"),
+        Capability::UseMaterials => valid_role(role),
     }
 }
 
@@ -158,19 +169,38 @@ impl FromRequestParts<AppState> for AuthTeacher {
     ) -> Result<Self, Self::Rejection> {
         let unauthorized = || AppError::Unauthorized("請先登入。".into());
         let token = bearer_token(&parts.headers).ok_or_else(unauthorized)?;
-        let teacher: Option<Teacher> = sqlx::query_as(
-            "SELECT t.id, t.research_id, t.school_track, t.role
-               FROM sessions s JOIN teachers t ON t.id = s.teacher_id
-              WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
-                AND t.deleted_at IS NULL",
-        )
-        .bind(sha256_hex(&token))
-        .fetch_optional(&state.db)
-        .await?;
-        teacher
-            .map(AuthTeacher)
-            .ok_or_else(|| AppError::Unauthorized("登入已失效，請重新登入。".into()))
+        authenticate(&state.db, &token).await
     }
+}
+
+/// The teacher a session token belongs to; 401 when it is unknown, revoked or expired.
+pub async fn authenticate(db: &PgPool, token: &str) -> AppResult<AuthTeacher> {
+    let teacher: Option<Teacher> = sqlx::query_as(
+        "SELECT t.id, t.research_id, t.school_track, t.role
+           FROM sessions s JOIN teachers t ON t.id = s.teacher_id
+          WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now()
+            AND t.deleted_at IS NULL",
+    )
+    .bind(sha256_hex(token))
+    .fetch_optional(db)
+    .await?;
+    teacher
+        .map(AuthTeacher)
+        .ok_or_else(|| AppError::Unauthorized("登入已失效，請重新登入。".into()))
+}
+
+/// Looks up a teacher by id for requests authenticated another way (a signed file link).
+pub async fn teacher_by_id(db: &PgPool, id: i64) -> AppResult<AuthTeacher> {
+    let teacher: Option<Teacher> = sqlx::query_as(
+        "SELECT id, research_id, school_track, role FROM teachers
+          WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    teacher
+        .map(AuthTeacher)
+        .ok_or_else(|| AppError::Unauthorized("登入已失效，請重新登入。".into()))
 }
 
 /// Creates the PI bootstrap invite if `ADMIN_BOOTSTRAP_CODE` is set and no invite with its hash exists.
@@ -302,6 +332,10 @@ mod tests {
                 "{role}"
             );
         }
+        for role in ["teacher", "pi", "kb_manager", "ra", "rater", "engineer"] {
+            assert!(role_can(role, UseMaterials), "{role}");
+        }
+        assert!(!role_can("unknown", UseMaterials));
         assert!(role_can("pi", Administer) && role_can("pi", ManageKnowledge));
         assert!(role_can("kb_manager", ManageKnowledge));
         assert!(!role_can("kb_manager", Administer));

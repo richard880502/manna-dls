@@ -13,6 +13,7 @@ pub mod db;
 pub mod embedding;
 pub mod error;
 pub mod kb_embeddings;
+pub mod materials;
 pub mod preferences;
 pub mod prompts;
 pub mod record;
@@ -20,6 +21,7 @@ pub mod retrieval;
 pub mod routes;
 pub mod settings;
 pub mod sop;
+pub mod storage;
 pub mod vocabulary;
 
 use std::path::PathBuf;
@@ -38,6 +40,8 @@ use crate::ai::AiClient;
 use crate::config::Config;
 use crate::embedding::Embedder;
 use crate::kb_embeddings::EmbedJobs;
+use crate::materials::access::LinkSigner;
+use crate::storage::Storage;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -47,18 +51,31 @@ pub struct AppState {
     /// Embedding model for hybrid retrieval; disabled unless `EMBEDDING_PROVIDER` is set.
     pub embedder: Arc<Embedder>,
     pub embed_jobs: Arc<EmbedJobs>,
+    /// Where original material files live; `None` when uploads are off (`STORAGE_BACKEND=none`
+    /// or a broken storage configuration).
+    pub storage: Option<Arc<dyn Storage>>,
+    /// Signs the short-lived file links for `<img>`, `<audio>` and `<video>`.
+    pub links: Arc<LinkSigner>,
+    /// Bounds how many uploads are held in memory at once.
+    pub upload_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let ai = Arc::new(AiClient::from_config(&config));
         let embedder = Arc::new(Embedder::new(config.embedding.clone()));
+        let storage = config.storage.build();
         Self {
             db,
             config: Arc::new(config),
             ai,
             embedder,
             embed_jobs: Arc::default(),
+            storage,
+            links: Arc::new(LinkSigner::new()),
+            upload_slots: Arc::new(tokio::sync::Semaphore::new(
+                materials::MAX_CONCURRENT_UPLOADS,
+            )),
         }
     }
 }

@@ -489,11 +489,13 @@ mod tests {
                 id: "p1".into(),
                 no: 1,
                 text: P1.into(),
+                page: None,
             },
             Paragraph {
                 id: "p7".into(),
                 no: 2,
                 text: P2.into(),
+                page: None,
             },
         ]
     }

@@ -34,6 +34,9 @@ pub struct Paragraph {
     /// Position in the current material, from 1.
     pub no: i32,
     pub text: String,
+    /// Page of the source document the paragraph starts on (PDFs only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<i32>,
 }
 
 fn collapse_ws(s: &str) -> String {
@@ -101,6 +104,7 @@ pub fn assign_paragraph_ids(
                 id,
                 no: i as i32 + 1,
                 text,
+                page: None,
             }
         })
         .collect();
@@ -375,6 +379,97 @@ pub struct SopContent {
     pub exit_ticket: ExitTicket,
 }
 
+// ---------------------------------------------------------------- paragraph references
+//
+// Paragraph ids (`p3`) are only unique inside one material. The SOP document refers to them by
+// that bare id, so a bare reference always means "a paragraph of the material this version
+// points at". When a lesson stops using a material (another one is picked, it is taken off the
+// lesson, or it is deleted) the references to it are renamed `m<material id>-p3`: they can no
+// longer be mistaken for a paragraph of the next material, and they come back if the teacher
+// returns to the first one. The frontend shows references it cannot resolve as 「原段落已變更」.
+
+fn each_paragraph_ref(content: &mut SopContent, mut f: impl FnMut(&mut String)) {
+    for focus in &mut content.analysis.language_focus {
+        if let Some(id) = focus.paragraph_id.as_mut() {
+            f(id);
+        }
+    }
+    for p in &mut content.analysis.paragraphs {
+        f(&mut p.paragraph_id);
+    }
+    for o in &mut content.objectives {
+        o.paragraph_ids.iter_mut().for_each(&mut f);
+    }
+    for g in &mut content.paragraph_goals {
+        f(&mut g.paragraph_id);
+    }
+    for b in &mut content.task_blocks {
+        b.paragraph_ids.iter_mut().for_each(&mut f);
+    }
+}
+
+/// `m12-p3`: a reference to a paragraph of material 12, which this version does not point at.
+pub fn is_foreign_paragraph_ref(id: &str) -> bool {
+    id.strip_prefix('m')
+        .and_then(|rest| rest.split_once('-'))
+        .is_some_and(|(digits, tail)| {
+            !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && !tail.is_empty()
+        })
+}
+
+/// Marks every bare paragraph reference as belonging to `material_id`.
+pub fn namespace_paragraph_refs(content: &mut SopContent, material_id: i64) {
+    each_paragraph_ref(content, |id| {
+        if !id.trim().is_empty() && !is_foreign_paragraph_ref(id) {
+            *id = format!("m{material_id}-{id}");
+        }
+    });
+}
+
+/// The reverse: references to `material_id` become bare again.
+pub fn restore_paragraph_refs(content: &mut SopContent, material_id: i64) {
+    let prefix = format!("m{material_id}-");
+    each_paragraph_ref(content, |id| {
+        if let Some(bare) = id.strip_prefix(&prefix) {
+            *id = bare.to_string();
+        }
+    });
+}
+
+/// What stands where a verbatim quote of a deleted material used to be.
+pub const DELETED_MATERIAL_MARK: &str = "［教材已刪除］";
+
+/// Removes the verbatim quotes (`evidence`) taken from material `material_id`. `current` says
+/// whether this version points at that material, i.e. whether bare references are its. The
+/// teacher's own words (function, summary, explanation, notes) stay. Returns whether anything
+/// changed.
+pub fn scrub_material_evidence(content: &mut SopContent, material_id: i64, current: bool) -> bool {
+    let prefix = format!("m{material_id}-");
+    let belongs = |id: Option<&str>| match id {
+        Some(id) if id.starts_with(&prefix) => true,
+        Some(id) => current && !is_foreign_paragraph_ref(id),
+        None => current,
+    };
+    let mut changed = false;
+    let mut scrub = |evidence: &mut String| {
+        if !evidence.trim().is_empty() && evidence != DELETED_MATERIAL_MARK {
+            *evidence = DELETED_MATERIAL_MARK.to_string();
+            changed = true;
+        }
+    };
+    for focus in &mut content.analysis.language_focus {
+        if belongs(focus.paragraph_id.as_deref()) {
+            scrub(&mut focus.evidence);
+        }
+    }
+    for p in &mut content.analysis.paragraphs {
+        if belongs(Some(&p.paragraph_id)) {
+            p.features.iter_mut().for_each(|f| scrub(&mut f.evidence));
+        }
+    }
+    changed
+}
+
 // ---------------------------------------------------------------- validation
 
 struct Validator {
@@ -564,6 +659,87 @@ pub fn is_blank(content: &SopContent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paragraph_refs_are_namespaced_restored_and_scrubbed() {
+        let mut c: SopContent = serde_json::from_value(serde_json::json!({
+            "analysis": {
+                "language_focus": [
+                    { "id": "f1", "item": "however", "paragraph_id": "p2", "evidence": "However, it rained." },
+                    { "id": "f2", "item": "so", "paragraph_id": null, "evidence": "so we left" }
+                ],
+                "paragraphs": [
+                    { "paragraph_id": "p1", "function": "開場",
+                      "features": [{ "id": "a", "feature": "故事", "evidence": "Once upon a time" }] },
+                    { "paragraph_id": "m7-p1", "function": "舊教材",
+                      "features": [{ "id": "b", "feature": "引用", "evidence": "An older quote" }] }
+                ]
+            },
+            "objectives": [{ "id": "o1", "type": "content", "paragraph_ids": ["p1", "p2"] }],
+            "paragraph_goals": [{ "paragraph_id": "p2" }],
+            "task_blocks": [{ "id": "b1", "paragraph_ids": ["p1"] }]
+        }))
+        .unwrap();
+        let original = c.clone();
+        assert!(is_foreign_paragraph_ref("m7-p1"));
+        for bare in ["p1", "m-p1", "m7-", "mx-p1", "memo-1"] {
+            assert!(!is_foreign_paragraph_ref(bare), "{bare}");
+        }
+
+        namespace_paragraph_refs(&mut c, 3);
+        assert_eq!(c.analysis.paragraphs[0].paragraph_id, "m3-p1");
+        assert_eq!(
+            c.analysis.paragraphs[1].paragraph_id, "m7-p1",
+            "already foreign"
+        );
+        assert_eq!(c.objectives[0].paragraph_ids, ["m3-p1", "m3-p2"]);
+        assert_eq!(c.paragraph_goals[0].paragraph_id, "m3-p2");
+        assert_eq!(c.task_blocks[0].paragraph_ids, ["m3-p1"]);
+        assert_eq!(
+            c.analysis.language_focus[0].paragraph_id.as_deref(),
+            Some("m3-p2")
+        );
+        assert!(validate(&c).is_ok());
+        restore_paragraph_refs(&mut c, 3);
+        assert_eq!(c, original);
+
+        // Deleting material 7 while the version points at another one: only its quotes go.
+        let mut other = original.clone();
+        assert!(scrub_material_evidence(&mut other, 7, false));
+        assert_eq!(
+            other.analysis.paragraphs[1].features[0].evidence,
+            DELETED_MATERIAL_MARK
+        );
+        assert_eq!(
+            other.analysis.paragraphs[0].features[0].evidence,
+            "Once upon a time"
+        );
+        assert_eq!(other.analysis.paragraphs[1].function, "舊教材");
+        // Deleting the material the version points at: every bare-referenced quote goes.
+        let mut current = original.clone();
+        assert!(scrub_material_evidence(&mut current, 3, true));
+        assert_eq!(
+            current.analysis.paragraphs[0].features[0].evidence,
+            DELETED_MATERIAL_MARK
+        );
+        assert_eq!(
+            current.analysis.language_focus[0].evidence,
+            DELETED_MATERIAL_MARK
+        );
+        assert_eq!(
+            current.analysis.language_focus[1].evidence,
+            DELETED_MATERIAL_MARK
+        );
+        assert_eq!(
+            current.analysis.paragraphs[1].features[0].evidence,
+            "An older quote"
+        );
+        assert_eq!(current.analysis.paragraphs[0].function, "開場");
+        assert!(
+            !scrub_material_evidence(&mut current, 3, true),
+            "nothing left to scrub"
+        );
+    }
 
     #[test]
     fn splits_on_blank_lines_and_joins_wrapped_lines() {
