@@ -63,12 +63,12 @@ cd web && pnpm install && pnpm dev
 
 | 環境變數 | 說明 |
 |---|---|
-| `STORAGE_BACKEND` | `s3`、`fs` 或 `none`。後端程式沒設時是 `fs`；`docker-compose.yml` 預設 `none`。`none` 時上傳回「還沒有設定檔案儲存空間」，貼上文字與網址照常可用。設定有誤（例如少了 `S3_BUCKET`）也只會關掉上傳，不會讓後端起不來 |
+| `STORAGE_BACKEND` | `s3`、`fs` 或 `none`。後端程式沒設時是 `fs`；`docker-compose.yml` 預設 `s3`（同一份 compose 裡的 `minio` 服務）。`none` 時上傳回「還沒有設定檔案儲存空間」，貼上文字與網址照常可用。設定有誤（例如少了 `S3_BUCKET`）也只會關掉上傳，不會讓後端起不來 |
 | `STORAGE_DIR` | `fs` 用的資料夾（預設 `./data/materials`；映像內是 `/app/data/materials`） |
-| `S3_ENDPOINT` | 例如 `http://manna-minio:9000`（Coolify 內部網址；path-style） |
+| `S3_ENDPOINT` | compose 預設 `http://minio:9000`（同一份 compose 的內部網址；path-style） |
 | `S3_BUCKET` | 例如 `manna-materials`。私有、**不要開版本保留（versioning）**，刪除才是真的刪除 |
 | `S3_REGION` | 預設 `us-east-1`（MinIO 不在意，但簽章需要） |
-| `S3_ACCESS_KEY`、`S3_SECRET_KEY` | MinIO 上**只給這個 bucket** 讀寫刪的帳號；只設在 Coolify，不進版本庫 |
+| `S3_ACCESS_KEY`、`S3_SECRET_KEY` | compose 裡接 Coolify 自動產生的 `SERVICE_USER_MINIO`／`SERVICE_PASSWORD_MINIO`（MinIO 的帳密），不進版本庫、不用手打 |
 
 主機 nginx（`/etc/nginx/sites-available/manna-dls`）要允許大檔：`client_max_body_size 105m;`（nginx 預設 1 MB，超過時上傳會在 nginx 被擋成 413）。
 

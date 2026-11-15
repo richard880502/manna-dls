@@ -49,8 +49,10 @@ impl S3Storage {
         })
     }
 
-    /// Whether the bucket answers with these credentials (logged at startup).
-    pub async fn check(&self) -> anyhow::Result<()> {
+    /// Make sure the bucket exists and answers with these credentials (run once at startup).
+    /// A missing bucket is created; MinIO creates buckets without versioning, which hard delete
+    /// relies on.
+    pub async fn ensure_bucket(&self) -> anyhow::Result<BucketState> {
         let url = self
             .bucket
             .head_bucket(Some(&self.credentials))
@@ -63,11 +65,32 @@ impl S3Storage {
             .await
             .context("reaching the S3 endpoint")?;
         if resp.status().is_success() {
-            Ok(())
+            return Ok(BucketState::Existed);
+        }
+        if resp.status() != StatusCode::NOT_FOUND {
+            return Err(anyhow!("HEAD bucket answered {}", resp.status()));
+        }
+        let url = self.bucket.create_bucket(&self.credentials).sign(SIGN_FOR);
+        let resp = self
+            .http
+            .put(url)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .context("creating the S3 bucket")?;
+        if resp.status().is_success() {
+            Ok(BucketState::Created)
         } else {
-            Err(anyhow!("HEAD bucket answered {}", resp.status()))
+            Err(anyhow!("creating the bucket answered {}", resp.status()))
         }
     }
+}
+
+/// What [`S3Storage::ensure_bucket`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BucketState {
+    Existed,
+    Created,
 }
 
 fn check_key(key: &str) -> Result<(), StorageError> {

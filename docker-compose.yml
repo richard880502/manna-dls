@@ -7,6 +7,8 @@
 # to that resource's "Postgres URL (internal)", and keep "Connect to predefined
 # network" enabled (Advanced) so the app can reach it.
 #
+# MinIO (material files) runs beside the app in this file; see the `minio` service.
+#
 # The app port is bound to 127.0.0.1 only; host nginx terminates TLS for
 # manna.biobank.tw and proxies to it.
 services:
@@ -36,17 +38,42 @@ services:
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}
-      # Material files (docs/API.md「Phase 2.2」, docs/BLUEPRINT.md §13.3). s3 = the Coolify
-      # MinIO service in the same project (internal network only, private bucket without
-      # versioning). Until it exists this stays "none": uploads are refused with a clear message,
-      # pasted text and links still work. Keys are set in Coolify, never in this file.
-      STORAGE_BACKEND: ${STORAGE_BACKEND:-none}
-      S3_ENDPOINT: ${S3_ENDPOINT:-}
-      S3_BUCKET: ${S3_BUCKET:-}
+      # Material files (docs/API.md「Phase 2.2」, docs/BLUEPRINT.md §13.3) go to the `minio`
+      # service below. Its credentials are Coolify magic variables: generated once by Coolify,
+      # shared by both services, never written in this file or typed by hand. The app creates
+      # the bucket (no versioning, so hard delete is real) on first start.
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_BUCKET: ${S3_BUCKET:-manna-materials}
       S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_ACCESS_KEY: ${SERVICE_USER_MINIO}
+      S3_SECRET_KEY: ${SERVICE_PASSWORD_MINIO}
       # Set by Coolify for each deployment; reported by /api/health.
       SOURCE_COMMIT: ${SOURCE_COMMIT:-unknown}
+    depends_on:
+      minio:
+        condition: service_started
     ports:
       - "127.0.0.1:8080:8080"
+
+  # Teaching-material files. Internal network only: no ports, not exposed through nginx; the
+  # app streams files to signed-in users. The volume is NOT covered by Coolify's database
+  # backups (see docs/BLUEPRINT.md §10).
+  minio:
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${SERVICE_USER_MINIO}
+      MINIO_ROOT_PASSWORD: ${SERVICE_PASSWORD_MINIO}
+      MINIO_BROWSER: "off"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  minio-data:
