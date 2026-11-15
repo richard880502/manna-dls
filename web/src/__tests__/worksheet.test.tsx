@@ -347,6 +347,7 @@ describe("entries", () => {
     const user = userEvent.setup();
     renderApp("/worksheets");
     expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "貼上文字" }));
     await user.type(screen.getByRole("textbox", { name: /教材標題/ }), "The Umbrella Stand");
     await user.type(screen.getByRole("textbox", { name: "貼上教材文字" }), P1);
     await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));

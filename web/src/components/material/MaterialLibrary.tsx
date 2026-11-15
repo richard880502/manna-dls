@@ -11,6 +11,7 @@ import {
   usedInText,
 } from "../../lib/materials";
 import { ErrorText, Loading } from "../common";
+import { useFirstOnPage } from "../OncePerPage";
 import { MaterialViewer } from "./MaterialViewer";
 
 /** The teacher's library as the server reports it: materials, usage, limits, whether uploads work. */
@@ -49,13 +50,15 @@ interface AddFormProps {
   lessonId?: number;
   onAdded: (material: MaterialDetail) => void;
   onCancel?: () => void;
+  /** The submit button's words when the upload leads somewhere else (e.g. 上傳並讀取設計). */
+  submitLabel?: string;
 }
 
 /**
  * One way of adding a material. Every way carries the same warning: no student work, names,
  * grades or photos; the material stays the teacher's own.
  */
-export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel }: AddFormProps) {
+export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, submitLabel }: AddFormProps) {
   const ids = useId();
   const [title, setTitle] = useState("");
   const [sourceNote, setSourceNote] = useState("");
@@ -66,6 +69,8 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel }: A
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const rules = library.limits.files;
+  // The privacy reminder is said once per page (another add form may already show it).
+  const showWarning = useFirstOnPage();
 
   const fileProblem = (() => {
     if (!file) return null;
@@ -143,9 +148,11 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel }: A
 
   return (
     <form className="material-add" onSubmit={onSubmit} aria-label={WAY_LABEL[way]}>
-      <p className="material-warning" role="note">
-        {UPLOAD_WARNING}
-      </p>
+      {showWarning && (
+        <p className="material-warning" role="note">
+          {UPLOAD_WARNING}
+        </p>
+      )}
       {way === "upload" && (
         <>
           <label className="field-label" htmlFor={`${ids}-file`}>
@@ -229,7 +236,11 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel }: A
       <ErrorText message={error} />
       <div className="button-row">
         <button type="submit" className="primary-button" disabled={busy || (way === "upload" && fileProblem !== null)}>
-          {busy ? (way === "upload" ? "上傳中…" : "儲存中…") : way === "upload" ? "上傳" : "加入教材庫"}
+          {busy
+            ? way === "upload"
+              ? "上傳中…"
+              : "儲存中…"
+            : (submitLabel ?? (way === "upload" ? "上傳" : "加入教材庫"))}
         </button>
         {onCancel && (
           <button type="button" className="text-link is-plain" disabled={busy} onClick={onCancel}>
@@ -304,9 +315,19 @@ function deleteConsequences(m: Material): string {
  * rename, and delete for good after an in-page confirmation. On its own page (`asPage`, the top
  * bar's 教材) the heading is the page title; elsewhere it is a section.
  */
-export function MaterialsSection({ asPage = false }: { asPage?: boolean } = {}) {
+export function MaterialsSection({
+  asPage = false,
+  refreshSignal = 0,
+}: {
+  asPage?: boolean;
+  /** Bumped when a material was added elsewhere on the page (a worksheet uploaded as a template). */
+  refreshSignal?: number;
+} = {}) {
   const ids = useId();
   const { library, error, reload } = useMaterialLibrary();
+  useEffect(() => {
+    if (refreshSignal > 0) reload();
+  }, [refreshSignal, reload]);
   const [adding, setAdding] = useState<AddWay | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<{ id: number; title: string } | null>(null);

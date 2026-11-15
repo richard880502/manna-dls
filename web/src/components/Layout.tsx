@@ -30,7 +30,8 @@ export const NAV: NavEntry[] = [
       p === "/record",
   },
   { to: "/worksheets", label: "學習單", match: (p) => p.startsWith("/worksheets") },
-  { to: "/materials", label: "教材", match: (p) => p.startsWith("/materials") },
+  // 我的學習單版型 live on the 教材 page; a template's own page counts as being there.
+  { to: "/materials", label: "教材", match: (p) => p.startsWith("/materials") || p.startsWith("/templates") },
 ];
 
 /** Working pages with two columns get the wider frame; the in-class console a narrower one. */

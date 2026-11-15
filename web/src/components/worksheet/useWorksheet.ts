@@ -32,6 +32,8 @@ export interface WorksheetController {
   regenerate: (blockId: string) => Promise<void>;
   undo: (blockId: string) => Promise<void>;
   saveMaterial: (body: SaveWorksheetMaterialRequest) => Promise<boolean>;
+  /** 照我的版型: sets (the server re-derives the settings from it) or removes the template. */
+  setTemplate: (templateId: number | null) => Promise<boolean>;
   /** Takes a state the server returned from another call (link, save as lesson). */
   adopt: (state: WorksheetState) => void;
   /** Re-reads the worksheet (after a sync, for the new difference count). */
@@ -185,6 +187,11 @@ export function useWorksheet(id: number): WorksheetController {
     [act, id],
   );
 
+  const setTemplate = useCallback(
+    (templateId: number | null) => act(() => api.setWorksheetTemplate(id, templateId)),
+    [act, id],
+  );
+
   const refresh = useCallback(async () => {
     try {
       const failed = await flush();
@@ -244,6 +251,7 @@ export function useWorksheet(id: number): WorksheetController {
     regenerate,
     undo,
     saveMaterial,
+    setTemplate,
     adopt: put,
     refresh,
     dirty: autosave.dirty,

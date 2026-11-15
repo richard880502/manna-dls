@@ -1,0 +1,187 @@
+/* 我的學習單版型 (docs/WORKSHEET_TEMPLATES_CONTRACT.md): the section on 教材, the template page,
+   and the template parts of the worksheet generator. Ruled sections, no boxes; the only washes
+   are Manna's (gold) while it reads a worksheet. */
+
+/* ================= 教材: 我的學習單版型 ================= */
+.templates-section {
+  margin-top: var(--space-section);
+  padding-top: var(--space-lg);
+  border-top: var(--rule-hair) solid var(--color-rule-strong);
+}
+
+.templates-section .lead {
+  margin-top: var(--space-2xs);
+}
+
+.template-add {
+  margin-top: var(--space-sm);
+}
+
+.template-extracting {
+  margin-top: var(--space-3xs);
+  font-size: var(--text-sm);
+}
+
+/* ================= the template page ================= */
+.template-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+.template-facts {
+  margin-bottom: var(--space-sm);
+}
+
+.template-facts .meta {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.template-editor {
+  max-width: 48rem;
+}
+
+.template-sections-head {
+  margin-top: var(--space-xl);
+  font-size: var(--text-lg);
+}
+
+.template-sections {
+  margin-top: var(--space-sm);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  list-style: none;
+}
+
+.template-section {
+  display: grid;
+  gap: var(--space-2xs);
+  padding: 1.25rem 0;
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+.template-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2xs) var(--space-md);
+}
+
+.template-section-head h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--text-md);
+}
+
+.template-section .field-label {
+  margin-top: var(--space-xs);
+}
+
+.template-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-lg);
+  margin-top: var(--space-xs);
+}
+
+.template-fields select {
+  width: auto;
+  min-width: 5rem;
+}
+
+.template-more-toggle {
+  margin-top: var(--space-2xs);
+  font-size: var(--text-sm);
+}
+
+.template-more {
+  display: grid;
+  grid-template-columns: 6em minmax(0, 1fr);
+  gap: var(--space-3xs) var(--space-sm);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.template-more dt {
+  color: var(--color-muted);
+}
+
+.template-more ul {
+  padding-left: 1.1em;
+}
+
+.template-save {
+  align-items: center;
+  margin-top: var(--space-lg);
+}
+
+.template-failed .button-row {
+  margin-top: var(--space-sm);
+}
+
+.template-danger {
+  margin-top: var(--space-section);
+  padding-top: var(--space-md);
+  border-top: var(--rule-hair) solid var(--color-rule);
+  font-size: var(--text-sm);
+}
+
+/* ================= the worksheet generator ================= */
+.ws-picked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.ws-new-form > .field-label {
+  margin-top: var(--space-md);
+}
+
+.ws-template-line {
+  margin-top: var(--space-3xs);
+}
+
+.ws-template-opt select {
+  max-width: 100%;
+}
+
+.ws-template-skeleton ol {
+  padding-left: 1.4em;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.ws-template-skeleton li + li {
+  margin-top: var(--space-3xs);
+}
+
+/* A block that needs the teacher's own video, recording, image or text: said plainly, in the
+   warning ink, with a rule on the left so it is found while scrolling the sheet. */
+.ws-message.is-needs-material {
+  padding: var(--space-xs) var(--space-sm);
+  border-left: 3px solid var(--color-warn-rule);
+  color: var(--color-ink);
+}
+
+.ws-message.is-needs-material .ws-message-label {
+  margin-bottom: var(--space-3xs);
+  color: var(--color-warn-ink);
+  font-weight: var(--weight-strong);
+}
+
+.ws-needs-summary {
+  margin-top: var(--space-xs);
+  padding-left: var(--space-sm);
+  border-left: 3px solid var(--color-warn-rule);
+  color: var(--color-warn-ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}

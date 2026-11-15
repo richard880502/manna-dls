@@ -308,5 +308,6 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     "GET /api/units/1": unit,
     "GET /api/classes": [],
     "GET /api/core/questions": questions,
+    "GET /api/worksheet-templates": { templates: [] },
   };
 }
