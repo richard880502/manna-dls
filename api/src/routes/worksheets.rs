@@ -16,14 +16,19 @@ use serde_json::json;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::store::{self as material_store, LinkTarget};
-use crate::routes::{log_usage, owned_class, owned_lesson, owned_unit, resolved_profile};
+use crate::routes::{
+    double_option, log_usage, owned_class, owned_lesson, owned_unit, resolved_profile,
+};
 use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::worksheet::ai::{self as ws_ai, Job, RunInput};
 use crate::worksheet::assemble::{project, Sheet};
 use crate::worksheet::export::{self, ExportError};
-use crate::worksheet::material::{SOURCE_LESSON_SOP, SOURCE_PASTED};
+use crate::worksheet::material::{SOURCE_LESSON_SOP, SOURCE_LIBRARY, SOURCE_PASTED};
 use crate::worksheet::store::{self, Summary, Worksheet};
 use crate::worksheet::sync::{self, Preview};
+use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
+use crate::worksheet::template::prefill_settings;
+use crate::worksheet::template::store as tpl_store;
 use crate::worksheet::vocab::{self, VocabCheck};
 use crate::worksheet::{
     auto_filename, auto_title, safe_filename, suggest_direct, suggest_from_sop, Audience, Brief,
@@ -37,6 +42,14 @@ use crate::AppState;
 pub struct SopSyncState {
     pub linked: bool,
     pub changes: usize,
+}
+
+/// The template a worksheet follows (「照我的版型」).
+#[derive(Debug, Serialize)]
+pub struct TemplateRef {
+    pub id: i64,
+    pub title: String,
+    pub version_no: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,6 +67,7 @@ pub struct WorksheetState {
     pub running: bool,
     pub undoable: Vec<String>,
     pub sop_sync: SopSyncState,
+    pub template: Option<TemplateRef>,
 }
 
 async fn lesson_sop_diff(
@@ -97,7 +111,23 @@ async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetState> {
             changes: 0,
         },
     };
+    let template = match ws.template_id {
+        Some(template_id) => {
+            let title: Option<String> =
+                sqlx::query_scalar("SELECT title FROM worksheet_templates WHERE id = $1")
+                    .bind(template_id)
+                    .fetch_optional(db)
+                    .await?;
+            title.map(|title| TemplateRef {
+                id: template_id,
+                title,
+                version_no: ws.template_version_no.unwrap_or(1),
+            })
+        }
+        None => None,
+    };
     Ok(WorksheetState {
+        template,
         summary: store::summary(db, id).await?,
         versions_count: store::versions_count(db, id).await?,
         saved_at: latest.created_at,
@@ -148,6 +178,28 @@ pub struct CreateWorksheet {
     pub class_id: Option<i64>,
     #[serde(default)]
     pub material: Option<PastedMaterial>,
+    /// One of the teacher's library materials with extracted text; wins over `material`.
+    #[serde(default)]
+    pub material_id: Option<i64>,
+    /// One of the teacher's `ready` templates.
+    #[serde(default)]
+    pub template_id: Option<i64>,
+}
+
+/// A library material the teacher chose, as the worksheet's material snapshot.
+async fn chosen_material(
+    db: &sqlx::PgPool,
+    teacher_id: i64,
+    material_id: i64,
+) -> AppResult<(Material, i32)> {
+    let row = material_store::owned(db, material_id, teacher_id)
+        .await
+        .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    if row.text_status != "ready" || row.paragraphs.0.is_empty() {
+        return Err(AppError::bad_request(MSG_NO_TEXT));
+    }
+    let stored = sop_store::Material::from(row);
+    Ok(Material::from_library(SOURCE_LIBRARY, None, &stored))
 }
 
 fn check_pasted(m: &PastedMaterial) -> AppResult<()> {
@@ -268,9 +320,17 @@ pub async fn create(
     if let Some(class_id) = req.class_id {
         owned_class(db, class_id, teacher.id()).await?;
     }
+    let template = match req.template_id {
+        Some(template_id) => Some(tpl_store::ready_for_use(db, teacher.id(), template_id).await?),
+        None => None,
+    };
     let pasted = req.material.unwrap_or_default();
     check_pasted(&pasted)?;
-    let pasted_material = library_material(db, teacher.id(), None, 0, &pasted).await?;
+    // A library material wins over pasted text (which is then not stored).
+    let pasted_material = match req.material_id {
+        Some(material_id) => chosen_material(db, teacher.id(), material_id).await?,
+        None => library_material(db, teacher.id(), None, 0, &pasted).await?,
+    };
 
     let (material, seq, settings, objectives, brief, sop_version_id, lesson_title) =
         match req.lesson_id {
@@ -313,6 +373,12 @@ pub async fn create(
                 )
             }
         };
+    // A template decides the student tasks, answer formats and generation options it implies
+    // (the teacher can still change them).
+    let settings = match &template {
+        Some((_, _, content)) => prefill_settings(&settings, content),
+        None => settings,
+    };
     let mut title = auto_title(&material);
     if material.title.trim().is_empty() {
         if let Some(t) = &lesson_title {
@@ -339,12 +405,13 @@ pub async fn create(
             brief: &brief,
             source_sop_version_id: sop_version_id,
             content: &content,
+            template: template.as_ref().map(|(row, no, _)| (row.id, *no)),
         },
     )
     .await?;
     if let (Some(material_id), true) = (
         material.source.material_id,
-        material.source.kind == SOURCE_PASTED,
+        material.source.kind == SOURCE_PASTED || material.source.kind == SOURCE_LIBRARY,
     ) {
         material_store::link(db, material_id, LinkTarget::Worksheet(id)).await?;
     }
@@ -355,6 +422,7 @@ pub async fn create(
         json!({
             "worksheet_id": id, "lesson_id": req.lesson_id, "class_id": req.class_id,
             "material_source": material.source.kind, "paragraphs": material.paragraphs.len(),
+            "template_id": req.template_id,
         }),
     )
     .await?;
@@ -394,6 +462,10 @@ pub struct SaveWorksheet {
     pub brief: Option<Brief>,
     #[serde(default)]
     pub content: Option<Content>,
+    /// A template to follow (its current version; the settings are re-derived from it), or
+    /// `null` to stop using one (the settings stay).
+    #[serde(default, deserialize_with = "double_option")]
+    pub template_id: Option<Option<i64>>,
 }
 
 pub async fn save(
@@ -421,10 +493,25 @@ pub async fn save(
         Some(f) => safe_filename(&f),
         None => ws.filename.clone(),
     };
-    let settings = match req.settings {
+    let mut settings = match req.settings {
         Some(s) => s.normalised().map_err(AppError::bad_request)?,
         None => ws.settings.clone(),
     };
+    let template = match req.template_id {
+        Some(Some(template_id)) => {
+            let (row, version_no, content) =
+                tpl_store::ready_for_use(db, teacher.id(), template_id).await?;
+            settings = prefill_settings(&settings, &content);
+            Some(Some((row.id, version_no)))
+        }
+        Some(None) => Some(None),
+        None => None,
+    };
+    if template.is_some() && ws_ai::jobs(&state, id).await?.1 {
+        return Err(AppError::Conflict(
+            "Manna 正在產生這份學習單，好了之後再換版型。".to_string(),
+        ));
+    }
     let brief = req.brief.unwrap_or_else(|| ws.brief.clone());
     brief.validate().map_err(AppError::bad_request)?;
     let mut content = req.content;
@@ -440,6 +527,9 @@ pub async fn save(
         vocab::relookup_levels(c, lexicon.as_ref());
     }
     store::update_fields(db, id, &title, &filename, &settings, &brief).await?;
+    if let Some(t) = template {
+        store::set_template(db, id, t).await?;
+    }
     if let Some(c) = content {
         store::save_content(db, id, &c, "edit").await?;
     }

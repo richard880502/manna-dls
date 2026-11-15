@@ -1230,6 +1230,9 @@ async fn admin_prompts_imports_and_permissions() {
             "worksheet_exit_ticket",
             "worksheet_scaffolds",
             "worksheet_tasks",
+            "worksheet_template_details",
+            "worksheet_template_outline",
+            "worksheet_template_section",
             "worksheet_warmup"
         ]
     );
@@ -1240,7 +1243,7 @@ async fn admin_prompts_imports_and_permissions() {
         .iter()
         .map(|p| p["version_no"].as_i64().unwrap())
         .collect();
-    assert_eq!(versions, vec![1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1]);
+    assert_eq!(versions, vec![1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1
             AND prompt_key IN ('core_assist_l2', 'plan_suggest')",
