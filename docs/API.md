@@ -1080,7 +1080,7 @@ interface WsSheet {
 | GET | `/api/worksheets` | `?lesson_id=` | `WorksheetSummary[]`，新到舊 |
 | POST | `/api/worksheets` | `{ lesson_id?, class_id?, material?: { title?, text, source_note? } }` | 201 `WorksheetState`。有 `lesson_id`：從課例 SOP 帶入教材、目標、任務、暖身、Exit ticket 與建議選項（沒有 SOP 內容也可以）。沒有：直接使用，`material.text` 可以先空著 |
 | GET | `/api/worksheets/:id` | – | `WorksheetState` |
-| PUT | `/api/worksheets/:id` | `{ title?, filename?, settings?, brief?, content? }` | `WorksheetState`。`content` 與最新版本不同才新增一個版本（只增不改）。標籤不在規格集合內 → 400 |
+| PUT | `/api/worksheets/:id` | `{ title?, filename?, settings?, brief?, content? }` | `WorksheetState`。`content` 與最新版本不同才新增一個版本（只增不改）。標籤不在規格集合內 → 400；產生中送 `content` → 409（產生完會整份取代） |
 | PUT | `/api/worksheets/:id/material` | `{ title?, text, source_note? }` | `WorksheetState`。換教材：重新分段（文字相同的段落沿用 id），`source.kind` 變成 `pasted`，重新計算 `suggested` |
 | DELETE | `/api/worksheets/:id` | – | `{ ok: true }`（軟刪除） |
 | POST | `/api/worksheets/:id/generate` | `{}` | 202 `WorksheetState`：建立四個步驟的背景工作並立刻回來。已在執行時回傳同一批 |
@@ -1114,7 +1114,7 @@ interface WsSheet {
 | `scaffolds` | `worksheet_scaffolds` | `worksheet_scaffolds` | `SC-WS-SCAFFOLDS` | 5000 | 每個區塊的語言鷹架、教學鷹架，以及**自動加入**的程序鷹架 |
 | `exit_ticket` | `worksheet_exit_ticket` | `worksheet_exit_ticket` | `SC-WS-EXIT` | 1500 | 2–4 題：形成性評量＋學生反思或蒐集問題 |
 
-之後由**程式組裝**（不呼叫模型）：暖身固定在最前、活動區塊依段落順序、Exit ticket 在最後；題號、版本差異、學生版／教師版都由程式決定，存成一個新的學習單版本（`cause = "generate"`）。
+最後一步的工作會維持 `running`（`phase`「正在把結果組合成學習單」）直到新版本存好，所以輪詢看到 `running = false` 時，`GET /api/worksheets/:id` 一定已是新內容。之後由**程式組裝**（不呼叫模型）：暖身固定在最前、活動區塊依段落順序、Exit ticket 在最後；題號、版本差異、學生版／教師版都由程式決定，存成一個新的學習單版本（`cause = "generate"`）。
 
 - 不選「加入暖身活動」時 `warmup` 步驟為 `skipped`。Exit ticket 預設加入（不是選項），教師之後可以關掉或刪除。
 - **版本差異（規格 §5.4）**：三個版本共用同一份目標與核心題（`core`，`levels` = 全部選到的版本）。`support` 題只在基礎版、`challenge` 題只在進階版。鷹架：基礎版顯示全部；一般版顯示程序鷹架＋字詞表、句型框架；進階版只留程序鷹架。開放題的作答行數基礎版 2、一般版 3、進階版 4。教師可以逐題、逐鷹架改 `levels`。
