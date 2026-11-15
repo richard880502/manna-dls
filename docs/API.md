@@ -1475,3 +1475,146 @@ Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)`
   - 內容：印刷樣式、頁邊段落編號、PDF 頁碼分隔、注記（藍色底線＋藍色淡底小塊，絕不用金色）、選取文字出現「加注記」、提供給 AI、修改、隱藏／顯示隱藏的注記、刪除（頁內確認）、重新確認位置；圖片／音訊／影片以瀏覽器內建元件預覽，可下載原檔；網址教材顯示連結（新分頁開啟）。
 - **備課庫 → 教材**：列出教材（類型、段數、頁數、大小、注記數、用在哪些課例）、上傳檔案／貼上文字／加入網址（每種都有隱私與著作權提醒）、改名、永久刪除（頁內確認）。
 - **課例第 1 步**：貼上文字、從教材庫選、上傳檔案；有教材時可修改（貼上的）、換一份、從這個課例移除；教材被刪除時顯示「教材已刪除」。
+
+---
+
+# Phase 2.5：我的學習單版型
+
+以下為**新增**；既有端點只多了選填欄位。Migration `0012_worksheet_templates.sql`。依據：`docs/WORKSHEET_TEMPLATE_PROBE.md` 與 `research/worksheet-template/probe.py`：v4 抽版型（兩次呼叫）與 gen2 照版型產生（每個區塊一次呼叫）的 prompt 與 schema，加上這裡寫的修改（`needs_external_material`、區塊上限 16 等）。
+
+教師上傳一份自己做過的學習單，Manna 抽出它的設計，存成**版型**。教師檢查、修改後儲存。為新的一課做學習單時選這個版型，Manna 就照它產生；之後的編修、檢查與匯出都和一般學習單一樣。
+
+## 資料
+
+- `worksheet_templates`：`id`、`teacher_id`（只有擁有者能存取）、`title`（≤200）、`status`（`extracting`｜`ready`｜`failed`）、`error`（失敗原因，中文）、`source_material_id`（教材庫教材；刪除教材時變成 null）、`created_at`、`updated_at`。另有內部欄位 `extract_run`、`extract_started_at`，用來處理重試與伺服器重啟。
+- `worksheet_template_versions`：只增不改，`(template_id, version_no)` 唯一，`content`（`WsTemplate`），`origin`（`ai`｜`teacher`）。版型目前的內容就是最新版本。
+- **刪除版型是真的刪除**：版型與所有版本都刪掉。用過它的學習單保留內容，只是 `template` 變成 null。
+- `worksheets` 新增 `template_id`（刪除版型時變成 null）與 `template_version_no`。
+- `prompt_versions` 新增 `worksheet_template_outline`、`worksheet_template_details`、`worksheet_template_section`。`scaffolds` 新增 `SC-WS-TPL-EXTRACT`、`SC-WS-TPL-GEN`。
+- `worksheet_jobs.step` 新增 `template`（見「照版型產生」）。
+
+## 型別
+
+```ts
+interface WsTemplate {
+  worksheet_kind: string;                       // 例如「課文深度閱讀」（≤200）
+  instruction_language: "英文" | "中文" | "中英並用";
+  header_fields: string[];                      // 例如 ["Name","No","Class"]（≤20 個，每個 ≤100）
+  shows_objectives: boolean;
+  includes_passage_text: boolean;
+  sections: WsTemplateSection[];                // 1–12 個
+  generation_options: string[];                 // 只能用「產生設定」的固定標籤
+  style_notes: string[];                        // 0–8 條，每條 ≤200
+}
+interface WsTemplateSection {
+  id: string;                                   // "s1"、"s2"…，編修時不變；新增的區塊可送空字串，由伺服器配 id
+  title_pattern: string;                        // 1–200 字，可有 [n]、[主題] 這類佔位符
+  purpose: string;                              // ≤300
+  block_kind: "warmup" | "activity" | "exit_ticket";
+  per_paragraph: boolean;                       // 新教材的每一段各做一次
+  student_tasks: string[];                      // 只能用「學生任務」的固定標籤
+  answer_formats: string[];                     // 只能用「作答方式」的固定標籤
+  item_count: number;                           // 1–12
+  text_scope: string;                           // ≤100，例如「逐段」「全文」「課文外」
+  scaffolds: string[];                          // 只能用規格 §3 的鷹架種類（語言、教學、程序三類）
+  instruction_style: string;                    // ≤200
+  item_patterns: string[];                      // 0–6 條，每條 ≤300
+  needs_external_material: boolean;             // 需要教師另外提供的影片、錄音、圖片或另一篇文字
+}
+interface WsTemplateSummary {
+  id: number; title: string; status: "extracting" | "ready" | "failed"; section_count: number;
+  source_material: { id: number; title: string } | null;
+  version_no: number | null;                    // 還沒有任何版本（讀取中或失敗）時是 null
+  updated_at: string;
+}
+interface WsTemplateDetail extends WsTemplateSummary { error: string | null; content: WsTemplate | null; }
+```
+
+既有型別的變更：
+
+```ts
+interface WsBlock { /* …既有欄位… */ template_section_id: string | null; }   // 照版型產生的區塊：來自哪個 section
+interface WorksheetMaterial { source: { kind: "pasted" | "lesson_sop" | "library"; /* … */ } }
+interface WorksheetState { /* … */ template: { id: number; title: string; version_no: number } | null; }
+interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "template"; /* … */ }
+```
+
+## 端點（皆需登入；只能存取自己的版型，其他人的 id 回 404）
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/worksheet-templates` | – | `{ templates: WsTemplateSummary[] }`，依建立時間新到舊 |
+| POST | `/api/worksheet-templates` | `{ material_id: number, title?: string }` | 202 `WsTemplateDetail`（`status: "extracting"`） |
+| GET | `/api/worksheet-templates/:id` | – | `WsTemplateDetail`（輪詢用） |
+| PUT | `/api/worksheet-templates/:id` | `{ title?: string, content?: WsTemplate }` | `WsTemplateDetail`。有 `content` 且與最新版本不同才新增一個版本（`origin = "teacher"`）。讀取中 → 409；`failed` 時送 `content` → 409（只能改名稱或重試） |
+| POST | `/api/worksheet-templates/:id/retry` | – | 202 `WsTemplateDetail`。只有 `failed` 可以（其他 → 409）；原本的教材已刪除 → 400 |
+| DELETE | `/api/worksheet-templates/:id` | – | `{ ok: true }`（真的刪除） |
+
+**驗證（400，訊息為中文）**
+
+- `POST`：`material_id` 必須是自己教材庫裡、已擷取到文字（`text_status = ready`）的教材。不是自己的或不存在 → 「找不到這份教材。」；圖片、影音、網址 → 「這份教材沒有文字可以讀…」；掃描檔或讀不出文字 → 「這份檔案讀不到文字（可能是掃描檔）…」；文字超過 30000 字 → 400（不像是一份學習單）。`title` 選填（≤200）；沒給時是教材標題＋「版型」。
+- `PUT`：`title` 不可空白、≤200。`content` 依上面型別的規則檢查：標籤不在固定集合內（包含「課綱議題」「SDGs」「SEL」「探究」「高層次思考」「專題任務」「合作活動」）、題數不在 1–12、區塊數不在 1–12、id 重複、長度超過 → 400，訊息會指出是第幾個區塊。重複的標籤會被去掉，順序照送來的。`block_kind` 不是三個值之一 → 400（「請求內容格式不正確…」）。
+
+## 抽版型（背景工作）
+
+1. **呼叫 A（大綱）** `worksheet_template_outline`：結構化大綱 `{ title_pattern, per_paragraph }[]`，加上表頭資訊（`worksheet_kind`、`instruction_language`、`header_fields`、`shows_objectives`、`includes_passage_text`）。規則照 probe v4：區塊內的小步驟不另列；逐段重複的區塊只列一次；學生版與教師版只算一次；只用佔位符；不寫人名、學校、出版社或班級。`max_tokens` 2000。
+2. **呼叫 B（細節）** `worksheet_template_details`：`sections` 的 `minItems = maxItems =` 大綱項數，另有 `generation_options` 與 `style_notes`。比 probe 多了 `needs_external_material`：需要學習單本身課文以外的影片、錄音、圖片或另一篇文章時為 true。`max_tokens` 5000。
+3. schema 的欄位照撰寫順序（閘道依 schema 順序輸出；字母順序曾造成輸出空白失控）。
+4. 任一次呼叫寫到 `max_tokens`、輸出讀不懂，或細節數量和大綱不同時，**重試一次**，temperature +0.4（0.2 → 0.6；閘道會快取相同的請求）。還是失敗，或逾時、供應商錯誤：`status = "failed"`，`error` 寫中文原因，教師可以按「重試」（`POST …/retry`）。
+5. 伺服器整理結果：配 section id（`s1`…）；`item_count` 限制在 1–12；拿掉固定集合以外的標籤；最多 12 個區塊；`text_scope` 明確指定某一段或某幾段（例如「第 2 段」「Paragraphs 2–3」「P4」）時，`per_paragraph` 改成 false。各文字欄位截到上限長度。
+6. 存成第 1 版（`origin = "ai"`），`status = "ready"`。
+7. 每次呼叫一列 `ai_interactions`（`module` = prompt key）。輸入快照裡的學習單文字只留字數與雜湊。
+8. 伺服器重啟會中斷工作：`extracting` 超過 `6 × AI_TIMEOUT_SECS + 60` 秒的版型，下次讀取時改成 `failed`（「這次讀取中斷了…請按「重試」」）。
+
+一份學習單的抽取大約 15–25 秒（兩次呼叫）。前端每 3 秒輪詢 `GET …/:id`。
+
+## 用版型建立學習單
+
+`POST /api/worksheets` 新增兩個選填欄位：
+
+- `template_id`：必須是自己的、`status = "ready"` 的版型，否則 400。學習單記下 `template_id` 與版型目前的版本號。
+- `material_id`：自己教材庫裡、有擷取文字的教材，否則 400。它就是這份學習單的教材，優先於貼上的 `material`（這時貼上的文字不會存進教材庫）。有 `lesson_id` 且課例 SOP 有教材時，仍以課例的教材為準。教材來源記為 `source.kind = "library"` 與它的 `material_id`，並以 `material_links` 連到這份學習單（教材庫顯示的使用次數會加一）。
+
+**設定**：有版型時，`settings`（以及 `suggested`）以版型預填：`student_tasks` 與 `answer_formats` 是各區塊的聯集；`generation` 是版型的 `generation_options`；`shows_objectives` 為 true 時加「顯示學習目標」，false 時拿掉。素材類型、版本與時間沿用原本的建議。教師之後仍可修改。
+
+`PUT /api/worksheets/:id` 新增 `template_id?: number | null`：
+
+- 給數字：同樣的檢查（不是自己的或不是 `ready` → 400），記下版型目前的版本號，並依版型重新算 `settings`（同一個請求也送了 `settings` 時，以送來的為底再套用版型）。
+- `null`：不再使用版型，`settings` 不變。
+- 產生中送 `template_id` → 409。
+
+## 照版型產生
+
+`POST /api/worksheets/:id/generate`（既有端點）遇到有版型的學習單時，不跑 tasks／warmup／scaffolds／exit_ticket 四步，改成一個 `step = "template"` 的工作：
+
+- 用版型的**最新版本**，並把 `template_version_no` 更新成這個版本。單一區塊重新產生則用學習單記下的版本，所以同一份學習單的各區塊來自同一個版本。
+- **展開**：每個 section 一個區塊；`per_paragraph` 的 section 依新教材每一段各一個區塊（`paragraph_ids = [那一段]`，標題寫出段號：`[n]` 換成段號，標題裡沒有段號時前面加 `Paragraph n:`，指示語言為中文時加「第 n 段：」）。**總數上限 16 個區塊**：依序展開，展開某個逐段 section 會超過 16 時，那個 section 改成對全文只做一次，並在 `content.notices` 說明原因。
+- **每個區塊一次呼叫**（`worksheet_template_section`，`max_tokens` 2500），最多同時 3 個。prompt 照 probe gen2，內容有：版型的整體資訊（`worksheet_kind`、`instruction_language`、`style_notes`）、目標 section、要涵蓋的段落（逐段時）、已完成區塊的標題、加了段落標記（`[第 n 段]`）的教材。輸出 `{ title, instructions, scaffold, items[{ answer_format, prompt, options, answer }] }`。
+- **檢查**：作答方式只能用固定標籤；選擇題至少 2 個不重複選項，答案必須是其中之一（模型只寫字母 A、B… 時換成該選項）；配對題至少 2 個選項；題幹不可直接含答案；至少要有 1 題。題目超過 `item_count` 時由程式只留前面幾題（不另外花一次呼叫）。答案是教材裡至少 5 個字的連續原文時，記為該題的 `evidence`（教師參考版會印出依據）。指示語可以是中文（由版型的 `instruction_language` 決定），所以這裡不做「全英文」檢查。
+- 輸出失控、讀不懂或沒通過檢查時**重試一次**（temperature +0.4，附上沒通過的項目）。還是失敗的區塊保留下來（標題、`student_tasks`），沒有題目，`message` 說明原因；其他區塊照常產生。工作的 `message` 會寫有幾個區塊沒有成功。
+- **需要教師提供素材的 section**（`needs_external_material = true`）：prompt 禁止寫出或編造任何素材（名稱、網址、作者、內容），題目只留空位；檢查會拿掉含網址或影片網站的欄位與題目。區塊的 `message` 一律是「這一區需要你提供素材（例如影片或另一篇文章），Manna 不會自己編造。」，`paragraph_ids` 是空的。呼叫失敗時程式放一題空位題（「放上你提供的素材後，在這裡寫題目。」）。
+- **對應到 `WsBlock`**：`block_kind` → `kind`；`title`、`instructions` 照輸出；`student_tasks` 照 section；題目 `origin = "ai"`、`levels` = 這次產生的所有版本；`answer` 只在教師參考版；`scaffold` 文字成為一個鷹架，種類是 section 的第一個 `scaffolds`（沒有時是語言鷹架「引導問題」；程序鷹架的文字依行拆成 `steps`），文字是空的就不加；`teacher_notes` = section 的 `purpose`；`template_section_id` = section 的 `id`。不另外加程式自動產生的程序鷹架。
+- `content.chosen`：照一般流程決定設定，`reasons` 第一條是「依版型：<版型名稱>」，`item_budget` 是各區塊題數的總和。`show_objectives` 依「顯示學習目標」。
+- 既有的檢查照常適用：詞彙級別檢查（`POST …/checks/vocabulary`）、編修時的標籤驗證、匯出。
+- **單一區塊重新產生**（`POST …/blocks/:block_id/regenerate`）：有 `template_section_id` 的區塊重跑那個 section 的呼叫（逐段的區塊用原本的段落），工作是 `step = "template"`、`block_id` 為該區塊；失敗時區塊維持原樣。可以照常 `undo`。教師自己新增、沒有 `template_section_id` 的區塊，用原本的流程重新產生。
+- 每次呼叫一列 `ai_interactions`（`module = "worksheet_template_section"`，鷹架 `SC-WS-TPL-GEN`），教材與已完成的標題只記字數與雜湊。
+
+## 測試用假模型（`AI_PROVIDER=fake`）
+
+抽版型時，學習單文字中每一行 `## <標題>` 是一個大綱項目：標題含 `[n]` → `per_paragraph`；含 video 或「影片」→ `needs_external_material`。
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_TPL_BAD_LABEL` | 細節用了固定集合以外的標籤，`item_count` 是 40 → 伺服器拿掉標籤、限制成 12 |
+| `FAKE_BLOCK` | 寫在學習單：兩次呼叫的輸出都讀不懂 → `failed`。寫在某個 section 的標題：只有那個區塊失敗 |
+| `FAKE_RUNAWAY` | 每次呼叫的第 1 次都寫到 `max_tokens`，重試成功 |
+
+照版型產生時，假模型每個區塊給 `item_count + 1` 題（由伺服器截掉多的），題目根據目標段落的第一句。既有的 `FAKE_ERROR`、`FAKE_TIMEOUT`、`FAKE_SLOW` 照舊。
+
+## usage_logs 新事件
+
+`worksheet_template_created`、`worksheet_template_extracted`（`status`、`sections`）、`worksheet_template_saved`、`worksheet_template_retried`、`worksheet_template_deleted`。`worksheet_generated` 有版型時多了 `template_id`、`template_version_no`、`failed_blocks`。
+
+## 試用真模型
+
+prompt key：`worksheet_template_outline`、`worksheet_template_details`、`worksheet_template_section`（可在管理頁改版本）。程式進入點：`worksheet::template::extract::extract`（兩次呼叫，回傳 `WsTemplate`）與 `worksheet::ai::start_generation`（有 `template_id` 的學習單會走 `worksheet::ai::template`）。

@@ -24,6 +24,9 @@ pub struct Worksheet {
     pub brief: Brief,
     pub source_sop_version_id: Option<i64>,
     pub generated: bool,
+    /// The teacher's template this worksheet follows, and the version it uses.
+    pub template_id: Option<i64>,
+    pub template_version_no: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -43,6 +46,8 @@ struct WorksheetRow {
     brief: serde_json::Value,
     source_sop_version_id: Option<i64>,
     generated: bool,
+    template_id: Option<i64>,
+    template_version_no: Option<i32>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -65,6 +70,8 @@ impl From<WorksheetRow> for Worksheet {
             brief: serde_json::from_value(r.brief).unwrap_or_default(),
             source_sop_version_id: r.source_sop_version_id,
             generated: r.generated,
+            template_id: r.template_id,
+            template_version_no: r.template_version_no,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -72,8 +79,8 @@ impl From<WorksheetRow> for Worksheet {
 }
 
 const WORKSHEET_COLS: &str = "id, teacher_id, lesson_id, class_id, title, filename, material,
-    paragraph_seq, settings, suggested, brief, source_sop_version_id, generated, created_at,
-    updated_at";
+    paragraph_seq, settings, suggested, brief, source_sop_version_id, generated, template_id,
+    template_version_no, created_at, updated_at";
 
 /// The worksheet if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<Worksheet> {
@@ -215,6 +222,8 @@ pub struct NewWorksheet<'a> {
     pub brief: &'a Brief,
     pub source_sop_version_id: Option<i64>,
     pub content: &'a Content,
+    /// (template id, version number)
+    pub template: Option<(i64, i32)>,
 }
 
 /// Creates the worksheet with its first version. `settings` starts as the suggestion.
@@ -222,8 +231,9 @@ pub async fn insert(db: &PgPool, new: NewWorksheet<'_>) -> AppResult<i64> {
     let mut tx = db.begin().await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO worksheets (teacher_id, lesson_id, class_id, title, filename, material,
-                                 paragraph_seq, settings, suggested, brief, source_sop_version_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10) RETURNING id",
+                                 paragraph_seq, settings, suggested, brief, source_sop_version_id,
+                                 template_id, template_version_no)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12) RETURNING id",
     )
     .bind(new.teacher_id)
     .bind(new.lesson_id)
@@ -235,6 +245,8 @@ pub async fn insert(db: &PgPool, new: NewWorksheet<'_>) -> AppResult<i64> {
     .bind(Json(new.settings))
     .bind(Json(new.brief))
     .bind(new.source_sop_version_id)
+    .bind(new.template.map(|(id, _)| id))
+    .bind(new.template.map(|(_, no)| no))
     .fetch_one(&mut *tx)
     .await?;
     insert_version(&mut tx, id, new.content, "created").await?;
@@ -435,6 +447,20 @@ pub async fn set_lesson(
     .bind(id)
     .bind(lesson_id)
     .bind(source_sop_version_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Sets (or, with `None`, clears) the template a worksheet follows.
+pub async fn set_template(db: &PgPool, id: i64, template: Option<(i64, i32)>) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheets SET template_id = $2, template_version_no = $3, updated_at = now()
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(template.map(|(t, _)| t))
+    .bind(template.map(|(_, no)| no))
     .execute(db)
     .await?;
     Ok(())

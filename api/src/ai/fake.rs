@@ -101,6 +101,16 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("worksheet_exit_ticket") => {
             crate::worksheet::fake::exit_ticket(ctx, req.attempt, &|m| has(req, m))
         }
+        // Worksheet templates (see `worksheet::fake`).
+        Some("worksheet_template_outline") => {
+            crate::worksheet::fake::template_outline(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("worksheet_template_details") => {
+            crate::worksheet::fake::template_details(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("worksheet_template_section") => {
+            crate::worksheet::fake::template_section(ctx, req.attempt, &|m| has(req, m))
+        }
         other => {
             return Err(ProviderError::InvalidOutput(format!(
                 "fake provider: unknown task {other:?}"

@@ -14,6 +14,7 @@ pub mod remote;
 pub mod runs;
 pub mod sop;
 pub mod suggestions;
+pub mod templates;
 pub mod units;
 pub mod worksheets;
 
@@ -132,6 +133,18 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/worksheets/{id}/checks", get(worksheets::checks))
         .route("/worksheets/{id}/export", get(worksheets::export))
+        // 我的學習單版型 (Phase 2.5)
+        .route(
+            "/worksheet-templates",
+            get(templates::list).post(templates::create),
+        )
+        .route(
+            "/worksheet-templates/{id}",
+            get(templates::get)
+                .put(templates::save)
+                .delete(templates::delete),
+        )
+        .route("/worksheet-templates/{id}/retry", post(templates::retry))
         // material library, original files and annotations (Phase 2.2)
         .route("/materials", get(library::list).post(library::create))
         .route(

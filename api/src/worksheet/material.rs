@@ -24,7 +24,7 @@ pub struct MaterialParagraph {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct MaterialSource {
-    /// `pasted` | `lesson_sop` (the material store will add its own).
+    /// `pasted` | `lesson_sop` | `library`.
     pub kind: String,
     pub lesson_id: Option<i64>,
     pub material_version_no: Option<i32>,
@@ -37,6 +37,8 @@ pub struct MaterialSource {
 
 pub const SOURCE_PASTED: &str = "pasted";
 pub const SOURCE_LESSON_SOP: &str = "lesson_sop";
+/// A material chosen from the teacher's library (`POST /api/worksheets { material_id }`).
+pub const SOURCE_LIBRARY: &str = "library";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
