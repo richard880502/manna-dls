@@ -680,8 +680,12 @@ async fn lesson_update_step_fields_and_effective_class_profile() {
         .await;
     assert_eq!(s, StatusCode::OK, "{d}");
     assert_eq!(
-        d["effective_class_profile"], "今天只有半班",
-        "lesson overrides unit"
+        d["class_description"], "今天只有半班",
+        "the stored value is kept"
+    );
+    assert_eq!(
+        d["effective_class_profile"], "高二普通班，程度中等",
+        "a lesson description no longer overrides (it is not shown to teachers)"
     );
     assert_eq!(d["my_example"], "我的舊學習單：Not only 句型重組");
     assert_eq!(d["title"], "L1");
@@ -719,7 +723,7 @@ async fn lesson_update_step_fields_and_effective_class_profile() {
         assert_eq!(s, StatusCode::BAD_REQUEST, "{bad}");
     }
 
-    // Empty class_description → back to the unit's profile, which follows unit edits.
+    // The unit's profile follows unit edits.
     let (_, d) = app
         .put(&path, Some(&t), json!({ "class_description": "" }))
         .await;

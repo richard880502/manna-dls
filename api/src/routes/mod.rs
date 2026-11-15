@@ -434,28 +434,26 @@ impl ResolvedProfile {
     }
 }
 
-/// Precedence: lesson override > class profile > unit `class_profile` (legacy) > preference P6.
-/// The class profile and P6 only take part in a class context (`class` is Some); without one
-/// the result is the pre-classes behaviour (lesson, else unit).
+/// Precedence: class profile > unit `class_profile` (legacy). The class profile only takes part
+/// in a class context (`class` is Some).
+///
+/// A lesson-level override and preference answer P6 used to come first and last. Teachers can no
+/// longer see or edit either (班級特性 lives on the class page only), so they are ignored: the
+/// AI must not read a profile the teacher cannot see. Their stored values are kept, and the
+/// parameters stay so callers do not change.
 pub fn resolve_class_profile(
-    lesson_description: &str,
+    _lesson_description: &str,
     class: Option<&ClassRef>,
     unit_profile: &str,
-    preference_profile: &str,
+    _preference_profile: &str,
 ) -> ResolvedProfile {
     let candidates = [
-        (ProfileSource::Lesson, lesson_description, true),
         (
             ProfileSource::Class,
             class.map(|c| c.class_profile.as_str()).unwrap_or_default(),
             class.is_some(),
         ),
         (ProfileSource::Unit, unit_profile, true),
-        (
-            ProfileSource::Preference,
-            preference_profile,
-            class.is_some(),
-        ),
     ];
     let (source, text) = candidates
         .iter()
@@ -469,8 +467,7 @@ pub fn resolve_class_profile(
     }
 }
 
-/// [`resolve_class_profile`] for a request: loads the class (404 when not the teacher's) and,
-/// only in a class context, the preference answer P6.
+/// [`resolve_class_profile`] for a request: loads the class (404 when not the teacher's).
 pub async fn resolved_profile(
     db: &PgPool,
     teacher_id: i64,
@@ -479,18 +476,11 @@ pub async fn resolved_profile(
     unit_profile: &str,
 ) -> AppResult<ResolvedProfile> {
     let class = class_context(db, class_id, teacher_id).await?;
-    let p6 = if class.is_some() {
-        crate::preferences::latest_answers(db, teacher_id)
-            .await?
-            .class_profile
-    } else {
-        String::new()
-    };
     Ok(resolve_class_profile(
         lesson_description,
         class.as_ref(),
         unit_profile,
-        &p6,
+        "",
     ))
 }
 
@@ -587,13 +577,8 @@ mod tests {
     #[test]
     fn class_profile_precedence() {
         let c = class("三班：活潑");
+        // An old lesson override no longer wins.
         let r = resolve_class_profile("今天半班", Some(&c), "單元舊描述", "問卷");
-        assert_eq!(
-            (r.source, r.text.as_str()),
-            (ProfileSource::Lesson, "今天半班")
-        );
-        assert_eq!(r.context_label(), "班級特性（本課覆寫）");
-        let r = resolve_class_profile(" ", Some(&c), "單元舊描述", "問卷");
         assert_eq!(
             (r.source, r.text.as_str()),
             (ProfileSource::Class, "三班：活潑")
@@ -602,12 +587,8 @@ mod tests {
         let empty = class("  ");
         let r = resolve_class_profile("", Some(&empty), "單元舊描述", "問卷");
         assert_eq!(r.source, ProfileSource::Unit);
+        // P6 is no longer a fallback.
         let r = resolve_class_profile("", Some(&empty), "", " 問卷 ");
-        assert_eq!(
-            (r.source, r.text.as_str()),
-            (ProfileSource::Preference, "問卷")
-        );
-        let r = resolve_class_profile("", Some(&empty), "", "");
         assert_eq!(r.source, ProfileSource::None);
     }
 
