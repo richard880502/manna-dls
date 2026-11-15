@@ -331,16 +331,19 @@ pub struct RawSectionOut {
 
 // ---------------------------------------------------------------- schemas (properties in written order)
 
-fn s() -> Value {
-    json!({ "type": "string" })
-}
-
 fn b() -> Value {
     json!({ "type": "boolean" })
 }
 
-fn strings() -> Value {
-    json!({ "type": "array", "items": { "type": "string" } })
+/// A string with a length cap. The gateway enforces `maxLength`/`maxItems` while decoding, which
+/// is what stops gemma's repetition runaways inside long strings (a real-model run lost about
+/// half its blocks to an answer repeating one sentence until max_tokens).
+fn s_max(max: usize) -> Value {
+    json!({ "type": "string", "maxLength": max })
+}
+
+fn strings_max(items: usize, chars: usize) -> Value {
+    json!({ "type": "array", "items": s_max(chars), "maxItems": items })
 }
 
 fn enum_of(labels: &[&str]) -> Value {
@@ -372,33 +375,39 @@ const BLOCK_KINDS: [&str; 3] = ["warmup", "activity", "exit_ticket"];
 /// OUTLINE4_SCHEMA of the probe.
 pub fn outline_schema() -> Value {
     obj(vec![
-        ("worksheet_kind", s()),
+        ("worksheet_kind", s_max(MAX_KIND_CHARS)),
         ("instruction_language", enum_of(&INSTRUCTION_LANGUAGES)),
-        ("header_fields", strings()),
+        (
+            "header_fields",
+            strings_max(MAX_HEADER_FIELDS, MAX_HEADER_FIELD_CHARS),
+        ),
         ("shows_objectives", b()),
         ("includes_passage_text", b()),
         (
             "outline",
             json!({ "type": "array", "items": obj(vec![
-                ("title_pattern", s()),
+                ("title_pattern", s_max(MAX_TITLE_CHARS)),
                 ("per_paragraph", b()),
-            ]) }),
+            ]), "maxItems": 20 }),
         ),
     ])
 }
 
 fn section_schema() -> Value {
     obj(vec![
-        ("title_pattern", s()),
-        ("purpose", s()),
+        ("title_pattern", s_max(MAX_TITLE_CHARS)),
+        ("purpose", s_max(MAX_PURPOSE_CHARS)),
         ("block_kind", enum_of(&BLOCK_KINDS)),
         ("student_tasks", enum_array(&student_tasks())),
         ("answer_formats", enum_array(&ANSWER_FORMATS)),
         ("item_count", json!({ "type": "integer" })),
-        ("text_scope", s()),
+        ("text_scope", s_max(MAX_TEXT_SCOPE_CHARS)),
         ("scaffolds", enum_array(&scaffold_kinds())),
-        ("instruction_style", s()),
-        ("item_patterns", strings()),
+        ("instruction_style", s_max(MAX_INSTRUCTION_STYLE_CHARS)),
+        (
+            "item_patterns",
+            strings_max(MAX_ITEM_PATTERNS, MAX_ITEM_PATTERN_CHARS),
+        ),
         ("needs_external_material", b()),
     ])
 }
@@ -411,27 +420,40 @@ pub fn details_schema(n: usize) -> Value {
             json!({ "type": "array", "items": section_schema(), "minItems": n, "maxItems": n }),
         ),
         ("generation_options", enum_array(&GENERATION_OPTIONS)),
-        ("style_notes", strings()),
+        (
+            "style_notes",
+            strings_max(MAX_STYLE_NOTES, MAX_STYLE_NOTE_CHARS),
+        ),
     ])
 }
 
-/// SECTION_OUT of the probe (gen2).
-pub fn section_out_schema() -> Value {
+/// Caps on one generated block. Generous for a worksheet item, small enough that a repetition
+/// runaway is cut off early instead of eating the whole token budget.
+pub const SECTION_TITLE_CHARS: usize = 150;
+pub const SECTION_INSTRUCTIONS_CHARS: usize = 500;
+pub const SECTION_SCAFFOLD_CHARS: usize = 600;
+pub const ITEM_PROMPT_CHARS: usize = 600;
+pub const ITEM_OPTIONS: usize = 6;
+pub const ITEM_OPTION_CHARS: usize = 150;
+pub const ITEM_ANSWER_CHARS: usize = 400;
+
+/// SECTION_OUT of the probe (gen2), with length caps; at most `item_count` items.
+pub fn section_out_schema(item_count: usize) -> Value {
     obj(vec![
-        ("title", s()),
-        ("instructions", s()),
-        ("scaffold", s()),
+        ("title", s_max(SECTION_TITLE_CHARS)),
+        ("instructions", s_max(SECTION_INSTRUCTIONS_CHARS)),
+        ("scaffold", s_max(SECTION_SCAFFOLD_CHARS)),
         (
             "items",
             json!({
                 "type": "array",
                 "items": obj(vec![
                     ("answer_format", enum_of(&ANSWER_FORMATS)),
-                    ("prompt", s()),
-                    ("options", strings()),
-                    ("answer", s()),
+                    ("prompt", s_max(ITEM_PROMPT_CHARS)),
+                    ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
+                    ("answer", s_max(ITEM_ANSWER_CHARS)),
                 ]),
-                "maxItems": MAX_ITEM_COUNT
+                "maxItems": item_count.clamp(1, MAX_ITEM_COUNT as usize)
             }),
         ),
     ])
@@ -995,7 +1017,14 @@ mod tests {
         let o = outline_schema();
         let keys: Vec<&String> = o["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys.last().map(|k| k.as_str()), Some("outline"));
-        for schema in [o, s, section_out_schema()] {
+        let out = section_out_schema(20);
+        assert_eq!(out["properties"]["items"]["maxItems"], 12, "capped at 12");
+        assert_eq!(section_out_schema(3)["properties"]["items"]["maxItems"], 3);
+        assert_eq!(
+            out["properties"]["items"]["items"]["properties"]["answer"]["maxLength"],
+            ITEM_ANSWER_CHARS
+        );
+        for schema in [o, s, out] {
             let text = schema.to_string();
             for label in super::super::FORBIDDEN_LABELS {
                 assert!(!text.contains(&format!("\"{label}\"")), "{label}");
