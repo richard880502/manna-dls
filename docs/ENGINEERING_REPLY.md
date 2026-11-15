@@ -142,4 +142,4 @@
 
 ## 部署前需要的設定（Coolify）
 
-在 manna 專案新增 MinIO 服務（Coolify 內建範本，映像 `ghcr.io/coollabsio/minio`；原本的 `minio/minio` 已不在 Docker Hub），只開內部網路；建 bucket `manna-materials`（**不開版本保留**）與一個只對這個 bucket 有讀、寫、刪、列權限的帳號；在 app 設 `STORAGE_BACKEND=s3`、`S3_ENDPOINT`、`S3_BUCKET`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`。設定完成前網站照常運作，只是上傳會顯示「還沒有設定檔案儲存空間」，貼上文字與網址可以使用。
+在 manna 專案新增 MinIO 服務（Coolify 內建範本，映像 `ghcr.io/coollabsio/minio`；原本的 `minio/minio` 已不在 Docker Hub），只開內部網路；建 bucket `manna-materials`（**不開版本保留**）與一個只對這個 bucket 有讀、寫、刪、列權限的帳號；在 app 設 `STORAGE_BACKEND=s3`、`S3_ENDPOINT`、`S3_BUCKET`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`。主機 nginx 需加 `client_max_body_size 105m;`（預設 1 MB 會擋掉大部分上傳）。設定完成前網站照常運作，只是上傳會顯示「還沒有設定檔案儲存空間」，貼上文字與網址可以使用。

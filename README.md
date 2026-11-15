@@ -56,6 +56,8 @@ cd web && pnpm install && pnpm dev
 | `S3_REGION` | 預設 `us-east-1`（MinIO 不在意，但簽章需要） |
 | `S3_ACCESS_KEY`、`S3_SECRET_KEY` | MinIO 上**只給這個 bucket** 讀寫刪的帳號；只設在 Coolify，不進版本庫 |
 
+主機 nginx（`/etc/nginx/sites-available/manna-dls`）要允許大檔：`client_max_body_size 105m;`（nginx 預設 1 MB，超過時上傳會在 nginx 被擋成 413）。
+
 後端啟動時會在日誌寫一行儲存方式，`s3` 時另外檢查 bucket 連得到（連不到只記錯誤，不會停機）。
 
 本機試 S3 後端：`minio/minio` 映像已不在 Docker Hub，用 Coolify 自己的版本：

@@ -254,7 +254,7 @@ API 合約見 `docs/API.md`「Phase 2.2：教材與注記」；給規格 §12 �
 - 上限（2 核心／8 GB 主機）：文件（.txt .docx .pdf）20 MB、圖片（.png .jpg .webp .gif）10 MB、音訊（.mp3 .m4a .wav）30 MB、影片（.mp4 .webm）100 MB；每位教師檔案合計 1 GB、教材 300 份；同時最多 2 個上傳在記憶體中處理。副檔名之外也檢查檔頭（magic bytes），內容不符就拒收；回應的 Content-Type 由伺服器決定，並加 `nosniff` 與 sandbox CSP。
 - 單元的「教材優先」菜單（`unit_materials`）仍是獨立的貼上文字功能，尚未併入教材庫（見 `docs/ENGINEERING_REPLY.md` 待辦）。
 
-**Coolify 上要做的事（主持人／工程）**：在 manna 專案新增 MinIO 服務（Coolify 內建範本，映像 `ghcr.io/coollabsio/minio`），只開內部網路、不對外開 9000/9001；建 bucket `manna-materials`（不開 versioning）；建一個只對這個 bucket 有 `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`、`s3:ListBucket` 的使用者；在 app 的環境變數設 `STORAGE_BACKEND=s3`、`S3_ENDPOINT=http://<MinIO 服務內部名稱>:9000`、`S3_BUCKET=manna-materials`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`（`S3_REGION` 可不設）。MinIO 的資料卷要納入主機備份規劃。
+**Coolify 上要做的事（主持人／工程）**：在 manna 專案新增 MinIO 服務（Coolify 內建範本，映像 `ghcr.io/coollabsio/minio`），只開內部網路、不對外開 9000/9001；建 bucket `manna-materials`（不開 versioning）；建一個只對這個 bucket 有 `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`、`s3:ListBucket` 的使用者；在 app 的環境變數設 `STORAGE_BACKEND=s3`、`S3_ENDPOINT=http://<MinIO 服務內部名稱>:9000`、`S3_BUCKET=manna-materials`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`（`S3_REGION` 可不設）。MinIO 的資料卷要納入主機備份規劃。主機 nginx 的 manna 站台加 `client_max_body_size 105m;`（預設 1 MB 會擋掉上傳）。
 
 ### 13.4 其他延後項目
 
