@@ -23,6 +23,7 @@ pub mod settings;
 pub mod sop;
 pub mod storage;
 pub mod vocabulary;
+pub mod worksheet;
 
 use std::path::PathBuf;
 use std::sync::Arc;

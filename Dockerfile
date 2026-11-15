@@ -22,7 +22,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # ---------- runtime ----------
 FROM debian:bookworm-slim
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates fonts-wqy-microhei \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 app \
  && mkdir -p /app/data/materials \
@@ -30,7 +30,9 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=api /usr/local/bin/manna-api /app/manna-api
 COPY --from=web /src/web/dist /app/web-dist
+# fonts-wqy-microhei: Chinese glyphs for worksheet PDFs (teacher notes); Latin fonts are built in.
 ENV STATIC_DIR=/app/web-dist \
+    WORKSHEET_CJK_FONT=/usr/share/fonts/truetype/wqy/wqy-microhei.ttc \
     PORT=8080 \
     RUST_LOG=info
 USER app

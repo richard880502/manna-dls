@@ -31,7 +31,7 @@ const NAV: NavEntry[] = [
 /** Working pages with two columns get the wider frame; the in-class console a narrower one. */
 function frameClass(pathname: string): string {
   if (/^\/runs\/\d+\/?$/.test(pathname)) return " is-console";
-  if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin)/.test(pathname)) return " is-wide";
+  if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin|worksheets\/\d+)/.test(pathname)) return " is-wide";
   // 知識庫管理 is a list page: the default frame.
   if (pathname === "/worksheets" || pathname === "/preferences") return " is-narrow";
   return "";

@@ -1226,7 +1226,11 @@ async fn admin_prompts_imports_and_permissions() {
             "material_focuses",
             "plan_suggest",
             "sop_objectives",
-            "sop_passage_analysis"
+            "sop_passage_analysis",
+            "worksheet_exit_ticket",
+            "worksheet_scaffolds",
+            "worksheet_tasks",
+            "worksheet_warmup"
         ]
     );
     // Phase 1.1 seeds v2 of core_assist_l2 and plan_suggest (v1 rows are kept).
@@ -1236,7 +1240,7 @@ async fn admin_prompts_imports_and_permissions() {
         .iter()
         .map(|p| p["version_no"].as_i64().unwrap())
         .collect();
-    assert_eq!(versions, vec![1, 2, 1, 1, 2, 1, 1]);
+    assert_eq!(versions, vec![1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1]);
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1
             AND prompt_key IN ('core_assist_l2', 'plan_suggest')",

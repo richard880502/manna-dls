@@ -85,6 +85,17 @@ import type {
   VocabularyAnalyzeRequest,
   VocabularyItemsQuery,
   VocabularyRow,
+  CreateWorksheetRequest,
+  SaveWorksheetMaterialRequest,
+  SaveWorksheetRequest,
+  SopSyncPreview,
+  SopSyncResult,
+  WorksheetState,
+  WorksheetSummary,
+  WsExportQuery,
+  WsJobsState,
+  WsLevel,
+  WsVocabCheck,
 } from "./types";
 
 export class ApiError extends Error {
@@ -210,6 +221,56 @@ const queryOf = (params: object): Record<string, string | undefined> =>
   Object.fromEntries(
     Object.entries(params as Record<string, unknown>).map(([k, v]) => [k, v === undefined ? undefined : String(v)]),
   );
+/** The file name of a download: RFC 5987 `filename*` first, then the plain `filename`. */
+export function dispositionFilename(header: string | null, fallback: string): string {
+  if (!header) return fallback;
+  const star = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      // fall through to the plain name
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/.exec(header);
+  return plain?.[1]?.trim() || fallback;
+}
+
+/** A binary download with the teacher's token. Errors carry the server's JSON message. */
+async function download(
+  path: string,
+  query: Record<string, string | undefined>,
+  fallbackName: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const headers: Record<string, string> = {};
+  const token = loadToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(path, query), { method: "GET", headers });
+  } catch {
+    throw new ApiError(0, "network", NETWORK_ERROR_MESSAGE);
+  }
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    let errBody: Partial<ApiErrorBody> | null = null;
+    try {
+      errBody = raw ? (JSON.parse(raw) as Partial<ApiErrorBody>) : null;
+    } catch {
+      errBody = null;
+    }
+    if (response.status === 401 && unauthorizedHandler) unauthorizedHandler();
+    throw new ApiError(
+      response.status,
+      errBody?.error?.code ?? "internal",
+      errBody?.error?.message || FALLBACK_MESSAGES[response.status] || SERVER_ERROR_MESSAGE,
+    );
+  }
+  const blob = await response.blob();
+  const filename = dispositionFilename(response.headers?.get?.("Content-Disposition") ?? null, fallbackName);
+  return { blob, filename };
+}
+
 const importCsv = (path: string, csv: string, dryRun: boolean) =>
   request<KnowledgeImportResult>("POST", path, {
     text: csv,
@@ -307,6 +368,41 @@ export const api = {
     post<SopJob>(`/lessons/${lessonId}/sop/${kind}`, classId ? { class_id: classId } : {}),
   getSopJob: (jobId: number) => get<SopJob>(`/sop-jobs/${jobId}`),
 
+  // 學習單產生器（Phase 2.3）
+  listWorksheets: (lessonId?: number) =>
+    get<WorksheetSummary[]>("/worksheets", lessonId ? { lesson_id: String(lessonId) } : undefined),
+  /** 有 lesson_id：從課例帶入；沒有：直接使用 */
+  createWorksheet: (body: CreateWorksheetRequest) => post<WorksheetState>("/worksheets", body),
+  getWorksheet: (id: number) => get<WorksheetState>(`/worksheets/${id}`),
+  /** 自動儲存：content 有變才多一個版本 */
+  saveWorksheet: (id: number, body: SaveWorksheetRequest) => put<WorksheetState>(`/worksheets/${id}`, body),
+  saveWorksheetMaterial: (id: number, body: SaveWorksheetMaterialRequest) =>
+    put<WorksheetState>(`/worksheets/${id}/material`, body),
+  deleteWorksheet: (id: number) => del<OkResponse>(`/worksheets/${id}`),
+  /** 建立背景工作並立刻回來；之後用 worksheetJobs 輪詢 */
+  generateWorksheet: (id: number) => post<WorksheetState>(`/worksheets/${id}/generate`),
+  worksheetJobs: (id: number) => get<WsJobsState>(`/worksheets/${id}/jobs`),
+  regenerateWorksheetBlock: (id: number, blockId: string) =>
+    post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/regenerate`),
+  undoWorksheetBlock: (id: number, blockId: string) =>
+    post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/undo`),
+  worksheetSopSyncPreview: (id: number) => get<SopSyncPreview>(`/worksheets/${id}/sop-sync`),
+  /** 只有教師按了確認才呼叫 */
+  applyWorksheetSopSync: (id: number, keys: string[], sopVersionNo: number | null) =>
+    post<SopSyncResult>(`/worksheets/${id}/sop-sync`, { confirm: true, keys, sop_version_no: sopVersionNo }),
+  linkWorksheet: (id: number, lessonId: number | null) =>
+    put<WorksheetState>(`/worksheets/${id}/link`, { lesson_id: lessonId }),
+  saveWorksheetAsLesson: (id: number, unitId: number, title: string) =>
+    post<WorksheetState>(`/worksheets/${id}/save-as-lesson`, { unit_id: unitId, title }),
+  checkWorksheetVocabulary: (id: number, level: WsLevel, targetLevel?: number) =>
+    post<WsVocabCheck>(`/worksheets/${id}/checks/vocabulary`, {
+      level,
+      ...(targetLevel !== undefined ? { target_level: targetLevel } : {}),
+    }),
+  worksheetChecks: (id: number) => get<WsVocabCheck[]>(`/worksheets/${id}/checks`),
+  /** 後端即時產生的檔案；回傳 Blob 與檔名 */
+  exportWorksheet: (id: number, query: WsExportQuery) =>
+    download(`/worksheets/${id}/export`, { ...query }, `worksheet.${query.format}`),
   // ---- 教材庫與注記（Phase 2.2）
   /** 自己的教材、用量與上傳限制；帶 lessonId 時只列連到那個課例的教材 */
   listLibraryMaterials: (lessonId?: number) =>

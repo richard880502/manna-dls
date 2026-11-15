@@ -342,20 +342,20 @@ async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
 
 // ---------------------------------------------------------------- one model call
 
-struct Attempt {
-    id: i64,
-    latency_ms: i32,
-    response: Result<LlmResponse, ProviderError>,
+pub(crate) struct Attempt {
+    pub(crate) id: i64,
+    pub(crate) latency_ms: i32,
+    pub(crate) response: Result<LlmResponse, ProviderError>,
 }
 
-enum Failure {
+pub(crate) enum Failure {
     Timeout,
     Error,
     /// Refusal, unreadable output or a runaway to `max_tokens`: worth one changed retry.
     Retryable,
 }
 
-async fn attempt(
+pub(crate) async fn attempt(
     state: &AppState,
     meta: &InteractionMeta,
     snapshot: &Value,
@@ -386,7 +386,7 @@ async fn attempt(
 }
 
 /// Records a call that returned JSON.
-async fn finish_output(
+pub(crate) async fn finish_output(
     db: &PgPool,
     a: &Attempt,
     resp: &LlmResponse,
@@ -411,7 +411,11 @@ async fn finish_output(
 }
 
 /// Records a call that did not return JSON and says what kind of failure it was.
-async fn finish_failure(db: &PgPool, a: &Attempt, error: &ProviderError) -> sqlx::Result<Failure> {
+pub(crate) async fn finish_failure(
+    db: &PgPool,
+    a: &Attempt,
+    error: &ProviderError,
+) -> sqlx::Result<Failure> {
     let (status, check, detail, kind) = match error {
         ProviderError::Timeout => (
             "timeout",
@@ -463,7 +467,12 @@ async fn finish_failure(db: &PgPool, a: &Attempt, error: &ProviderError) -> sqlx
 }
 
 /// Marks the row the shown result is attributed to, with what the code repaired.
-async fn set_final(db: &PgPool, id: i64, status: &str, report: Value) -> sqlx::Result<()> {
+pub(crate) async fn set_final(
+    db: &PgPool,
+    id: i64,
+    status: &str,
+    report: Value,
+) -> sqlx::Result<()> {
     sqlx::query("UPDATE ai_interactions SET status = $2, check_results = $3 WHERE id = $1")
         .bind(id)
         .bind(status)
@@ -473,7 +482,7 @@ async fn set_final(db: &PgPool, id: i64, status: &str, report: Value) -> sqlx::R
     Ok(())
 }
 
-fn report_with(results: &[CheckResult], repairs: Value) -> Value {
+pub(crate) fn report_with(results: &[CheckResult], repairs: Value) -> Value {
     let mut report = checks::report(results);
     report["repairs"] = repairs;
     report
@@ -510,7 +519,7 @@ fn nos(list: &[i32]) -> String {
         .join("、")
 }
 
-async fn prompt(db: &PgPool, key: &str) -> AppResult<prompts::PromptVersion> {
+pub(crate) async fn prompt(db: &PgPool, key: &str) -> AppResult<prompts::PromptVersion> {
     prompts::latest(db, key)
         .await?
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no prompt version for {key}")))

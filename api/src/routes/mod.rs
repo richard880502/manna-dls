@@ -15,6 +15,7 @@ pub mod runs;
 pub mod sop;
 pub mod suggestions;
 pub mod units;
+pub mod worksheets;
 
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
@@ -92,6 +93,45 @@ pub fn api_router() -> Router<AppState> {
         .route("/lessons/{id}/sop/analysis", post(sop::start_analysis))
         .route("/lessons/{id}/sop/objectives", post(sop::start_objectives))
         .route("/sop-jobs/{id}", get(sop::job))
+        // 學習單產生器 (Phase 2.3)
+        .route(
+            "/worksheets",
+            get(worksheets::list).post(worksheets::create),
+        )
+        .route(
+            "/worksheets/{id}",
+            get(worksheets::get)
+                .put(worksheets::save)
+                .delete(worksheets::delete),
+        )
+        .route("/worksheets/{id}/material", put(worksheets::put_material))
+        .route("/worksheets/{id}/generate", post(worksheets::generate))
+        .route("/worksheets/{id}/jobs", get(worksheets::jobs))
+        .route(
+            "/worksheets/{id}/blocks/{block_id}/regenerate",
+            post(worksheets::regenerate_block),
+        )
+        .route(
+            "/worksheets/{id}/blocks/{block_id}/undo",
+            post(worksheets::undo_block),
+        )
+        .route("/worksheets/{id}/sheet", get(worksheets::sheet))
+        .route("/worksheets/{id}/versions", get(worksheets::versions))
+        .route(
+            "/worksheets/{id}/sop-sync",
+            get(worksheets::sync_preview).post(worksheets::sync_apply),
+        )
+        .route("/worksheets/{id}/link", put(worksheets::link))
+        .route(
+            "/worksheets/{id}/save-as-lesson",
+            post(worksheets::save_as_lesson),
+        )
+        .route(
+            "/worksheets/{id}/checks/vocabulary",
+            post(worksheets::check_vocabulary),
+        )
+        .route("/worksheets/{id}/checks", get(worksheets::checks))
+        .route("/worksheets/{id}/export", get(worksheets::export))
         // material library, original files and annotations (Phase 2.2)
         .route("/materials", get(library::list).post(library::create))
         .route(
