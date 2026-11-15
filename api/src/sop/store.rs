@@ -1,46 +1,58 @@
-//! Reading and appending SOP versions and materials. Both tables are append-only: a save is a
-//! new row, and a save that changes nothing adds none.
+//! Reading and appending SOP versions. Versions are append-only: a save is a new row, and a
+//! save that changes nothing adds none.
+//!
+//! The material is not part of this history. It is a material of the teacher's library
+//! (`materials`, docs/API.md Phase 2.2) that a version points at: a pasted text is edited in
+//! place, and deleting it deletes it everywhere. A version then only remembers that it had one
+//! (`material_deleted`, shown as 「教材已刪除」).
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::types::Json;
 use sqlx::{PgPool, Postgres, Transaction};
 
-use super::{assign_paragraph_ids, split_paragraphs, word_count, Paragraph, SopContent};
-use crate::error::AppResult;
+use super::{namespace_paragraph_refs, restore_paragraph_refs, Paragraph, SopContent};
+use crate::error::{AppError, AppResult};
+use crate::materials::store::{self as library, LinkTarget, MaterialRow};
 
+/// The material a SOP version works on: a library material as the SOP steps need it.
 #[derive(Debug, Clone, Serialize)]
 pub struct Material {
     pub id: i64,
+    /// The material's revision (+1 whenever its text changes).
     pub version_no: i32,
+    pub kind: String,
+    pub origin: String,
     pub title: String,
     pub source_note: String,
+    pub url: Option<String>,
+    pub filename: Option<String>,
+    pub has_file: bool,
+    /// `ready` | `no_text` | `failed` | `not_applicable`: only `ready` has paragraphs.
+    pub text_status: String,
+    pub text_truncated: bool,
+    pub page_count: Option<i32>,
     pub text: String,
     pub paragraphs: Vec<Paragraph>,
     pub word_count: usize,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(sqlx::FromRow)]
-struct MaterialRow {
-    id: i64,
-    version_no: i32,
-    title: String,
-    source_note: String,
-    text: String,
-    paragraphs: Json<Vec<Paragraph>>,
-    paragraph_seq: i32,
-    created_at: DateTime<Utc>,
-}
-
 impl From<MaterialRow> for Material {
     fn from(r: MaterialRow) -> Self {
         Self {
             id: r.id,
-            version_no: r.version_no,
+            version_no: r.revision,
+            kind: r.kind,
+            origin: r.origin,
             title: r.title,
             source_note: r.source_note,
-            word_count: word_count(&r.text),
+            url: r.url,
+            filename: r.filename,
+            has_file: r.storage_key.is_some(),
+            text_status: r.text_status,
+            text_truncated: r.text_truncated,
+            page_count: r.page_count,
+            word_count: super::word_count(&r.text),
             text: r.text,
             paragraphs: r.paragraphs.0,
             created_at: r.created_at,
@@ -48,15 +60,16 @@ impl From<MaterialRow> for Material {
     }
 }
 
-const MATERIAL_COLS: &str =
-    "id, version_no, title, source_note, text, paragraphs, paragraph_seq, created_at";
-
 /// One stored SOP version.
 #[derive(Debug, Clone)]
 pub struct Version {
     pub id: i64,
     pub version_no: i32,
     pub material_id: Option<i64>,
+    /// The material's revision when this version was saved.
+    pub material_revision: Option<i32>,
+    /// This version had a material that the teacher has since deleted.
+    pub material_deleted: bool,
     pub content: SopContent,
     pub created_at: DateTime<Utc>,
 }
@@ -66,6 +79,8 @@ struct VersionRow {
     id: i64,
     version_no: i32,
     material_id: Option<i64>,
+    material_revision: Option<i32>,
+    material_deleted: bool,
     content: serde_json::Value,
     created_at: DateTime<Utc>,
 }
@@ -76,6 +91,8 @@ impl From<VersionRow> for Version {
             id: r.id,
             version_no: r.version_no,
             material_id: r.material_id,
+            material_revision: r.material_revision,
+            material_deleted: r.material_deleted,
             // Stored documents were validated on the way in; an older shape still reads, with
             // defaults for whatever it lacks.
             content: serde_json::from_value(r.content).unwrap_or_default(),
@@ -84,7 +101,8 @@ impl From<VersionRow> for Version {
     }
 }
 
-const VERSION_COLS: &str = "id, version_no, material_id, content, created_at";
+const VERSION_COLS: &str =
+    "id, version_no, material_id, material_revision, material_deleted, content, created_at";
 
 pub async fn latest(db: &PgPool, lesson_id: i64) -> sqlx::Result<Option<Version>> {
     let row: Option<VersionRow> = sqlx::query_as(&format!(
@@ -119,10 +137,12 @@ pub async fn versions_count(db: &PgPool, lesson_id: i64) -> sqlx::Result<i64> {
         .await
 }
 
+/// The library material a version points at, as it is now (earlier texts are not kept).
 pub async fn material(db: &PgPool, id: Option<i64>) -> sqlx::Result<Option<Material>> {
     let Some(id) = id else { return Ok(None) };
     let row: Option<MaterialRow> = sqlx::query_as(&format!(
-        "SELECT {MATERIAL_COLS} FROM lesson_sop_materials WHERE id = $1"
+        "SELECT {} FROM materials WHERE id = $1",
+        library::COLS
     ))
     .bind(id)
     .fetch_optional(db)
@@ -134,14 +154,19 @@ pub async fn material(db: &PgPool, id: Option<i64>) -> sqlx::Result<Option<Mater
 pub struct VersionSummary {
     pub version_no: i32,
     pub created_at: DateTime<Utc>,
+    /// The material's revision at that save; null when the version had no material.
     pub material_version_no: Option<i32>,
+    pub material_deleted: bool,
 }
 
 pub async fn list_versions(db: &PgPool, lesson_id: i64) -> sqlx::Result<Vec<VersionSummary>> {
     sqlx::query_as(
-        "SELECT v.version_no, v.created_at, m.version_no AS material_version_no
-           FROM lesson_sop_versions v LEFT JOIN lesson_sop_materials m ON m.id = v.material_id
-          WHERE v.lesson_id = $1 ORDER BY v.version_no DESC",
+        "SELECT version_no, created_at,
+                CASE WHEN material_id IS NULL THEN NULL ELSE material_revision END
+                  AS material_version_no,
+                material_deleted
+           FROM lesson_sop_versions
+          WHERE lesson_id = $1 ORDER BY version_no DESC",
     )
     .bind(lesson_id)
     .fetch_all(db)
@@ -171,21 +196,37 @@ async fn latest_in_tx(
     Ok(row.map(Version::from))
 }
 
+async fn material_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: i64,
+    teacher_id: i64,
+) -> sqlx::Result<Option<MaterialRow>> {
+    sqlx::query_as(&format!(
+        "SELECT {} FROM materials WHERE id = $1 AND teacher_id = $2 FOR UPDATE",
+        library::COLS
+    ))
+    .bind(id)
+    .bind(teacher_id)
+    .fetch_optional(&mut **tx)
+    .await
+}
+
 async fn insert_version(
     tx: &mut Transaction<'_, Postgres>,
     lesson_id: i64,
-    material_id: Option<i64>,
+    material: Option<(i64, i32)>,
     content: &SopContent,
 ) -> AppResult<Version> {
     let json = serde_json::to_value(content).map_err(anyhow::Error::from)?;
     let row: VersionRow = sqlx::query_as(&format!(
-        "INSERT INTO lesson_sop_versions (lesson_id, version_no, material_id, content)
+        "INSERT INTO lesson_sop_versions (lesson_id, version_no, material_id, material_revision, content)
          VALUES ($1, (SELECT COALESCE(MAX(version_no), 0) + 1 FROM lesson_sop_versions
-                       WHERE lesson_id = $1), $2, $3)
+                       WHERE lesson_id = $1), $2, $3, $4)
          RETURNING {VERSION_COLS}"
     ))
     .bind(lesson_id)
-    .bind(material_id)
+    .bind(material.map(|(id, _)| id))
+    .bind(material.map(|(_, revision)| revision))
     .bind(json)
     .fetch_one(&mut **tx)
     .await?;
@@ -203,80 +244,185 @@ pub async fn save_content(db: &PgPool, lesson_id: i64, content: &SopContent) -> 
             return Ok(v.clone());
         }
     }
-    let material_id = current.and_then(|v| v.material_id);
-    let saved = insert_version(&mut tx, lesson_id, material_id, content).await?;
+    let material = current
+        .as_ref()
+        .and_then(|v| Some((v.material_id?, v.material_revision.unwrap_or(1))));
+    let saved = insert_version(&mut tx, lesson_id, material, content).await?;
     tx.commit().await?;
     Ok(saved)
 }
 
-/// Stores the pasted material (splitting it into paragraphs with stable ids) and appends a
-/// version pointing at it; blank text removes the material from the SOP. The SOP content is
-/// carried over untouched. Nothing is written when title, note and text are unchanged.
+/// The SOP content for a version that points at another material than the current one.
+/// Bare paragraph references belong to `from`; they are set aside under its id, and references
+/// that were set aside for `to` earlier come back (see `sop::namespace_paragraph_refs`).
+fn move_refs(content: &mut SopContent, from: Option<i64>, to: Option<i64>) {
+    if from == to {
+        return;
+    }
+    // Without a material there should be no bare references; 0 covers documents written
+    // before materials had ids.
+    namespace_paragraph_refs(content, from.unwrap_or(0));
+    if let Some(to) = to {
+        restore_paragraph_refs(content, to);
+    }
+}
+
+/// The lesson's SOP stops using its material (which stays in the teacher's library). The SOP
+/// content is kept; nothing happens when there is no material.
+async fn detach(
+    tx: &mut Transaction<'_, Postgres>,
+    lesson_id: i64,
+    current: Option<Version>,
+) -> AppResult<Option<Version>> {
+    let Some(current) = current else {
+        return Ok(None);
+    };
+    let Some(material_id) = current.material_id else {
+        return Ok(Some(current));
+    };
+    let mut content = current.content;
+    move_refs(&mut content, Some(material_id), None);
+    library::unlink(&mut **tx, material_id, LinkTarget::Lesson(lesson_id)).await?;
+    Ok(Some(insert_version(tx, lesson_id, None, &content).await?))
+}
+
+/// Step 1 by pasting. Blank text takes the material off the lesson (it stays in the library;
+/// deleting is a separate, explicit action). Otherwise:
+///
+/// * the lesson's current material is a pasted text that nothing else uses → it is edited in
+///   place (paragraphs split again, unchanged ones keep their ids, revision + 1);
+/// * otherwise a new pasted material is created. When the lesson has (or last had) a pasted
+///   material, the new one continues its paragraph ids, so what the SOP says about unchanged
+///   paragraphs stays attached.
+///
+/// Nothing is written when title, note and text are unchanged. `None`: there was no version and
+/// nothing was pasted.
 pub async fn save_material(
     db: &PgPool,
+    teacher_id: i64,
     lesson_id: i64,
     title: &str,
     source_note: &str,
     text: &str,
-) -> AppResult<Version> {
+) -> AppResult<Option<Version>> {
     let mut tx = db.begin().await?;
     lock_lesson(&mut tx, lesson_id).await?;
     let current = latest_in_tx(&mut tx, lesson_id).await?;
-    let content = current
-        .as_ref()
-        .map(|v| v.content.clone())
-        .unwrap_or_default();
-    let current_material_id = current.as_ref().and_then(|v| v.material_id);
+    let target = LinkTarget::Lesson(lesson_id);
 
     if text.trim().is_empty() {
-        // Nothing to remove.
-        if let Some(v) = current.filter(|v| v.material_id.is_none()) {
-            return Ok(v);
-        }
-        let saved = insert_version(&mut tx, lesson_id, None, &content).await?;
+        let saved = detach(&mut tx, lesson_id, current).await?;
         tx.commit().await?;
         return Ok(saved);
     }
 
-    // Ids continue from the lesson's most recent material, also after a removal.
-    let previous: Option<MaterialRow> = sqlx::query_as(&format!(
-        "SELECT {MATERIAL_COLS} FROM lesson_sop_materials
-          WHERE lesson_id = $1 ORDER BY version_no DESC LIMIT 1"
-    ))
-    .bind(lesson_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if let (Some(prev), Some(v)) = (&previous, &current) {
-        if Some(prev.id) == current_material_id
-            && prev.title == title
-            && prev.source_note == source_note
-            && prev.text == text
-        {
-            return Ok(v.clone());
+    let current_id = current.as_ref().and_then(|v| v.material_id);
+    let mut content = current
+        .as_ref()
+        .map(|v| v.content.clone())
+        .unwrap_or_default();
+    let current_material = match current_id {
+        Some(id) => material_in_tx(&mut tx, id, teacher_id).await?,
+        None => None,
+    };
+
+    // ---- edit in place
+    if let Some(m) = current_material.as_ref().filter(|m| m.origin == "paste") {
+        if m.title == title && m.source_note == source_note && m.text == text {
+            return Ok(current);
+        }
+        if !library::used_elsewhere(&mut tx, m.id, target).await? {
+            let mut row = m.clone();
+            if m.title != title || m.source_note != source_note {
+                row = library::set_meta(&mut tx, m.id, title, source_note).await?;
+            }
+            if m.text != text {
+                row = library::replace_text(&mut tx, &row, text).await?;
+            }
+            library::link(&mut *tx, row.id, target).await?;
+            let saved =
+                insert_version(&mut tx, lesson_id, Some((row.id, row.revision)), &content).await?;
+            tx.commit().await?;
+            return Ok(Some(saved));
         }
     }
-    let (prev_paragraphs, prev_seq) = previous
-        .as_ref()
-        .map(|p| (p.paragraphs.0.clone(), p.paragraph_seq))
-        .unwrap_or_default();
-    let (paragraphs, seq) =
-        assign_paragraph_ids(&prev_paragraphs, prev_seq, split_paragraphs(text));
-    let material_id: i64 = sqlx::query_scalar(
-        "INSERT INTO lesson_sop_materials
-           (lesson_id, version_no, title, source_note, text, paragraphs, paragraph_seq)
-         VALUES ($1, (SELECT COALESCE(MAX(version_no), 0) + 1 FROM lesson_sop_materials
-                       WHERE lesson_id = $1), $2, $3, $4, $5, $6)
-         RETURNING id",
+
+    // ---- a new material, continuing the paragraph ids of the lesson's pasted material
+    let base = match &current_material {
+        Some(m) => Some(m.clone()),
+        None => {
+            let last: Option<i64> = sqlx::query_scalar(
+                "SELECT material_id FROM lesson_sop_versions
+                  WHERE lesson_id = $1 AND material_id IS NOT NULL
+                  ORDER BY version_no DESC LIMIT 1",
+            )
+            .bind(lesson_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            match last {
+                Some(id) => material_in_tx(&mut tx, id, teacher_id).await?,
+                None => None,
+            }
+        }
+    }
+    .filter(|m| m.origin == "paste");
+    let row = library::insert_text(
+        &mut tx,
+        teacher_id,
+        title,
+        source_note,
+        text,
+        base.as_ref()
+            .map(|m| (m.paragraphs.0.as_slice(), m.paragraph_seq)),
     )
-    .bind(lesson_id)
-    .bind(title)
-    .bind(source_note)
-    .bind(text)
-    .bind(Json(&paragraphs))
-    .bind(seq)
-    .fetch_one(&mut *tx)
     .await?;
-    let saved = insert_version(&mut tx, lesson_id, Some(material_id), &content).await?;
+    // The new material carries on its base's ids: references to the base stay as they are.
+    match &base {
+        Some(base) => {
+            move_refs(&mut content, current_id, Some(base.id));
+        }
+        None => move_refs(&mut content, current_id, Some(row.id)),
+    }
+    if let Some(old) = current_id {
+        library::unlink(&mut *tx, old, target).await?;
+    }
+    library::link(&mut *tx, row.id, target).await?;
+    let saved = insert_version(&mut tx, lesson_id, Some((row.id, row.revision)), &content).await?;
     tx.commit().await?;
-    Ok(saved)
+    Ok(Some(saved))
+}
+
+/// Step 1 by picking a material from the library (`Some`), or taking the material off the
+/// lesson (`None`). Someone else's material is a 404.
+pub async fn set_material(
+    db: &PgPool,
+    teacher_id: i64,
+    lesson_id: i64,
+    material_id: Option<i64>,
+) -> AppResult<Option<Version>> {
+    let mut tx = db.begin().await?;
+    lock_lesson(&mut tx, lesson_id).await?;
+    let current = latest_in_tx(&mut tx, lesson_id).await?;
+    let Some(material_id) = material_id else {
+        let saved = detach(&mut tx, lesson_id, current).await?;
+        tx.commit().await?;
+        return Ok(saved);
+    };
+    let row = material_in_tx(&mut tx, material_id, teacher_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("找不到這份教材。"))?;
+    let current_id = current.as_ref().and_then(|v| v.material_id);
+    if current_id == Some(row.id) {
+        return Ok(current);
+    }
+    let mut content = current.map(|v| v.content).unwrap_or_default();
+    move_refs(&mut content, current_id, Some(row.id));
+    let target = LinkTarget::Lesson(lesson_id);
+    if let Some(old) = current_id {
+        library::unlink(&mut *tx, old, target).await?;
+    }
+    library::link(&mut *tx, row.id, target).await?;
+    let saved = insert_version(&mut tx, lesson_id, Some((row.id, row.revision)), &content).await?;
+    tx.commit().await?;
+    Ok(Some(saved))
 }

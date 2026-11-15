@@ -11,6 +11,7 @@ pub mod core_questions;
 pub mod curriculum;
 pub mod db;
 pub mod error;
+pub mod materials;
 pub mod preferences;
 pub mod prompts;
 pub mod record;
@@ -18,6 +19,7 @@ pub mod retrieval;
 pub mod routes;
 pub mod settings;
 pub mod sop;
+pub mod storage;
 pub mod vocabulary;
 
 use std::path::PathBuf;
@@ -34,21 +36,36 @@ use tower_http::trace::TraceLayer;
 
 use crate::ai::AiClient;
 use crate::config::Config;
+use crate::materials::access::LinkSigner;
+use crate::storage::Storage;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub config: Arc<Config>,
     pub ai: Arc<AiClient>,
+    /// Where original material files live; `None` when uploads are off (`STORAGE_BACKEND=none`
+    /// or a broken storage configuration).
+    pub storage: Option<Arc<dyn Storage>>,
+    /// Signs the short-lived file links for `<img>`, `<audio>` and `<video>`.
+    pub links: Arc<LinkSigner>,
+    /// Bounds how many uploads are held in memory at once.
+    pub upload_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let ai = Arc::new(AiClient::from_config(&config));
+        let storage = config.storage.build();
         Self {
             db,
             config: Arc::new(config),
             ai,
+            storage,
+            links: Arc::new(LinkSigner::new()),
+            upload_slots: Arc::new(tokio::sync::Semaphore::new(
+                materials::MAX_CONCURRENT_UPLOADS,
+            )),
         }
     }
 }

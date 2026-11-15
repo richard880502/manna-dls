@@ -6,6 +6,7 @@ pub mod core;
 pub mod feedback;
 pub mod knowledge;
 pub mod lessons;
+pub mod library;
 pub mod materials;
 pub mod preferences;
 pub mod remote;
@@ -19,7 +20,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -90,6 +91,38 @@ pub fn api_router() -> Router<AppState> {
         .route("/lessons/{id}/sop/analysis", post(sop::start_analysis))
         .route("/lessons/{id}/sop/objectives", post(sop::start_objectives))
         .route("/sop-jobs/{id}", get(sop::job))
+        // material library, original files and annotations (Phase 2.2)
+        .route("/materials", get(library::list).post(library::create))
+        .route(
+            "/materials/upload",
+            post(library::upload).layer(DefaultBodyLimit::max(
+                crate::materials::MAX_UPLOAD_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/materials/{id}",
+            get(library::get_one)
+                .put(library::update)
+                .delete(library::remove),
+        )
+        .route("/materials/{id}/file", get(library::file))
+        .route("/materials/{id}/file-link", post(library::file_link))
+        .route(
+            "/materials/{id}/annotations",
+            get(library::list_annotations).post(library::create_annotation),
+        )
+        .route(
+            "/materials/{id}/annotations/ai",
+            get(library::ai_annotations),
+        )
+        .route(
+            "/annotations/{id}",
+            put(library::update_annotation).delete(library::delete_annotation),
+        )
+        .route(
+            "/lessons/{id}/materials/{material_id}",
+            put(library::link_lesson).delete(library::unlink_lesson),
+        )
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
         .route("/scaffold-events", post(feedback::scaffold_event))
         .route("/teacher-cases", get(feedback::teacher_cases))
@@ -193,6 +226,8 @@ async fn public_config(State(state): State<AppState>) -> AppResult<Json<serde_js
         "ai_provider": c.ai_provider.as_str(),
         "ai_model": c.ai_model,
         "route_choice_enabled": crate::settings::route_choice_enabled(&state.db).await?,
+        // Whether files can be uploaded to the material library (pasting always works).
+        "uploads_enabled": state.storage.is_some(),
     })))
 }
 
@@ -449,6 +484,17 @@ where
         .execute(executor)
         .await?;
     Ok(())
+}
+
+/// For optional JSON fields where `null` means something else than "not sent":
+/// absent → `None`, `null` → `Some(None)`, a value → `Some(Some(value))`. Use with
+/// `#[serde(default, deserialize_with = "…")]`.
+pub fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(deserializer)?))
 }
 
 /// Text shown to the model for an optional teacher field.

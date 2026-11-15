@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::storage::StorageConfig;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiProviderKind {
     /// AI endpoints answer with status `disabled`.
@@ -71,6 +73,8 @@ pub struct Config {
     pub demo_mode: bool,
     pub admin_bootstrap_code: Option<String>,
     pub rag_top_k: usize,
+    /// Where material files are kept (`STORAGE_BACKEND`, docs/API.md Phase 2.2).
+    pub storage: StorageConfig,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -86,6 +90,7 @@ impl std::fmt::Debug for Config {
             .field("openai_compat_base_url", &self.openai_compat_base_url)
             .field("demo_mode", &self.demo_mode)
             .field("rag_top_k", &self.rag_top_k)
+            .field("storage", &self.storage)
             .finish_non_exhaustive()
     }
 }
@@ -214,6 +219,8 @@ impl Config {
             demo_mode,
             admin_bootstrap_code: get("ADMIN_BOOTSTRAP_CODE").map(|c| c.trim().to_string()),
             rag_top_k,
+            // Never an error: a broken storage configuration only turns uploads off.
+            storage: StorageConfig::from_lookup(get),
         })
     }
 
@@ -233,6 +240,7 @@ impl Config {
             demo_mode: false,
             admin_bootstrap_code: None,
             rag_top_k: 8,
+            storage: StorageConfig::none(),
         }
     }
 

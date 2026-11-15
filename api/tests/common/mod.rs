@@ -44,8 +44,76 @@ macro_rules! test_app {
     };
 }
 
+/// A response as it left the server: for downloads and anything that is not JSON.
+pub struct RawResponse {
+    pub status: StatusCode,
+    pub headers: axum::http::HeaderMap,
+    pub body: Vec<u8>,
+}
+
+impl RawResponse {
+    pub fn header(&self, name: &str) -> &str {
+        self.headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+    }
+}
+
+/// One part of a `multipart/form-data` body.
+pub enum Part<'a> {
+    Text(&'a str, &'a str),
+    /// field name, file name, content
+    File(&'a str, &'a str, &'a [u8]),
+}
+
+pub const MULTIPART_BOUNDARY: &str = "----manna-test-boundary-7MA4YWxkTrZu0gW";
+
+pub fn multipart_body(parts: &[Part<'_>]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for part in parts {
+        body.extend_from_slice(format!("--{MULTIPART_BOUNDARY}\r\n").as_bytes());
+        match part {
+            Part::Text(name, value) => {
+                body.extend_from_slice(
+                    format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                        .as_bytes(),
+                );
+            }
+            Part::File(name, filename, data) => {
+                body.extend_from_slice(
+                    format!(
+                        "Content-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\n\
+                         Content-Type: application/octet-stream\r\n\r\n"
+                    )
+                    .as_bytes(),
+                );
+                body.extend_from_slice(data);
+                body.extend_from_slice(b"\r\n");
+            }
+        }
+    }
+    body.extend_from_slice(format!("--{MULTIPART_BOUNDARY}--\r\n").as_bytes());
+    body
+}
+
 impl TestApp {
     pub async fn new(customize: impl FnOnce(&mut Config)) -> Option<Self> {
+        Self::new_seeded(customize, None, |_| async {}).await
+    }
+
+    /// Like [`TestApp::new`], but the database is first migrated only up to (and including)
+    /// migration `stop_after`, `seed` runs against that older schema, and then the remaining
+    /// migrations run: for testing a data migration exactly as a deployment performs it.
+    pub async fn new_seeded<F, Fut>(
+        customize: impl FnOnce(&mut Config),
+        stop_after: Option<i64>,
+        seed: F,
+    ) -> Option<Self>
+    where
+        F: FnOnce(PgPool) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
         let url = match std::env::var("DATABASE_URL") {
             Ok(u) if !u.trim().is_empty() => u,
             _ => {
@@ -74,6 +142,21 @@ impl TestApp {
         let pool = db::connect_with(admin_opts.clone().database(&db_name), 5)
             .await
             .expect("connect to test database");
+        if let Some(stop_after) = stop_after {
+            let older = sqlx::migrate::Migrator {
+                migrations: std::borrow::Cow::Owned(
+                    db::MIGRATOR
+                        .migrations
+                        .iter()
+                        .filter(|m| m.version <= stop_after)
+                        .cloned()
+                        .collect(),
+                ),
+                ..sqlx::migrate::Migrator::DEFAULT
+            };
+            older.run(&pool).await.expect("older migrations");
+            seed(pool.clone()).await;
+        }
         db::migrate(&pool).await.expect("migrations");
 
         let mut config = Config::for_tests(url);
@@ -121,6 +204,61 @@ impl TestApp {
                 .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
         };
         (status, value)
+    }
+
+    /// Sends a request and returns the response untouched (headers and raw body).
+    pub async fn send_raw(
+        &self,
+        method: Method,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> RawResponse {
+        let mut req = Request::builder().method(method).uri(path);
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+        let resp = self
+            .app
+            .clone()
+            .oneshot(req.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        RawResponse {
+            status: resp.status(),
+            headers: resp.headers().clone(),
+            body: resp
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        }
+    }
+
+    /// `POST` of a `multipart/form-data` body.
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        token: Option<&str>,
+        parts: &[Part<'_>],
+    ) -> (StatusCode, Value) {
+        self.send(
+            Method::POST,
+            path,
+            token,
+            Some(&format!(
+                "multipart/form-data; boundary={MULTIPART_BOUNDARY}"
+            )),
+            multipart_body(parts),
+        )
+        .await
+    }
+
+    pub async fn delete(&self, path: &str, token: Option<&str>) -> (StatusCode, Value) {
+        self.send(Method::DELETE, path, token, None, Vec::new())
+            .await
     }
 
     pub async fn get(&self, path: &str, token: Option<&str>) -> (StatusCode, Value) {
