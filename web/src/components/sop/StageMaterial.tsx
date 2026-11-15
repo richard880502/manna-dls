@@ -243,7 +243,7 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
             </div>
             <MaterialContent materialId={material.id} material={material} />
             <p className="field-hint">
-              「從這個課例移除」只是不在這節課使用，教材仍留在教材庫；要永久刪除請到備課庫的「教材」。
+              「從這個課例移除」只是不在這節課使用，教材仍留在教材庫；要永久刪除請到「教材」。
             </p>
           </section>
         )

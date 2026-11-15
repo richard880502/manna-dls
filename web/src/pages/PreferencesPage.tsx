@@ -8,10 +8,16 @@ import { useApp } from "../context/AppContext";
 import { formatDateTime } from "../lib/labels";
 import { PREFERENCE_SOURCE_LABELS, answersFrom } from "../lib/preferences";
 
-/** 我的備課偏好: edit P1–P6; every save creates a new version (source "settings"). */
+/**
+ * 我的備課偏好: edit P1–P5; every save creates a new version (source "settings"). It is optional
+ * and reached from the top bar; nothing asks for it first. P6 (班級特性) is not asked here any
+ * more: class traits are written once, on the class page. An earlier P6 answer is kept as it was
+ * and saved again unchanged with every new version.
+ */
 export function PreferencesPage() {
   const { preferences, preferencesStatus, setPreferences } = useApp();
-  const { questions, loaded } = usePreferenceQuestions();
+  const { questions: allQuestions, loaded } = usePreferenceQuestions();
+  const questions = allQuestions.filter((q) => q.id !== "P6");
   const [answers, setAnswers] = useState<PreferenceAnswers>(() => answersFrom(preferences));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -54,7 +60,7 @@ export function PreferencesPage() {
         <p className="eyebrow">{versionLabel}</p>
         <h1 id="prefs-heading">我的備課偏好</h1>
         <p>
-          這些回答決定新單元的預設備課菜單、預設展開哪些輔助，以及 AI 建議的長度。偏好只改「預設」，不會隱藏任何功能；每次儲存都會保留舊版本。
+          想填再填。這些回答幫 Manna 調整建議的方式與長度；偏好只改「預設」，不會隱藏任何功能，每次儲存都會保留舊版本。班級特性寫在各班的班級頁。
         </p>
       </div>
 

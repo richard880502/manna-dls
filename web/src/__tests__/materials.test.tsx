@@ -81,7 +81,7 @@ const annotation = (overrides: Partial<MaterialAnnotation> = {}): MaterialAnnota
 });
 
 async function openLibrary() {
-  renderApp("/library");
+  renderApp("/materials");
   return within(await screen.findByRole("region", { name: "教材" }));
 }
 
@@ -99,7 +99,7 @@ function selectText(pid: string, quote: string) {
   });
 }
 
-describe("備課庫 → 教材", () => {
+describe("教材 (the material library page)", () => {
   it("lists the teacher's materials with where they are used and how much space is left", async () => {
     signIn();
     mockApi({ ...baseRoutes(), "GET /api/materials": library() });

@@ -182,7 +182,7 @@ export function NoMaterialNote({ onGoToMaterial }: { onGoToMaterial: () => void 
       <button type="button" className="text-link is-plain" onClick={onGoToMaterial}>
         到第 1 步貼上教材
       </button>
-      ，或直接略過這一步。
+      。
     </p>
   );
 }

@@ -4,7 +4,6 @@ import { Link, Outlet, useLocation, useOutletContext } from "react-router";
 import { useApp } from "../context/AppContext";
 import { can } from "../lib/permissions";
 import { DemoBanner, Loading } from "./common";
-import { OnboardingWizard } from "./prefs/OnboardingWizard";
 
 interface NavEntry {
   to: string;
@@ -13,19 +12,25 @@ interface NavEntry {
   match: (pathname: string) => boolean;
 }
 
-/** The whole navigation (docs/DESIGN_OVERHAUL.md section 2): three destinations, nothing unbuilt. */
-const NAV: NavEntry[] = [
+/**
+ * The whole navigation: three destinations, nothing unbuilt. The teacher's path runs through
+ * 班級 (class → unit → lesson → worksheet), so units, lessons, runs and the list of all units
+ * count as being inside 班級; materials have their own place under 教材.
+ */
+export const NAV: NavEntry[] = [
   {
     to: "/",
     label: "班級",
-    match: (p) => p === "/" || p.startsWith("/classes") || p.startsWith("/runs") || p === "/record",
-  },
-  {
-    to: "/library",
-    label: "備課庫",
-    match: (p) => p === "/library" || p === "/plan" || p.startsWith("/units") || p.startsWith("/lessons"),
+    match: (p) =>
+      p === "/" ||
+      p.startsWith("/classes") ||
+      p.startsWith("/units") ||
+      p.startsWith("/lessons") ||
+      p.startsWith("/runs") ||
+      p === "/record",
   },
   { to: "/worksheets", label: "學習單", match: (p) => p.startsWith("/worksheets") },
+  { to: "/materials", label: "教材", match: (p) => p.startsWith("/materials") },
 ];
 
 /** Working pages with two columns get the wider frame; the in-class console a narrower one. */
@@ -53,13 +58,9 @@ export function TopBarSlot({ children }: { children: ReactNode }) {
 }
 
 export function Layout() {
-  const { teacher, logout, preferences, preferencesStatus } = useApp();
+  const { teacher, logout, preferencesStatus } = useApp();
   const { pathname } = useLocation();
   const [topSlot, setTopSlot] = useState<HTMLElement | null>(null);
-  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
-  // The first-use survey is about lesson preparation: it does not stand in front of 知識庫管理.
-  const needsOnboarding =
-    preferencesStatus === "loaded" && preferences === null && !onboardingDismissed && pathname !== "/knowledge";
 
   useEffect(() => {
     try {
@@ -111,8 +112,6 @@ export function Layout() {
       <main className={`workspace${frameClass(pathname)}`}>
         {preferencesStatus === "loading" ? (
           <Loading label="正在載入你的備課偏好…" />
-        ) : needsOnboarding ? (
-          <OnboardingWizard onDismiss={() => setOnboardingDismissed(true)} />
         ) : (
           <Outlet context={{ topSlot } satisfies ShellContext} />
         )}

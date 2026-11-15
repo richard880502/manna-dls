@@ -8,13 +8,11 @@ import {
   baseRoutes,
   lessonDetail,
   mockApi,
-  openSection,
   renderApp,
   respond,
   schoolClass,
   signIn,
   step,
-  todayCard,
   type MockCall,
 } from "../test/mockApi";
 
@@ -421,6 +419,8 @@ describe("課後補寫", () => {
     const first = within(cards[0] as HTMLElement);
     expect(first.getByText("「例句太難」")).toBeInTheDocument();
     expect(first.getByText(/不要寫學生姓名/)).toBeInTheDocument();
+    // The privacy reminder is said once on the page, under the first card's field.
+    expect(within(cards[1] as HTMLElement).queryByText(/不要寫學生姓名/)).not.toBeInTheDocument();
     expect(first.getByRole("button", { name: "儲存這張書籤" })).toBeDisabled();
 
     await user.selectOptions(first.getByLabelText("活動歸屬（選填）"), "步驟 2：兩兩討論");
@@ -616,24 +616,20 @@ describe("課後補寫 never drops an unsaved bookmark choice (R2c, regression f
 });
 
 describe("starting a run", () => {
-  it("開始本節課 on the lesson page opens the console; an already open run is resumed", async () => {
+  it("開始上課 in the lesson page head opens the console", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/lessons/7": lessonDetail(),
-      "GET /api/units/1/core": { id: 1, unit_id: 1, phase: "pre", version_no: 1, completed_at: null, saw_ai_assist: false, focuses: [] },
-      "GET /api/siop": [],
-      "GET /api/teacher-cases": [],
       "GET /api/lessons/7/runs": [run({ id: 8, ended_at: "2026-11-11T02:00:00Z", good_count: 2, stuck_count: 1 })],
       "POST /api/lessons/7/runs": run(),
       "GET /api/runs/9": runDetail(),
     });
     const user = userEvent.setup();
     renderApp("/lessons/7");
-    expect(await screen.findByRole("button", { name: "上課紀錄與課後補寫（1）" })).toBeInTheDocument();
-    await openSection(user, "上課紀錄與課後補寫");
-    expect(await screen.findByText(/順利 2 · 卡住 1 · 課後補寫/)).toBeInTheDocument();
-    await user.click(todayCard().getByRole("button", { name: "開始上課" }));
+    const start = await screen.findByRole("button", { name: "開始上課" });
+    expect(start).toHaveClass("secondary-button");
+    await user.click(start);
     expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/lessons/7/runs")).toHaveLength(1);
   });

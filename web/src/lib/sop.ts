@@ -9,8 +9,8 @@ import type {
   SopScaffolds,
 } from "../api/types";
 
-/** A stage of the lesson workspace: the overview, or one of the seven SOP steps. */
-export type StageKey = "overview" | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+/** A stage of the lesson workspace: one of the seven SOP steps. */
+export type StageKey = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export const STAGES: ReadonlyArray<{ step: 1 | 2 | 3 | 4 | 5 | 6 | 7; name: string }> = [
   { step: 1, name: "閱讀教材" },

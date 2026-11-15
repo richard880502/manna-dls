@@ -7,14 +7,17 @@ interface RailProps {
   onStage: (stage: StageKey) => void;
   material: SopMaterial | null;
   content: SopContent;
+  /** Where the seven steps lead: 產生學習單. Omitted, the rail ends with step 7. */
+  onWorksheet?: () => void;
+  worksheetBusy?: boolean;
 }
 
 /**
- * The progress rail of the lesson workspace (direction A): 本節概要, then the seven steps, each
- * with what it already holds. Any step can be opened at any time; a tick only says the step has
- * something in it, never that it is required. Under 760px it folds into one line.
+ * The progress rail of the lesson workspace (direction A): the seven steps, each with what it
+ * already holds, then where they lead, 產生學習單. Any step can be opened at any time; a tick only
+ * says the step has something in it, never that it is required. Under 760px it folds into one line.
  */
-export function Rail({ stage, onStage, material, content }: RailProps) {
+export function Rail({ stage, onStage, material, content, onWorksheet, worksheetBusy = false }: RailProps) {
   const [open, setOpen] = useState(false);
   const go = (next: StageKey) => {
     setOpen(false);
@@ -24,7 +27,7 @@ export function Rail({ stage, onStage, material, content }: RailProps) {
   return (
     <nav className={`rail${open ? " is-open" : ""}`} aria-label="備課步驟">
       <p className="rail-title">
-        <span>{stage === "overview" ? "本節概要" : `第 ${stage} 步，共 7 步`}</span>
+        <span>第 {stage} 步，共 7 步</span>
         <button
           type="button"
           className="text-link is-plain rail-toggle"
@@ -36,18 +39,6 @@ export function Rail({ stage, onStage, material, content }: RailProps) {
         </button>
       </p>
       <div id="rail-steps" className="rail-steps">
-        <button
-          type="button"
-          className={`rail-step rail-overview${stage === "overview" ? " is-now" : ""}`}
-          aria-current={stage === "overview" ? "step" : undefined}
-          onClick={() => go("overview")}
-        >
-          <span className="dot" aria-hidden="true" />
-          <span>
-            本節概要
-            <span className="state">今天要教什麼、開始上課</span>
-          </span>
-        </button>
         <ol>
           {STAGES.map((s) => {
             const summary = stageSummary(s.step, material, content);
@@ -73,11 +64,25 @@ export function Rail({ stage, onStage, material, content }: RailProps) {
             );
           })}
         </ol>
-        <p className="rail-aside">
-          可以跳著做，也可以略過。
-          <br />
-          每一步都會自動儲存。
-        </p>
+        {onWorksheet && (
+          <button
+            type="button"
+            className="rail-step rail-end"
+            disabled={worksheetBusy}
+            onClick={() => {
+              setOpen(false);
+              onWorksheet();
+            }}
+          >
+            <span className="dot" aria-hidden="true" />
+            <span>
+              {worksheetBusy ? "建立中…" : "產生學習單"}
+              <span className="state">用這節課備好的內容</span>
+            </span>
+          </button>
+        )}
+        {/* Said once on the page: the steps themselves do not repeat it. Saving is said in the head. */}
+        <p className="rail-aside">可以跳著做，也可以略過。</p>
       </div>
     </nav>
   );

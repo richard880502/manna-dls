@@ -1,5 +1,5 @@
 // 班級與備課庫 (Phase 1.4): the class a unit or lesson is worked on in, and the words for a class's next lesson.
-import type { ClassNextAction, ClassProfileSourceUsed, LessonRun, SchoolClass, Unit, UnitClassRef } from "../api/types";
+import type { ClassNextAction, LessonRun, SchoolClass, Unit, UnitClassRef } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { SCHOOL_TRACK_LABELS } from "./labels";
 
@@ -88,20 +88,4 @@ export function focalClass(classes: SchoolClass[], runs: LessonRun[]): SchoolCla
     if (taught) return taught;
   }
   return ready[0] ?? classes.find((c) => c.next_action?.kind === "plan_unit") ?? null;
-}
-
-/** Where the class profile Manna uses comes from, in the teacher's words. */
-export function profileSourceText(source: ClassProfileSourceUsed | undefined, className: string | null): string {
-  switch (source) {
-    case "lesson":
-      return "本課覆寫";
-    case "class":
-      return className ? `${className}的班級特性` : "班級的班級特性";
-    case "preference":
-      return "沿用備課偏好";
-    case "unit":
-      return "沿用單元設定";
-    default:
-      return className ? `${className}還沒有班級特性` : "沿用單元設定";
-  }
 }

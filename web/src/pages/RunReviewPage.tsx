@@ -43,10 +43,12 @@ interface ReviewCardProps {
   register: (deviceEventId: string, handle: ReviewCardHandle | null) => void;
   /** Reports unsaved edits. Stable. */
   onDirtyChange: (deviceEventId: string, dirty: boolean) => void;
+  /** The privacy reminder sits under the first card's field only, not under every card. */
+  showPrivacyHint: boolean;
 }
 
 /** One bookmark: time, 順利／卡住, the in-class sentence, corrections and the optional 補寫 fields. */
-function ReviewCard({ runId, event, steps, sync, register, onDirtyChange }: ReviewCardProps) {
+function ReviewCard({ runId, event, steps, sync, register, onDirtyChange, showPrivacyHint }: ReviewCardProps) {
   const ids = useId();
   const server = event.server;
   const [loadedFrom, setLoadedFrom] = useState<number | null>(server ? server.id : null);
@@ -218,7 +220,9 @@ function ReviewCard({ runId, event, steps, sync, register, onDirtyChange }: Revi
             touch();
           }}
         />
-        <p className="field-hint">不要寫學生姓名。可以用手機鍵盤內建的語音輸入。</p>
+        <p className="field-hint">
+          {showPrivacyHint ? "不要寫學生姓名。" : ""}可以用手機鍵盤內建的語音輸入。
+        </p>
 
         <div className="review-save-row">
           <button type="button" className="secondary-button" onClick={() => void save()} disabled={!dirty || saving}>
@@ -410,8 +414,9 @@ export function RunReviewPage() {
           {events.length === 0 ? (
             <p className="empty-preview">這節課沒有書籤。沒有書籤也沒關係，可以直接完成。</p>
           ) : (
-            events.map((ev) => (
+            events.map((ev, index) => (
               <ReviewCard
+                showPrivacyHint={index === 0}
                 key={ev.device_event_id}
                 runId={runId}
                 event={ev}

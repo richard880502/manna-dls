@@ -1,15 +1,11 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { CreateUnitRequest, PrepRoute, SchoolClass, Unit } from "../api/types";
+import type { CreateUnitRequest, SchoolClass, Unit } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
-import { MaterialsSection } from "../components/material/MaterialLibrary";
-import { RouteOptions } from "../components/unit/RouteOptions";
 import { useApp } from "../context/AppContext";
 import { usedByText } from "../lib/classes";
 import { UNIT_IDEAS_STATUS } from "../lib/labels";
-import { can } from "../lib/permissions";
-import { effectiveRoute } from "../lib/preferences";
 
 /** 加到班級: which classes use one unit. Each tick is saved at once. */
 function AssignClasses({
@@ -69,12 +65,14 @@ function AssignClasses({
 }
 
 /**
- * 備課庫: the teacher's own units as ruled rows (lessons, 單元想法, which classes use it). One
- * unit, reusable across classes. Coming here leaves the class context: a unit opened from the
- * library has no class in play unless only one class uses it.
+ * 備課庫 (`/units`): every unit of the teacher as ruled rows (lessons, 單元想法, which classes use
+ * it), with 加到班級 to reuse a unit in another class. It is not in the top bar: it is reached
+ * from 班級 (the home page and the class page's 「從備課庫加入單元」). Materials have their own
+ * page (教材). Coming here leaves the class context: a unit opened from the library has no class
+ * in play unless only one class uses it.
  */
 export function LibraryPage() {
-  const { routeChoiceEnabled, preferences, setCurrentClassId, teacher } = useApp();
+  const { setCurrentClassId } = useApp();
   const navigate = useNavigate();
   const ids = useId();
   const [units, setUnits] = useState<Unit[] | null>(null);
@@ -82,17 +80,12 @@ export function LibraryPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
-  /** null = teacher has not picked; the default comes from 備課偏好 (P2). */
-  const [pickedRoute, setPickedRoute] = useState<PrepRoute | null>(null);
   /** "" = 先放在備課庫，不加入班級. */
   const [classId, setClassId] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   /** The unit whose 加到班級 choices are open. */
   const [assigning, setAssigning] = useState<number | null>(null);
-
-  const defaultRoute = effectiveRoute(true, preferences?.answers?.start_from ?? null);
-  const route = pickedRoute ?? defaultRoute;
 
   useEffect(() => {
     setCurrentClassId(null);
@@ -126,7 +119,6 @@ export function LibraryPage() {
       return;
     }
     const body: CreateUnitRequest = { title: trimmed };
-    if (routeChoiceEnabled) body.prep_route = route;
     if (classId) body.class_id = Number(classId);
     setCreating(true);
     setCreateError(null);
@@ -134,8 +126,6 @@ export function LibraryPage() {
       const unit = await api.createUnit(body);
       setUnits((prev) => [unit, ...(prev ?? [])]);
       setTitle("");
-      setPickedRoute(null);
-      // The unit page opens on the first screen of the chosen prep route.
       navigate(`/units/${unit.id}`);
     } catch (err) {
       setCreateError(errorMessage(err));
@@ -164,6 +154,9 @@ export function LibraryPage() {
 
   return (
     <section aria-labelledby="library-heading">
+      <p className="crumbs">
+        <Link to="/">班級</Link> / 備課庫
+      </p>
       <div className="head-row page-head">
         <div>
           <h1 id="library-heading">備課庫</h1>
@@ -203,20 +196,6 @@ export function LibraryPage() {
                 ))}
               </select>
             </div>
-          )}
-          {routeChoiceEnabled && (
-            <RouteOptions
-              name="new-unit-route"
-              legend="從哪裡開始備課？"
-              value={route}
-              onChange={setPickedRoute}
-              disabled={creating}
-              hint={
-                preferences?.answers?.start_from
-                  ? "預設依你的備課偏好；建立後也可以在單元頁隨時切換。"
-                  : "建立後也可以在單元頁隨時切換。"
-              }
-            />
           )}
           <ErrorText message={createError} />
           <div className="button-row">
@@ -270,8 +249,6 @@ export function LibraryPage() {
           })}
         </ul>
       )}
-
-      {can(teacher, "use_materials") && <MaterialsSection />}
     </section>
   );
 }

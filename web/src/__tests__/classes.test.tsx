@@ -5,22 +5,20 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { ClassDetail, CreateClassRequest, LessonRun, RunDetail, SchoolClass } from "../api/types";
+import { emptyContent } from "../lib/sop";
 import { CURRENT_CLASS_STORAGE_KEY } from "../lib/storage";
 import {
   baseRoutes,
   classDetail,
   classRef,
   classUnit,
-  coreVersion,
   lessonDetail,
   mockApi,
-  openSection,
   preferences,
   renderApp,
   respond,
   schoolClass,
   signIn,
-  todayCard,
   unitWith,
   type MockCall,
 } from "../test/mockApi";
@@ -57,9 +55,6 @@ function lessonRoutes(unit = shared, extra: Record<string, unknown> = {}) {
     ...baseRoutes(),
     "GET /api/units/1": unit,
     "GET /api/lessons/7": lessonDetail({ class_description: "", effective_class_profile: "" }),
-    "GET /api/units/1/core": coreVersion([]),
-    "GET /api/siop": [],
-    "GET /api/teacher-cases": [],
     "GET /api/lessons/7/runs": [],
     "POST /api/lessons/7/runs": (call: MockCall) => {
       const classId = (call.body as { class_id?: number }).class_id ?? null;
@@ -326,7 +321,7 @@ describe("creating a class", () => {
     await user.click(await screen.findByRole("button", { name: "先略過" }));
     expect(screen.queryByRole("region", { name: "先建立你的第一個班級" })).not.toBeInTheDocument();
     const empty = within(screen.getByText(/還沒有班級。/));
-    expect(empty.getByRole("link", { name: "備課庫" })).toHaveAttribute("href", "/library");
+    expect(empty.getByRole("link", { name: "備課庫" })).toHaveAttribute("href", "/units");
     expect(api.callsTo("POST", "/api/classes")).toHaveLength(0);
     // …and the invitation comes back on request.
     await user.click(empty.getByRole("button", { name: "新增班級" }));
@@ -542,7 +537,7 @@ describe("備課庫", () => {
       "DELETE /api/classes/3/units/1": classDetail(class3, []),
     });
     const user = userEvent.setup();
-    renderApp("/library");
+    renderApp("/units");
 
     expect(await screen.findByRole("heading", { name: "備課庫", level: 1 })).toBeInTheDocument();
     const rows = await within(await screen.findByRole("list", { name: "單元" })).findAllByRole("listitem");
@@ -584,7 +579,7 @@ describe("備課庫", () => {
       "GET /api/units/4/materials": [],
     });
     const user = userEvent.setup();
-    renderApp("/library");
+    renderApp("/units");
     // The form opens on request; the page's one filled action then is 「建立單元」.
     await user.click(await screen.findByRole("button", { name: "新增單元" }));
     const pick = await screen.findByRole("combobox", { name: "給哪個班級用？" });
@@ -610,36 +605,28 @@ describe("備課庫", () => {
       "GET /api/classes": [class3, class7],
     });
     const user = userEvent.setup();
-    renderApp("/library");
+    renderApp("/units");
     await user.click(await screen.findByRole("link", { name: "L3 倒裝句" }));
     expect(await screen.findByRole("heading", { name: "L3 倒裝句", level: 1 })).toBeInTheDocument();
     expect(window.sessionStorage.getItem(CURRENT_CLASS_STORAGE_KEY)).toBeNull();
     // The breadcrumb leads back to the library; the classes are named once, as a fact.
-    expect(document.querySelector(".crumbs a")).toHaveAttribute("href", "/library");
+    expect(within(document.querySelector(".crumbs") as HTMLElement).getByRole("link", { name: "備課庫" })).toHaveAttribute(
+      "href",
+      "/units",
+    );
     expect(screen.getByText("高一 3 班、高一 7 班在用")).toBeInTheDocument();
     expectNoClassField();
   });
 });
 
 describe("the class is context, never a field", () => {
-  it("a unit entered from a class shows that class in the breadcrumb, and Manna gets that class", async () => {
+  it("a unit entered from a class shows that class in the breadcrumb and keeps it as the context", async () => {
     signIn();
-    const api = mockApi({
+    mockApi({
       ...baseRoutes(),
       "GET /api/classes/3": classDetail(class3, [classUnit(shared)]),
       "GET /api/units/1": shared,
       "GET /api/units/1/lessons": [],
-      "GET /api/units/1/materials": [
-        { id: 31, filename: "L3 課文", char_count: 120, created_at: "2026-11-10T08:00:00Z" },
-      ],
-      "POST /api/units/1/material-focuses": {
-        interaction_id: 1,
-        status: "blocked",
-        message: "目前暫無建議，你可以繼續手動完成。",
-        output: null,
-        sources: [],
-        context: [],
-      },
     });
     const user = userEvent.setup();
     renderApp("/classes/3");
@@ -647,20 +634,11 @@ describe("the class is context, never a field", () => {
 
     expect(await screen.findByRole("heading", { name: "L3 倒裝句", level: 1 })).toBeInTheDocument();
     expectNoClassField();
-    // The breadcrumb leads back to the class, and the profile shown is that class's.
+    // The breadcrumb leads back to the class; the class profile is not repeated on the unit page.
     expect(screen.getByRole("link", { name: "高一 3 班" })).toHaveAttribute("href", "/classes/3");
-    const profile = within(screen.getByRole("region", { name: "班級特性" }));
-    expect(profile.getByText(/高一 3 班的班級特性/)).toBeInTheDocument();
-    expect(profile.getByText("三班：不太敢開口")).toBeInTheDocument();
-    expect(profile.getByRole("link", { name: "到班級頁修改" })).toHaveAttribute("href", "/classes/3");
+    expect(screen.queryByRole("region", { name: "班級特性" })).not.toBeInTheDocument();
+    expect(screen.queryByText("三班：不太敢開口")).not.toBeInTheDocument();
     expect(window.sessionStorage.getItem(CURRENT_CLASS_STORAGE_KEY)).toBe("3");
-
-    // Manna's context follows the class the teacher came from.
-    await user.click(screen.getByRole("button", { name: /教材/ }));
-    await user.click(await screen.findByRole("button", { name: /候選/ }));
-    await waitFor(() =>
-      expect(api.lastBody("POST", "/api/units/1/material-focuses")).toEqual({ material_id: 31, class_id: 3 }),
-    );
   });
 
   it("with exactly one class, that class is the context without choosing", async () => {
@@ -678,37 +656,46 @@ describe("the class is context, never a field", () => {
     expectNoClassField();
   });
 
-  it("a unit no class uses keeps its own (legacy) class profile and points to the library", async () => {
+  it("a unit no class uses points to the library to add it to a class", async () => {
     signIn();
     mockApi({
       ...baseRoutes(),
       "GET /api/units/1": unitWith({ class_profile: "單元舊描述" }),
       "GET /api/units/1/lessons": [],
-      "GET /api/units/1/materials": [],
     });
     renderApp("/units/1");
     expect(await screen.findByText(/還沒有班級在用/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "到備課庫加到班級" })).toHaveAttribute("href", "/library");
-    expect(screen.getByRole("textbox", { name: "這個單元的班級特性" })).toHaveValue("單元舊描述");
+    expect(screen.getByRole("link", { name: "到備課庫加到班級" })).toHaveAttribute("href", "/units");
+    // The unit's legacy profile is kept on the server but no longer edited here.
+    expect(screen.queryByRole("textbox", { name: /班級特性/ })).not.toBeInTheDocument();
   });
 
-  it("the lesson page shows the class once, uses its profile, and sends it with suggestion requests", async () => {
+  it("the lesson page shows the class once and sends it when Manna is asked", async () => {
     signIn();
     window.sessionStorage.setItem(CURRENT_CLASS_STORAGE_KEY, "7");
     const api = mockApi(
       lessonRoutes(shared, {
-        "GET /api/lessons/7": (call: MockCall) =>
-          call.url.includes("class_id=7")
-            ? lessonDetail({ class_description: "", effective_class_profile: "七班：活潑、愛發言", class_profile_source: "class" })
-            : lessonDetail({ class_description: "", effective_class_profile: "" }),
-        "POST /api/lessons/7/suggestions": {
-          interaction_id: 1,
-          status: "blocked",
-          message: "目前暫無建議，你可以繼續手動完成。",
-          output: null,
-          sources: [],
-          context: [],
+        "GET /api/lessons/7/sop": {
+          lesson_id: 7,
+          version_no: 1,
+          versions_count: 1,
+          saved_at: "2026-11-14T08:00:00Z",
+          material: {
+            id: 1,
+            version_no: 1,
+            title: "L3",
+            source_note: "",
+            text: "Not only does Amy sing well.",
+            paragraphs: [{ id: "p1", no: 1, text: "Not only does Amy sing well." }],
+            word_count: 6,
+            created_at: "2026-11-14T08:00:00Z",
+          },
+          content: emptyContent(),
+          today_objective: "",
+          jobs: { analysis: null, objectives: null },
         },
+        "GET /api/materials/1/annotations": [],
+        "POST /api/lessons/7/sop/analysis": respond(503, { error: { code: "ai_unavailable", message: "暫時不能用" } }),
       }),
     );
     const user = userEvent.setup();
@@ -716,21 +703,20 @@ describe("the class is context, never a field", () => {
     expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "高一 7 班" })).toHaveAttribute("href", "/classes/7");
     expectNoClassField();
-    expect(todayCard().getByText(/上課紀錄會記在「高一 7 班」。/)).toBeInTheDocument();
+    // The class's profile is not shown or overridden on the lesson page: it is edited on the class page.
+    expect(screen.queryByText(/本課背景/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/這節課的班級描述/)).not.toBeInTheDocument();
 
-    // The class's profile is what is in effect; it sits with the lesson background, not in the page head.
-    await openSection(user, "本課背景");
-    const effective = within(screen.getByLabelText("目前生效的班級特性"));
-    expect(await effective.findByText("七班：活潑、愛發言")).toBeInTheDocument();
-    expect(effective.getByText(/高一 7 班的班級特性/)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "請 Manna 提供建議" }));
-    await waitFor(() => expect(api.lastBody("POST", "/api/lessons/7/suggestions")).toEqual({ class_id: 7 }));
+    await user.click(within(screen.getByRole("navigation", { name: "備課步驟" })).getByRole("button", { name: /分析寫作特色/ }));
+    await user.click(await screen.findByRole("button", { name: /請 Manna/ }));
+    await waitFor(() => expect(api.lastBody("POST", "/api/lessons/7/sop/analysis")).toEqual({ class_id: 7 }));
   });
 });
 
 describe("開始上課: the class is asked once, and only when it is not known", () => {
-  const startButton = () => todayCard().getByRole("button", { name: "開始上課" });
+  /** 「開始上課」 is a secondary button in the lesson page head. */
+  const startButton = () =>
+    within(document.querySelector(".lesson-head") as HTMLElement).getByRole("button", { name: "開始上課" });
   const dialog = () => screen.queryByRole("dialog", { name: "這節課在哪一班上？" });
 
   async function openLesson() {
@@ -814,7 +800,9 @@ describe("開始上課: the class is asked once, and only when it is not known",
     );
     const user = userEvent.setup();
     const { router } = await openLesson();
-    await user.click(await todayCard().findByRole("button", { name: "回到課堂" }));
+    await user.click(
+      await within(document.querySelector(".lesson-head") as HTMLElement).findByRole("button", { name: "回到課堂" }),
+    );
     await waitFor(() => expect(router.state.location.pathname).toBe("/runs/9"));
     expect(api.callsTo("POST", "/api/lessons/7/runs")).toHaveLength(0);
   });

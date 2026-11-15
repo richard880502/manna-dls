@@ -381,9 +381,6 @@ describe("entries", () => {
     const api = mockApi({
       ...routes(fromLesson),
       "GET /api/lessons/7": lessonDetail({ latest_version: null, versions_count: 0 }),
-      "GET /api/units/1/core": { id: 1, unit_id: 1, focuses: [] },
-      "GET /api/siop": [],
-      "GET /api/teacher-cases": [],
       "GET /api/lessons/7/runs": [],
       "GET /api/lessons/7/sop": {
         lesson_id: 7,
@@ -399,7 +396,10 @@ describe("entries", () => {
     });
     const user = userEvent.setup();
     renderApp("/lessons/7");
-    await user.click(await screen.findByRole("button", { name: "產生學習單" }));
+    // The rail ends with 產生學習單, so it can be made from any step.
+    await user.click(
+      await within(await screen.findByRole("navigation", { name: "備課步驟" })).findByRole("button", { name: /產生學習單/ }),
+    );
 
     expect(await screen.findByRole("heading", { name: "做一份學習單", level: 1 })).toBeInTheDocument();
     expect(api.lastBody("POST", "/api/worksheets")).toEqual({ lesson_id: 7 });

@@ -180,18 +180,24 @@ export function HomePage() {
       ) : (
         <div className="page-head">
           <h1 id="home-heading">班級</h1>
-          <p className="lead">每個班級有自己的進度與上課紀錄；單元在備課庫準備，一份可以給好幾個班用。</p>
+          <p className="lead">每個班級有自己的進度與上課紀錄；一份單元可以給好幾個班用。</p>
         </div>
       )}
 
       <section className="section" aria-labelledby="classes-heading">
         <div className="head-row">
           <h2 id="classes-heading">我的班級</h2>
-          {classes && active.length > 0 && !adding && (
-            <button type="button" className="text-link" onClick={() => setAdding(true)}>
-              新增班級
-            </button>
-          )}
+          <span className="actions">
+            {/* Every unit, to reuse one in another class: reached from here, not from the top bar. */}
+            <Link className="text-link is-plain" to="/units">
+              所有單元
+            </Link>
+            {classes && active.length > 0 && !adding && (
+              <button type="button" className="text-link" onClick={() => setAdding(true)}>
+                新增班級
+              </button>
+            )}
+          </span>
         </div>
 
         {loadError && <ErrorText message={loadError} />}
@@ -215,7 +221,7 @@ export function HomePage() {
         )}
         {classes && active.length === 0 && skipped && (
           <p className="empty-line">
-            還沒有班級。可以先到<Link to="/library">備課庫</Link>準備單元，之後再
+            還沒有班級。可以先到<Link to="/units">備課庫</Link>準備單元，之後再
             <button type="button" className="text-link" onClick={() => setSkipped(false)}>
               新增班級
             </button>

@@ -116,12 +116,6 @@ describe("admin page (pi)", () => {
     await waitFor(() => expect(api.lastBody("PUT", "/api/admin/settings")).toEqual({ route_choice_enabled: false }));
     expect(await screen.findByText(/已關閉：所有單元改用固定的「目標優先」順序/)).toBeInTheDocument();
     expect(toggle).not.toBeChecked();
-
-    // the rest of the app follows the new setting without a reload
-    await user.click(screen.getByRole("link", { name: "備課庫" }));
-    await user.click(await screen.findByRole("button", { name: "新增單元" }));
-    await screen.findByLabelText("單元名稱");
-    expect(screen.queryByRole("radio", { name: /教材優先/ })).not.toBeInTheDocument();
   });
 
   it("hides the admin page from teachers", async () => {
