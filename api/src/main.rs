@@ -85,14 +85,22 @@ fn report_storage(storage: &StorageConfig) {
             tracing::info!(endpoint = %settings.endpoint, bucket = %settings.bucket,
                 "material files go to S3-compatible storage");
             tokio::spawn(async move {
-                match S3Storage::new(&settings) {
-                    Ok(s3) => match s3.check().await {
-                        Ok(()) => tracing::info!("S3 bucket is reachable"),
+                let s3 = match S3Storage::new(&settings) {
+                    Ok(s3) => s3,
+                    Err(e) => return tracing::error!("S3 settings are invalid: {e:#}"),
+                };
+                // MinIO may still be starting when the app comes up: retry for about a minute.
+                for attempt in 1..=12 {
+                    match s3.ensure_bucket().await {
+                        Ok(state) => return tracing::info!(?state, "S3 bucket is ready"),
+                        Err(e) if attempt < 12 => {
+                            tracing::warn!(attempt, "S3 bucket not ready yet: {e:#}");
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        }
                         Err(e) => tracing::error!(
                             "S3 bucket check failed (uploads will fail until this is fixed): {e:#}"
                         ),
-                    },
-                    Err(e) => tracing::error!("S3 settings are invalid: {e:#}"),
+                    }
                 }
             });
         }

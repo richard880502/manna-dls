@@ -254,7 +254,7 @@ API 合約見 `docs/API.md`「Phase 2.2：教材與注記」；給規格 §12 �
 - 上限（2 核心／8 GB 主機）：文件（.txt .docx .pdf）20 MB、圖片（.png .jpg .webp .gif）10 MB、音訊（.mp3 .m4a .wav）30 MB、影片（.mp4 .webm）100 MB；每位教師檔案合計 1 GB、教材 300 份；同時最多 2 個上傳在記憶體中處理。副檔名之外也檢查檔頭（magic bytes），內容不符就拒收；回應的 Content-Type 由伺服器決定，並加 `nosniff` 與 sandbox CSP。
 - 單元的「教材優先」菜單（`unit_materials`）仍是獨立的貼上文字功能，尚未併入教材庫（見 `docs/ENGINEERING_REPLY.md` 待辦）。
 
-**Coolify 上要做的事（主持人／工程）**：在 manna 專案新增 MinIO 服務（Coolify 內建範本，映像 `ghcr.io/coollabsio/minio`），只開內部網路、不對外開 9000/9001；建 bucket `manna-materials`（不開 versioning）；建一個只對這個 bucket 有 `s3:GetObject`、`s3:PutObject`、`s3:DeleteObject`、`s3:ListBucket` 的使用者；在 app 的環境變數設 `STORAGE_BACKEND=s3`、`S3_ENDPOINT=http://<MinIO 服務內部名稱>:9000`、`S3_BUCKET=manna-materials`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`（`S3_REGION` 可不設）。MinIO 的資料卷要納入主機備份規劃。主機 nginx 的 manna 站台加 `client_max_body_size 105m;`（預設 1 MB 會擋掉上傳）。
+**部署方式（2026-11-15 上線）**：MinIO 寫在 app 同一份 `docker-compose.yml`（服務 `minio`，映像釘在 `ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z`），不開任何對外埠、關閉網頁主控台，只有 app 在內部網路連得到。帳密用 Coolify 的魔法變數 `SERVICE_USER_MINIO`／`SERVICE_PASSWORD_MINIO`：由 Coolify 產生一次、兩個服務共用，沒有人經手。bucket `manna-materials` 由後端第一次啟動時自動建立（MinIO 新 bucket 預設不開 versioning）。後端用的是 MinIO 的 root 帳密而不是只限這個 bucket 的帳號：MinIO 只服務這一個 bucket、不對外，風險可接受；之後若有其他服務共用 MinIO 再拆出受限帳號。主機 nginx 的 manna 站台已設 `client_max_body_size 105m;`。**待辦**：MinIO 資料卷（`minio-data`）不在 Coolify 的資料庫備份內，要納入主機備份規劃（與異地備份一起由主持人決定，§12）。
 
 ### 13.4 其他延後項目
 

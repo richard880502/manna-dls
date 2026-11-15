@@ -10,13 +10,14 @@
 //!   S3_TEST_SECRET_KEY=manna-test-secret-key cargo test --test storage_s3 -- --nocapture
 //! ```
 //!
-//! The test creates its own bucket (`manna-test-<random>`), without versioning, and removes it.
+//! The test has the backend create its own bucket (`manna-test-<random>`, without versioning),
+//! then removes it.
 
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use manna_api::storage::s3::S3Storage;
+use manna_api::storage::s3::{BucketState, S3Storage};
 use manna_api::storage::{ByteRange, ByteStream, S3Settings, Storage, StorageError};
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
 
@@ -46,8 +47,15 @@ async fn s3_backend_puts_reads_ranges_and_really_deletes() {
     };
     let store = S3Storage::new(&settings).expect("settings");
 
-    // The bucket does not exist yet: the startup check says so instead of panicking.
-    assert!(store.check().await.is_err());
+    // The bucket does not exist yet: the startup step creates it, and finds it the next time.
+    assert_eq!(
+        store.ensure_bucket().await.expect("create"),
+        BucketState::Created
+    );
+    assert_eq!(
+        store.ensure_bucket().await.expect("exists"),
+        BucketState::Existed
+    );
     let http = reqwest::Client::new();
     let bucket = Bucket::new(
         endpoint.parse().unwrap(),
@@ -58,13 +66,6 @@ async fn s3_backend_puts_reads_ranges_and_really_deletes() {
     .unwrap();
     let credentials = Credentials::new(access_key, secret_key);
     let sign = Duration::from_secs(60);
-    let created = http
-        .put(bucket.create_bucket(&credentials).sign(sign))
-        .send()
-        .await
-        .unwrap();
-    assert!(created.status().is_success(), "{}", created.status());
-    store.check().await.expect("bucket reachable");
 
     // Objects are private: an unsigned request is refused.
     let key = "t7/0123456789abcdef.txt";
