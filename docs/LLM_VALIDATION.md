@@ -40,6 +40,7 @@
 | 失控重複 | 270 份學習單標註中有 3 份在 enum 陣列內無限重複同一個值（temperature 0），其中 2 份改用 temperature 0.5 仍失敗。**不設 `max_tokens` 時請求會卡到 HTTP 逾時**，而且之後一段時間其他請求也變慢或逾時 |
 | 逾時 | chain 評估的 145 次呼叫中有 8 次 200 秒無回應（重試後成功） |
 | 空白失控 | (g) 這類長輸出有另一種失控：在 JSON 內不停輸出空白與換行直到 `max_tokens`（chain 中 8 次，集中在 (g)） |
+| 欄位順序 | **受限解碼要模型照 schema `properties` 的順序寫欄位。** 平台第一版的 Rust 伺服器用 `serde_json` 預設設定，`json!` 會把欄位按字母排序（`answer_en` 在 `prompt_en` 前、`title_en` 在 `items` 後）；模型寫完它以為的最後一個欄位想結束物件時，文法只允許空白，於是一直輸出空白直到 `max_tokens`。暖身同一請求按字母排序 3/4 次失控、照撰寫順序 0/6；`frequency_penalty`、`repetition_penalty` 救不回（前者變成 4 萬字空格），`structured_outputs.disable_any_whitespace` 閘道不採用。伺服器改開 `preserve_order` 後正式模型 12 份學習單、48 步全部成功、0 次失控（`docs/llm-eval/worksheet-real/`）。本研究的 Python 腳本本來就保留順序，所以上面的比例沒有受影響 |
 | 閘道快取 | **完全相同的請求會被快取**：失控後原樣重試，不到 1 秒就拿回同一個失敗結果。重試必須改變請求（本次改 temperature） |
 | 陣列提早結束 | strict schema 不能限制陣列長度，模型有時只輸出前幾筆就收尾（見 §6.2 的 (a)） |
 | 輸出怪癖 | 中英文欄位偶爾出現 LaTeX 箭頭 `$\rightarrow$`（JSON 解碼後變成亂碼）；段落編號曾輸出負數；會自行把英文人名譯成中文 |

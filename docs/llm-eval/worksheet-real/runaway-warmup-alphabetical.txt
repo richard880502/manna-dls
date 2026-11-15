@@ -1,0 +1,10 @@
+{
+  "background_activities": [
+    {
+      "answer_format": "簡答題",
+      "instructions_en": "Think about a skill you want to learn or a goal you want to achieve. Answer the questions below.",
+      "prompts_en": [⟨9 whitespace⟩"What is one thing you want to be better at?",⟨9 whitespace⟩"Do you think it is better to practice for 5 hours once a month, or 15 minutes every day? Why?"
+      ],
+      "purpose_zh": "連結個人經驗，引導學生思考「持續小努力」與「偶爾大努力」的差異，為課文核心觀點做鋪陳。",
+      "student_tasks": [⟨9 whitespace⟩"討論／分享"
+      ]⟨7074 whitespace⟩
