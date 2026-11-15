@@ -60,7 +60,8 @@ impl Tally {
         debug_assert!(self.names.contains(&name), "undeclared check {name}");
         self.failures.entry(name).or_default().push(problem.clone());
         if !repair.is_empty() {
-            self.repairs.push(format!("{repair}：{}", clip_chars(&problem, 160)));
+            self.repairs
+                .push(format!("{repair}：{}", clip_chars(&problem, 160)));
         }
         self.problems.push(problem);
     }
@@ -191,7 +192,10 @@ fn paragraph_label(nos: &[i64]) -> String {
         }
         many => format!(
             "Paragraphs {}",
-            many.iter().map(i64::to_string).collect::<Vec<_>>().join(", ")
+            many.iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     }
 }
@@ -228,7 +232,10 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
         if info_function_from_label(&b.info_function).is_none() {
             t.fail(
                 "labels_from_spec_sets",
-                format!("{name} 的 info_function「{}」不在允許的清單內。", b.info_function),
+                format!(
+                    "{name} 的 info_function「{}」不在允許的清單內。",
+                    b.info_function
+                ),
                 "整個區塊拿掉",
             );
             continue;
@@ -323,7 +330,10 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             if !ANSWER_FORMATS.contains(&item.answer_format.as_str()) {
                 t.fail(
                     "labels_from_spec_sets",
-                    format!("{iname} 的 answer_format「{}」不在允許的清單內。", it.answer_format),
+                    format!(
+                        "{iname} 的 answer_format「{}」不在允許的清單內。",
+                        it.answer_format
+                    ),
                     "拿掉這一題",
                 );
                 continue;
@@ -380,7 +390,8 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             items.push(item);
         }
         if items.is_empty() {
-            t.repairs.push(format!("{name} 沒有剩下可用的題目，整個區塊拿掉"));
+            t.repairs
+                .push(format!("{name} 沒有剩下可用的題目，整個區塊拿掉"));
             continue;
         }
         // Every version shows the core items: a block needs at least one.
@@ -405,7 +416,10 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
     if ctx.only.is_some() {
         blocks.truncate(1);
     } else {
-        let covered: HashSet<i64> = blocks.iter().flat_map(|b| b.paragraph_nos.clone()).collect();
+        let covered: HashSet<i64> = blocks
+            .iter()
+            .flat_map(|b| b.paragraph_nos.clone())
+            .collect();
         let missing: Vec<String> = (1..=n)
             .filter(|p| !covered.contains(p))
             .map(|p| format!("[P{p}]"))
@@ -413,16 +427,26 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
         if !missing.is_empty() && !blocks.is_empty() {
             t.fail(
                 "all_paragraphs_covered",
-                format!("這些段落沒有被任何區塊涵蓋：{}。每一段都要有區塊。", missing.join("、")),
+                format!(
+                    "這些段落沒有被任何區塊涵蓋：{}。每一段都要有區塊。",
+                    missing.join("、")
+                ),
                 "",
             );
         }
         // A closing whole-text block (first and last paragraph) may follow the others.
-        let closing = blocks.last().is_some_and(|b| {
-            n > 1 && b.paragraph_nos.contains(&1) && b.paragraph_nos.contains(&n)
-        });
-        let ordered = if closing { blocks.len() - 1 } else { blocks.len() };
-        let firsts: Vec<i64> = blocks[..ordered].iter().map(|b| b.paragraph_nos[0]).collect();
+        let closing = blocks
+            .last()
+            .is_some_and(|b| n > 1 && b.paragraph_nos.contains(&1) && b.paragraph_nos.contains(&n));
+        let ordered = if closing {
+            blocks.len() - 1
+        } else {
+            blocks.len()
+        };
+        let firsts: Vec<i64> = blocks[..ordered]
+            .iter()
+            .map(|b| b.paragraph_nos[0])
+            .collect();
         if firsts.windows(2).any(|w| w[0] > w[1]) {
             t.fail(
                 "blocks_in_paragraph_order",
@@ -481,13 +505,20 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             it.item_id = format!("B{}-{}", bi + 1, ii + 1);
         }
     }
-    let output = if blocks.is_empty() { None } else { Some(blocks) };
+    let output = if blocks.is_empty() {
+        None
+    } else {
+        Some(blocks)
+    };
     t.finish(output)
 }
 
 /// Paragraph numbers (from 1) that no block covers.
 pub fn uncovered_paragraphs(blocks: &[RawBlock], paragraphs: usize) -> Vec<i64> {
-    let covered: HashSet<i64> = blocks.iter().flat_map(|b| b.paragraph_nos.clone()).collect();
+    let covered: HashSet<i64> = blocks
+        .iter()
+        .flat_map(|b| b.paragraph_nos.clone())
+        .collect();
     (1..=paragraphs as i64)
         .filter(|p| !covered.contains(p))
         .collect()
@@ -706,7 +737,10 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
                 } else if content.is_empty() || !english_only(&content) {
                     t.fail(
                         "english_only",
-                        format!("{target} 的{what}「{}」含有中文或沒有內容；鷹架只能用英文。", sup.kind),
+                        format!(
+                            "{target} 的{what}「{}」含有中文或沒有內容；鷹架只能用英文。",
+                            sup.kind
+                        ),
                         "拿掉這個鷹架",
                     );
                 } else if ctx.answers.iter().any(|a| contains_answer(&content, a)) {
@@ -766,7 +800,9 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
         if procedural.is_empty() {
             t.fail(
                 "each_target_has_procedural",
-                format!("{target} 沒有可用的程序鷹架；每個區塊至少要 1 個，steps_en 列出 2–5 個步驟。"),
+                format!(
+                    "{target} 沒有可用的程序鷹架；每個區塊至少要 1 個，steps_en 列出 2–5 個步驟。"
+                ),
                 "由程式產生分步指示",
             );
         }
@@ -786,7 +822,10 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
     if !missing.is_empty() {
         t.fail(
             "targets_match_blocks_and_warmup",
-            format!("這些區塊沒有鷹架：{}。每個 target 都要有一筆。", missing.join("、")),
+            format!(
+                "這些區塊沒有鷹架：{}。每個 target 都要有一筆。",
+                missing.join("、")
+            ),
             "缺的區塊由程式產生分步指示",
         );
     }
@@ -880,7 +919,8 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
                 "拿掉清單以外的標籤",
             );
         }
-        item.objective_refs.retain(|r| ctx.objective_ids.contains(r));
+        item.objective_refs
+            .retain(|r| ctx.objective_ids.contains(r));
         if item.purpose == formative && item.sample_answer_en.is_none() {
             t.fail(
                 "formative_has_sample_answer",
@@ -893,8 +933,15 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
     if !(2..=4).contains(&items.len()) {
         t.fail(
             "item_count_2_4",
-            format!("Exit ticket 需要 2–4 題可用的題目，現在有 {} 題。", items.len()),
-            if items.len() > 4 { "只留前 4 題" } else { "" },
+            format!(
+                "Exit ticket 需要 2–4 題可用的題目，現在有 {} 題。",
+                items.len()
+            ),
+            if items.len() > 4 {
+                "只留前 4 題"
+            } else {
+                ""
+            },
         );
     }
     items.truncate(4);
@@ -930,7 +977,8 @@ mod tests {
     use crate::worksheet::schemas::{RawProcedure, RawSupport};
 
     const P1: &str = "Mrs. Lin put an umbrella stand outside her shop on a rainy Monday.";
-    const P2: &str = "Her neighbors laughed at the idea. They were sure every umbrella would be gone.";
+    const P2: &str =
+        "Her neighbors laughed at the idea. They were sure every umbrella would be gone.";
     const P3: &str = "In the first month, twelve umbrellas did disappear. However, something unexpected followed.";
 
     fn paragraphs() -> Vec<String> {
@@ -981,9 +1029,25 @@ mod tests {
         let p = paragraphs();
         let raw = RawTasks {
             blocks: vec![
-                block(&[1], "發現資訊", vec![item("簡答題", "Where was the stand?", "Outside her shop.")]),
-                block(&[2], "分析資訊", vec![item("簡答題", "Why did they laugh?", "They expected theft.")]),
-                block(&[3], "創造資訊", vec![item("段落寫作", "Write your own ending.", "Answers vary.")]),
+                block(
+                    &[1],
+                    "發現資訊",
+                    vec![item("簡答題", "Where was the stand?", "Outside her shop.")],
+                ),
+                block(
+                    &[2],
+                    "分析資訊",
+                    vec![item(
+                        "簡答題",
+                        "Why did they laugh?",
+                        "They expected theft.",
+                    )],
+                ),
+                block(
+                    &[3],
+                    "創造資訊",
+                    vec![item("段落寫作", "Write your own ending.", "Answers vary.")],
+                ),
             ],
         };
         let e = evaluate_tasks(&raw, &tasks_ctx(&p, &[]));
@@ -998,7 +1062,11 @@ mod tests {
         let p = paragraphs();
         let mut cjk = item("簡答題", "請回答 Why?", "Because.");
         cjk.tier = "support".into();
-        let mut spliced = item("簡答題", "What happened in the first month?", "Twelve disappeared.");
+        let mut spliced = item(
+            "簡答題",
+            "What happened in the first month?",
+            "Twelve disappeared.",
+        );
         spliced.evidence = Some("In the first month ... unexpected followed.".into());
         let mut mcq = item("選擇題", "Pick one.", "A");
         mcq.options = vec!["A".into(), "B".into()];
@@ -1007,12 +1075,20 @@ mod tests {
             "They were sure every umbrella would be gone. What were they sure about?",
             "every umbrella would be gone",
         );
-        let mut labelled = block(&[2], "發現資訊", vec![item("簡答題", "Who laughed?", "The neighbors."), leak]);
+        let mut labelled = block(
+            &[2],
+            "發現資訊",
+            vec![item("簡答題", "Who laughed?", "The neighbors."), leak],
+        );
         labelled.student_tasks.push("探究".into());
         labelled.objective_refs = vec!["O9".into()];
         let raw = RawTasks {
             blocks: vec![
-                block(&[1], "發現資訊", vec![item("簡答題", "Where?", "Outside."), cjk, mcq]),
+                block(
+                    &[1],
+                    "發現資訊",
+                    vec![item("簡答題", "Where?", "Outside."), cjk, mcq],
+                ),
                 labelled,
                 block(&[3], "發現資訊", vec![spliced]),
                 block(&[3], "高層次思考", vec![item("簡答題", "Q?", "A.")]),
@@ -1033,7 +1109,11 @@ mod tests {
             assert!(names.contains(&expected), "{expected} in {names:?}");
         }
         let blocks = e.output.unwrap();
-        assert_eq!(blocks.len(), 3, "the block with a label outside the set is gone");
+        assert_eq!(
+            blocks.len(),
+            3,
+            "the block with a label outside the set is gone"
+        );
         assert_eq!(blocks[0].items.len(), 1);
         assert_eq!(blocks[1].student_tasks, vec!["理解內容".to_string()]);
         assert!(blocks[1].objective_refs.is_empty());
@@ -1049,7 +1129,10 @@ mod tests {
             .map(|i| item("簡答題", &format!("Question {i}?"), "Yes."))
             .collect();
         let raw = RawTasks {
-            blocks: vec![block(&[2], "發現資訊", many), block(&[1], "分析資訊", vec![item("簡答題", "Q?", "A.")])],
+            blocks: vec![
+                block(&[2], "發現資訊", many),
+                block(&[1], "分析資訊", vec![item("簡答題", "Q?", "A.")]),
+            ],
         };
         let mut ctx = tasks_ctx(&p, &[]);
         ctx.item_budget = 4;
@@ -1069,8 +1152,18 @@ mod tests {
     fn warmup_keeps_only_candidates_and_levels_from_data() {
         let p = paragraphs();
         let candidates = vec![
-            Candidate { word: "disappear".into(), level: Some(2), paragraph_no: 3, sentence: "In the first month, twelve umbrellas did disappear.".into() },
-            Candidate { word: "unexpected".into(), level: Some(4), paragraph_no: 3, sentence: "However, something unexpected followed.".into() },
+            Candidate {
+                word: "disappear".into(),
+                level: Some(2),
+                paragraph_no: 3,
+                sentence: "In the first month, twelve umbrellas did disappear.".into(),
+            },
+            Candidate {
+                word: "unexpected".into(),
+                level: Some(4),
+                paragraph_no: 3,
+                sentence: "However, something unexpected followed.".into(),
+            },
         ];
         let raw = RawWarmup {
             background_activities: vec![RawBackground {
@@ -1082,21 +1175,57 @@ mod tests {
                 purpose_zh: "連結個人經驗".into(),
             }],
             key_vocabulary: vec![
-                RawKeyWord { word: "Disappear".into(), paragraph_no: 3, context_sentence: "twelve umbrellas did disappear".into(), student_friendly_definition_en: "to go away".into() },
-                RawKeyWord { word: "unexpected".into(), paragraph_no: 1, context_sentence: "made up sentence".into(), student_friendly_definition_en: "沒想到的".into() },
-                RawKeyWord { word: "trust".into(), paragraph_no: 1, context_sentence: "x".into(), student_friendly_definition_en: "belief".into() },
+                RawKeyWord {
+                    word: "Disappear".into(),
+                    paragraph_no: 3,
+                    context_sentence: "twelve umbrellas did disappear".into(),
+                    student_friendly_definition_en: "to go away".into(),
+                },
+                RawKeyWord {
+                    word: "unexpected".into(),
+                    paragraph_no: 1,
+                    context_sentence: "made up sentence".into(),
+                    student_friendly_definition_en: "沒想到的".into(),
+                },
+                RawKeyWord {
+                    word: "trust".into(),
+                    paragraph_no: 1,
+                    context_sentence: "x".into(),
+                    student_friendly_definition_en: "belief".into(),
+                },
             ],
         };
-        let e = evaluate_warmup(&raw, &WarmupCtx { paragraphs: &p, candidates: &candidates, vocab_count: 6 });
+        let e = evaluate_warmup(
+            &raw,
+            &WarmupCtx {
+                paragraphs: &p,
+                candidates: &candidates,
+                vocab_count: 6,
+            },
+        );
         let names = failed(&e.results);
-        for expected in ["labels_from_spec_sets", "vocab_only_from_candidates", "context_sentence_verbatim", "english_only"] {
+        for expected in [
+            "labels_from_spec_sets",
+            "vocab_only_from_candidates",
+            "context_sentence_verbatim",
+            "english_only",
+        ] {
             assert!(names.contains(&expected), "{expected} in {names:?}");
         }
         let w = e.output.unwrap();
-        assert_eq!(w.activities[0].student_tasks, vec!["討論／分享".to_string()]);
+        assert_eq!(
+            w.activities[0].student_tasks,
+            vec!["討論／分享".to_string()]
+        );
         assert_eq!(w.words.len(), 2);
-        assert_eq!((w.words[0].word.as_str(), w.words[0].level), ("disappear", Some(2)));
-        assert_eq!(w.words[1].context, "However, something unexpected followed.");
+        assert_eq!(
+            (w.words[0].word.as_str(), w.words[0].level),
+            ("disappear", Some(2))
+        );
+        assert_eq!(
+            w.words[1].context,
+            "However, something unexpected followed."
+        );
         assert_eq!(w.words[1].definition, "");
     }
     use crate::worksheet::schemas::{RawBackground, RawKeyWord};
@@ -1105,24 +1234,57 @@ mod tests {
     fn scaffolds_need_a_procedure_and_must_not_give_the_answer() {
         let targets = vec!["warm_up".to_string(), "B1".to_string(), "B2".to_string()];
         let answers = vec!["because a stranger once shared his umbrella".to_string()];
-        let steps = |s: &[&str]| RawProcedure { kind: "清楚的分步指示及完成順序".into(), steps_en: s.iter().map(|x| x.to_string()).collect() };
+        let steps = |s: &[&str]| RawProcedure {
+            kind: "清楚的分步指示及完成順序".into(),
+            steps_en: s.iter().map(|x| x.to_string()).collect(),
+        };
         let raw = RawScaffolds {
             scaffolds: vec![
-                RawScaffoldSet { target: "warm_up".into(), verbal: vec![], instructional: vec![], procedural: vec![steps(&["Read.", "Talk."])] },
+                RawScaffoldSet {
+                    target: "warm_up".into(),
+                    verbal: vec![],
+                    instructional: vec![],
+                    procedural: vec![steps(&["Read.", "Talk."])],
+                },
                 RawScaffoldSet {
                     target: "B1".into(),
                     verbal: vec![
-                        RawSupport { kind: "句型框架".into(), content_en: "She started it ___ because ___.".into() },
-                        RawSupport { kind: "作答示例".into(), content_en: "She did it because a stranger once shared his umbrella with her.".into() },
-                        RawSupport { kind: "自創".into(), content_en: "x".into() },
+                        RawSupport {
+                            kind: "句型框架".into(),
+                            content_en: "She started it ___ because ___.".into(),
+                        },
+                        RawSupport {
+                            kind: "作答示例".into(),
+                            content_en:
+                                "She did it because a stranger once shared his umbrella with her."
+                                    .into(),
+                        },
+                        RawSupport {
+                            kind: "自創".into(),
+                            content_en: "x".into(),
+                        },
                     ],
-                    instructional: vec![RawSupport { kind: "圖像組織".into(), content_en: "請畫表格".into() }],
+                    instructional: vec![RawSupport {
+                        kind: "圖像組織".into(),
+                        content_en: "請畫表格".into(),
+                    }],
                     procedural: vec![],
                 },
-                RawScaffoldSet { target: "B9".into(), verbal: vec![], instructional: vec![], procedural: vec![steps(&["Go."])] },
+                RawScaffoldSet {
+                    target: "B9".into(),
+                    verbal: vec![],
+                    instructional: vec![],
+                    procedural: vec![steps(&["Go."])],
+                },
             ],
         };
-        let e = evaluate_scaffolds(&raw, &ScaffoldsCtx { targets: &targets, answers: &answers });
+        let e = evaluate_scaffolds(
+            &raw,
+            &ScaffoldsCtx {
+                targets: &targets,
+                answers: &answers,
+            },
+        );
         let names = failed(&e.results);
         for expected in SCAFFOLD_CHECKS {
             assert!(names.contains(&expected), "{expected} in {names:?}");
@@ -1147,11 +1309,18 @@ mod tests {
         };
         let objectives = vec!["O1".to_string()];
         let prompts = vec!["Why did they laugh?".to_string()];
-        let ctx = ExitCtx { objective_ids: &objectives, task_prompts: &prompts };
+        let ctx = ExitCtx {
+            objective_ids: &objectives,
+            task_prompts: &prompts,
+        };
         let good = RawExit {
             estimated_minutes: 3,
             items: vec![
-                ex("形成性評量", "Explain the main idea in one sentence.", Some("Trust grows when it is given.")),
+                ex(
+                    "形成性評量",
+                    "Explain the main idea in one sentence.",
+                    Some("Trust grows when it is given."),
+                ),
                 ex("學生反思", "What was hard today?", None),
             ],
         };
@@ -1163,11 +1332,20 @@ mod tests {
 
         let bad = RawExit {
             estimated_minutes: 3,
-            items: vec![ex("形成性評量", "why did they laugh?", None), ex("形成性評量", "今天學到什麼？", None)],
+            items: vec![
+                ex("形成性評量", "why did they laugh?", None),
+                ex("形成性評量", "今天學到什麼？", None),
+            ],
         };
         let e = evaluate_exit(&bad, &ctx);
         let names = failed(&e.results);
-        for expected in ["english_only", "not_a_repeat_of_main_task", "item_count_2_4", "has_formative_item", "has_reflection_or_question_item"] {
+        for expected in [
+            "english_only",
+            "not_a_repeat_of_main_task",
+            "item_count_2_4",
+            "has_formative_item",
+            "has_reflection_or_question_item",
+        ] {
             assert!(names.contains(&expected), "{expected} in {names:?}");
         }
         assert!(e.output.is_none());

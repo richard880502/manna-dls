@@ -19,7 +19,8 @@ use super::assemble::{Sheet, SheetBlock, SheetItem};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
 use crate::retrieval::is_cjk;
 
-pub const DOCX_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const DOCX_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 pub const PDF_TYPE: &str = "application/pdf";
 
 #[derive(Debug, thiserror::Error)]
@@ -154,7 +155,9 @@ fn table(cols: &[u32], rows: &[Vec<String>], height: Option<u32>, header: bool) 
         .iter()
         .map(|w| format!("<w:gridCol w:w=\"{w}\"/>"))
         .collect();
-    let border = |side: &str| format!("<w:{side} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"8C8C8C\"/>");
+    let border = |side: &str| {
+        format!("<w:{side} w:val=\"single\" w:sz=\"4\" w:space=\"0\" w:color=\"8C8C8C\"/>")
+    };
     let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
         .iter()
         .map(|s| border(s))
@@ -196,45 +199,99 @@ const MUTED_INK: &str = "595959";
 
 fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
     out.push_str(&para(
-        &[run(&format!("{}.\t", it.no), RunStyle { bold: true, ..RunStyle::default() }), run(&it.prompt, RunStyle::default())],
-        &ParaStyle { indent: 400, hanging: 400, before: 120, after: 40, ..ParaStyle::default() },
+        &[
+            run(
+                &format!("{}.\t", it.no),
+                RunStyle {
+                    bold: true,
+                    ..RunStyle::default()
+                },
+            ),
+            run(&it.prompt, RunStyle::default()),
+        ],
+        &ParaStyle {
+            indent: 400,
+            hanging: 400,
+            before: 120,
+            after: 40,
+            ..ParaStyle::default()
+        },
     ));
     for (i, o) in it.options.iter().enumerate() {
         out.push_str(&para(
-            &[run(&format!("({}) {o}", option_letter(i)), RunStyle::default())],
-            &ParaStyle { indent: 700, ..ParaStyle::default() },
+            &[run(
+                &format!("({}) {o}", option_letter(i)),
+                RunStyle::default(),
+            )],
+            &ParaStyle {
+                indent: 700,
+                ..ParaStyle::default()
+            },
         ));
     }
     match boxed(it) {
         Some("table") => out.push_str(&table(
             &[DOCX_WIDTH / 2 - 200, DOCX_WIDTH / 2 - 200],
-            &[vec![String::new(), String::new()], vec![String::new(), String::new()], vec![String::new(), String::new()]],
+            &[
+                vec![String::new(), String::new()],
+                vec![String::new(), String::new()],
+                vec![String::new(), String::new()],
+            ],
             Some(520),
             false,
         )),
-        Some(_) => out.push_str(&table(&[DOCX_WIDTH - 400], &[vec![String::new()]], Some(2000), false)),
+        Some(_) => out.push_str(&table(
+            &[DOCX_WIDTH - 400],
+            &[vec![String::new()]],
+            Some(2000),
+            false,
+        )),
         None => {
             for _ in 0..it.lines {
                 out.push_str(&para(
                     &[run(" ", RunStyle::default())],
-                    &ParaStyle { indent: 400, before: 160, border_bottom: true, ..ParaStyle::default() },
+                    &ParaStyle {
+                        indent: 400,
+                        before: 160,
+                        border_bottom: true,
+                        ..ParaStyle::default()
+                    },
                 ));
             }
         }
     }
     if teacher {
-        let gold = RunStyle { color: Some(TEACHER_INK), ..RunStyle::default() };
+        let gold = RunStyle {
+            color: Some(TEACHER_INK),
+            ..RunStyle::default()
+        };
         let gold_bold = RunStyle { bold: true, ..gold };
         if let Some(a) = &it.answer {
             out.push_str(&para(
                 &[run("Answer: ", gold_bold), run(a, gold)],
-                &ParaStyle { indent: 400, before: 60, ..ParaStyle::default() },
+                &ParaStyle {
+                    indent: 400,
+                    before: 60,
+                    ..ParaStyle::default()
+                },
             ));
         }
         if let Some(e) = &it.evidence {
             out.push_str(&para(
-                &[run("Evidence: ", gold_bold), run(&format!("“{e}”"), RunStyle { italic: true, ..gold })],
-                &ParaStyle { indent: 400, ..ParaStyle::default() },
+                &[
+                    run("Evidence: ", gold_bold),
+                    run(
+                        &format!("“{e}”"),
+                        RunStyle {
+                            italic: true,
+                            ..gold
+                        },
+                    ),
+                ],
+                &ParaStyle {
+                    indent: 400,
+                    ..ParaStyle::default()
+                },
             ));
         }
     }
@@ -243,37 +300,126 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
 fn document_xml(sheet: &Sheet) -> String {
     let teacher = sheet.audience == Audience::Teacher;
     let mut body = String::new();
-    body.push_str(&para(&[run(&sheet.title, RunStyle::default())], &ParaStyle { style: Some("Title"), after: 80, ..ParaStyle::default() }));
+    body.push_str(&para(
+        &[run(&sheet.title, RunStyle::default())],
+        &ParaStyle {
+            style: Some("Title"),
+            after: 80,
+            ..ParaStyle::default()
+        },
+    ));
     if teacher {
         body.push_str(&para(
-            &[run(&teacher_banner(sheet), RunStyle { color: Some(TEACHER_INK), size: Some(18), ..RunStyle::default() })],
-            &ParaStyle { after: 60, ..ParaStyle::default() },
+            &[run(
+                &teacher_banner(sheet),
+                RunStyle {
+                    color: Some(TEACHER_INK),
+                    size: Some(18),
+                    ..RunStyle::default()
+                },
+            )],
+            &ParaStyle {
+                after: 60,
+                ..ParaStyle::default()
+            },
         ));
     }
     body.push_str(&para(
-        &[run(META_LINE, RunStyle { color: Some(MUTED_INK), size: Some(20), ..RunStyle::default() })],
-        &ParaStyle { after: 200, border_bottom: true, ..ParaStyle::default() },
+        &[run(
+            META_LINE,
+            RunStyle {
+                color: Some(MUTED_INK),
+                size: Some(20),
+                ..RunStyle::default()
+            },
+        )],
+        &ParaStyle {
+            after: 200,
+            border_bottom: true,
+            ..ParaStyle::default()
+        },
     ));
     if !sheet.objectives.is_empty() {
-        body.push_str(&para(&[run("Today I can …", RunStyle::default())], &ParaStyle { style: Some("Heading2"), keep_next: true, ..ParaStyle::default() }));
+        body.push_str(&para(
+            &[run("Today I can …", RunStyle::default())],
+            &ParaStyle {
+                style: Some("Heading2"),
+                keep_next: true,
+                ..ParaStyle::default()
+            },
+        ));
         for (i, o) in sheet.objectives.iter().enumerate() {
             body.push_str(&para(
                 &[run(&format!("{}.\t{o}", i + 1), RunStyle::default())],
-                &ParaStyle { indent: 400, hanging: 400, after: 40, ..ParaStyle::default() },
+                &ParaStyle {
+                    indent: 400,
+                    hanging: 400,
+                    after: 40,
+                    ..ParaStyle::default()
+                },
             ));
         }
     }
     for b in &sheet.blocks {
-        body.push_str(&para(&[run(&heading(b), RunStyle::default())], &ParaStyle { style: Some("Heading2"), keep_next: true, ..ParaStyle::default() }));
+        body.push_str(&para(
+            &[run(&heading(b), RunStyle::default())],
+            &ParaStyle {
+                style: Some("Heading2"),
+                keep_next: true,
+                ..ParaStyle::default()
+            },
+        ));
         if !b.instructions.is_empty() {
-            body.push_str(&para(&[run(&b.instructions, RunStyle { italic: true, ..RunStyle::default() })], &ParaStyle { after: 60, ..ParaStyle::default() }));
+            body.push_str(&para(
+                &[run(
+                    &b.instructions,
+                    RunStyle {
+                        italic: true,
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    after: 60,
+                    ..ParaStyle::default()
+                },
+            ));
         }
         for (i, s) in b.steps.iter().enumerate() {
-            let text = if s.to_lowercase().starts_with("step") { s.clone() } else { format!("Step {}: {s}", i + 1) };
-            body.push_str(&para(&[run(&text, RunStyle { color: Some(MUTED_INK), ..RunStyle::default() })], &ParaStyle { indent: 200, after: 20, ..ParaStyle::default() }));
+            let text = if s.to_lowercase().starts_with("step") {
+                s.clone()
+            } else {
+                format!("Step {}: {s}", i + 1)
+            };
+            body.push_str(&para(
+                &[run(
+                    &text,
+                    RunStyle {
+                        color: Some(MUTED_INK),
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    indent: 200,
+                    after: 20,
+                    ..ParaStyle::default()
+                },
+            ));
         }
         if !b.vocabulary.is_empty() {
-            body.push_str(&para(&[run("Key words", RunStyle { bold: true, ..RunStyle::default() })], &ParaStyle { before: 120, keep_next: true, ..ParaStyle::default() }));
+            body.push_str(&para(
+                &[run(
+                    "Key words",
+                    RunStyle {
+                        bold: true,
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    before: 120,
+                    keep_next: true,
+                    ..ParaStyle::default()
+                },
+            ));
             let mut rows = vec![vec!["Word".to_string(), "Meaning".to_string()]];
             for v in &b.vocabulary {
                 let word = match (teacher, v.level) {
@@ -286,8 +432,21 @@ fn document_xml(sheet: &Sheet) -> String {
         }
         for s in &b.supports {
             body.push_str(&para(
-                &[run(&format!("{}: ", s.heading), RunStyle { bold: true, ..RunStyle::default() }), run(&s.content, RunStyle::default())],
-                &ParaStyle { before: 80, after: 40, ..ParaStyle::default() },
+                &[
+                    run(
+                        &format!("{}: ", s.heading),
+                        RunStyle {
+                            bold: true,
+                            ..RunStyle::default()
+                        },
+                    ),
+                    run(&s.content, RunStyle::default()),
+                ],
+                &ParaStyle {
+                    before: 80,
+                    after: 40,
+                    ..ParaStyle::default()
+                },
             ));
         }
         for it in &b.items {
@@ -295,8 +454,27 @@ fn document_xml(sheet: &Sheet) -> String {
         }
         if let Some(n) = &b.teacher_notes {
             body.push_str(&para(
-                &[run("Teacher notes: ", RunStyle { bold: true, color: Some(TEACHER_INK), ..RunStyle::default() }), run(n, RunStyle { color: Some(TEACHER_INK), ..RunStyle::default() })],
-                &ParaStyle { before: 80, ..ParaStyle::default() },
+                &[
+                    run(
+                        "Teacher notes: ",
+                        RunStyle {
+                            bold: true,
+                            color: Some(TEACHER_INK),
+                            ..RunStyle::default()
+                        },
+                    ),
+                    run(
+                        n,
+                        RunStyle {
+                            color: Some(TEACHER_INK),
+                            ..RunStyle::default()
+                        },
+                    ),
+                ],
+                &ParaStyle {
+                    before: 80,
+                    ..ParaStyle::default()
+                },
             ));
         }
     }
@@ -440,8 +618,13 @@ impl Face {
     }
 
     fn advance(&self, c: char, size: f32) -> f32 {
-        let gid = self.parsed.glyph_index(c).or_else(|| self.parsed.glyph_index('?'));
-        let units = gid.and_then(|g| self.parsed.glyph_hor_advance(g)).unwrap_or(500);
+        let gid = self
+            .parsed
+            .glyph_index(c)
+            .or_else(|| self.parsed.glyph_index('?'));
+        let units = gid
+            .and_then(|g| self.parsed.glyph_hor_advance(g))
+            .unwrap_or(500);
         f32::from(units) / self.upem * size
     }
 }
@@ -492,7 +675,9 @@ impl Fonts {
     }
 
     fn width(&self, w: Weight, text: &str, size: f32) -> f32 {
-        text.chars().map(|c| self.pick(w, c).1.advance(c, size)).sum()
+        text.chars()
+            .map(|c| self.pick(w, c).1.advance(c, size))
+            .sum()
     }
 }
 
@@ -503,9 +688,28 @@ const RULE: Rgb = (140, 140, 140);
 const GOLD: Rgb = (122, 82, 0);
 
 enum Op {
-    Text { x: f32, y: f32, face: u8, size: f32, color: Rgb, text: String },
-    Line { x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Rgb },
-    Rect { x: f32, y: f32, w: f32, h: f32 },
+    Text {
+        x: f32,
+        y: f32,
+        face: u8,
+        size: f32,
+        color: Rgb,
+        text: String,
+    },
+    Line {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        width: f32,
+        color: Rgb,
+    },
+    Rect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    },
 }
 
 const PAGE_W: f32 = 595.28;
@@ -525,7 +729,14 @@ struct Style {
 
 impl Style {
     fn body() -> Self {
-        Self { weight: Weight::Regular, size: 11.5, color: INK, indent: 0.0, before: 0.0, after: 3.0 }
+        Self {
+            weight: Weight::Regular,
+            size: 11.5,
+            color: INK,
+            indent: 0.0,
+            before: 0.0,
+            after: 3.0,
+        }
     }
 }
 
@@ -537,7 +748,11 @@ struct Layout<'a> {
 
 impl<'a> Layout<'a> {
     fn new(fonts: &'a Fonts) -> Self {
-        Self { fonts, pages: vec![Vec::new()], y: MARGIN }
+        Self {
+            fonts,
+            pages: vec![Vec::new()],
+            y: MARGIN,
+        }
     }
 
     fn ops(&mut self) -> &mut Vec<Op> {
@@ -593,7 +808,11 @@ impl<'a> Layout<'a> {
             let mut line_w = 0.0;
             for (token, space_before) in tokens {
                 let w = self.fonts.width(weight, &token, size);
-                let gap = if line.is_empty() || !space_before { 0.0 } else { space_w };
+                let gap = if line.is_empty() || !space_before {
+                    0.0
+                } else {
+                    space_w
+                };
                 if !line.is_empty() && line_w + gap + w > width {
                     lines.push(std::mem::take(&mut line));
                     line_w = 0.0;
@@ -636,8 +855,18 @@ impl<'a> Layout<'a> {
         }
         let mut cx = x;
         for (id, s) in runs {
-            let w: f32 = s.chars().map(|c| self.fonts.by_id(id).advance(c, style.size)).sum();
-            self.ops().push(Op::Text { x: cx, y: baseline, face: id, size: style.size, color: style.color, text: s });
+            let w: f32 = s
+                .chars()
+                .map(|c| self.fonts.by_id(id).advance(c, style.size))
+                .sum();
+            self.ops().push(Op::Text {
+                x: cx,
+                y: baseline,
+                face: id,
+                size: style.size,
+                color: style.color,
+                text: s,
+            });
             cx += w;
         }
     }
@@ -671,7 +900,14 @@ impl<'a> Layout<'a> {
         }
         let first = lines.remove(0);
         self.ensure(Self::line_height(style.size));
-        self.draw_line(label, MARGIN + style.indent, Style { weight: label_weight, ..style });
+        self.draw_line(
+            label,
+            MARGIN + style.indent,
+            Style {
+                weight: label_weight,
+                ..style
+            },
+        );
         self.draw_line(&first, MARGIN + style.indent + label_w, style);
         self.y += Self::line_height(style.size);
         let rest = lines.join(" ");
@@ -687,7 +923,14 @@ impl<'a> Layout<'a> {
 
     fn rule(&mut self, x1: f32, x2: f32, width: f32, color: Rgb) {
         let y = self.y;
-        self.ops().push(Op::Line { x1, y1: y, x2, y2: y, width, color });
+        self.ops().push(Op::Line {
+            x1,
+            y1: y,
+            x2,
+            y2: y,
+            width,
+            color,
+        });
     }
 
     fn answer_lines(&mut self, n: u8, indent: f32) {
@@ -712,11 +955,25 @@ impl<'a> Layout<'a> {
         self.ops().push(Op::Rect { x, y: top, w, h });
         for r in 1..rows {
             let y = top + row_h * r as f32;
-            self.ops().push(Op::Line { x1: x, y1: y, x2: x + w, y2: y, width: 0.6, color: RULE });
+            self.ops().push(Op::Line {
+                x1: x,
+                y1: y,
+                x2: x + w,
+                y2: y,
+                width: 0.6,
+                color: RULE,
+            });
         }
         for c in 1..cols {
             let cx = x + w * c as f32 / cols as f32;
-            self.ops().push(Op::Line { x1: cx, y1: top, x2: cx, y2: top + h, width: 0.6, color: RULE });
+            self.ops().push(Op::Line {
+                x1: cx,
+                y1: top,
+                x2: cx,
+                y2: top + h,
+                width: 0.6,
+                color: RULE,
+            });
         }
         self.y = top + h + 8.0;
     }
@@ -729,7 +986,14 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     l.y += 6.0;
     l.ensure(Layout::line_height(body.size) * 2.0);
     let no = format!("{}.", it.no);
-    l.draw_line(&no, MARGIN, Style { weight: Weight::Bold, ..body });
+    l.draw_line(
+        &no,
+        MARGIN,
+        Style {
+            weight: Weight::Bold,
+            ..body
+        },
+    );
     let lines = l.wrap(&it.prompt, Weight::Regular, body.size, CONTENT_W - indent);
     for (i, line) in lines.iter().enumerate() {
         if i > 0 {
@@ -739,7 +1003,14 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
         l.y += Layout::line_height(body.size);
     }
     for (i, o) in it.options.iter().enumerate() {
-        l.paragraph(&format!("({}) {o}", option_letter(i)), Style { indent: indent + 14.0, after: 1.0, ..body });
+        l.paragraph(
+            &format!("({}) {o}", option_letter(i)),
+            Style {
+                indent: indent + 14.0,
+                after: 1.0,
+                ..body
+            },
+        );
     }
     match boxed(it) {
         Some("table") => l.grid(indent, 2, 3, 26.0),
@@ -747,12 +1018,27 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
         None => l.answer_lines(it.lines, indent),
     }
     if teacher {
-        let gold = Style { color: GOLD, indent, size: 10.5, before: 2.0, after: 1.0, ..body };
+        let gold = Style {
+            color: GOLD,
+            indent,
+            size: 10.5,
+            before: 2.0,
+            after: 1.0,
+            ..body
+        };
         if let Some(a) = &it.answer {
             l.labelled("Answer: ", a, gold, Weight::Bold);
         }
         if let Some(e) = &it.evidence {
-            l.labelled("Evidence: ", &format!("“{e}”"), Style { weight: Weight::Italic, ..gold }, Weight::Bold);
+            l.labelled(
+                "Evidence: ",
+                &format!("“{e}”"),
+                Style {
+                    weight: Weight::Italic,
+                    ..gold
+                },
+                Weight::Bold,
+            );
         }
     }
 }
@@ -760,19 +1046,58 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
 fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
     let teacher = sheet.audience == Audience::Teacher;
     let body = Style::body();
-    l.paragraph(&sheet.title, Style { weight: Weight::Bold, size: 19.0, after: 4.0, ..body });
+    l.paragraph(
+        &sheet.title,
+        Style {
+            weight: Weight::Bold,
+            size: 19.0,
+            after: 4.0,
+            ..body
+        },
+    );
     if teacher {
-        l.paragraph(&teacher_banner(sheet), Style { size: 9.0, color: GOLD, after: 2.0, ..body });
+        l.paragraph(
+            &teacher_banner(sheet),
+            Style {
+                size: 9.0,
+                color: GOLD,
+                after: 2.0,
+                ..body
+            },
+        );
     }
-    l.paragraph(META_LINE, Style { size: 10.0, color: MUTED, before: 4.0, after: 6.0, ..body });
+    l.paragraph(
+        META_LINE,
+        Style {
+            size: 10.0,
+            color: MUTED,
+            before: 4.0,
+            after: 6.0,
+            ..body
+        },
+    );
     l.rule(MARGIN, PAGE_W - MARGIN, 1.2, INK);
     l.y += 8.0;
-    let heading_style = Style { weight: Weight::Bold, size: 13.0, before: 12.0, after: 3.0, ..body };
+    let heading_style = Style {
+        weight: Weight::Bold,
+        size: 13.0,
+        before: 12.0,
+        after: 3.0,
+        ..body
+    };
     if !sheet.objectives.is_empty() {
         l.ensure(60.0);
         l.paragraph("Today I can …", heading_style);
         for (i, o) in sheet.objectives.iter().enumerate() {
-            l.labelled(&format!("{}. ", i + 1), o, Style { indent: 8.0, ..body }, Weight::Regular);
+            l.labelled(
+                &format!("{}. ", i + 1),
+                o,
+                Style {
+                    indent: 8.0,
+                    ..body
+                },
+                Weight::Regular,
+            );
         }
     }
     for b in &sheet.blocks {
@@ -780,25 +1105,71 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         l.ensure(80.0);
         l.paragraph(&heading(b), heading_style);
         if !b.instructions.is_empty() {
-            l.paragraph(&b.instructions, Style { weight: Weight::Italic, after: 3.0, ..body });
+            l.paragraph(
+                &b.instructions,
+                Style {
+                    weight: Weight::Italic,
+                    after: 3.0,
+                    ..body
+                },
+            );
         }
         for (i, s) in b.steps.iter().enumerate() {
-            let text = if s.to_lowercase().starts_with("step") { s.clone() } else { format!("Step {}: {s}", i + 1) };
-            l.paragraph(&text, Style { color: MUTED, size: 10.5, indent: 8.0, after: 1.0, ..body });
+            let text = if s.to_lowercase().starts_with("step") {
+                s.clone()
+            } else {
+                format!("Step {}: {s}", i + 1)
+            };
+            l.paragraph(
+                &text,
+                Style {
+                    color: MUTED,
+                    size: 10.5,
+                    indent: 8.0,
+                    after: 1.0,
+                    ..body
+                },
+            );
         }
         if !b.vocabulary.is_empty() {
-            l.paragraph("Key words", Style { weight: Weight::Bold, before: 6.0, after: 2.0, ..body });
+            l.paragraph(
+                "Key words",
+                Style {
+                    weight: Weight::Bold,
+                    before: 6.0,
+                    after: 2.0,
+                    ..body
+                },
+            );
             for v in &b.vocabulary {
                 let word = match (teacher, v.level) {
                     (true, Some(level)) => format!("{} (Level {level})", v.word),
                     _ => v.word.clone(),
                 };
                 let label = format!("{word} — ");
-                l.labelled(&label, &v.definition, Style { indent: 8.0, after: 1.0, ..body }, Weight::Bold);
+                l.labelled(
+                    &label,
+                    &v.definition,
+                    Style {
+                        indent: 8.0,
+                        after: 1.0,
+                        ..body
+                    },
+                    Weight::Bold,
+                );
             }
         }
         for s in &b.supports {
-            l.labelled(&format!("{}: ", s.heading), &s.content, Style { before: 4.0, after: 2.0, ..body }, Weight::Bold);
+            l.labelled(
+                &format!("{}: ", s.heading),
+                &s.content,
+                Style {
+                    before: 4.0,
+                    after: 2.0,
+                    ..body
+                },
+                Weight::Bold,
+            );
         }
         if b.kind == BlockKind::ExitTicket && b.items.is_empty() {
             l.answer_lines(2, 0.0);
@@ -807,7 +1178,17 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
             pdf_item(l, it, teacher);
         }
         if let Some(n) = &b.teacher_notes {
-            l.labelled("Teacher notes: ", n, Style { color: GOLD, size: 10.5, before: 6.0, ..body }, Weight::Bold);
+            l.labelled(
+                "Teacher notes: ",
+                n,
+                Style {
+                    color: GOLD,
+                    size: 10.5,
+                    before: 6.0,
+                    ..body
+                },
+                Weight::Bold,
+            );
         }
     }
 }
@@ -824,7 +1205,11 @@ fn printed_text(sheet: &Sheet) -> String {
     for b in &sheet.blocks {
         out.extend([b.title.clone(), b.instructions.clone()]);
         out.extend(b.steps.iter().cloned());
-        out.extend(b.vocabulary.iter().flat_map(|v| [v.word.clone(), v.definition.clone()]));
+        out.extend(
+            b.vocabulary
+                .iter()
+                .flat_map(|v| [v.word.clone(), v.definition.clone()]),
+        );
         out.extend(b.supports.iter().map(|s| s.content.clone()));
         for it in &b.items {
             out.push(it.prompt.clone());
@@ -854,7 +1239,11 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
     let mut layout = Layout::new(&fonts);
     layout_sheet(&mut layout, sheet);
     let total = layout.pages.len();
-    let footer = Style { size: 9.0, color: MUTED, ..Style::body() };
+    let footer = Style {
+        size: 9.0,
+        color: MUTED,
+        ..Style::body()
+    };
     for i in 0..total {
         let text = format!("{} · {}/{}", sheet.level.english(), i + 1, total);
         let w = fonts.width(Weight::Regular, &text, footer.size);
@@ -886,13 +1275,20 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
         ..Default::default()
     };
     for ops in &layout.pages {
-        let settings = PageSettings::from_wh(PAGE_W, PAGE_H)
-            .ok_or_else(|| anyhow::anyhow!("page size"))?;
+        let settings =
+            PageSettings::from_wh(PAGE_W, PAGE_H).ok_or_else(|| anyhow::anyhow!("page size"))?;
         let mut page = document.start_page_with(settings);
         let mut surface = page.surface();
         for op in ops {
             match op {
-                Op::Text { x, y, face, size, color, text } => {
+                Op::Text {
+                    x,
+                    y,
+                    face,
+                    size,
+                    color,
+                    text,
+                } => {
                     surface.set_stroke(None);
                     surface.set_fill(Some(fill(*color)));
                     surface.draw_text(
@@ -904,7 +1300,14 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
                         TextDirection::Auto,
                     );
                 }
-                Op::Line { x1, y1, x2, y2, width, color } => {
+                Op::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    width,
+                    color,
+                } => {
                     let mut pb = PathBuilder::new();
                     pb.move_to(*x1, *y1);
                     pb.line_to(*x2, *y2);
@@ -939,7 +1342,13 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
 pub fn content_disposition(filename: &str) -> String {
     let ascii: String = filename
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let mut encoded = String::new();
     for b in filename.as_bytes() {
@@ -996,13 +1405,15 @@ mod tests {
         assert_eq!(&bytes[..2], b"PK");
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let mut xml = String::new();
-        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+            .unwrap();
         assert!(xml.contains("Question 1: why"));
         assert!(!xml.contains("Answer:") && !xml.contains("every umbrella would be gone."));
         let teacher = docx(&sheet(Audience::Teacher)).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(teacher)).unwrap();
         let mut xml = String::new();
-        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml).unwrap();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+            .unwrap();
         assert!(xml.contains("Answer: ") && xml.contains("先找出關鍵句"));
     }
 
@@ -1032,9 +1443,17 @@ mod tests {
         let lines = l.wrap(text, Weight::Regular, 12.0, 120.0);
         assert!(lines.len() > 1);
         assert_eq!(lines.join(" "), text);
-        let zh = l.wrap("先找出關鍵句再推論先找出關鍵句再推論先找出關鍵句再推論", Weight::Regular, 12.0, 60.0);
+        let zh = l.wrap(
+            "先找出關鍵句再推論先找出關鍵句再推論先找出關鍵句再推論",
+            Weight::Regular,
+            12.0,
+            60.0,
+        );
         assert!(zh.len() > 1);
-        assert_eq!(zh.concat(), "先找出關鍵句再推論先找出關鍵句再推論先找出關鍵句再推論");
+        assert_eq!(
+            zh.concat(),
+            "先找出關鍵句再推論先找出關鍵句再推論先找出關鍵句再推論"
+        );
     }
 
     #[test]

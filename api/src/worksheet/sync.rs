@@ -133,10 +133,9 @@ fn block_label(block: &Block, material: &Material) -> String {
 }
 
 fn activity_blocks(content: &Content) -> impl Iterator<Item = &Block> {
-    content
-        .blocks
-        .iter()
-        .filter(|b| b.kind == BlockKind::Activity && b.items.iter().any(|i| !i.prompt.trim().is_empty()))
+    content.blocks.iter().filter(|b| {
+        b.kind == BlockKind::Activity && b.items.iter().any(|i| !i.prompt.trim().is_empty())
+    })
 }
 
 /// What would change in the SOP. Additions and updates; removals only for SOP entries the
@@ -179,7 +178,11 @@ pub fn diff(content: &Content, material: &Material, sop: &SopContent) -> Vec<Cha
             .iter()
             .filter_map(|o| o.sop_id.as_deref())
             .collect();
-        for s in sop.objectives.iter().filter(|s| !kept.contains(s.id.as_str())) {
+        for s in sop
+            .objectives
+            .iter()
+            .filter(|s| !kept.contains(s.id.as_str()))
+        {
             changes.push(Change {
                 key: format!("remove-objective:{}", s.id),
                 target: "objective",
@@ -257,7 +260,10 @@ fn unique_id(wanted: &str, taken: &HashSet<String>) -> String {
 }
 
 /// Worksheet paragraph id → the SOP material's id of the paragraph with the same text.
-fn paragraph_map(material: &Material, sop_paragraphs: &[sop::Paragraph]) -> HashMap<String, String> {
+fn paragraph_map(
+    material: &Material,
+    sop_paragraphs: &[sop::Paragraph],
+) -> HashMap<String, String> {
     material
         .paragraphs
         .iter()
@@ -400,7 +406,10 @@ mod tests {
     fn nothing_changes_until_applied_and_only_what_is_ticked() {
         let m = material();
         let mut sop = SopContent {
-            objectives: vec![sop_objective("o1", "學生能說出主旨"), sop_objective("o2", "舊的")],
+            objectives: vec![
+                sop_objective("o1", "學生能說出主旨"),
+                sop_objective("o2", "舊的"),
+            ],
             ..SopContent::default()
         };
         let mut content = Content {
@@ -422,7 +431,8 @@ mod tests {
             ..Content::default()
         };
         let changes = diff(&content, &m, &sop);
-        let actions: Vec<(&str, &str)> = changes.iter().map(|c| (c.key.as_str(), c.action)).collect();
+        let actions: Vec<(&str, &str)> =
+            changes.iter().map(|c| (c.key.as_str(), c.action)).collect();
         assert_eq!(
             actions,
             [
@@ -434,10 +444,23 @@ mod tests {
         );
         assert_eq!(pending(&changes), 3);
         let before = sop.clone();
-        let sop_paragraphs = vec![sop::Paragraph { id: "p9".into(), no: 1, text: "Two.".into() }];
-        let n = apply(&mut content, &m, &mut sop, &sop_paragraphs, &["block:b1".to_string()]);
+        let sop_paragraphs = vec![sop::Paragraph {
+            id: "p9".into(),
+            no: 1,
+            text: "Two.".into(),
+        }];
+        let n = apply(
+            &mut content,
+            &m,
+            &mut sop,
+            &sop_paragraphs,
+            &["block:b1".to_string()],
+        );
         assert_eq!(n, 1);
-        assert_eq!(sop.objectives, before.objectives, "unticked changes are not written");
+        assert_eq!(
+            sop.objectives, before.objectives,
+            "unticked changes are not written"
+        );
         assert_eq!(sop.task_blocks.len(), 1);
         assert_eq!(sop.task_blocks[0].paragraph_ids, vec!["p9".to_string()]);
         assert_eq!(sop.task_blocks[0].tasks[0].origin, sop::Origin::AiAdopted);

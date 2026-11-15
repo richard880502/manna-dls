@@ -64,7 +64,10 @@ async fn lesson_sop_diff(
         return Ok(None);
     };
     // A lesson deleted since the link was made: the worksheet stays, unlinked in effect.
-    if owned_lesson(&state.db, lesson_id, ws.teacher_id).await.is_err() {
+    if owned_lesson(&state.db, lesson_id, ws.teacher_id)
+        .await
+        .is_err()
+    {
         return Ok(None);
     }
     let sop_version = sop_store::latest(&state.db, lesson_id).await?;
@@ -121,7 +124,9 @@ pub async fn list(
     teacher: AuthTeacher,
     ApiQuery(q): ApiQuery<ListQuery>,
 ) -> AppResult<Json<Vec<Summary>>> {
-    Ok(Json(store::list(&state.db, teacher.id(), q.lesson_id).await?))
+    Ok(Json(
+        store::list(&state.db, teacher.id(), q.lesson_id).await?,
+    ))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -252,20 +257,40 @@ pub async fn create(
             Some(lesson_id) => {
                 let lesson = owned_lesson(db, lesson_id, teacher.id()).await?;
                 let version = sop_store::latest(db, lesson_id).await?;
-                let sop_material = sop_store::material(db, version.as_ref().and_then(|v| v.material_id)).await?;
+                let sop_material =
+                    sop_store::material(db, version.as_ref().and_then(|v| v.material_id)).await?;
                 let (material, seq) = match &sop_material {
                     Some(m) if !m.paragraphs.is_empty() => Material::from_lesson_sop(lesson_id, m),
                     _ => pasted_material(),
                 };
-                let sop_content = version.as_ref().map(|v| v.content.clone()).unwrap_or_default();
+                let sop_content = version
+                    .as_ref()
+                    .map(|v| v.content.clone())
+                    .unwrap_or_default();
                 let (objectives, brief) = prefill_from_sop(&sop_content);
                 let settings = suggest_from_sop(&material, &sop_content);
-                (material, seq, settings, objectives, brief, version.map(|v| v.id), Some(lesson.title))
+                (
+                    material,
+                    seq,
+                    settings,
+                    objectives,
+                    brief,
+                    version.map(|v| v.id),
+                    Some(lesson.title),
+                )
             }
             None => {
                 let (material, seq) = pasted_material();
                 let settings = suggest_direct(&material);
-                (material, seq, settings, Vec::new(), Brief::default(), None, None)
+                (
+                    material,
+                    seq,
+                    settings,
+                    Vec::new(),
+                    Brief::default(),
+                    None,
+                    None,
+                )
             }
         };
     let mut title = auto_title(&material);
@@ -357,7 +382,9 @@ pub async fn save(
         Some(t) => {
             let t = t.trim().to_string();
             if t.chars().count() > MAX_TITLE_CHARS {
-                return Err(AppError::bad_request(format!("標題最多 {MAX_TITLE_CHARS} 字。")));
+                return Err(AppError::bad_request(format!(
+                    "標題最多 {MAX_TITLE_CHARS} 字。"
+                )));
             }
             t
         }
@@ -432,7 +459,10 @@ pub async fn put_material(
     } else {
         ws.filename.clone()
     };
-    store::set_material(db, id, &material, seq, &settings, &suggested, &title, &filename).await?;
+    store::set_material(
+        db, id, &material, seq, &settings, &suggested, &title, &filename,
+    )
+    .await?;
     Ok(Json(state_of(&state, id).await?))
 }
 
@@ -449,7 +479,8 @@ async fn run_input(state: &AppState, teacher: &AuthTeacher, ws: Worksheet) -> Ap
         .as_ref()
         .map(|l| (l.class_description.clone(), l.unit_class_profile.clone()))
         .unwrap_or_default();
-    let profile = resolved_profile(db, teacher.id(), ws.class_id, &description, &unit_profile).await?;
+    let profile =
+        resolved_profile(db, teacher.id(), ws.class_id, &description, &unit_profile).await?;
     Ok(RunInput {
         content,
         track: teacher.track().to_string(),
@@ -560,14 +591,19 @@ pub struct SheetQuery {
 
 fn sheet_for(ws: &Worksheet, content: &Content, q: &SheetQuery) -> AppResult<Sheet> {
     let level = match q.level.as_deref() {
-        Some(l) => Level::parse(l).ok_or_else(|| AppError::bad_request("level 需為 basic、standard 或 advanced。"))?,
+        Some(l) => Level::parse(l)
+            .ok_or_else(|| AppError::bad_request("level 需為 basic、standard 或 advanced。"))?,
         None => content.levels.first().copied().unwrap_or(Level::Standard),
     };
     if !content.levels.contains(&level) {
-        return Err(AppError::bad_request(format!("這份學習單沒有{}。", level.label())));
+        return Err(AppError::bad_request(format!(
+            "這份學習單沒有{}。",
+            level.label()
+        )));
     }
     let audience = match q.audience.as_deref() {
-        Some(a) => Audience::parse(a).ok_or_else(|| AppError::bad_request("audience 需為 student 或 teacher。"))?,
+        Some(a) => Audience::parse(a)
+            .ok_or_else(|| AppError::bad_request("audience 需為 student 或 teacher。"))?,
         None => Audience::Student,
     };
     Ok(project(&ws.title, content, level, audience))
@@ -630,7 +666,11 @@ pub async fn export(
     };
     let name = format!(
         "{}_{}_{}.{extension}",
-        if ws.filename.trim().is_empty() { "學習單" } else { ws.filename.trim() },
+        if ws.filename.trim().is_empty() {
+            "學習單"
+        } else {
+            ws.filename.trim()
+        },
         level.label(),
         audience.label()
     );
@@ -663,7 +703,8 @@ pub async fn sync_preview(
 ) -> AppResult<Json<Preview>> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
     let content = store::latest(&state.db, id).await?.content;
-    let Some((lesson_id, sop_version, changes)) = lesson_sop_diff(&state, &ws, &content).await? else {
+    let Some((lesson_id, sop_version, changes)) = lesson_sop_diff(&state, &ws, &content).await?
+    else {
         return Err(AppError::Conflict("這份學習單沒有連結課例。".to_string()));
     };
     Ok(Json(Preview {
@@ -694,14 +735,18 @@ async fn write_back(
 ) -> AppResult<(i32, usize)> {
     let db = &state.db;
     let version = sop_store::latest(db, lesson_id).await?;
-    let sop_material = sop_store::material(db, version.as_ref().and_then(|v| v.material_id)).await?;
+    let sop_material =
+        sop_store::material(db, version.as_ref().and_then(|v| v.material_id)).await?;
     let mut sop_content = version.map(|v| v.content).unwrap_or_default();
     let mut content = store::latest(db, ws.id).await?.content;
     let applied = sync::apply(
         &mut content,
         &ws.material,
         &mut sop_content,
-        sop_material.as_ref().map(|m| m.paragraphs.as_slice()).unwrap_or(&[]),
+        sop_material
+            .as_ref()
+            .map(|m| m.paragraphs.as_slice())
+            .unwrap_or(&[]),
         keys,
     );
     sop::validate(&sop_content).map_err(AppError::bad_request)?;
@@ -732,7 +777,9 @@ pub async fn sync_apply(
         return Err(AppError::Conflict("這份學習單沒有連結課例。".to_string()));
     };
     owned_lesson(db, lesson_id, teacher.id()).await?;
-    let current = sop_store::latest(db, lesson_id).await?.map(|v| v.version_no);
+    let current = sop_store::latest(db, lesson_id)
+        .await?
+        .map(|v| v.version_no);
     if current != req.sop_version_no {
         return Err(AppError::Conflict(
             "課例在你預覽之後改過了，請重新預覽要同步的內容。".to_string(),
@@ -749,7 +796,9 @@ pub async fn sync_apply(
         json!({ "worksheet_id": id, "lesson_id": lesson_id, "sop_version_no": sop_version_no, "applied": applied }),
     )
     .await?;
-    Ok(Json(json!({ "sop_version_no": sop_version_no, "applied": applied })))
+    Ok(Json(
+        json!({ "sop_version_no": sop_version_no, "applied": applied }),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -805,7 +854,9 @@ pub async fn save_as_lesson(
         req.title.trim().to_string()
     };
     if title.chars().count() > MAX_TITLE_CHARS {
-        return Err(AppError::bad_request(format!("課例名稱最多 {MAX_TITLE_CHARS} 字。")));
+        return Err(AppError::bad_request(format!(
+            "課例名稱最多 {MAX_TITLE_CHARS} 字。"
+        )));
     }
     let lesson_id: i64 = sqlx::query_scalar(
         "INSERT INTO lessons (unit_id, title, class_description, my_example)

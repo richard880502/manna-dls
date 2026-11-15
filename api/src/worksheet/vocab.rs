@@ -136,8 +136,5 @@ pub async fn latest(db: &PgPool, worksheet_id: i64) -> AppResult<Vec<VocabCheck>
     .bind(worksheet_id)
     .fetch_all(db)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| into_check(r, latest.id))
-        .collect())
+    Ok(rows.into_iter().map(|r| into_check(r, latest.id)).collect())
 }

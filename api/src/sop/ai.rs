@@ -408,7 +408,11 @@ pub(crate) async fn finish_output(
 }
 
 /// Records a call that did not return JSON and says what kind of failure it was.
-pub(crate) async fn finish_failure(db: &PgPool, a: &Attempt, error: &ProviderError) -> sqlx::Result<Failure> {
+pub(crate) async fn finish_failure(
+    db: &PgPool,
+    a: &Attempt,
+    error: &ProviderError,
+) -> sqlx::Result<Failure> {
     let (status, check, detail, kind) = match error {
         ProviderError::Timeout => (
             "timeout",
@@ -460,7 +464,12 @@ pub(crate) async fn finish_failure(db: &PgPool, a: &Attempt, error: &ProviderErr
 }
 
 /// Marks the row the shown result is attributed to, with what the code repaired.
-pub(crate) async fn set_final(db: &PgPool, id: i64, status: &str, report: Value) -> sqlx::Result<()> {
+pub(crate) async fn set_final(
+    db: &PgPool,
+    id: i64,
+    status: &str,
+    report: Value,
+) -> sqlx::Result<()> {
     sqlx::query("UPDATE ai_interactions SET status = $2, check_results = $3 WHERE id = $1")
         .bind(id)
         .bind(status)

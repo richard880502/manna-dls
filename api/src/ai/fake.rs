@@ -77,7 +77,9 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         }
         Some("sop_objectives") => crate::sop::fake::objectives(ctx, req.attempt, &|m| has(req, m)),
         // The worksheet steps (see `worksheet::fake`).
-        Some("worksheet_tasks") => crate::worksheet::fake::tasks(ctx, req.attempt, &|m| has(req, m)),
+        Some("worksheet_tasks") => {
+            crate::worksheet::fake::tasks(ctx, req.attempt, &|m| has(req, m))
+        }
         Some("worksheet_warmup") => {
             crate::worksheet::fake::warmup(ctx, req.attempt, &|m| has(req, m))
         }

@@ -143,7 +143,10 @@ impl Material {
 
     /// Position of a paragraph id, from 1.
     pub fn no_of(&self, id: &str) -> Option<usize> {
-        self.paragraphs.iter().position(|p| p.id == id).map(|i| i + 1)
+        self.paragraphs
+            .iter()
+            .position(|p| p.id == id)
+            .map(|i| i + 1)
     }
 
     pub fn id_of(&self, no: i64) -> Option<&str> {
@@ -162,13 +165,20 @@ impl Material {
     pub fn label(&self) -> String {
         let name = if self.title.trim().is_empty() {
             crate::routes::clip_chars(
-                self.paragraphs.first().map(|p| p.text.as_str()).unwrap_or(""),
+                self.paragraphs
+                    .first()
+                    .map(|p| p.text.as_str())
+                    .unwrap_or(""),
                 24,
             )
         } else {
             self.title.trim().to_string()
         };
-        format!("{name}（{} 段，{} 字）", self.paragraphs.len(), self.word_count())
+        format!(
+            "{name}（{} 段，{} 字）",
+            self.paragraphs.len(),
+            self.word_count()
+        )
     }
 }
 
@@ -181,13 +191,19 @@ mod tests {
         let (m, seq) = Material::pasted(None, 0, " Title ", "One.\n\nTwo.\n\nThree.", "note");
         assert_eq!(m.title, "Title");
         assert_eq!(
-            m.paragraphs.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            m.paragraphs
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
             ["p1", "p2", "p3"]
         );
         assert_eq!(seq, 3);
         let (m2, seq2) = Material::pasted(Some(&m), seq, "Title", "Zero.\n\nTwo.\n\nThree.", "");
         assert_eq!(
-            m2.paragraphs.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            m2.paragraphs
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
             ["p4", "p2", "p3"]
         );
         assert_eq!(seq2, 4);

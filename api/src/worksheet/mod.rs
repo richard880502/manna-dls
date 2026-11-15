@@ -28,14 +28,24 @@ pub use material::Material;
 // ---------------------------------------------------------------- fixed labels (spec §5)
 // These are display labels fixed by the spec: never rename, merge or split them.
 
-pub const MATERIAL_TYPES: [&str; 5] = ["閱讀文本", "聽力素材", "影片素材", "圖像素材", "資料／數據"];
+pub const MATERIAL_TYPES: [&str; 5] =
+    ["閱讀文本", "聽力素材", "影片素材", "圖像素材", "資料／數據"];
 
 /// 學生任務, grouped only for display (spec §5.2, §6).
 pub const STUDENT_TASK_GROUPS: [(&str, &[&str]); 5] = [
-    ("語言與內容學習", &["理解內容", "字彙練習", "文法／句型練習"]),
+    (
+        "語言與內容學習",
+        &["理解內容", "字彙練習", "文法／句型練習"],
+    ),
     (
         "思考與資訊處理",
-        &["比較／分類", "推論／預測", "評估／提出理由", "蒐集資料", "整理／分析資料"],
+        &[
+            "比較／分類",
+            "推論／預測",
+            "評估／提出理由",
+            "蒐集資料",
+            "整理／分析資料",
+        ],
     ),
     ("互動與合作", &["討論／分享", "小組共同完成"]),
     ("表達與成果", &["寫作", "製作成果", "成果發表"]),
@@ -50,7 +60,14 @@ pub fn student_tasks() -> Vec<&'static str> {
 }
 
 pub const ANSWER_FORMATS: [&str; 8] = [
-    "填空題", "選擇題", "是非題", "配對題", "簡答題", "表格整理", "圖像組織", "段落寫作",
+    "填空題",
+    "選擇題",
+    "是非題",
+    "配對題",
+    "簡答題",
+    "表格整理",
+    "圖像組織",
+    "段落寫作",
 ];
 pub const FMT_BLANK: &str = "填空題";
 pub const FMT_CHOICE: &str = "選擇題";
@@ -81,7 +98,13 @@ pub const GENERATION_OPTIONS: [&str; 6] = [
 /// Labels the spec explicitly keeps out of the options (§5, §6, §10.2). Only used by tests and
 /// documentation: they are rejected like any other string outside the sets.
 pub const FORBIDDEN_LABELS: [&str; 7] = [
-    "課綱議題", "SDGs", "SEL", "探究", "高層次思考", "專題任務", "合作活動",
+    "課綱議題",
+    "SDGs",
+    "SEL",
+    "探究",
+    "高層次思考",
+    "專題任務",
+    "合作活動",
 ];
 
 // Scaffold kinds: the examples the spec lists for each of the three scaffold types (§3).
@@ -288,7 +311,11 @@ pub struct Settings {
 
 /// Keeps `chosen` in the order of `allowed`, without duplicates; a value outside the set is an
 /// error naming it.
-fn normalise_labels(what: &str, chosen: &[String], allowed: &[&str]) -> Result<Vec<String>, String> {
+fn normalise_labels(
+    what: &str,
+    chosen: &[String],
+    allowed: &[&str],
+) -> Result<Vec<String>, String> {
     if let Some(bad) = chosen.iter().find(|c| !allowed.contains(&c.as_str())) {
         return Err(format!(
             "「{}」不是「{what}」的選項。",
@@ -582,7 +609,9 @@ impl Content {
         )?;
         let all_tasks = student_tasks();
         for b in &mut self.blocks {
-            if b.items.len() > MAX_ITEMS || b.scaffolds.len() > MAX_LIST || b.vocabulary.len() > MAX_LIST
+            if b.items.len() > MAX_ITEMS
+                || b.scaffolds.len() > MAX_LIST
+                || b.vocabulary.len() > MAX_LIST
             {
                 return Err("一個區塊裡的題目、鷹架或字詞太多了。".to_string());
             }
@@ -679,7 +708,11 @@ pub fn suggest_direct(material: &Material) -> Settings {
         material_types: material_types_for(material),
         student_tasks: vec!["理解內容".to_string()],
         answer_formats: Vec::new(),
-        generation: vec![GEN_WARMUP.to_string(), GEN_WORD_LIST.to_string(), GEN_FRAMES.to_string()],
+        generation: vec![
+            GEN_WARMUP.to_string(),
+            GEN_WORD_LIST.to_string(),
+            GEN_FRAMES.to_string(),
+        ],
         levels: vec![Level::Standard],
         minutes: None,
     }
@@ -705,8 +738,16 @@ pub fn suggest_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Se
         tasks.push("理解內容".to_string());
     }
     let mut generation: Vec<String> = Vec::new();
-    let has_warmup = sop.warmup.background.iter().any(|a| !a.text.trim().is_empty())
-        || sop.warmup.vocabulary.iter().any(|v| !v.word.trim().is_empty());
+    let has_warmup = sop
+        .warmup
+        .background
+        .iter()
+        .any(|a| !a.text.trim().is_empty())
+        || sop
+            .warmup
+            .vocabulary
+            .iter()
+            .any(|v| !v.word.trim().is_empty());
     if has_warmup {
         generation.push(GEN_WARMUP.to_string());
     }
@@ -717,7 +758,12 @@ pub fn suggest_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Se
         generation.push(GEN_GUIDING.to_string());
         generation.push(GEN_FRAMES.to_string());
     }
-    if sop.warmup.vocabulary.iter().any(|v| !v.word.trim().is_empty()) {
+    if sop
+        .warmup
+        .vocabulary
+        .iter()
+        .any(|v| !v.word.trim().is_empty())
+    {
         generation.push(GEN_WORD_LIST.to_string());
     }
     let settings = Settings {
@@ -798,11 +844,16 @@ pub fn resolve(
         s.generation.push(GEN_WORD_LIST.to_string());
         s.generation.push(GEN_FRAMES.to_string());
         auto.push("generation".to_string());
-        reasons.push(format!("產生設定：使用常用的組合「{}」。", s.generation.join("、")));
+        reasons.push(format!(
+            "產生設定：使用常用的組合「{}」。",
+            s.generation.join("、")
+        ));
     }
     if s.levels.is_empty() {
         s.levels = vec![Level::Standard];
-        let mixed = MIXED_ABILITY_HINTS.iter().any(|h| class_profile.contains(h));
+        let mixed = MIXED_ABILITY_HINTS
+            .iter()
+            .any(|h| class_profile.contains(h));
         let hard = hard_share.is_some_and(|h| h >= 0.08);
         if mixed || hard {
             s.levels.insert(0, Level::Basic);
@@ -870,10 +921,13 @@ pub fn safe_filename(name: &str) -> String {
 }
 
 pub fn auto_filename(material: &Material, lesson_title: Option<&str>) -> String {
-    let base = [material.title.trim(), lesson_title.unwrap_or_default().trim()]
-        .into_iter()
-        .find(|s| !s.is_empty())
-        .unwrap_or("");
+    let base = [
+        material.title.trim(),
+        lesson_title.unwrap_or_default().trim(),
+    ]
+    .into_iter()
+    .find(|s| !s.is_empty())
+    .unwrap_or("");
     if base.is_empty() {
         "學習單".to_string()
     } else {
@@ -904,7 +958,10 @@ mod tests {
             .chain(GENERATION_OPTIONS)
             .collect();
         for forbidden in FORBIDDEN_LABELS {
-            assert!(!all.contains(&forbidden), "{forbidden} must not be an option");
+            assert!(
+                !all.contains(&forbidden),
+                "{forbidden} must not be an option"
+            );
         }
     }
 
@@ -949,7 +1006,14 @@ mod tests {
         assert_eq!(c.settings.material_types, labels(&["閱讀文本"]));
         assert!(c.settings.wants(GEN_WARMUP) && !c.settings.wants(GEN_OBJECTIVES));
         assert_eq!(c.settings.levels, vec![Level::Standard]);
-        for part in ["material_types", "student_tasks", "answer_formats", "generation", "levels", "minutes"] {
+        for part in [
+            "material_types",
+            "student_tasks",
+            "answer_formats",
+            "generation",
+            "levels",
+            "minutes",
+        ] {
             assert!(c.auto.iter().any(|a| a == part), "{part}");
         }
         let c = resolve(&Settings::default(), &material, true, "程度落差大", None);

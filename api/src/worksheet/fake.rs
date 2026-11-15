@@ -407,6 +407,12 @@ pub fn exit_ticket(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
 
 #[allow(dead_code)]
 const ALL_FORMATS_COVERED: [&str; 8] = [
-    FMT_BLANK, FMT_CHOICE, FMT_TRUE_FALSE, FMT_MATCHING, FMT_SHORT, FMT_TABLE, FMT_ORGANIZER,
+    FMT_BLANK,
+    FMT_CHOICE,
+    FMT_TRUE_FALSE,
+    FMT_MATCHING,
+    FMT_SHORT,
+    FMT_TABLE,
+    FMT_ORGANIZER,
     FMT_PARAGRAPH,
 ];

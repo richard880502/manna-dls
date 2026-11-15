@@ -97,8 +97,15 @@ pub fn answer_lines(answer_format: Option<&str>, level: Level) -> u8 {
     };
     match answer_format {
         Some(f)
-            if [FMT_BLANK, FMT_CHOICE, FMT_TRUE_FALSE, FMT_MATCHING, FMT_TABLE, FMT_ORGANIZER]
-                .contains(&f) =>
+            if [
+                FMT_BLANK,
+                FMT_CHOICE,
+                FMT_TRUE_FALSE,
+                FMT_MATCHING,
+                FMT_TABLE,
+                FMT_ORGANIZER,
+            ]
+            .contains(&f) =>
         {
             0
         }
@@ -113,7 +120,12 @@ pub fn answer_lines(answer_format: Option<&str>, level: Level) -> u8 {
 /// the model did not deliver a usable procedural scaffold, so every block has one (spec §3.3).
 pub fn auto_steps(block: &Block) -> Vec<String> {
     let has = |label: &str| block.student_tasks.iter().any(|t| t == label);
-    let format = |f: &str| block.items.iter().any(|i| i.answer_format.as_deref() == Some(f));
+    let format = |f: &str| {
+        block
+            .items
+            .iter()
+            .any(|i| i.answer_format.as_deref() == Some(f))
+    };
     let mut steps = Vec::new();
     match block.kind {
         BlockKind::Warmup => {
@@ -134,20 +146,30 @@ pub fn auto_steps(block: &Block) -> Vec<String> {
                 "Read the paragraph(s) on your own. Then read the questions.".to_string()
             });
             if format(FMT_TABLE) || format(FMT_ORGANIZER) {
-                steps.push("Underline the information you need, then fill in the organizer.".to_string());
+                steps.push(
+                    "Underline the information you need, then fill in the organizer.".to_string(),
+                );
             } else {
                 steps.push("Underline the words in the text that help you answer.".to_string());
             }
             if has("小組共同完成") {
-                steps.push("Work in a group of four. Decide who writes, who checks and who reports.".to_string());
+                steps.push(
+                    "Work in a group of four. Decide who writes, who checks and who reports."
+                        .to_string(),
+                );
                 steps.push("Agree on one answer for the group and write it down.".to_string());
             } else if has("討論／分享") {
-                steps.push("Write your own answer first. Then compare it with a partner.".to_string());
+                steps.push(
+                    "Write your own answer first. Then compare it with a partner.".to_string(),
+                );
             } else {
                 steps.push("Write your answers.".to_string());
             }
             if format(FMT_PARAGRAPH) || has("寫作") {
-                steps.push("Read your writing once more and check it against the instructions.".to_string());
+                steps.push(
+                    "Read your writing once more and check it against the instructions."
+                        .to_string(),
+                );
             } else {
                 steps.push("Check your answers against the text.".to_string());
             }
@@ -195,7 +217,11 @@ pub fn attach_scaffolds(
             .verbal
             .iter()
             .map(|s| (ScaffoldType::Verbal, "sv", s))
-            .chain(set.instructional.iter().map(|s| (ScaffoldType::Instructional, "si", s)));
+            .chain(
+                set.instructional
+                    .iter()
+                    .map(|s| (ScaffoldType::Instructional, "si", s)),
+            );
         for (i, (kind_type, prefix, s)) in supports.enumerate() {
             if let Some(shown) = scaffold_levels(kind_type, &s.kind, levels, ticked) {
                 block.scaffolds.push(Scaffold {
@@ -525,7 +551,8 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     prompt: i.prompt.trim().to_string(),
                     options: i.options.clone(),
                     lines: answer_lines(i.answer_format.as_deref(), level),
-                    answer: (teacher && !i.answer.trim().is_empty()).then(|| i.answer.trim().to_string()),
+                    answer: (teacher && !i.answer.trim().is_empty())
+                        .then(|| i.answer.trim().to_string()),
                     evidence: (teacher && !i.evidence.trim().is_empty())
                         .then(|| i.evidence.trim().to_string()),
                 }
@@ -625,7 +652,10 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
             push(format!("{name} · 步驟 {}", i + 1), s);
         }
         for v in &b.vocabulary {
-            push(format!("{name} · 字詞表"), &format!("{} {}", v.word, v.definition));
+            push(
+                format!("{name} · 字詞表"),
+                &format!("{} {}", v.word, v.definition),
+            );
         }
         for s in &b.supports {
             push(format!("{name} · {}", s.kind), &s.content);
@@ -664,7 +694,12 @@ mod tests {
             kind: BlockKind::Warmup,
             title: "Warm-up".into(),
             items: vec![item("w1", &all, "簡答題")],
-            vocabulary: vec![Vocab { word: "trust".into(), level: Some(2), definition: "belief".into(), ..Vocab::default() }],
+            vocabulary: vec![Vocab {
+                word: "trust".into(),
+                level: Some(2),
+                definition: "belief".into(),
+                ..Vocab::default()
+            }],
             ..Block::default()
         };
         attach_scaffolds(&mut warm, None, &all, &[]);
@@ -682,8 +717,14 @@ mod tests {
         let set = RawScaffoldSet {
             target: "b1".into(),
             verbal: vec![
-                crate::worksheet::schemas::RawSupport { kind: KIND_FRAMES.into(), content_en: "I think ___ because ___.".into() },
-                crate::worksheet::schemas::RawSupport { kind: "提示與追問".into(), content_en: "Look at line 2.".into() },
+                crate::worksheet::schemas::RawSupport {
+                    kind: KIND_FRAMES.into(),
+                    content_en: "I think ___ because ___.".into(),
+                },
+                crate::worksheet::schemas::RawSupport {
+                    kind: "提示與追問".into(),
+                    content_en: "Look at line 2.".into(),
+                },
             ],
             instructional: vec![],
             procedural: vec![],
@@ -707,8 +748,14 @@ mod tests {
     fn versions_share_the_core_and_differ_in_support() {
         let c = content();
         let sheet = |level| project("T", &c, level, Audience::Student);
-        let (basic, standard, advanced) = (sheet(Level::Basic), sheet(Level::Standard), sheet(Level::Advanced));
-        let prompts = |s: &Sheet| -> Vec<String> { s.blocks[1].items.iter().map(|i| i.prompt.clone()).collect() };
+        let (basic, standard, advanced) = (
+            sheet(Level::Basic),
+            sheet(Level::Standard),
+            sheet(Level::Advanced),
+        );
+        let prompts = |s: &Sheet| -> Vec<String> {
+            s.blocks[1].items.iter().map(|i| i.prompt.clone()).collect()
+        };
         assert_eq!(prompts(&basic), ["Prompt s", "Prompt c"]);
         assert_eq!(prompts(&standard), ["Prompt c"]);
         assert_eq!(prompts(&advanced), ["Prompt c", "Prompt x"]);
@@ -718,7 +765,10 @@ mod tests {
         assert_eq!(advanced.blocks[1].supports.len(), 0);
         for s in [&basic, &standard, &advanced] {
             assert!(!s.blocks[1].steps.is_empty());
-            assert!(!s.blocks[0].steps.is_empty(), "the program adds steps when the model gave none");
+            assert!(
+                !s.blocks[0].steps.is_empty(),
+                "the program adds steps when the model gave none"
+            );
         }
         // More room to answer in the higher versions.
         assert_eq!(basic.blocks[1].items[1].lines, 4);
@@ -729,12 +779,18 @@ mod tests {
     #[test]
     fn answers_exist_only_in_the_teacher_version() {
         let c = content();
-        let student = serde_json::to_value(project("T", &c, Level::Standard, Audience::Student)).unwrap();
+        let student =
+            serde_json::to_value(project("T", &c, Level::Standard, Audience::Student)).unwrap();
         let text = student.to_string();
-        assert!(!text.contains("Answer") && !text.contains("Evidence") && !text.contains("設計理由"));
+        assert!(
+            !text.contains("Answer") && !text.contains("Evidence") && !text.contains("設計理由")
+        );
         assert!(!text.contains("\"answer\"") && !text.contains("teacher_notes"));
         let teacher = project("T", &c, Level::Standard, Audience::Teacher);
-        assert_eq!(teacher.blocks[1].items[0].answer.as_deref(), Some("Answer c"));
+        assert_eq!(
+            teacher.blocks[1].items[0].answer.as_deref(),
+            Some("Answer c")
+        );
         assert_eq!(teacher.blocks[1].teacher_notes.as_deref(), Some("設計理由"));
     }
 
@@ -743,35 +799,57 @@ mod tests {
         let mut c = content();
         let s = project("T", &c, Level::Standard, Audience::Student);
         assert_eq!(
-            s.blocks.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(),
+            s.blocks
+                .iter()
+                .map(|b| b.label.as_str())
+                .collect::<Vec<_>>(),
             ["A", "B", ""]
         );
         assert_eq!(
-            s.blocks.iter().flat_map(|b| b.items.iter().map(|i| i.no)).collect::<Vec<_>>(),
+            s.blocks
+                .iter()
+                .flat_map(|b| b.items.iter().map(|i| i.no))
+                .collect::<Vec<_>>(),
             [1, 2, 3]
         );
         c.blocks[0].enabled = false;
         c.blocks[2].enabled = false;
         let s = project("T", &c, Level::Standard, Audience::Student);
         assert_eq!(s.blocks.len(), 1);
-        assert_eq!((s.blocks[0].label.as_str(), s.blocks[0].items[0].no), ("A", 1));
+        assert_eq!(
+            (s.blocks[0].label.as_str(), s.blocks[0].items[0].no),
+            ("A", 1)
+        );
         let lines = text_lines(&s);
-        assert!(lines.iter().any(|(place, text)| place == "A 活動 · 第 1 題" && text == "Prompt c"));
+        assert!(lines
+            .iter()
+            .any(|(place, text)| place == "A 活動 · 第 1 題" && text == "Prompt c"));
     }
 
     #[test]
     fn a_ticked_kind_is_kept_in_the_lowest_selected_version() {
         let only_advanced = [Level::Advanced];
         assert_eq!(
-            scaffold_levels(ScaffoldType::Verbal, KIND_GUIDING, &only_advanced, &[KIND_GUIDING]),
+            scaffold_levels(
+                ScaffoldType::Verbal,
+                KIND_GUIDING,
+                &only_advanced,
+                &[KIND_GUIDING]
+            ),
             Some(vec![Level::Advanced])
         );
-        assert_eq!(scaffold_levels(ScaffoldType::Verbal, KIND_GUIDING, &only_advanced, &[]), None);
+        assert_eq!(
+            scaffold_levels(ScaffoldType::Verbal, KIND_GUIDING, &only_advanced, &[]),
+            None
+        );
         assert_eq!(
             scaffold_levels(ScaffoldType::Procedural, KIND_STEPS, &only_advanced, &[]),
             Some(vec![Level::Advanced])
         );
-        assert_eq!(item_levels("support", &[Level::Standard]), Vec::<Level>::new());
+        assert_eq!(
+            item_levels("support", &[Level::Standard]),
+            Vec::<Level>::new()
+        );
     }
 
     #[test]

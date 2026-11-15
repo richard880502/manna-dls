@@ -92,7 +92,10 @@ pub fn api_router() -> Router<AppState> {
         .route("/lessons/{id}/sop/objectives", post(sop::start_objectives))
         .route("/sop-jobs/{id}", get(sop::job))
         // 學習單產生器 (Phase 2.3)
-        .route("/worksheets", get(worksheets::list).post(worksheets::create))
+        .route(
+            "/worksheets",
+            get(worksheets::list).post(worksheets::create),
+        )
         .route(
             "/worksheets/{id}",
             get(worksheets::get)

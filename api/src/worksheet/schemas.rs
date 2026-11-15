@@ -321,7 +321,9 @@ mod tests {
             assert!(!s.contains(&format!("\"{label}\"")), "{label}");
         }
         assert!(s.contains("整理／分析資料") && s.contains("段落寫作") && s.contains("創造資訊"));
-        assert!(scaffolds_schema().to_string().contains("清楚的分步指示及完成順序"));
+        assert!(scaffolds_schema()
+            .to_string()
+            .contains("清楚的分步指示及完成順序"));
         assert!(exit_schema().to_string().contains("蒐集問題"));
     }
 }

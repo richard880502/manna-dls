@@ -31,9 +31,9 @@ use super::schemas::{
 };
 use super::store::{self, Worksheet};
 use super::{
-    exit_count, info_function_label, resolve, student_tasks, vocab_count, Block, BlockKind,
-    Chosen, Content, Level, Objective, ANSWER_FORMATS, GEN_OBJECTIVES, GEN_WARMUP,
-    INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
+    exit_count, info_function_label, resolve, student_tasks, vocab_count, Block, BlockKind, Chosen,
+    Content, Level, Objective, ANSWER_FORMATS, GEN_OBJECTIVES, GEN_WARMUP, INSTRUCTIONAL_KINDS,
+    PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::ai::pipeline::{self, AiContextItem, ContextList, InteractionMeta};
 use crate::ai::LlmRequest;
@@ -41,7 +41,9 @@ use crate::checks::{self as base_checks, CheckResult};
 use crate::error::{AppError, AppResult};
 use crate::prompts;
 use crate::routes::{clip_chars, log_usage, or_blank, scaffold_id, track_label};
-use crate::sop::ai::{attempt, finish_failure, finish_output, prompt, report_with, set_final, Failure};
+use crate::sop::ai::{
+    attempt, finish_failure, finish_output, prompt, report_with, set_final, Failure,
+};
 use crate::vocabulary;
 use crate::AppState;
 
@@ -250,6 +252,33 @@ async fn mark_done(
     Ok(())
 }
 
+/// Records the outcome of the last step of a run but keeps it open: the run is only over once
+/// the worksheet has been assembled and saved, so a page that sees nothing running anymore
+/// always finds the new version.
+async fn mark_held(
+    db: &PgPool,
+    job_id: i64,
+    outcome: &str,
+    message: Option<&str>,
+    interaction_id: Option<i64>,
+    context: &[AiContextItem],
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_jobs
+            SET outcome = $2, message = $3, interaction_id = $4, context = $5,
+                phase = '正在把結果組合成學習單'
+          WHERE id = $1 AND status <> 'done'",
+    )
+    .bind(job_id)
+    .bind(outcome)
+    .bind(message)
+    .bind(interaction_id)
+    .bind(json!(context))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// Starts the background task of a run. Whatever is still open when the work returns, fails or
 /// panics is closed as an error, so the page never waits for ever.
 fn spawn_run<F>(state: &AppState, worksheet_id: i64, run_no: i32, work: F)
@@ -262,6 +291,18 @@ where
             Ok(Ok(())) => {}
             Ok(Err(e)) => tracing::error!(worksheet_id, run_no, error = %e, "worksheet run failed"),
             Err(e) => tracing::error!(worksheet_id, run_no, error = %e, "worksheet run panicked"),
+        }
+        // A step that has its outcome is finished now; one that never got one failed.
+        let held = sqlx::query(
+            "UPDATE worksheet_jobs SET status = 'done', phase = '', finished_at = now()
+              WHERE worksheet_id = $1 AND run_no = $2 AND status <> 'done' AND outcome IS NOT NULL",
+        )
+        .bind(worksheet_id)
+        .bind(run_no)
+        .execute(&db)
+        .await;
+        if let Err(e) = held {
+            tracing::error!(worksheet_id, error = %e, "could not close the worksheet run");
         }
         let closed = sqlx::query(
             "UPDATE worksheet_jobs
@@ -303,10 +344,17 @@ struct Run {
     objectives: Vec<(String, Objective)>,
     candidates: Vec<Candidate>,
     hard_share: Option<f64>,
+    /// The last step's job: kept open until the result is saved.
+    hold: Option<i64>,
 }
 
 impl Run {
-    async fn new(state: &AppState, input: RunInput, run_no: i32) -> AppResult<Self> {
+    async fn new(
+        state: &AppState,
+        input: RunInput,
+        run_no: i32,
+        hold: Option<i64>,
+    ) -> AppResult<Self> {
         let earlier: i64 = sqlx::query_scalar(
             "SELECT COUNT(DISTINCT run_no) FROM worksheet_jobs WHERE worksheet_id = $1 AND run_no < $2",
         )
@@ -332,8 +380,11 @@ impl Run {
         let lexicon = vocabulary::load_lexicon(&state.db, None)
             .await?
             .filter(|l| !l.is_empty());
-        let (candidates, hard_share) =
-            key_word_candidates(&paragraphs, lexicon.as_ref(), &input.worksheet.brief.vocabulary);
+        let (candidates, hard_share) = key_word_candidates(
+            &paragraphs,
+            lexicon.as_ref(),
+            &input.worksheet.brief.vocabulary,
+        );
         Ok(Self {
             state: state.clone(),
             temperature: BASE_TEMPERATURE + 0.1 * earlier.min(6) as f32,
@@ -343,6 +394,7 @@ impl Run {
             objectives,
             candidates,
             hard_share,
+            hold,
         })
     }
 
@@ -530,7 +582,11 @@ pub fn key_word_candidates(
             continue;
         }
         let level = lexicon.and_then(|lex| vocabulary::word_level(lex, word).level);
-        let stem: String = word.to_lowercase().chars().take(word.chars().count().saturating_sub(2).max(3)).collect();
+        let stem: String = word
+            .to_lowercase()
+            .chars()
+            .take(word.chars().count().saturating_sub(2).max(3))
+            .collect();
         let place = paragraphs.iter().enumerate().find_map(|(pi, p)| {
             sentences(p)
                 .into_iter()
@@ -617,8 +673,16 @@ where
     let user = prompts::render_user_with(&prompt, &vars, &required);
     // The material must stay deletable: the logged copy keeps only its length and a hash.
     let passage = vars.get("passage_numbered").cloned().unwrap_or_default();
-    vars.insert("passage_numbered", prompts::redacted("學習單教材", &passage));
-    for key in ["blocks_detail", "tasks_summary", "vocab_candidates", "teacher_tasks"] {
+    vars.insert(
+        "passage_numbered",
+        prompts::redacted("學習單教材", &passage),
+    );
+    for key in [
+        "blocks_detail",
+        "tasks_summary",
+        "vocab_candidates",
+        "teacher_tasks",
+    ] {
         if let Some(v) = vars.get(key).cloned() {
             vars.insert(key, prompts::redacted("由教材衍生的內容", &v));
         }
@@ -782,7 +846,27 @@ async fn close<T>(
             interaction_id,
             output,
         } => {
-            mark_done(run.db(), job_id, "shown", None, Some(interaction_id), context).await?;
+            if run.hold == Some(job_id) {
+                mark_held(
+                    run.db(),
+                    job_id,
+                    "shown",
+                    None,
+                    Some(interaction_id),
+                    context,
+                )
+                .await?;
+            } else {
+                mark_done(
+                    run.db(),
+                    job_id,
+                    "shown",
+                    None,
+                    Some(interaction_id),
+                    context,
+                )
+                .await?;
+            }
             Ok(Ok((output, interaction_id)))
         }
         StepResult::Failed {
@@ -791,7 +875,27 @@ async fn close<T>(
             reason,
         } => {
             let message = format!("{reason}，這一步沒有產生成功；你可以繼續手動完成。");
-            mark_done(run.db(), job_id, outcome, Some(&message), interaction_id, context).await?;
+            if run.hold == Some(job_id) {
+                mark_held(
+                    run.db(),
+                    job_id,
+                    outcome,
+                    Some(&message),
+                    interaction_id,
+                    context,
+                )
+                .await?;
+            } else {
+                mark_done(
+                    run.db(),
+                    job_id,
+                    outcome,
+                    Some(&message),
+                    interaction_id,
+                    context,
+                )
+                .await?;
+            }
             Ok(Err(reason))
         }
     }
@@ -988,18 +1092,31 @@ async fn step_warmup(
     let count = vocab_count(minutes);
     let mut vars = run.common_vars();
     vars.extend([
-        ("vocab_count", format!("{}–{count}", count.saturating_sub(2).max(2))),
+        (
+            "vocab_count",
+            format!("{}–{count}", count.saturating_sub(2).max(2)),
+        ),
         (
             "teacher_warmup",
             lines_or(
-                brief.warmup.iter().filter(|w| !w.trim().is_empty()).map(|w| format!("- {}", w.trim())).collect(),
+                brief
+                    .warmup
+                    .iter()
+                    .filter(|w| !w.trim().is_empty())
+                    .map(|w| format!("- {}", w.trim()))
+                    .collect(),
                 "（沒有）",
             ),
         ),
         (
             "teacher_vocabulary",
             labels_or(
-                &brief.vocabulary.iter().filter(|w| !w.trim().is_empty()).map(|w| w.trim().to_string()).collect::<Vec<_>>(),
+                &brief
+                    .vocabulary
+                    .iter()
+                    .filter(|w| !w.trim().is_empty())
+                    .map(|w| w.trim().to_string())
+                    .collect::<Vec<_>>(),
                 "（沒有）",
             ),
         ),
@@ -1013,7 +1130,9 @@ async fn step_warmup(
                         format!(
                             "{}｜{}｜P{}",
                             c.word,
-                            c.level.map(|l| format!("第 {l} 級")).unwrap_or_else(|| "未對應到詞彙表".to_string()),
+                            c.level
+                                .map(|l| format!("第 {l} 級"))
+                                .unwrap_or_else(|| "未對應到詞彙表".to_string()),
                             c.paragraph_no
                         )
                     })
@@ -1107,7 +1226,11 @@ fn target_of_warmup(w: &CleanWarmup) -> ScaffoldTarget {
                 .map(|p| format!("  - {}", clip_chars(p, 300)))
                 .collect::<Vec<_>>()
                 .join("\n"),
-            w.words.iter().map(|w| w.word.as_str()).collect::<Vec<_>>().join(", ")
+            w.words
+                .iter()
+                .map(|w| w.word.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         answers: Vec::new(),
     }
@@ -1136,7 +1259,11 @@ async fn step_scaffolds(
         ),
         (
             "blocks_detail",
-            targets.iter().map(|t| t.detail.clone()).collect::<Vec<_>>().join("\n\n"),
+            targets
+                .iter()
+                .map(|t| t.detail.clone())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
         ),
     ]);
     let names: Vec<String> = targets.iter().map(|t| t.target.clone()).collect();
@@ -1184,7 +1311,10 @@ async fn step_exit(
     let mut vars = run.common_vars();
     vars.extend([
         ("exit_count", count.to_string()),
-        ("exit_minutes", if count <= 2 { "3" } else { "5" }.to_string()),
+        (
+            "exit_minutes",
+            if count <= 2 { "3" } else { "5" }.to_string(),
+        ),
         (
             "teacher_exit",
             lines_or(
@@ -1270,7 +1400,8 @@ pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()
     };
     let state2 = state.clone();
     spawn_run(state, worksheet_id, run_no, async move {
-        let run = Run::new(&state2, input, run_no).await?;
+        let hold = ids.get(STEP_EXIT).copied();
+        let run = Run::new(&state2, input, run_no, hold).await?;
         generate(&run, &ids).await
     });
     Ok(())
@@ -1302,23 +1433,29 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         },
     )
     .await?;
-    let raw_blocks: Vec<RawBlock> = tasks
-        .as_ref()
-        .map(|(b, _)| b.clone())
-        .unwrap_or_default();
+    let raw_blocks: Vec<RawBlock> = tasks.as_ref().map(|(b, _)| b.clone()).unwrap_or_default();
     if !raw_blocks.is_empty() {
         // What Manna decided where the teacher left a block empty is reported back (spec §4.6).
         if chosen.auto.iter().any(|a| a == "student_tasks") {
             chosen.settings.student_tasks = student_tasks()
                 .into_iter()
-                .filter(|l| raw_blocks.iter().any(|b| b.student_tasks.iter().any(|t| t == l)))
+                .filter(|l| {
+                    raw_blocks
+                        .iter()
+                        .any(|b| b.student_tasks.iter().any(|t| t == l))
+                })
                 .map(str::to_string)
                 .collect();
         }
         if chosen.auto.iter().any(|a| a == "answer_formats") {
             chosen.settings.answer_formats = ANSWER_FORMATS
                 .into_iter()
-                .filter(|l| raw_blocks.iter().flat_map(|b| &b.items).any(|i| i.answer_format == *l))
+                .filter(|l| {
+                    raw_blocks
+                        .iter()
+                        .flat_map(|b| &b.items)
+                        .any(|i| i.answer_format == *l)
+                })
                 .map(str::to_string)
                 .collect();
         }
@@ -1326,7 +1463,11 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         if !missing.is_empty() {
             notices.push(format!(
                 "第 {} 段沒有對應的任務，可以自己加一個區塊。",
-                missing.iter().map(i64::to_string).collect::<Vec<_>>().join("、")
+                missing
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join("、")
             ));
         }
     }
@@ -1416,7 +1557,8 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
             let mut used_seed_blocks: HashSet<String> = HashSet::new();
             for (i, raw) in raw_blocks.iter().enumerate() {
                 let id = format!("r{}b{}", run.run_no, i + 1);
-                let mut block = assemble::activity_block(&id, raw, material, &levels, &objective_ids);
+                let mut block =
+                    assemble::activity_block(&id, raw, material, &levels, &objective_ids);
                 block.sop_block_id = sop_block_for(ws, &block.paragraph_ids, &mut used_seed_blocks);
                 assemble::attach_scaffolds(&mut block, set_for(&raw.block_id), &levels, &ticked);
                 blocks.push(block);
@@ -1430,7 +1572,11 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         )),
     }
     match &exit {
-        Ok((items, _)) => blocks.push(assemble::exit_block(items, &levels, &objective_ids)),
+        Ok((items, _)) => {
+            let mut block = assemble::exit_block(items, &levels, &objective_ids);
+            assemble::attach_scaffolds(&mut block, None, &levels, &ticked);
+            blocks.push(block);
+        }
         Err(reason) => blocks.push(assemble::placeholder(
             BlockKind::ExitTicket,
             EXIT_ID,
@@ -1450,7 +1596,9 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         notices,
     };
     content.normalise().map_err(|e| {
-        AppError::Internal(anyhow::anyhow!("assembled worksheet failed validation: {e}"))
+        AppError::Internal(anyhow::anyhow!(
+            "assembled worksheet failed validation: {e}"
+        ))
     })?;
     let saved = store::save_content(db, ws.id, &content, "generate").await?;
     store::set_generated(db, ws.id).await?;
@@ -1522,9 +1670,11 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
     else {
         return Ok(());
     };
+    let last_step = steps.last().copied();
     let state2 = state.clone();
     spawn_run(state, worksheet_id, run_no, async move {
-        let run = Run::new(&state2, input, run_no).await?;
+        let hold = last_step.and_then(|s| ids.get(s)).copied();
+        let run = Run::new(&state2, input, run_no, hold).await?;
         regenerate(&run, &ids, block).await
     });
     Ok(())
@@ -1586,7 +1736,9 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
                 .iter()
                 .filter(|i| i.levels.len() == levels.len())
                 .count();
-            let budget = core.clamp(1, 6).max(if old.items.is_empty() { 2 } else { 1 });
+            let budget = core
+                .clamp(1, 6)
+                .max(if old.items.is_empty() { 2 } else { 1 });
             let tasks = step_tasks(
                 run,
                 jobs[STEP_TASKS],
@@ -1604,7 +1756,8 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
                 skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
             };
-            let mut block = assemble::activity_block(&old.id, &raw, material, &levels, &objective_ids);
+            let mut block =
+                assemble::activity_block(&old.id, &raw, material, &levels, &objective_ids);
             if old.paragraph_ids.is_empty() {
                 block.paragraph_ids = Vec::new();
             }
@@ -1624,7 +1777,13 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
         }
         BlockKind::Warmup => {
             let summary_blocks: Vec<RawBlock> = Vec::new();
-            let warmup = step_warmup(run, jobs[STEP_WARMUP], chosen.settings.minutes, &summary_blocks).await?;
+            let warmup = step_warmup(
+                run,
+                jobs[STEP_WARMUP],
+                chosen.settings.minutes,
+                &summary_blocks,
+            )
+            .await?;
             let Ok((w, interaction_id)) = warmup else {
                 skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
@@ -1644,14 +1803,20 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             (block, interaction_id)
         }
         BlockKind::ExitTicket => {
-            let exit = step_exit(run, jobs[STEP_EXIT], chosen.settings.minutes, &[], &other_prompts).await?;
+            let exit = step_exit(
+                run,
+                jobs[STEP_EXIT],
+                chosen.settings.minutes,
+                &[],
+                &other_prompts,
+            )
+            .await?;
             let Ok((items, interaction_id)) = exit else {
                 return Ok(());
             };
-            (
-                assemble::exit_block(&items, &levels, &objective_ids),
-                interaction_id,
-            )
+            let mut block = assemble::exit_block(&items, &levels, &objective_ids);
+            assemble::attach_scaffolds(&mut block, None, &levels, &ticked);
+            (block, interaction_id)
         }
     };
     block.id = old.id.clone();
@@ -1705,7 +1870,8 @@ mod tests {
 
     #[test]
     fn sentences_are_split_at_closing_marks() {
-        let p = "Mrs. Lin put a stand outside. A sign said, “Take one if you need it.” Nobody laughed!";
+        let p =
+            "Mrs. Lin put a stand outside. A sign said, “Take one if you need it.” Nobody laughed!";
         let s = sentences(p);
         assert_eq!(s.last().copied(), Some("Nobody laughed!"));
         assert!(s.iter().any(|x| x.ends_with("need it.”")));
@@ -1716,7 +1882,8 @@ mod tests {
     #[test]
     fn candidates_without_a_word_list_have_no_level() {
         let paragraphs = vec![
-            "Her neighbors laughed at the idea. Something unexpected followed in Taipei.".to_string(),
+            "Her neighbors laughed at the idea. Something unexpected followed in Taipei."
+                .to_string(),
         ];
         let (c, share) = key_word_candidates(&paragraphs, None, &["laughed".to_string()]);
         assert_eq!(share, None);
@@ -1724,6 +1891,9 @@ mod tests {
         assert!(c.iter().all(|x| x.level.is_none()));
         assert!(c.iter().any(|x| x.word == "unexpected"));
         assert!(c.iter().any(|x| x.word == "neighbors"));
-        assert_eq!(c.iter().find(|x| x.word == "unexpected").unwrap().sentence, "Something unexpected followed in Taipei.");
+        assert_eq!(
+            c.iter().find(|x| x.word == "unexpected").unwrap().sentence,
+            "Something unexpected followed in Taipei."
+        );
     }
 }

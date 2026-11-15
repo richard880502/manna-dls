@@ -91,11 +91,12 @@ pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<Worksheet
 
 /// For background work: the row by id, deleted or not.
 pub async fn by_id(db: &PgPool, id: i64) -> sqlx::Result<Option<Worksheet>> {
-    let row: Option<WorksheetRow> =
-        sqlx::query_as(&format!("SELECT {WORKSHEET_COLS} FROM worksheets WHERE id = $1"))
-            .bind(id)
-            .fetch_optional(db)
-            .await?;
+    let row: Option<WorksheetRow> = sqlx::query_as(&format!(
+        "SELECT {WORKSHEET_COLS} FROM worksheets WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
     Ok(row.map(Worksheet::from))
 }
 
