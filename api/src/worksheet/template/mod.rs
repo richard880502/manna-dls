@@ -530,6 +530,7 @@ pub fn from_extraction(outline: &RawOutline, details: &RawDetails) -> WsTemplate
             }
         })
         .collect();
+    let sections = drop_header_section(sections);
     let language = outline.instruction_language.trim();
     WsTemplate {
         worksheet_kind: clip_trim(&outline.worksheet_kind, MAX_KIND_CHARS),
@@ -645,6 +646,31 @@ pub fn plan_blocks(t: &WsTemplate, paragraphs: usize) -> (Vec<Target>, Vec<Strin
     (targets, notices)
 }
 
+/// The worksheet's own title line (「[單元名稱] Vocabulary Worksheet」) sometimes comes back as the
+/// first section, although the prompt says it is not one; generating it gives a block like
+/// 「write your name here」. A first section that looks like a worksheet title is dropped (when
+/// others remain) and the ids are renumbered.
+fn drop_header_section(mut sections: Vec<WsTemplateSection>) -> Vec<WsTemplateSection> {
+    static HEADER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(worksheet|handout|學習單|講義|提問單)\s*$").expect("valid regex")
+    });
+    static ACTIVITY: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(task|part|step|activity|exercise)\b|任務|活動|練習")
+            .expect("valid regex")
+    });
+    let looks_like_header = sections.first().is_some_and(|s| {
+        let t = s.title_pattern.trim();
+        HEADER.is_match(t) && !ACTIVITY.is_match(t)
+    });
+    if looks_like_header && sections.len() > 1 {
+        sections.remove(0);
+        for (i, s) in sections.iter_mut().enumerate() {
+            s.id = format!("s{}", i + 1);
+        }
+    }
+    sections
+}
+
 /// A block title for a paragraph, always in one form: 「Paragraph n: …」 (「第 n 段：…」 for a
 /// Chinese template). The model numbers paragraphs in many ways (`[n]`, `[2]`, `2 `, `Para 2`,
 /// `Paragraph 2`, `第 2 段`), so any leading number or paragraph label is removed before the
@@ -669,6 +695,13 @@ pub fn title_for(title: &str, paragraph: Option<usize>, instruction_language: &s
         }
         rest = stripped;
     }
+    static TRAILING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)\s*[(（]\s*(?:(?:paragraphs?|para\.?|p\.?)\s*(?:\[\s*(?:n|\d+)\s*\]|\d+)|第\s*(?:\[\s*(?:n|\d+)\s*\]|\d+)\s*段)\s*[)）]\s*$",
+        )
+        .expect("valid regex")
+    });
+    let rest = TRAILING.replace(&rest, "").to_string();
     let rest = rest.replace("[n]", &n.to_string());
     let rest = rest.trim_matches(|c: char| c.is_whitespace() || ":：-–.".contains(c));
     let prefix = if instruction_language == "中文" {
@@ -855,6 +888,30 @@ mod tests {
     }
 
     #[test]
+    fn a_leading_worksheet_title_is_not_a_section() {
+        let kept = drop_header_section(vec![
+            section("[單元名稱] Vocabulary Worksheet", false),
+            section("Task I. Syllables", false),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].title_pattern, "Task I. Syllables");
+        assert_eq!(kept[0].id, "s1");
+        // A real activity, or the only section, stays.
+        assert_eq!(
+            drop_header_section(vec![
+                section("Task 1 Reading Worksheet", false),
+                section("B", false)
+            ])
+            .len(),
+            2
+        );
+        assert_eq!(
+            drop_header_section(vec![section("Worksheet", false)]).len(),
+            1
+        );
+    }
+
+    #[test]
     fn titles_name_the_paragraph() {
         assert_eq!(
             title_for("Paragraph [n]: Details", Some(3), "英文"),
@@ -888,6 +945,14 @@ mod tests {
             "第 2 段：字彙"
         );
         assert_eq!(title_for("[n]", Some(5), "英文"), "Paragraph 5");
+        assert_eq!(
+            title_for("Vocabulary (第 1 段)", Some(1), "中文"),
+            "第 1 段：Vocabulary"
+        );
+        assert_eq!(
+            title_for("Reading (Paragraph [n])", Some(2), "英文"),
+            "Paragraph 2: Reading"
+        );
         assert_eq!(title_for(" Wrap up ", None, "英文"), "Wrap up");
     }
 
