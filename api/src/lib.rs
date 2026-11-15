@@ -22,6 +22,7 @@ pub mod routes;
 pub mod settings;
 pub mod sop;
 pub mod storage;
+pub mod syllables;
 pub mod vocabulary;
 pub mod worksheet;
 

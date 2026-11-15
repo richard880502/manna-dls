@@ -20,6 +20,7 @@ use super::{
 use crate::checks::CheckResult;
 use crate::routes::clip_chars;
 use crate::sop::checks::{clean_markup, english_only, is_verbatim, norm};
+use crate::syllables;
 
 pub struct Eval<T> {
     /// The output with everything that failed taken out; `None` when nothing usable is left.
@@ -1150,13 +1151,14 @@ pub struct CleanSection {
     pub items: Vec<CleanSectionItem>,
 }
 
-const SECTION_CHECKS: [&str; 6] = [
+const SECTION_CHECKS: [&str; 7] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "answer_not_in_prompt",
     "item_count_within_template",
     "has_items",
     "no_invented_material",
+    "syllables_match_dictionary",
 ];
 
 /// Text that names a resource from outside the material: a web address or a video site.
@@ -1167,6 +1169,63 @@ fn names_a_resource(text: &str) -> bool {
     ]
     .iter()
     .any(|k| t.contains(k))
+}
+
+fn described(corrections: &[syllables::Correction]) -> String {
+    corrections
+        .iter()
+        .map(|c| format!("{} → {}", c.written, c.dictionary))
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
+/// Puts the dictionary's syllable division in an item's answer (the model gets these wrong:
+/// "dra-ma-tic" for dra-mat-ic). A choice item's answer has to stay one of its options, so it
+/// moves to the option the dictionary agrees with; when no option does, the item is dropped.
+/// Returns whether the item is kept.
+fn syllable_answer_from_dictionary(
+    item: &mut CleanSectionItem,
+    iname: &str,
+    t: &mut Tally,
+) -> bool {
+    if item.answer_format == FMT_CHOICE {
+        if matches!(syllables::check(item.answer.trim()), Some(Err(_))) {
+            let right = item
+                .options
+                .iter()
+                .find(|o| matches!(syllables::check(o.trim()), Some(Ok(()))))
+                .cloned();
+            match right {
+                Some(option) => {
+                    t.fixed(
+                        "syllables_match_dictionary",
+                        format!("{iname} 的答案 {} 與字典不同，改選 {option}", item.answer),
+                        "依字典改正",
+                    );
+                    item.answer = option;
+                }
+                None => {
+                    t.fail(
+                        "syllables_match_dictionary",
+                        format!("{iname} 的選項裡沒有字典的音節劃分（{}）。", item.answer),
+                        "拿掉這一題",
+                    );
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    let (fixed, corrections) = syllables::correct(&item.answer);
+    if !corrections.is_empty() {
+        t.fixed(
+            "syllables_match_dictionary",
+            format!("{iname} 的音節劃分與字典不同：{}", described(&corrections)),
+            "依字典改正",
+        );
+        item.answer = fixed;
+    }
+    true
 }
 
 /// Checks one generated template block: fixed answer-format labels, well-formed closed items
@@ -1185,6 +1244,25 @@ pub fn evaluate_section(
         scaffold: clean(&raw.scaffold),
         items: Vec::new(),
     };
+    let syllable_section = syllables::mentions_syllables(&out.title)
+        || syllables::mentions_syllables(&out.instructions);
+    if syllable_section {
+        // An example in the instructions ("e.g., be-hav-ior") is a division too.
+        for (what, field) in [
+            ("instructions", &mut out.instructions),
+            ("scaffold", &mut out.scaffold),
+        ] {
+            let (fixed, corrections) = syllables::correct(field);
+            if !corrections.is_empty() {
+                t.fixed(
+                    "syllables_match_dictionary",
+                    format!("{what} 的音節劃分與字典不同：{}", described(&corrections)),
+                    "依字典改正",
+                );
+                *field = fixed;
+            }
+        }
+    }
     if ctx.needs_external {
         for (what, field) in [
             ("title", &mut out.title),
@@ -1292,6 +1370,10 @@ pub fn evaluate_section(
         } else {
             item.evidence = verbatim_piece(&item.answer, ctx.passage);
         }
+        let about_syllables = syllable_section || syllables::mentions_syllables(&item.prompt);
+        if about_syllables && !syllable_answer_from_dictionary(&mut item, &iname, &mut t) {
+            continue;
+        }
         out.items.push(item);
     }
     if out.items.len() > ctx.item_count {
@@ -1334,6 +1416,66 @@ mod tests {
             options: options.iter().map(|o| o.to_string()).collect(),
             answer: answer.into(),
         }
+    }
+
+    #[test]
+    fn syllable_answers_come_from_the_dictionary() {
+        let passage = paragraphs().join("\n");
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Task I. Syllable Separation and Oral Reading".into(),
+            instructions: "Separate the words into syllables (e.g., be-ha-vior).".into(),
+            scaffold: "".into(),
+            items: vec![
+                out_item(FMT_BLANK, "dramatic", &[], "dra-ma-tic"),
+                out_item(FMT_BLANK, "invisible", &[], "in-vis-i-ble"),
+                out_item(FMT_BLANK, "Kaohsiung", &[], "Kao-hsi-ung"),
+                out_item(
+                    FMT_CHOICE,
+                    "Which division is right?",
+                    &["au-to-ma-tic", "au-to-mat-ic"],
+                    "au-to-ma-tic",
+                ),
+                out_item(
+                    FMT_CHOICE,
+                    "Which division is right?",
+                    &["pat-ience", "pati-ence"],
+                    "pat-ience",
+                ),
+            ],
+        };
+        let ctx = SectionCtx {
+            passage: &passage,
+            item_count: 5,
+            needs_external: false,
+        };
+        let e = evaluate_section(&raw, &ctx);
+        let out = e.output.unwrap();
+        assert_eq!(
+            out.instructions,
+            "Separate the words into syllables (e.g., be-hav-ior)."
+        );
+        let answers: Vec<&str> = out.items.iter().map(|i| i.answer.as_str()).collect();
+        assert_eq!(
+            answers,
+            ["dra-mat-ic", "in-vis-i-ble", "Kao-hsi-ung", "au-to-mat-ic"],
+            "corrected, kept, unknown word left alone, choice moved; no right option: dropped"
+        );
+        let result = e
+            .results
+            .iter()
+            .find(|r| r.name == "syllables_match_dictionary")
+            .unwrap();
+        assert!(!result.passed, "the dropped choice item fails the check");
+
+        // Outside a syllable section an answer with a hyphen is not touched.
+        let other = crate::worksheet::template::RawSectionOut {
+            title: "Paragraph 1: Details".into(),
+            instructions: "Answer.".into(),
+            scaffold: "".into(),
+            items: vec![out_item(FMT_BLANK, "Word?", &[], "dra-ma-tic")],
+        };
+        let out = evaluate_section(&other, &ctx).output.unwrap();
+        assert_eq!(out.items[0].answer, "dra-ma-tic");
     }
 
     #[test]
