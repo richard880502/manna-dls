@@ -729,7 +729,9 @@ pub fn evaluate_warmup(raw: &RawWarmup, ctx: &WarmupCtx<'_>) -> Eval<CleanWarmup
         let (context, paragraph_no) = if verbatim {
             (sentence, Some(v.paragraph_no))
         } else {
-            t.fail(
+            // The code found the word's sentence in the material itself, so this is fully
+            // repaired here (gemma drops the quotation marks of dialogue, for one).
+            t.fixed(
                 "context_sentence_verbatim",
                 format!(
                     "關鍵字「{word}」的 context_sentence 不是 [P{}] 的原句；請逐字複製含有這個字的句子。",
@@ -1429,11 +1431,18 @@ mod tests {
         for expected in [
             "labels_from_spec_sets",
             "vocab_only_from_candidates",
-            "context_sentence_verbatim",
             "english_only",
         ] {
             assert!(names.contains(&expected), "{expected} in {names:?}");
         }
+        // A context sentence that is not verbatim is replaced by the one the code found:
+        // repaired, not a reason for another call.
+        let context = e
+            .results
+            .iter()
+            .find(|r| r.name == "context_sentence_verbatim")
+            .unwrap();
+        assert!(context.passed && context.detail.is_some());
         let w = e.output.unwrap();
         assert_eq!(
             w.activities[0].student_tasks,
