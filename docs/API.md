@@ -920,3 +920,289 @@ interface SopObjectivesSuggestion {
 - 自動儲存：SOP 與教案（今天要教什麼？＋教學步驟）在停止輸入約 1.5 秒後各自存成新版本；頁首顯示「儲存中…／已自動儲存 14:32／沒有存到」。沒有「儲存教案」按鈕。離開頁面、開始上課、請 Manna 分析之前會先把還沒存的內容存好；存不成功時照舊在頁面上確認。
 - 第 2–7 步右上的「對照教材」從左側滑出教材（印刷樣式、段落編號），可與步驟並排。
 - 「開始上課」在每一步的頁首都在，從不檢查 SOP 是否完成。
+
+---
+
+# Phase 2.3：學習單產生器
+
+以下為**新增**；既有端點不變。Migration `0010_worksheets.sql`（`0009` 保留給教材庫分支）。依據：《學習單產生器：教師選項與 SOP 整合規格》§4.1、§4.2、§4.6、§5–§9.5、§9.7，`docs/LLM_VALIDATION.md` §5–§10（步驟 (c)(d)(e)(f)，(g) 改由程式組裝），`docs/DESIGN_OVERHAUL.md` 第 3 步。工程說明與規格 §12 第 2–6 項的回覆在 `docs/ENGINEERING_REPLY_WORKSHEET.md`。
+
+不在這一版：外部資源搜尋（§4.3）、教材注記與教材庫（另一分支，見「教材接縫」）、AI 資深教師（§4.5）、歷屆考題分析（沒有資料）。§9.6 只做決定性的詞彙級別檢查。
+
+## 固定標籤（規格 §5，逐字；伺服器只接受這些值）
+
+| 區塊 | `WorksheetSettings` 欄位 | 可用的值 |
+|---|---|---|
+| 素材類型 | `material_types` | 閱讀文本、聽力素材、影片素材、圖像素材、資料／數據 |
+| 學生任務 | `student_tasks` | 語言與內容學習：理解內容、字彙練習、文法／句型練習｜思考與資訊處理：比較／分類、推論／預測、評估／提出理由、蒐集資料、整理／分析資料｜互動與合作：討論／分享、小組共同完成｜表達與成果：寫作、製作成果、成果發表｜反思與評量：學習反思、自我評量、同儕互評 |
+| 作答方式 | `answer_formats` | 填空題、選擇題、是非題、配對題、簡答題、表格整理、圖像組織、段落寫作 |
+| 產生設定 | `generation` | 加入暖身活動、顯示學習目標、提供引導問題、顯示作答示例、提供字詞表、提供句型框架 |
+| 產生設定 →「產生基礎版／一般版／進階版」 | `levels` | `basic`（基礎版）、`standard`（一般版）、`advanced`（進階版） |
+
+- 四個區塊都是複選、都可以是空陣列；沒有任何必選規則。五個小標只用來排版，不是欄位。
+- 陣列裡出現表外的字串（包含「課綱議題」「SDGs」「SEL」「探究」「高層次思考」「專題任務」「合作活動」）→ 400。重複值會被去掉，順序依上表。
+- `minutes`（預計完成時間，分鐘）可為 null；有值時需為 5–240。
+
+## 型別
+
+```ts
+type WsLevel = "basic" | "standard" | "advanced";
+type WsAudience = "student" | "teacher";
+type WsOrigin = "teacher" | "ai" | "ai_edited";       // 教師寫的｜Manna 產生的｜Manna 產生後教師改過
+type WsBlockKind = "warmup" | "activity" | "exit_ticket";
+type WsScaffoldType = "verbal" | "instructional" | "procedural";   // 語言／教學／程序鷹架（規格 §3）
+
+interface WorksheetSettings {
+  material_types: string[]; student_tasks: string[]; answer_formats: string[]; generation: string[];
+  levels: WsLevel[]; minutes: number | null;
+}
+
+// 教材接縫：產生器只認這個形狀。目前的來源是「貼上的文字」與「課例 SOP 的教材」。
+interface WorksheetMaterial {
+  title: string;
+  paragraphs: Array<{ id: string; text: string }>;       // id 例如 "p3"；由程式分段
+  source: { kind: "pasted" | "lesson_sop"; lesson_id: number | null; material_version_no: number | null; note: string };
+}
+
+interface WsObjective {
+  id: string; type: "content" | "language";
+  text: string;                 // 教師看的說明（可中文）
+  student_facing_en: string;    // 印在學習單「Today I can …」的英文
+  origin: WsOrigin;
+  sop_id: string | null;        // 從課例帶入時，對應的 SOP 目標 id
+}
+
+// 產生前可以編修的「帶入內容」（從課例預帶；直接使用時是空的）。全部可改、可刪。
+interface WorksheetBrief {
+  tasks: Array<{ id: string; paragraph_ids: string[]; function: InfoFunction | null; text: string;
+                 sop_block_id: string | null; sop_task_id: string | null }>;
+  warmup: string[];             // 暖身想法
+  vocabulary: string[];         // 想放進暖身的關鍵字
+  exit_ticket: Array<{ kind: ExitKind; text: string }>;
+}
+
+interface WsVocab { word: string; level: number | null; definition: string; context: string; paragraph_id: string | null }
+// level 一律由伺服器查 vocabulary_items；查不到或詞彙表未匯入時是 null（不由模型產生，也不採用用戶端送來的值）
+interface WsItem {
+  id: string; answer_format: string | null;   // 規格 §5.3 的標籤
+  prompt: string; options: string[];
+  answer: string;                // 參考答案：只出現在教師參考版
+  evidence: string;              // 答案在教材中的逐字依據：只出現在教師參考版
+  purpose: ExitKind | null;      // 只有 Exit ticket 的題目有
+  levels: WsLevel[];             // 這一題出現在哪些版本（核心題＝全部版本）
+  origin: WsOrigin;
+}
+interface WsScaffold {
+  id: string; type: WsScaffoldType;
+  kind: string;                  // 規格 §3 的例子名稱，例如 句型框架、字詞表、圖像組織、清楚的分步指示及完成順序
+  content: string; steps: string[];   // 程序鷹架用 steps，其餘用 content
+  levels: WsLevel[];             // 這個鷹架出現在哪些版本
+  auto: boolean;                 // 系統自動加入的程序鷹架
+  origin: WsOrigin;
+}
+interface WsBlock {
+  id: string; kind: WsBlockKind;
+  enabled: boolean;              // 暖身與 Exit ticket 可以關掉（保留內容、不印出）
+  title: string; instructions: string;
+  paragraph_ids: string[];       // 一段，或合併的數段
+  info_function: InfoFunction | null; student_tasks: string[]; objective_ids: string[];
+  vocabulary: WsVocab[];         // 只有暖身有
+  items: WsItem[]; scaffolds: WsScaffold[];
+  teacher_notes: string;         // 只出現在教師參考版（設計理由，可中文）
+  origin: WsOrigin;
+  message: string | null;        // 這一區塊沒有產生成功時的說明；不影響手動編輯
+  sop_block_id: string | null;
+}
+
+interface WsChosen {             // 系統這次實際用的設定（規格 §4.6：要讓教師看到）
+  settings: WorksheetSettings;
+  auto: Array<"material_types" | "student_tasks" | "answer_formats" | "generation" | "levels" | "minutes">;  // 哪些是系統決定的
+  item_budget: number;           // 主要任務的核心題數目標
+  reasons: string[];
+}
+interface WorksheetContent {
+  objectives: WsObjective[]; show_objectives: boolean;
+  blocks: WsBlock[];             // 順序＝印出的順序；可拖曳調整
+  levels: WsLevel[];             // 版本分頁（只有選了的）
+  chosen: WsChosen | null;       // 還沒產生過是 null
+  notices: string[];             // 產生時要讓教師知道的事（例如某段沒有對應任務）
+}
+
+interface WsJob {
+  id: number; worksheet_id: number; run_no: number;
+  step: "tasks" | "warmup" | "scaffolds" | "exit_ticket";
+  block_id: string | null;       // 單一區塊重新產生時
+  status: "queued" | "running" | "done";
+  outcome: "shown" | "blocked" | "timeout" | "error" | "disabled" | "skipped" | null;   // done 時才有
+  phase: string; message: string | null;
+  interaction_id: number | null; context: AiContextItem[];
+  started_at: string | null; finished_at: string | null;
+}
+
+interface WorksheetSummary {
+  id: number; title: string; filename: string;
+  lesson: { id: number; title: string; unit_id: number; unit_title: string } | null;
+  class_id: number | null; generated: boolean; levels: WsLevel[];
+  version_no: number; created_at: string; updated_at: string;
+}
+interface WorksheetState extends WorksheetSummary {
+  material: WorksheetMaterial;
+  settings: WorksheetSettings;         // 教師目前勾的
+  suggested: WorksheetSettings;        // 系統依教材與課例建議的（畫面上打星號）；建立時 settings 以它起始
+  brief: WorksheetBrief;
+  versions_count: number; saved_at: string;
+  content: WorksheetContent;
+  jobs: WsJob[];                       // 最近一次產生（或區塊重新產生）的各步驟
+  running: boolean;
+  undoable: string[];                  // 有上一版可以復原的區塊 id
+  sop_sync: { linked: boolean; changes: number };   // 連結課例時：與課例 SOP 不同的地方有幾項
+}
+
+// 學生版／教師版的投影（由程式組裝；匯出與這個端點用同一份）
+interface WsSheet {
+  title: string; level: WsLevel; audience: WsAudience; objectives: string[];
+  blocks: Array<{
+    id: string; kind: WsBlockKind; label: string;      // "A"、"B"…；Exit ticket 沒有
+    title: string; instructions: string; steps: string[];
+    vocabulary: Array<{ word: string; level: number | null; definition: string }>;
+    supports: Array<{ type: WsScaffoldType; kind: string; content: string }>;
+    items: Array<{ no: number; answer_format: string | null; prompt: string; options: string[]; lines: number;
+                   answer?: string; evidence?: string }>;   // 學生版沒有 answer 與 evidence 這兩個鍵
+    teacher_notes?: string;                                 // 學生版沒有這個鍵
+  }>;
+}
+```
+
+## 端點（皆需登入；只能存取自己的學習單，其他人的回 404）
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/worksheets` | `?lesson_id=` | `WorksheetSummary[]`，新到舊 |
+| POST | `/api/worksheets` | `{ lesson_id?, class_id?, material?: { title?, text, source_note? } }` | 201 `WorksheetState`。有 `lesson_id`：從課例 SOP 帶入教材、目標、任務、暖身、Exit ticket 與建議選項（沒有 SOP 內容也可以）。沒有：直接使用，`material.text` 可以先空著 |
+| GET | `/api/worksheets/:id` | – | `WorksheetState` |
+| PUT | `/api/worksheets/:id` | `{ title?, filename?, settings?, brief?, content? }` | `WorksheetState`。`content` 與最新版本不同才新增一個版本（只增不改）。標籤不在規格集合內 → 400 |
+| PUT | `/api/worksheets/:id/material` | `{ title?, text, source_note? }` | `WorksheetState`。換教材：重新分段（文字相同的段落沿用 id），`source.kind` 變成 `pasted`，重新計算 `suggested` |
+| DELETE | `/api/worksheets/:id` | – | `{ ok: true }`（軟刪除） |
+| POST | `/api/worksheets/:id/generate` | `{}` | 202 `WorksheetState`：建立四個步驟的背景工作並立刻回來。已在執行時回傳同一批 |
+| GET | `/api/worksheets/:id/jobs` | – | `{ running, jobs: WsJob[], version_no }`（輪詢用） |
+| POST | `/api/worksheets/:id/blocks/:block_id/regenerate` | `{}` | 202 `WorksheetState`：只重新產生這一個區塊 |
+| POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生之前的那一版；沒有上一版 → 409 |
+| GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
+| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo` |
+| GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
+| POST | `/api/worksheets/:id/sop-sync` | `{ confirm: true, keys: string[], sop_version_no }` | `{ sop_version_no, applied }`。沒有 `confirm: true` → 400；課例在預覽之後改過 → 409 |
+| PUT | `/api/worksheets/:id/link` | `{ lesson_id: number \| null }` | `WorksheetState`：連結既有課例或取消連結（不改課例內容） |
+| POST | `/api/worksheets/:id/save-as-lesson` | `{ unit_id, title }` | `WorksheetState`：在這個單元建立新課例，把教材、目標與任務寫成它的第一版 SOP，並連結 |
+| POST | `/api/worksheets/:id/checks/vocabulary` | `{ level, target_level? }` | `WsVocabCheck`。詞彙表未匯入 → 409 |
+| GET | `/api/worksheets/:id/checks` | – | `WsVocabCheck[]`：每個版本最近一次的結果 |
+| GET | `/api/worksheets/:id/export` | `?format=docx\|pdf&level=&audience=` | 檔案本體（`Content-Disposition: attachment`）。`level` 不在這份學習單的版本裡 → 400 |
+
+## 兩個入口
+
+- **從課例**（`POST /api/worksheets { lesson_id }`）：伺服器讀最新的 SOP 版本，把教材（`source.kind = "lesson_sop"`，是當時的快照）、目標（`content.objectives`）、任務／暖身／Exit ticket（`brief`）帶進來，並依課例內容給 `suggested`：有教材→「閱讀文本」；SOP 任務的資訊處理功能依規格 §8 對應到學生任務（發現→理解內容、整理→整理／分析資料、分析→推論／預測、比較→比較／分類、創造→寫作）；有暖身→「加入暖身活動」；有目標→「顯示學習目標」；任務裡寫了語言鷹架→「提供句型框架」「提供引導問題」。全部只是建議：`settings` 以它起始，教師可以全部取消。課例不需要先完成任何一步。
+- **直接使用**：貼上教材即可。`suggested` 只由教材判斷（素材類型：一般文字→「閱讀文本」，數字很多→再加「資料／數據」；其餘給常用的起始值）。學習單預設獨立（`lesson = null`），不會建立課例；之後可用 `link` 或 `save-as-lesson`。
+- **四個區塊完全不選也能產生**：每個空的區塊由系統決定（素材類型依教材；學生任務與作答方式由模型依教材設計後回報；產生設定預設「加入暖身活動、顯示學習目標、提供字詞表、提供句型框架」；版本預設一般版，班級特性提到程度落差或教材詞彙偏難時加基礎版）。實際用的設定寫在 `content.chosen`，`chosen.auto` 列出哪些是系統決定的。
+
+## 產生流程
+
+`POST …/generate` 建立一輪（`run_no`）四個工作，依序執行，每個工作是**一次模型步驟**（最多兩次呼叫：第一次＋一次修復）：
+
+| 步驟 | prompt key | 模組 `ai_interactions.module` | 鷹架 | `max_tokens` | 內容 |
+|---|---|---|---|---|---|
+| `tasks` | `worksheet_tasks` | `worksheet_tasks` | `SC-WS-TASKS` | 6000 | 逐段（或合併段落）的活動區塊：資訊處理功能、學生任務、題目、作答方式、參考答案、逐字依據；每題標 `core`／`support`／`challenge` |
+| `warmup` | `worksheet_warmup` | `worksheet_warmup` | `SC-WS-WARMUP` | 3000 | 喚醒背景知識 1–2 個活動＋關鍵字彙（只能從程式算出的候選字挑；級別由 `vocabulary_items` 帶入） |
+| `scaffolds` | `worksheet_scaffolds` | `worksheet_scaffolds` | `SC-WS-SCAFFOLDS` | 5000 | 每個區塊的語言鷹架、教學鷹架，以及**自動加入**的程序鷹架 |
+| `exit_ticket` | `worksheet_exit_ticket` | `worksheet_exit_ticket` | `SC-WS-EXIT` | 1500 | 2–4 題：形成性評量＋學生反思或蒐集問題 |
+
+之後由**程式組裝**（不呼叫模型）：暖身固定在最前、活動區塊依段落順序、Exit ticket 在最後；題號、版本差異、學生版／教師版都由程式決定，存成一個新的學習單版本（`cause = "generate"`）。
+
+- 不選「加入暖身活動」時 `warmup` 步驟為 `skipped`。Exit ticket 預設加入（不是選項），教師之後可以關掉或刪除。
+- **版本差異（規格 §5.4）**：三個版本共用同一份目標與核心題（`core`，`levels` = 全部選到的版本）。`support` 題只在基礎版、`challenge` 題只在進階版。鷹架：基礎版顯示全部；一般版顯示程序鷹架＋字詞表、句型框架；進階版只留程序鷹架。開放題的作答行數基礎版 2、一般版 3、進階版 4。教師可以逐題、逐鷹架改 `levels`。
+- **份量（規格 §9.2）**：`item_budget` = 主要任務的核心題數。有 `minutes`：扣掉暖身 5 分鐘與 Exit ticket 3 分鐘後，每 2.5 分鐘一題（3–24）。沒有：每段 2 題（4–14）。超過 1.5 倍時先請模型修一次，仍超過由程式刪去多的非核心題與區塊末端的題目（每個區塊至少留一題）。
+- **程序鷹架**：每個區塊至少一個，`auto = true`。模型沒有交出時，程式依作答方式與學生任務產生分步指示（例如有「小組共同完成」就寫明分工步驟），所以一定會有。
+- **自動檢查**（移植自 `research/sop-validation/chain/checks.py`）與處理：
+  - 標籤只能來自規格集合；全英文（學生看得到的欄位含中日韓文字即不通過）；逐字依據必須是教材的連續片段；選擇題 4 個不重複選項且答案在選項內、是非題答案為 True/False、填空題要有空格；題幹不可含答案；每段都要被涵蓋、區塊依段落順序；區塊數 ≥ 3 時至少 3 種資訊處理功能；暖身關鍵字只能來自候選清單；鷹架不可含答案原文；Exit ticket 2–4 題且兩種用途都有、不重複主要任務的題目。
+  - 第一次沒過 → **修復一次**，請求一定不同（temperature +0.4，並附上未通過的項目）。
+  - 修復後仍不過 → 不整份擋下：拿掉不合格的部分（不逐字的依據清空、不合格的題目或鷹架移除），記在 `ai_interactions.check_results.repairs`；整個步驟沒有可用內容時，對應區塊留一個空的區塊並在 `message` 說明（例如「暖身沒有產生成功，你可以自己寫，或按重新產生」），其餘步驟照常進行。
+  - 輸出會清掉 LaTeX／Markdown 殘留。
+- 逾時、供應商錯誤、AI 關閉：該步驟 `outcome` = `timeout`／`error`／`disabled`，其餘照上面的方式處理。**任何失敗都不會擋住手動編輯。**
+- 每次呼叫各寫一列 `ai_interactions`（輸入快照中的教材只留字數與雜湊）；`WsJob.interaction_id` 指向教師看到的那一次。教師復原一個重新產生的區塊時，記一筆 `teacher_decisions`（`reject`）。
+- 伺服器重啟會中斷工作：`queued`／`running` 超過 `8 × AI_TIMEOUT_SECS + 60` 秒的在下次讀取時結束為 `error`。
+
+### 單一區塊重新產生與復原
+
+- `regenerate`：活動區塊＝對那幾段重跑 `tasks`（只要這個區塊）再跑 `scaffolds`；暖身＝`warmup`＋`scaffolds`；Exit ticket＝`exit_ticket`。temperature 依這份學習單先前產生的次數遞增（閘道會快取相同的請求）。
+- 取代之前，先把目前的區塊存進 `worksheet_block_history`。`undo` 取回最近一筆並把它從歷史移除（可一路復原到最早）。兩者都產生新的學習單版本（`regenerate`／`undo`），所以整份的版本紀錄也還在。
+- 重新產生失敗時區塊維持原樣，`WsJob.message` 說明原因。
+
+## 結果編修
+
+- 前端直接改 `content` 後 `PUT`（自動儲存，約 1.5 秒）。教師改過 AI 產生的區塊、題目或鷹架時，把該筆的 `origin` 改成 `ai_edited`；自己新增的是 `teacher`。
+- 可以改的：所有文字、參考答案、題目與鷹架出現的版本、區塊順序、`enabled`（關掉暖身或 Exit ticket）、刪除任何區塊／題目／鷹架、新增區塊與題目、學習目標、`show_objectives`、標題與檔名。
+- `WsItem.answer_format`、`student_tasks`、鷹架的 `kind` 在儲存時由伺服器重新驗證；`WsVocab.level` 一律重新查表。
+
+## 與課例 SOP 的同步（規格 §9.5）
+
+學習單裡改目標或任務**不會**動到課例。`sop_sync.changes > 0` 時前端顯示一行提示；教師按「同步回課例」才呼叫預覽：
+
+```ts
+interface SopSyncChange {
+  key: string;                              // 例如 "objective:O1"、"block:b2"
+  target: "objective" | "task_block";
+  action: "add" | "update" | "remove";      // remove：課例裡有、學習單已刪掉（預設不勾）
+  label: string; before: string; after: string;
+}
+interface SopSyncPreview {
+  lesson_id: number; sop_version_no: number | null;
+  changes: SopSyncChange[];
+  core_suggestions: [];                     // 預留：「建議補充至單元想法（CoRe）」；這一版永遠是空陣列
+}
+```
+
+`POST …/sop-sync { confirm: true, keys, sop_version_no }` 只套用 `keys` 裡的項目，寫成課例 SOP 的**新版本**（只增不改，舊版本仍在）。對應方式：目標以 `sop_id` 對應；活動區塊以 `sop_block_id` 對應，寫回時每一題成為一個 SOP 任務（`text` = 題目，`function` = 區塊的資訊處理功能，三種鷹架各自合併成文字，`origin` 依學習單的 `origin` 轉成 `teacher`／`ai_adopted`／`ai_edited`）。套用後學習單的 `sop_id`／`sop_block_id` 會補上。
+
+## 詞彙級別檢查（規格 §9.6 的決定性部分）
+
+```ts
+interface WsVocabCheck {
+  id: number; level: WsLevel; audience: "student"; target_level: number;
+  version_no: number;            // 分析的是哪一個學習單版本
+  checked_at: string;
+  stale: boolean;                // 學習單在那之後改過
+  analysis: VocabularyAnalysis;  // Phase 2.0 的結果：級別分布、分母、超出目標級別的詞與位置、專有名詞／未收錄／複合詞與片語另列、限制、聲明
+  lines: string[];               // analysis 中 position.line（從 1）對應的位置說明，例如 "A 暖身 · 字詞表"、"C · 第 4 題"
+}
+```
+
+分析的文字是**學生版**（該版本實際印出的字）。沒有模型呼叫；級別、版本、分母與限制全部來自 Phase 2.0 的 `vocabulary::analyze`。結果連同學習單版本存進 `worksheet_checks`；之後學習單有新版本，舊結果以 `stale = true` 回傳。這是備課輔助，不是官方評定（`analysis.disclaimer`）。
+
+## 匯出
+
+`GET …/export` 由後端即時產生並串流回瀏覽器（不經物件儲存）：
+
+- **DOCX**：直接寫 WordprocessingML（`zip` crate），段落、編號、表格、作答線皆為 Word 原生物件，可編輯。
+- **PDF**：純 Rust 產生，字型子集化後內嵌。內嵌的拉丁字型是 Libertinus Serif（OFL，來自 `typst-assets` crate）；中文字由 `WORKSHEET_CJK_FONT`（或映像檔內建的中文字型）提供。學習單含中文而環境沒有中文字型時回 409，請教師改用 DOCX。
+- 檔名：`<filename>_<版本>_<學生版|教師參考版>.<副檔名>`（RFC 5987 `filename*`）。教師參考版在每題下方印參考答案與依據，並印 `teacher_notes`。
+
+## 測試用假模型（`AI_PROVIDER=fake`）新增的標記（寫在教材文字裡）
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_WS_CJK` | `tasks` 第 1 次有一題題目含中文；修復後改正 |
+| `FAKE_WS_CJK_ALWAYS` | 兩次都含中文 → 該題被拿掉 |
+| `FAKE_WS_BAD_LABEL` | `tasks` 第 1 次用了表外的學生任務標籤；修復後改正 |
+| `FAKE_WS_SPLICE_ALWAYS` | `tasks` 有一筆依據兩次都以「...」拼接 → 依據被清空 |
+| `FAKE_WS_WARMUP_BLOCK` | `warmup` 兩次都不合格 → 暖身區塊留空並附說明 |
+| `FAKE_WS_NO_PROCEDURAL` | `scaffolds` 不交程序鷹架 → 由程式補上 |
+| `FAKE_WS_LEAK` | `scaffolds` 第 1 次有一個鷹架含答案原文；修復後改正 |
+
+既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_REFUSAL`、`FAKE_BLOCK`、`FAKE_SLOW` 照舊（對四個步驟都有效）。
+
+## usage_logs 新事件
+
+`worksheet_created`、`worksheet_generated`、`worksheet_block_regenerated`、`worksheet_block_undone`、`worksheet_sop_synced`、`worksheet_linked`、`worksheet_vocabulary_checked`、`worksheet_exported`（payload 只有 id、版本、格式等，不含內容）。
+
+## 前端
+
+- `/worksheets`：做過的學習單清單＋「直接做一份」（貼上教材）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
+- 教材欄是一個可替換的插槽（`materialPane`）：這一版放唯讀的教材檢視；教材庫分支的 `MaterialViewer`（含注記）之後接在同一個位置。
