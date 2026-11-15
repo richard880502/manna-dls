@@ -667,6 +667,13 @@ mod tests {
             source_doc: "課綱".into(),
             source_version: "107".into(),
             source_page: "8".into(),
+            official_code: "3-Ⅴ-7".into(),
+            item_kind: "learning_performance".into(),
+            strand_name: String::new(),
+            stage: "V".into(),
+            subject: "英語文".into(),
+            advanced: false,
+            recurring: false,
         }
     }
 

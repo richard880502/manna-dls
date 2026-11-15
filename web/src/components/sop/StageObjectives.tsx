@@ -1,10 +1,43 @@
 import { useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../api/client";
-import type { ObjectiveType, SopCurriculumLink, SopObjective, SopObjectiveSuggestion } from "../../api/types";
+import type {
+  KnowledgeItem,
+  ObjectiveType,
+  SopCurriculumLink,
+  SopObjective,
+  SopObjectiveSuggestion,
+} from "../../api/types";
 import { OBJECTIVE_TYPES, newId, objectiveTypeLabel } from "../../lib/sop";
 import { ErrorText } from "../common";
 import { AskManna, MannaWell } from "./parts";
 import type { SopController } from "./useSop";
+
+/** The code a teacher knows the item by: the one printed in the curriculum. */
+const shownCode = (link: SopCurriculumLink) => link.official_code || link.item_code;
+
+/** Code and title of an item. Imported titles usually start with the code: it is not said twice. */
+function ItemName({ link }: { link: SopCurriculumLink }) {
+  const code = shownCode(link);
+  if (link.title.includes(code)) return <span className="item-name">{link.title}</span>;
+  return (
+    <span className="item-name">
+      <span className="code">{code}</span> {link.title}
+    </span>
+  );
+}
+
+/** A knowledge-base item as a link (the server fills these fields in again when it saves). */
+const linkFromItem = (item: KnowledgeItem): SopCurriculumLink => ({
+  item_code: item.item_code,
+  why: "",
+  official_code: item.official_code,
+  title: item.title,
+  text: item.content,
+  category: item.category,
+  source_doc: item.source_doc,
+  source_version: item.source_version,
+  source_page: item.source_page,
+});
 
 /** Where a curriculum item comes from, as far as the knowledge base knows. */
 function sourceLine(link: SopCurriculumLink): string {
@@ -19,7 +52,7 @@ function CurriculumLinkLine({ link, onRemove }: { link: SopCurriculumLink; onRem
   const source = sourceLine(link);
   return (
     <span className="curriculum-link">
-      <span className="code">{link.item_code}</span> {link.title}
+      <ItemName link={link} />
       <button type="button" className="text-link is-plain" aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? "收起原文" : "看原文"}
       </button>
@@ -27,7 +60,7 @@ function CurriculumLinkLine({ link, onRemove }: { link: SopCurriculumLink; onRem
         <button
           type="button"
           className="text-link is-plain"
-          aria-label={`取消連結 ${link.item_code}`}
+          aria-label={`取消連結 ${shownCode(link)}`}
           onClick={onRemove}
         >
           取消連結
@@ -43,7 +76,10 @@ function CurriculumLinkLine({ link, onRemove }: { link: SopCurriculumLink; onRem
   );
 }
 
-/** The teacher's own way to link an objective: keyword search over the knowledge base, no AI. */
+/**
+ * The teacher's own way to link an objective: the knowledge base's curriculum search (senior
+ * high, English subjects of the teacher's school track), no AI.
+ */
 function CurriculumPicker({
   linked,
   onPick,
@@ -63,7 +99,8 @@ function CurriculumPicker({
     setSearching(true);
     setError(null);
     try {
-      setResults(await api.searchCurriculum(query.trim()));
+      const found = await api.searchCurriculum({ q: query.trim(), limit: 20 });
+      setResults((found.items ?? []).map((hit) => linkFromItem(hit.item)));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -104,7 +141,9 @@ function CurriculumPicker({
           {results.map((item) => (
             <li key={item.item_code}>
               <span>
-                <span className="code">{item.item_code}</span> <strong>{item.title}</strong>
+                <strong>
+                  <ItemName link={item} />
+                </strong>
                 <span className="curriculum-text">
                   {item.text}
                   {sourceLine(item) && <span className="curriculum-source">來源：{sourceLine(item)}</span>}
@@ -116,7 +155,7 @@ function CurriculumPicker({
                 <button
                   type="button"
                   className="text-link"
-                  aria-label={`連結 ${item.item_code}`}
+                  aria-label={`連結 ${shownCode(item)}`}
                   onClick={() => onPick(item)}
                 >
                   連結
@@ -455,7 +494,7 @@ export function StageObjectives({ sop, todayObjective }: StageObjectivesProps) {
                       {s.links.map((link) => (
                         <div key={link.item_code} className="well-link">
                           <p>
-                            <span className="code">{link.item_code}</span> {link.title}
+                            <ItemName link={link} />
                           </p>
                           <p className="curriculum-text">{link.text}</p>
                           {sourceLine(link) && <p className="curriculum-source">來源：{sourceLine(link)}</p>}

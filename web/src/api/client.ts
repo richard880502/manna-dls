@@ -17,11 +17,18 @@ import type {
   CreateMaterialRequest,
   CreatePromptRequest,
   CreateUnitRequest,
+  CurriculumByCodeResult,
+  CurriculumQuery,
+  CurriculumSearchResult,
   DecisionRequest,
   Health,
   ImportResult,
   InviteRequest,
   InviteResponse,
+  KnowledgeImportResult,
+  KnowledgeItemRow,
+  KnowledgeItemsQuery,
+  KnowledgeSummary,
   Lesson,
   LessonDetail,
   LessonRun,
@@ -30,6 +37,7 @@ import type {
   LoginResponse,
   MaterialFocusesOutput,
   OkResponse,
+  Page,
   PairResponse,
   Pairing,
   PlanSuggestOutput,
@@ -39,6 +47,7 @@ import type {
   RecordEvent,
   RecordOp,
   RemoteRun,
+  RetireDemoResult,
   ReviewRequest,
   RevokePairingResponse,
   RunDetail,
@@ -50,7 +59,6 @@ import type {
   SchoolClass,
   SiopFeature,
   SopContent,
-  SopCurriculumLink,
   SopJob,
   SopJobKind,
   SopState,
@@ -63,6 +71,10 @@ import type {
   UpdateClassRequest,
   UpdateLessonRequest,
   UpdateUnitRequest,
+  VocabularyAnalysis,
+  VocabularyAnalyzeRequest,
+  VocabularyItemsQuery,
+  VocabularyRow,
 } from "./types";
 
 export class ApiError extends Error {
@@ -179,6 +191,17 @@ const put = <T>(path: string, json: unknown, query?: Record<string, string | und
 /** `?class_id=` for requests made in a class context. */
 const classQuery = (classId?: number | null) => (classId ? { class_id: String(classId) } : undefined);
 const del = <T>(path: string) => request<T>("DELETE", path);
+/** Query values as strings; numbers included, undefined dropped by buildUrl. */
+const queryOf = (params: object): Record<string, string | undefined> =>
+  Object.fromEntries(
+    Object.entries(params as Record<string, unknown>).map(([k, v]) => [k, v === undefined ? undefined : String(v)]),
+  );
+const importCsv = (path: string, csv: string, dryRun: boolean) =>
+  request<KnowledgeImportResult>("POST", path, {
+    text: csv,
+    contentType: "text/csv",
+    query: dryRun ? { dry_run: "true" } : undefined,
+  });
 
 export const api = {
   // 公開
@@ -265,8 +288,6 @@ export const api = {
   /** 教材由伺服器分段；段落 id 在文字不變時沿用 */
   saveSopMaterial: (lessonId: number, body: SaveSopMaterialRequest) =>
     put<SopState>(`/lessons/${lessonId}/sop/material`, body),
-  /** 教師自己連結課綱條目用的搜尋（不呼叫 AI） */
-  searchCurriculum: (q: string) => get<SopCurriculumLink[]>("/curriculum", { q }),
   /** 建立背景工作並立刻回來；之後用 getSopJob 輪詢 */
   startSopJob: (lessonId: number, kind: SopJobKind, classId?: number | null) =>
     post<SopJob>(`/lessons/${lessonId}/sop/${kind}`, classId ? { class_id: classId } : {}),
@@ -289,6 +310,29 @@ export const api = {
   /** 撤銷未使用的配對碼與已配對的遙控器 */
   revokePairing: (runId: number) => del<RevokePairingResponse>(`/runs/${runId}/pairing`),
 
+  // 知識庫與詞彙（Phase 2.0）：教師查詢
+  /** 課綱條目：依關鍵字排序；沒有關鍵字時依代碼列出。預設高中、英語相關科目。 */
+  searchCurriculum: (query: CurriculumQuery = {}) =>
+    get<CurriculumSearchResult>("/knowledge/curriculum", queryOf(query)),
+  /** 依代碼取官方條文與來源；查不到的在 not_found，不可自行補上條文。 */
+  curriculumByCode: (codes: string[], track?: string) =>
+    get<CurriculumByCodeResult>("/knowledge/curriculum/by-code", { codes: codes.join(","), track }),
+  /** 詞彙級別分析（規則比對，無 AI）。 */
+  analyzeVocabulary: (body: VocabularyAnalyzeRequest) => post<VocabularyAnalysis>("/vocabulary/analyze", body),
+
+  // 知識庫管理（主持人或知識庫管理員）
+  knowledge: {
+    summary: () => get<KnowledgeSummary>("/admin/knowledge/summary"),
+    importItems: (csv: string, dryRun: boolean) => importCsv("/admin/knowledge/import", csv, dryRun),
+    importVocabulary: (csv: string, dryRun: boolean) => importCsv("/admin/vocabulary/import", csv, dryRun),
+    retireDemo: (dryRun: boolean) =>
+      request<RetireDemoResult>("POST", "/admin/knowledge/retire-demo", { query: { dry_run: String(dryRun) } }),
+    items: (query: KnowledgeItemsQuery = {}) =>
+      get<Page<KnowledgeItemRow>>("/admin/knowledge/items", queryOf(query)),
+    vocabulary: (query: VocabularyItemsQuery = {}) =>
+      get<Page<VocabularyRow>>("/admin/vocabulary/items", queryOf(query)),
+  },
+
   // 主持人
   admin: {
     getSettings: () => get<AdminSettings>("/admin/settings"),
@@ -296,8 +340,6 @@ export const api = {
     createInvite: (body: InviteRequest) => post<InviteResponse>("/admin/invites", body),
     listPrompts: () => get<PromptVersion[]>("/admin/prompts"),
     createPrompt: (body: CreatePromptRequest) => post<PromptVersion>("/admin/prompts", body),
-    importKnowledge: (csv: string) =>
-      request<ImportResult>("POST", "/admin/knowledge/import", { text: csv, contentType: "text/csv" }),
     importTeacherCases: (csv: string) =>
       request<ImportResult>("POST", "/admin/teacher-cases/import", {
         text: csv,

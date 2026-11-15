@@ -2,7 +2,7 @@
 
 The visual system of the web app (`web/`). Every screen reads it; change it on purpose. The source of truth for values is `web/src/styles/tokens.css`; this file says what each token is for and how the parts are put together. The direction and the reasons are in [`DESIGN_OVERHAUL.md`](DESIGN_OVERHAUL.md); the approved mockups are in [`design/overhaul/`](design/overhaul/index.html), and before/after screenshots of what is built so far are in [`design/overhaul/implemented/`](design/overhaul/implemented/).
 
-**Status:** overhaul step 1 (shell and list pages) is in the app. The lesson page is interim until the seven-step SOP (step 2); the CoRe editor, 課後補寫, preferences and admin keep their layout and take the new tokens, heads and frameless panels.
+**Status:** overhaul steps 1 (shell and list pages) and 2 (the seven-step lesson workspace, direction A) are in the app; the CoRe editor, 課後補寫, preferences and admin keep their layout and take the new tokens, heads and frameless panels.
 
 ## System
 
@@ -71,7 +71,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 
 ## Layout
 
-- **Top bar** (`.top`, 56px, sticky under the demo banner): the star and 「Manna」, the three destinations (班級, 備課庫, 學習單), and at the right the account links (後台管理 for the project lead, 「研究編號 · 備課偏好」, 登出). Under 760px the three destinations move to a fixed bar at the bottom (60px) and the research ID drops out of the top bar.
+- **Top bar** (`.top`, 56px, sticky under the demo banner): the star and 「Manna」, the three destinations (班級, 備課庫, 學習單), and at the right the account links (知識庫管理 for the project lead and knowledge-base managers, 後台管理 for the project lead, 「研究編號 · 備課偏好」, 登出). Under 760px the three destinations move to a fixed bar at the bottom (60px) and the research ID drops out of the top bar.
 - A page that takes over the bar renders into its slot (`TopBarSlot`): during a lesson the bar shows only 「上課中 · 已同步」 and 「結束本節課」, and the bottom bar is gone, so nothing invites a stray tap.
 - **Frames** (`.workspace`): list pages 1040px; working pages with two columns (lesson, 單元想法, 課後補寫, admin) 1200px; the in-class console 880px; single-column text pages 800px.
 - **Breakpoints:** 760px (shell, rows, single column), 1100px (the lesson page's side column goes under the main one), plus the older 75rem / 60rem / 40rem inside screens not rebuilt yet.
@@ -87,8 +87,12 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 - **Dialog** (`.scrim` > `.dialog`, `.radio-rows`): only for 「這節課在哪一班上？」. Focus starts on the chosen class, Tab stays inside, Escape cancels, focus returns to the button that opened it.
 - **Fields.** Label above (14px, 600), helper below in muted 14px, a 1px `--color-field-edge` border that never changes width. Selects keep native behaviour with a drawn chevron.
 - **Manna content** (`help-entry`, `ai-suggestion`, `candidate-card`, `ai-status`, `manna-label`): a gold well, no border; it opens with the star and 「Manna」; its sources sit under a gold hairline; secondary text inside it is `--color-ink-2`. On the lesson page her panel sits in the side column, a step quieter than the plan.
-- **Collapsible sections** (`plan-section` inside `.plan-sections`): on the interim lesson page everything past the first view is a hairline row with a count (「教學步驟（3）」). The body stays mounted while closed.
-- **Saved state** (`.saved`): plain words at the right of a working page's head: 「尚未儲存」 or 「已儲存 14:32 · 第 3 版」. Buttons never mention versions.
+- **Lesson workspace** (`.guided` > `.rail` + `.stage`, `sop.css`): the progress rail (232px, sticky; under 760px one line, 「第 3 步，共 7 步　看全部步驟」) lists 本節概要 and the seven steps, each with what it already holds; a tick means "has something", never "required". The stage shows one step: its title (30px) with 「對照教材」 at the right, a lead sentence, blocks parted by space, and at the bottom 上一步 / 先略過這一步 / the view's one filled button, 「下一步：…」. 「開始上課」 is an outline button in the page head on every step, and the filled big button on 本節概要.
+- **Teacher's writing** (`.mine`): ink on a ruled line with quiet tools (修改, 刪除) at the right. A form opened in place (`.stage-form`) sits between two strong rules.
+- **Manna in a step** (`.manna-well`, `.decide`): a gold well directly under the paragraph or objective type it is about: star, 「Manna 建議 · 第 3 段」, the suggestion, 為什麼建議, sources under a gold hairline, then 採用 (ink-blue edge) / 修改後採用 / 不用. While she works the same well says what she is doing and for how long (`.manna-progress`). 「尚未完成課綱連結」 is the one amber tag (`.warn-tag`).
+- **Print** (`.material-sheet`, `.sop-quote`, `.material-viewer`): the source text is serif on the lightest sheet with `¶n` in the margin; a paragraph quoted above its tasks uses the same face without the sheet. 「對照教材」 slides the sheet in from the left: beside the step from 1100px up (the rail gives way), over the page below that.
+- **Collapsible sections** (`plan-section` inside `.plan-sections`): on 本節概要 everything past the first view is a hairline row with a count (「教學步驟（3）」). The body stays mounted while closed.
+- **Saved state** (`.saved`): plain words at the right of a working page's head: 「會自動儲存」, 「尚未儲存」, 「儲存中…」, 「已自動儲存 14:32」, or 「沒有存到：…　再試一次」. There is no save button on the lesson page.
 - **Panels** (`panel-card`): **retired.** Screens not rebuilt yet still carry the class; it is now only a block parted from the one before it by space and one hairline. Do not use it in new code. A page has at most one layer of filled surface.
 - **Tags** (`soft-tag`, `status-pill`, `record-pill`): 13px, only where they carry a fact (a mark's kind, a selection count). No 「選用」「可略過」 labels: what can be skipped is said once, in a sentence.
 - **Notices:** a tinted well (`info`, `success`, `warn`), ink text, no side stripe.
@@ -115,11 +119,11 @@ Don't:
 
 ## Not done (yet)
 
-- **Lesson SOP (step 2):** the seven steps (direction A) with the slide-in material viewer, auto-save in place of the 「儲存教案」 link, suggestions inside each step. Until then the lesson page keeps its first view and collapsed sections.
+- **Lesson workspace, later:** Manna inside steps 4 to 7 (they are manual editors now), automatic procedural scaffolds, the version history behind the saved line, annotations on the material, and the 「問資深教師」 button (step 4).
 - **學習單 (step 3)** and **AI 資深教師 (step 4):** the destination exists as an honest placeholder; the senior-teacher button is not in the app yet.
 - **Screens not rebuilt:** the 單元想法 (CoRe) editor, 課後補寫, 備課偏好, the first-use survey and admin still use their earlier layout (wells for steps and choices, `ghost-button` utilities, more than one filled button on the CoRe editor and admin).
 - **Dark mode.** Left out on purpose: the gold-on-wash Manna role and the two record tones need their own pairs and a contrast pass in both modes.
 
 ## Exports
 
-`web/src/styles/tokens.css` (tokens) · `base.css` (elements, focus, motion policy) · `components.css` (controls, fields, tags, notices) · `shell.css` (demo banner, top bar, frames, sign-in) · `app.css` (unit page, 單元想法, lesson planning, preferences, admin) · `record.css` (the console's parts, 課後補寫, the phone remote) · `views.css` (rows, the focal block, page heads, text links, the dialog, the console layout; loaded last).
+`web/src/styles/tokens.css` (tokens) · `base.css` (elements, focus, motion policy) · `components.css` (controls, fields, tags, notices) · `shell.css` (demo banner, top bar, frames, sign-in) · `app.css` (unit page, 單元想法, lesson planning, preferences, admin) · `record.css` (the console's parts, 課後補寫, the phone remote) · `views.css` (rows, the focal block, page heads, text links, the dialog, the console layout) · `sop.css` (the lesson workspace: rail, steps, Manna wells in a step, the print sheet and the material viewer; loaded last).

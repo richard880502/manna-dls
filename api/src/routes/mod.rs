@@ -4,6 +4,7 @@ pub mod admin;
 pub mod classes;
 pub mod core;
 pub mod feedback;
+pub mod knowledge;
 pub mod lessons;
 pub mod materials;
 pub mod preferences;
@@ -89,7 +90,6 @@ pub fn api_router() -> Router<AppState> {
         .route("/lessons/{id}/sop/analysis", post(sop::start_analysis))
         .route("/lessons/{id}/sop/objectives", post(sop::start_objectives))
         .route("/sop-jobs/{id}", get(sop::job))
-        .route("/curriculum", get(sop::curriculum_search))
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
         .route("/scaffold-events", post(feedback::scaffold_event))
         .route("/teacher-cases", get(feedback::teacher_cases))
@@ -115,6 +115,32 @@ pub fn api_router() -> Router<AppState> {
         .route("/remote/pair", post(remote::pair))
         .route("/remote/run", get(remote::get_run))
         .route("/remote/events/sync", post(remote::sync))
+        // knowledge base and vocabulary (Phase 2.0)
+        .route("/knowledge/curriculum", get(knowledge::search_curriculum))
+        .route(
+            "/knowledge/curriculum/by-code",
+            get(knowledge::curriculum_by_code),
+        )
+        .route(
+            "/vocabulary/analyze",
+            post(knowledge::analyze_vocabulary).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        // knowledge-base management (PI or 知識庫管理員)
+        .route(
+            "/admin/knowledge/import",
+            post(admin::import_knowledge).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
+        )
+        .route(
+            "/admin/vocabulary/import",
+            post(admin::import_vocabulary).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
+        )
+        .route("/admin/knowledge/summary", get(admin::knowledge_summary))
+        .route(
+            "/admin/knowledge/retire-demo",
+            post(admin::retire_demo_knowledge),
+        )
+        .route("/admin/knowledge/items", get(knowledge::browse_items))
+        .route("/admin/vocabulary/items", get(knowledge::browse_vocabulary))
         // PI
         .route("/admin/invites", post(admin::create_invite))
         .route(
@@ -124,10 +150,6 @@ pub fn api_router() -> Router<AppState> {
         .route(
             "/admin/prompts",
             get(admin::list_prompts).post(admin::create_prompt),
-        )
-        .route(
-            "/admin/knowledge/import",
-            post(admin::import_knowledge).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
         )
         .route(
             "/admin/teacher-cases/import",
@@ -404,7 +426,8 @@ pub async fn scaffold_id(db: &PgPool, code: &str) -> sqlx::Result<Option<i64>> {
 pub fn track_label(track: &str) -> &'static str {
     match track {
         "vocational" => "技高",
-        "both" => "普高／技高共用",
+        "comprehensive" => "綜高",
+        "both" => "各類型共用",
         _ => "普高",
     }
 }

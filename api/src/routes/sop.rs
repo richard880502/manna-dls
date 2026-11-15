@@ -1,5 +1,5 @@
-//! 課例 SOP endpoints (docs/API.md「Phase 2.1」): the versioned document, its material, the
-//! teacher's own curriculum search, and the two AI stages as background jobs.
+//! 課例 SOP endpoints (docs/API.md「Phase 2.1」): the versioned document, its material, and the
+//! two AI stages as background jobs.
 
 use axum::body::Bytes;
 use axum::extract::State;
@@ -10,17 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthTeacher;
 use crate::curriculum;
-use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
+use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::routes::{owned_lesson, resolved_profile};
 use crate::sop::ai::{self, Job, JobInput, JobKind, MAX_AI_PARAGRAPHS};
 use crate::sop::store::{self, Material, Version, VersionSummary};
-use crate::sop::{
-    self, CurriculumLink, SopContent, MAX_FIELD_CHARS, MAX_MATERIAL_CHARS, MAX_TITLE_CHARS,
-};
+use crate::sop::{self, SopContent, MAX_FIELD_CHARS, MAX_MATERIAL_CHARS, MAX_TITLE_CHARS};
 use crate::AppState;
-
-/// Most curriculum items returned to the teacher's own search.
-pub const CURRICULUM_SEARCH_LIMIT: usize = 20;
 
 #[derive(Debug, Serialize)]
 pub struct Jobs {
@@ -194,33 +189,6 @@ pub async fn version(
         .await?
         .ok_or_else(|| AppError::not_found("找不到這個版本。"))?;
     Ok(Json(state_of(&state, id, Some(version), false).await?))
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct CurriculumQuery {
-    #[serde(default)]
-    pub q: Option<String>,
-}
-
-/// Curriculum items for the teacher's own linking. No AI involved.
-pub async fn curriculum_search(
-    State(state): State<AppState>,
-    teacher: AuthTeacher,
-    ApiQuery(q): ApiQuery<CurriculumQuery>,
-) -> AppResult<Json<Vec<CurriculumLink>>> {
-    let items = curriculum::search(
-        &state.db,
-        teacher.track(),
-        q.q.as_deref().unwrap_or_default(),
-        CURRICULUM_SEARCH_LIMIT,
-    )
-    .await?;
-    Ok(Json(
-        items
-            .iter()
-            .map(|i| CurriculumLink::from_item(i, ""))
-            .collect(),
-    ))
 }
 
 #[derive(Debug, Default, Deserialize)]

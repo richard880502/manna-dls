@@ -95,7 +95,7 @@ export function StepsEditor({ steps, onSteps, showDiff, diffByPreference, onTogg
           </span>
         </p>
       )}
-      {steps.length === 0 && <p className="empty-preview">還沒有步驟。按「新增步驟」開始，或從右側建議採用。</p>}
+      {steps.length === 0 && <p className="empty-preview">還沒有步驟。按「新增步驟」開始，或從下方 Manna 的備課建議採用。</p>}
       <ol className="step-list">
         {steps.map((step, index) => (
           <li key={step.key} className="step-row" aria-label={`步驟 ${index + 1}`}>

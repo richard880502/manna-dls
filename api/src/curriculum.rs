@@ -1,128 +1,59 @@
 //! 108 curriculum items for the lesson SOP (docs/API.md「Phase 2.1」).
 //!
-//! Everything that needs curriculum items goes through the three functions here, so a better
-//! knowledge base (more items, better retrieval, fetch by code) only has to change this file.
-//! The rule they serve: curriculum **text** always comes from `knowledge_items` by code, never
-//! from the model.
+//! Everything the SOP needs from the curriculum goes through the two functions here, which sit
+//! on the knowledge base's own retrieval (`retrieval::retrieve_curriculum`, exact-code lookup
+//! `retrieval::curriculum_by_codes`). The rule they serve: curriculum **text** always comes from
+//! `knowledge_items` by code, never from the model. Only official items count (those carrying
+//! the code printed in their source); hand-written notes filed under `curriculum` do not.
 
 use std::collections::HashMap;
 
-use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::retrieval::{self, KbItem};
+use crate::retrieval::{self, CurriculumFilter, KbItem};
 
-pub const CATEGORY: &str = "curriculum";
+/// A curriculum item as the knowledge base stores it.
+pub type CurriculumItem = KbItem;
 
-#[derive(Debug, Clone, Serialize, PartialEq, sqlx::FromRow)]
-pub struct CurriculumItem {
-    pub item_code: String,
-    pub version: i32,
-    pub category: String,
-    pub school_track: String,
-    pub title: String,
-    pub content: String,
-    pub source_doc: String,
-    pub source_version: String,
-    pub source_page: String,
-}
+/// More than any track has: "all of them".
+const ALL: usize = 100_000;
 
-const COLS: &str = "item_code, version, category, school_track, title, content, source_doc, \
-                    source_version, source_page";
-
-/// Every current curriculum item for a school track, in code order.
-async fn all_for_track(db: &PgPool, track: &str) -> sqlx::Result<Vec<CurriculumItem>> {
-    sqlx::query_as(&format!(
-        "SELECT * FROM (
-            SELECT DISTINCT ON (item_code) {COLS}, retired_at
-              FROM knowledge_items
-             WHERE category = $1 AND school_track IN ($2, 'both')
-             ORDER BY item_code, version DESC) latest
-          WHERE retired_at IS NULL
-          ORDER BY item_code"
-    ))
-    .bind(CATEGORY)
-    .bind(track)
-    .fetch_all(db)
-    .await
-}
-
-/// Orders `items` by how well they match `query` (keyword retrieval); items that do not match
-/// follow in code order. Also returns how many matched.
-fn ranked(items: Vec<CurriculumItem>, query: &str) -> (Vec<CurriculumItem>, usize) {
-    let kb: Vec<KbItem> = items
-        .iter()
-        .map(|i| KbItem {
-            item_code: i.item_code.clone(),
-            version: i.version,
-            category: i.category.clone(),
-            school_track: i.school_track.clone(),
-            title: i.title.clone(),
-            content: i.content.clone(),
-            source_doc: i.source_doc.clone(),
-            source_page: i.source_page.clone(),
-        })
-        .collect();
-    let order: Vec<String> = retrieval::rank(query, kb, items.len())
-        .into_iter()
-        .map(|s| s.item.item_code)
-        .collect();
-    let mut by_code: HashMap<String, CurriculumItem> = items
-        .iter()
-        .cloned()
-        .map(|i| (i.item_code.clone(), i))
-        .collect();
-    let mut out: Vec<CurriculumItem> = order
-        .iter()
-        .filter_map(|code| by_code.remove(code))
-        .collect();
-    let matched = out.len();
-    out.extend(
-        items
-            .into_iter()
-            .filter(|i| by_code.contains_key(&i.item_code)),
-    );
-    (out, matched)
-}
-
-/// The items the model may link objectives to: all of the track's items when they fit in
-/// `limit`, otherwise the `limit` best matches for `query`.
+/// The items the model may link objectives to, in the default scope (senior high, English
+/// subjects) of the teacher's track: all of them when they fit in `limit`, otherwise the best
+/// matches for `query`, filled up in code order.
 pub async fn items_for_track(
     db: &PgPool,
     track: &str,
     query: &str,
     limit: usize,
 ) -> sqlx::Result<Vec<CurriculumItem>> {
-    let items = all_for_track(db, track).await?;
-    if items.len() <= limit {
-        return Ok(items);
+    let scope = CurriculumFilter::default();
+    let all: Vec<KbItem> = retrieval::retrieve_curriculum(db, track, &scope, "", ALL)
+        .await?
+        .into_iter()
+        .map(|s| s.item)
+        .collect();
+    if all.len() <= limit {
+        return Ok(all);
     }
-    let (mut items, _) = ranked(items, query);
-    items.truncate(limit);
-    Ok(items)
+    let mut picked: Vec<KbItem> = retrieval::search_curriculum(all.clone(), &scope, query, limit)
+        .into_iter()
+        .map(|s| s.item)
+        .collect();
+    for item in all {
+        if picked.len() >= limit {
+            break;
+        }
+        if !picked.iter().any(|p| p.item_code == item.item_code) {
+            picked.push(item);
+        }
+    }
+    Ok(picked)
 }
 
-/// Keyword search for the teacher's own linking (no AI). A blank query lists the first items.
-pub async fn search(
-    db: &PgPool,
-    track: &str,
-    query: &str,
-    limit: usize,
-) -> sqlx::Result<Vec<CurriculumItem>> {
-    let items = all_for_track(db, track).await?;
-    let mut items = if query.trim().is_empty() {
-        items
-    } else {
-        let (mut ordered, matched) = ranked(items, query);
-        ordered.truncate(matched);
-        ordered
-    };
-    items.truncate(limit);
-    Ok(items)
-}
-
-/// The latest version of each code, whatever its track and whether or not it was retired since:
-/// a link a teacher saved earlier must stay readable.
+/// Exact lookup by `item_code` for the links a teacher saves. Active items come from the
+/// knowledge base's exact-code lookup; a code that was retired since is still resolved (latest
+/// version), so a link saved earlier stays readable. Codes that match nothing are absent.
 pub async fn by_codes(
     db: &PgPool,
     codes: &[String],
@@ -130,49 +61,30 @@ pub async fn by_codes(
     if codes.is_empty() {
         return Ok(HashMap::new());
     }
-    let rows: Vec<CurriculumItem> = sqlx::query_as(&format!(
-        "SELECT DISTINCT ON (item_code) {COLS}
-           FROM knowledge_items
-          WHERE item_code = ANY($1)
-          ORDER BY item_code, version DESC"
-    ))
-    .bind(codes)
-    .fetch_all(db)
-    .await?;
-    Ok(rows.into_iter().map(|i| (i.item_code.clone(), i)).collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn item(code: &str, title: &str, content: &str) -> CurriculumItem {
-        CurriculumItem {
-            item_code: code.into(),
-            version: 1,
-            category: CATEGORY.into(),
-            school_track: "general".into(),
-            title: title.into(),
-            content: content.into(),
-            source_doc: String::new(),
-            source_version: String::new(),
-            source_page: String::new(),
-        }
+    let mut found: HashMap<String, CurriculumItem> =
+        retrieval::curriculum_by_codes(db, None, codes)
+            .await?
+            .into_iter()
+            // The lookup also matches official codes (shared between 領綱); a stored link names
+            // one item, by its unique item_code.
+            .filter(|i| codes.contains(&i.item_code))
+            .map(|i| (i.item_code.clone(), i))
+            .collect();
+    let missing: Vec<&String> = codes.iter().filter(|c| !found.contains_key(*c)).collect();
+    if !missing.is_empty() {
+        let retired: Vec<KbItem> = sqlx::query_as(
+            "SELECT DISTINCT ON (item_code)
+                    item_code, version, category, school_track, title, content, source_doc,
+                    source_version, source_page, official_code, item_kind, strand_name, stage,
+                    subject, advanced, recurring
+               FROM knowledge_items
+              WHERE item_code = ANY($1) AND category = 'curriculum' AND official_code <> ''
+              ORDER BY item_code, version DESC",
+        )
+        .bind(missing)
+        .fetch_all(db)
+        .await?;
+        found.extend(retired.into_iter().map(|i| (i.item_code.clone(), i)));
     }
-
-    #[test]
-    fn ranked_puts_matches_first_and_keeps_the_rest() {
-        let items = vec![
-            item("A", "口語", "能以簡短口語描述個人經驗"),
-            item("B", "閱讀", "能閱讀議論文並找出論點與理由"),
-            item("C", "寫作", "能寫出段落"),
-        ];
-        let (out, matched) = ranked(items.clone(), "議論文 論點");
-        assert_eq!(
-            out.iter().map(|i| i.item_code.as_str()).collect::<Vec<_>>(),
-            ["B", "A", "C"]
-        );
-        assert_eq!(matched, 1);
-        assert_eq!(ranked(items.clone(), "  "), (items, 0));
-    }
+    Ok(found)
 }

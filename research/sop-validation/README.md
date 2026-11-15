@@ -25,6 +25,7 @@ prompts, schemas, the de-identified design rules, one original test passage and 
 | `kb/dump_pdf_text.py` | Per-page text of the knowledge-base PDFs (to find scanned pages). |
 | `kb/ingest_curriculum.py` | 108 curriculum PDFs → item-level records + CSV in the `/api/admin/knowledge/import` column format. |
 | `kb/ingest_vocab.py` | CEEC 高中英文參考詞彙表 → headword/level/POS entries and an expanded word-form CSV. |
+| `kb/build_import_csv.py` | The two extraction outputs → the CSV files the 知識庫管理 page uploads (`$MANNA_DATA/kb/import/`), with row counts and SHA-256 in `import_manifest.json`. Imports nothing itself. |
 | `worksheets/extract_text.py` | DOCX/PDF worksheet examples → text + `files.csv` (ids `W001…`, SHA-256). |
 | `worksheets/classify.py` | LLM-built structured inventory (one call per worksheet, resumable). |
 | `worksheets/inventory_stats.py` | Aggregated, de-identified statistics + LLM-vs-regex agreement. |
@@ -53,6 +54,7 @@ cd research/sop-validation
 $PY kb/dump_pdf_text.py   <dir with the curriculum + vocabulary PDFs>
 $PY kb/ingest_curriculum.py <same dir>          # -> $MANNA_DATA/kb/curriculum_items.{json,csv}, knowledge_import*.csv
 $PY kb/ingest_vocab.py "<dir>/高中英文參考詞彙表(111學年度起適用).pdf"   # -> ceec_vocab_entries.csv, ceec_vocab.csv
+$PY kb/build_import_csv.py                      # -> import/curriculum_import.csv, import/vocabulary_import.csv (upload on the 知識庫管理 page)
 
 # 2. worksheets
 $PY worksheets/extract_text.py <dir with the worksheet examples>
@@ -77,6 +79,7 @@ $PY vocab/analyze.py passages/original_repair_club.txt --target 3
 $PY runner/worksheet_text.py r1 P2 一般版 > /tmp/sheet.txt && $PY vocab/analyze.py /tmp/sheet.txt --target 4
 ```
 
-The knowledge-base CSVs are **not** imported anywhere by these scripts. Importing
+The knowledge-base CSVs are **not** imported anywhere by these scripts (they are uploaded on the
+知識庫管理 page, see `docs/API.md`「Phase 2.0：知識庫與詞彙」). Importing
 `knowledge_import.csv` through `POST /api/admin/knowledge/import` is a separate, deliberate step
 (see the report for what has to be decided first).

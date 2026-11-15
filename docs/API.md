@@ -7,7 +7,7 @@
 - 驗證：`Authorization: Bearer <token>`（登入取得）。未帶或失效 → `401`。
 - 錯誤格式：`{ "error": { "code": "not_found", "message": "給人看的中文訊息" } }`
   - code 取值：`bad_request`、`unauthorized`、`forbidden`、`not_found`、`conflict`、`internal`
-- 權限：教師只能存取自己的單元／課例；`/api/admin/*` 只限 `role = "pi"`。
+- 權限：教師只能存取自己的單元／課例；`/api/admin/*` 只限 `role = "pi"`（Phase 2.0 起，知識庫管理的端點也開放給 `kb_manager`，見「Phase 2.0：知識庫與詞彙」的「角色與權限」）。
 
 ### 型別
 
@@ -108,7 +108,7 @@ interface PlanSuggestOutput { kb_empty: boolean; suggestions: PlanSuggestion[]; 
 | POST | `/api/admin/invites` | `{ research_id: string; school_track: SchoolTrack; role?: Role }` | `{ code: string }`（明碼只回這一次，DB 只存雜湊） |
 | GET | `/api/admin/prompts` | – | `Array<{ id; prompt_key; version_no; system_text; user_template; created_at }>`（每個 key 的最新版） |
 | POST | `/api/admin/prompts` | `{ prompt_key: string; system_text: string; user_template: string }` | 新版本（version_no + 1） |
-| POST | `/api/admin/knowledge/import` | `Content-Type: text/csv`，欄位：`item_code,category,school_track,title,content,source_doc,source_version,source_page` | `{ imported: number; sha256: string }` |
+| POST | `/api/admin/knowledge/import` | `Content-Type: text/csv`，欄位：`item_code,category,school_track,title,content,source_doc,source_version,source_page` | `{ imported: number; sha256: string }`（Phase 2.0 起多了選填欄位、`dry_run` 與更多回應欄位，並開放給 `kb_manager`） |
 | POST | `/api/admin/teacher-cases/import` | `Content-Type: text/csv`，欄位：`case_code,school_track,grade,topic,summary,details,approved` | `{ imported: number; sha256: string }` |
 
 ## 鷹架編號（scaffold_code）
@@ -546,6 +546,197 @@ interface LessonDetail { /* 原欄位… */ class_profile_source: ClassProfileSo
 
 ---
 
+# Phase 2.0：知識庫與詞彙
+
+以下為**新增或變更**；未提到的端點維持原樣。Migration `0007_knowledge_base.sql`。背景與擷取品質見 [`LLM_VALIDATION.md`](LLM_VALIDATION.md) §3、§8。
+
+## 重點
+
+- **課綱條目是真的了**：`knowledge_items` 的課綱條目帶官方代碼、學習表現／學習內容、類別、學習階段、科目、`*`／`◎` 標記，以及來源文件、版本、頁碼、來源 PDF 的 SHA-256 與匯入批次。
+- **條文一律由資料庫帶出**。模型只能引用代碼；顯示給教師的條文、來源、版本、頁碼都用 `GET /api/knowledge/curriculum/by-code` 查。查不到的代碼列在 `not_found`，前端必須標示「尚未完成課綱連結」，不得補寫條文（規格 §2.1 第 9 點）。
+- **詞彙級別一律查表**。`POST /api/vocabulary/analyze` 是純規則比對，不呼叫模型。
+- **只停用、不刪除**：內容有變的列成為新版本，舊版本設 `retired_at`。重複匯入同一份檔案不會產生任何變動。
+- 課綱與詞彙表的**資料不在 repo 內**（授權未確認）；資料表一開始是空的，由知識庫管理頁匯入。測試一律用合成的假資料。
+
+## 角色與權限
+
+新角色 `kb_manager`（介面顯示「知識庫管理員」）：在同一個網站內管理知識庫，沒有主持人的其他權限。主持人在後台建立邀請碼時選這個角色。
+
+| 能力（capability） | 內容 | `pi` | `kb_manager` | `teacher`／`ra`／`rater`／`engineer` |
+|---|---|---|---|---|
+| `administer` | 邀請碼、提示詞版本、平台設定、教師備課經驗匯入（碰到身分、研究資料或 AI 行為的都算） | ✓ | ✗（403） | ✗（403） |
+| `manage_knowledge` | 課綱條目與詞彙表的匯入、預覽、停用示範條目、現況、查看條目 | ✓ | ✓ | ✗（403） |
+| （登入即可） | 自己的班級、單元、課例；課綱查詢；詞彙分析 | ✓ | ✓ | ✓ |
+
+- 後端只在一處決定角色有哪些能力（`auth::role_can`），端點用 `teacher.require(Capability::…)` 檢查；之後新增能力（例如教材管理）是多一個列舉值與一行對應，不必到處比對角色字串。
+- `kb_manager` 也是一個帳號（有研究編號與學校類型），可以用自己的備課功能，但**看不到其他教師的任何資料**：教師端點本來就只回本人的資料（別人的回 404）。
+- `GET /api/me` 多回 `capabilities: ("administer" | "manage_knowledge")[]`；前端依它決定顯示哪些入口（`web/src/lib/permissions.ts`，登入回應沒有這個欄位時依角色推得）。
+- 「共通」一節的「`/api/admin/*` 只限 `role = "pi"`」改為：下表標示「知識庫管理」的端點需要 `manage_knowledge`，其餘 `/api/admin/*` 需要 `administer`。
+
+## 型別變更
+
+```ts
+type SchoolTrack = "general" | "vocational" | "comprehensive";   // 新增綜合型高中（綜高）
+type ItemTrack = SchoolTrack | "both";                            // 知識庫條目、教師備課經驗；both＝各類型共用
+type Role = "teacher" | "pi" | "kb_manager" | "ra" | "rater" | "engineer";
+interface Teacher { /* … */ capabilities?: ("administer" | "manage_knowledge")[] }
+
+interface KnowledgeItem {
+  item_code: string;        // 匯入用的唯一代碼，例如 108-G-3-V-7（普高）、108-V-…（技高）、108-C-…（綜高）、外語-技-英語IV-2
+  version: number;
+  category: string;         // curriculum | grammar | vocab | siop | …
+  school_track: ItemTrack;
+  title: string;            // 課綱條目：標記＋官方代碼＋學習表現／學習內容｜類別
+  content: string;          // 課綱條目：官方條文
+  official_code: string;    // 來源上印的代碼，例如 ◎3-Ⅴ-7；非課綱條目為 ""
+  item_kind: "" | "learning_performance" | "learning_content";
+  strand_name: string;      // 例如 語言能力（讀）
+  stage: string;            // 學習階段 II | III | IV | V；"" 表示不適用
+  subject: string;          // 英語文、英語、職場、日語…
+  advanced: boolean;        // * 較高階
+  recurring: boolean;       // ◎ 跨階段重複
+  source_doc: string; source_version: string; source_page: string;
+}
+```
+
+綜合型高中：`teachers`、`invite_codes`、`classes`、`knowledge_items`、`teacher_cases` 的 `school_track` 都接受 `comprehensive`，彼此一致。綜高有自己的領綱（112 條），所以綜高教師查到的是綜高條目加上 `both` 的共用條目，不會混入普高或技高的條文。
+
+## 端點
+
+### 教師（登入即可）
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/knowledge/curriculum` | query：`q?`（關鍵字）、`track?`（預設教師的學校類型）、`kind?`（`learning_performance` \| `learning_content`）、`stage?`（`II`–`V` 或 `all`，預設 `V`）、`subject?`（科目或 `all`，預設英語相關科目）、`limit?`（預設 20，最多 100） | `{ track; filter: { kind; stage; subject }; ranked: boolean; items: { item: KnowledgeItem; score: number; title_score: number }[] }` |
+| GET | `/api/knowledge/curriculum/by-code` | query：`codes`（逗號分隔，最多 50 個）、`track?`（預設教師的學校類型；`all` 表示不限） | `{ track; items: KnowledgeItem[]; not_found: string[] }` |
+| POST | `/api/vocabulary/analyze` | `{ text: string; target_level?: 1–6（預設 4）; phrases?: string[]; list_version?: string }` | `VocabularyAnalysis`（見下）；尚未匯入詞彙表 → `409` |
+
+**課綱檢索**（`api/src/retrieval.rs`）
+
+- 範圍：教師的學校類型＋`both`；只取未停用條目的最新版本；只取有官方代碼的課綱條目（內建的 `DEMO-CUR-*` 示範條目自稱「不是課綱原文」，不會出現在這兩個端點）。
+- 預設只找**高中（第五學習階段）、英語相關科目**（`英語文`、外語群的 `英語`、`職場`）。知識庫收了全部 1,352 條，其中普高領綱含國小、國中階段 254 條，外語群含日語、商業概論、數位科技等 508 條；這些要用 `stage`、`subject` 明確指定，或用代碼直接查。教案建議（`POST /api/lessons/:id/suggestions`）檢索時套用同一個預設範圍。
+- 排序沿用 Phase 1：英文詞（小寫、去停用詞、簡單複數還原）加中文二字組，分數＝命中的不同 token 數＋標題命中數；同分依代碼。沒有可用關鍵字時依代碼順序列出（`ranked: false`）。
+- **依代碼查**：`item_code`（唯一）一定查得到；官方代碼（`3-Ⅴ-7` 或 `3-V-7` 皆可，`*`、`◎`、空白忽略）在 `track` 範圍內比對，因為三份領綱的官方代碼彼此重複。只做完全比對，沒有模糊比對。
+
+**詞彙級別分析**（`api/src/vocabulary.rs`，移植自 `research/sop-validation/vocab/analyze.py`）
+
+```ts
+interface VocabularyAnalysis {
+  wordlist_version: string;            // 使用的詞彙表版本
+  target_level: number;
+  basis: {
+    counted_tokens: number;            // token_ratio 的分母：對應得到詞彙表的詞次
+    counted_types: number;             // type_ratio 的分母：對應得到詞彙表的不同詞
+    denominator_note: string;          // 分母的中文說明
+    excluded_tokens: { proper_nouns: number; unknown: number; multiword: number; appendix: number };  // 未計入分母
+    match_types: { exact?: number; inflection?: number; derived?: number };
+  };
+  level_distribution: { level: 1|2|3|4|5|6; tokens: number; token_ratio: number; types: number; type_ratio: number }[];
+  above_target: { base: string; level: number; count: number;
+                  positions: { form: string; line: number; col: number; context: string;
+                               match: "exact" | "inflection" | "ambiguous" | "derived";
+                               also_listed_level?: number; rule?: string }[] }[];   // 級別高的在前
+  ambiguous_forms: { word; base; level; also_listed_level }[];   // 詞形歧義，取較低級
+  derived_matches: { word; base; level; rule }[];                // 規則衍生的推定對應（re-、non-、un-、-less、-ly、-ness）
+  multi_level_words: { base: string; levels: number[]; used_level: number }[];   // 一詞多級，取最低級
+  proper_nouns: Listed[];   // 專有名詞
+  unknown: Listed[];        // 未收錄或無法判定（occurrences 有 note 與 context）
+  multiword: Listed[];      // 連字號詞、複合詞、呼叫端提供的片語（occurrences 有 kind 與 component_levels）
+  appendix_words: Listed[]; // 附錄詞彙：數字、星期、月份、國名…（occurrences 有 category）
+  limits: string[];         // 給教師看的資料限制
+  disclaimer: string;       // 「不是大考中心的官方評定…」
+}
+interface Listed { word: string; count: number; occurrences: { line: number; col: number; /* … */ }[] }  // 最多列 20 處
+```
+
+- 詞形還原只靠規則：原形比對 → 不規則變化表 → 詞尾規則（-s/-es/-ies、-ed、-ing、重複子音、-er/-est、所有格、縮寫）。`line`、`col` 從 1 起算，`col` 以字元計。
+- 顯示比例時**必須同時顯示分母與未計入的數量**（規格 §9.6）；`basis` 與四個另列清單就是為此。
+- 文字上限 100,000 字元；`phrases` 最多 200 個。**不儲存文字**，`usage_logs` 只記數量（`vocabulary_analyzed`）。
+- 已知限制（回應的 `limits` 也會帶）：不判斷詞性與詞義（`broke`、`learned` 取較低級並標示）；詞彙表沒有片語，除非由 `phrases` 提供否則偵測不到；句首大寫的未收錄詞無法判定是不是專有名詞；英式拼法與不在表內的不規則變化會落入未收錄；未收錄詞不計入任何一級，只看比例會低估難度；還原正確率尚未以人工標註語料量測。
+- 和研究用腳本的兩處差異（270 份學習單文字逐一比對，其餘輸出相同）：`-ed`／`-ing` 優先選動詞時改為比對完整的詞類（原腳本把 `adv.` 當成含 `v.`，會把 `pasting` 還原成 `past`）；全文開頭有空白時，第一個詞仍視為句首。
+
+### 知識庫管理（`pi` 或 `kb_manager`）
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| POST | `/api/admin/knowledge/import` | `Content-Type: text/csv`；query：`dry_run?=true`。必要欄位同 Phase 1；選填欄位：`official_code, item_kind, strand, strand_name, stage, subject, advanced, recurring, source_sha256` | `ImportResult` |
+| POST | `/api/admin/vocabulary/import` | `Content-Type: text/csv`；query：`dry_run?=true`。欄位：`word, headword, level, pos, kind, appendix_category, list_version, source_doc, source_page, source_sha256` | `ImportResult` |
+| GET | `/api/admin/knowledge/summary` | – | `{ knowledge: { active; real_active; demo_active; groups: { school_track; category; item_kind; demo; count }[] }; vocabulary: { active_forms; groups: { list_version; level \| null; forms; entries }[] }; recent_batches: { id; kind; file_sha256; row_count; inserted; updated; unchanged; imported_by; created_at }[] }` |
+| POST | `/api/admin/knowledge/retire-demo` | query：`dry_run?=true` | `{ dry_run; demo_active; demo_by_category; real_active; categories_left_empty: string[]; retired }`；沒有任何正式條目時 `409` |
+| GET | `/api/admin/knowledge/items` | query：`q?`（代碼、標題或內文）、`category?`、`track?`、`kind?`、`status?`（`active` 預設 \| `retired` \| `all`）、`limit?`、`offset?` | `{ total; items: (KnowledgeItem & { source_sha256; import_batch_id; created_at; retired_at })[] }` |
+| GET | `/api/admin/vocabulary/items` | query：`q?`（詞形或詞條的開頭）、`level?`（`1`–`6` \| `appendix`）、`status?`、`limit?`、`offset?` | `{ total; items: VocabularyRow[] }` |
+
+```ts
+interface ImportResult {
+  dry_run: boolean;
+  rows: number;                 // 檔案列數
+  inserted: number;             // 第一次出現的代碼／詞形
+  updated: number;              // 內容有變：新增一版，舊版停用
+  unchanged: number;            // 和目前的最新版相同：不動
+  by_track?: Record<string, number>;   // 知識庫
+  by_level?: Record<string, number>;   // 詞彙表；"appendix"＝附錄
+  sha256: string;               // 上傳的 CSV 的 SHA-256
+  batch_id: number | null;      // 沒有任何變動或 dry_run 時為 null
+  imported: number;             // 沿用 Phase 1：實際受理的列數（dry_run 為 0）
+}
+```
+
+**匯入規則**
+
+- 全有或全無；任何一列不合格就整份拒絕，錯誤訊息指出第幾列。
+- 先 `dry_run=true` 看 `inserted`／`updated`／`unchanged`，再正式匯入。檔案沒列到的條目不會被動到（不會因為漏列而停用）。
+- 知識庫條目以 `item_code` 為單位；詞彙表以（`list_version`、`word`、`headword`、`pos`、`kind`、`appendix_category`）為單位。
+- `source_sha256` 是**來源文件**（PDF）的 SHA-256；知識庫 CSV 沒有這一欄時沿用 Phase 1 的行為，存 CSV 本身的 SHA-256。上傳檔案的 SHA-256 記在 `import_batches.file_sha256`。
+- 詞彙表一列是一個**可比對的詞形**：`a/an` 展開成 `a`、`an` 兩列，`agree(ment)` 展開成 `agree`、`agreement`，`headword` 保留原本印的詞條。`kind`：`base` \| `variant` \| `derived` \| `appendix`；`appendix`（附錄詞彙，未分級）的 `level` 留空。
+
+**示範條目**：內建的 16 條 `DEMO-*` **不會自動停用**，由主持人或知識庫管理員按「停用示範條目」。選這個做法的原因：示範條目除了 3 條假的課綱描述，還有文法、詞彙教學、SIOP 共 13 條，課綱匯入並不會取代它們；自動停用會讓教案建議可引用的內容在沒有人決定的情況下改變。預覽會列出停用後哪些類別會沒有任何條目；知識庫還沒有正式條目時拒絕停用。
+
+## 匯入檔
+
+由 `research/sop-validation/kb/` 的腳本產生，放在 repo 外（`~/manna-data/kb/import/`）：
+
+```bash
+python kb/ingest_curriculum.py <PDF 資料夾>     # → curriculum_items.csv
+python kb/ingest_vocab.py <詞彙表 PDF>          # → ceec_vocab.csv
+python kb/build_import_csv.py                   # → import/curriculum_import.csv、import/vocabulary_import.csv、import/import_manifest.json
+```
+
+| 檔案 | 列數 | 內容 |
+|---|---|---|
+| `curriculum_import.csv` | 1,352 | 普高 401（含國小、國中階段 254）、技高 839（語文領域 120＋外語群 719）、綜高 112 |
+| `vocabulary_import.csv` | 6,373 | 6,012 個詞條展開成 6,183 個詞形，加附錄詞彙 190 個 |
+
+全部 1,352 條都匯入的理由：四份文件擷取到的代碼與全文出現的代碼完全一致（無遺漏、無多出）；外語群 719 條另以逐頁文字比對，711 條逐字相同，其餘 8 條只差在比對用文字的換行位置。與高中英文無關的條目靠檢索的預設範圍排除，而不是不匯入，這樣任何被引用的代碼都查得到條文。普高領綱有 8 條跨頁接續的條目（3-Ⅴ-13、Ae-Ⅲ-1、Ae-Ⅳ-1、B-Ⅳ-3、B-Ⅴ-2、B-Ⅴ-15、D-Ⅲ-3、D-Ⅳ-2），建議匯入後在管理頁對一次原文。
+
+## 資料表
+
+- `knowledge_items` 新增 `official_code, item_kind, strand, strand_name, stage, subject, advanced, recurring, import_batch_id`。
+- `vocabulary_items`（新）：`word, headword, level（1–6，附錄為 NULL）, pos, kind, appendix_category, list_version, source_doc, source_page, source_sha256, version, import_batch_id, retired_at`。
+- `import_batches`（新）：每次**有變動**的匯入一筆：`kind, file_sha256, row_count, inserted, updated, unchanged, imported_by, created_at`。
+- `teachers`、`invite_codes` 的 `role` 多 `kb_manager`；五個資料表的 `school_track` 多 `comprehensive`。
+
+## usage_logs 新事件
+
+誰（`teacher_id`）、何時（`created_at`）之外，`payload` 為：
+
+| 事件 | payload |
+|---|---|
+| `knowledge_imported`、`vocabulary_imported` | `{ batch_id, sha256, rows, inserted, updated, unchanged }`（每次正式匯入都記，沒有變動也記；`dry_run` 不記） |
+| `demo_knowledge_retired` | `{ retired, by_category }` |
+| `vocabulary_analyzed` | `{ wordlist_version, target_level, counted_tokens, above_target, unknown }`（不含文字） |
+
+## 前端
+
+- **知識庫管理** `/knowledge`：只有 `pi` 與 `kb_manager` 在頂端列看得到入口。其他角色直接開這個網址會看到「這個頁面只開放給計畫主持人與知識庫管理員」，頁面不會呼叫任何管理端點（呼叫了也是 403）。內容：目前內容（各學校類型的課綱條目數、詞彙表各級詞條數、示範條目與「停用示範條目」、最近的匯入與檔案 SHA-256）、匯入課綱條目、匯入詞彙表（選檔 →「預覽」→「確認匯入」；一次只有一個匯入在等確認）、查看條目與查看詞彙表（只能看，可篩選，一次 20 筆）。
+- **後台管理** `/admin`（只有 `pi`）：邀請碼的角色多「知識庫管理員」、學校類型多「綜高」；知識庫匯入移到知識庫管理頁，其餘不變。
+- 初次使用的備課偏好問卷不會擋在知識庫管理頁前面。
+- 教師端目前還沒有課綱查詢與詞彙分析的畫面；API 用法已在 `web/src/api/client.ts`（`searchCurriculum`、`curriculumByCode`、`analyzeVocabulary`），等課例 SOP 與學習單產生器接上。
+
+## 尚未有的資料
+
+- **學測、統測歷屆考題：完全沒有。** 規格 §9.6 的「歷屆考題能力對應度」無資料可做。
+- 各來源文件的**官方原始連結**：交付的 PDF 沒有附網址，系統目前只能顯示文件名稱、版本與頁碼，不由工程端或模型填寫網址。
+- 技高、綜高兩份語文領綱的發布日期（PDF 內未標示）與詞彙表的使用授權，待計畫確認。
 # Phase 2.1：課例 SOP（七步備課；改版第 2 步）
 
 以下為**新增或變更**；未提到的端點維持原樣。Migration `0008_lesson_sop.sql`。依據：《學習單產生器：教師選項與 SOP 整合規格》§1–§3、§8、§9.5，`docs/DESIGN_OVERHAUL.md` 方向 A，`docs/LLM_VALIDATION.md`。
@@ -581,8 +772,9 @@ interface SopAnalysis {
 }
 
 interface SopCurriculumLink {
-  item_code: string; why: string;
-  // 以下一律由伺服器依 item_code 從 knowledge_items 帶出；用戶端送來的值會被忽略
+  item_code: string; why: string;     // item_code 是知識庫的唯一代碼（例如 108-G-3-V-7）
+  // 以下一律由伺服器依 item_code 從 knowledge_items 帶出（Phase 2.0 的精確代碼查詢）；用戶端送來的值會被忽略
+  official_code: string;              // 來源上印的代碼（例如 3-Ⅴ-7），畫面顯示這個
   title: string; text: string; category: string; source_doc: string; source_version: string; source_page: string;
 }
 interface SopObjective {
@@ -636,10 +828,11 @@ interface SopState {
 | PUT | `/api/lessons/:id/sop` | `{ content: SopContent }` | `{ version_no, versions_count, saved_at, content }`（`content` 是正規化後的結果：課綱條文與來源已由資料庫帶出）。與最新版本相同時不產生新版本。課綱連結的 `item_code` 在知識庫找不到 → 400（已停用的條目仍可讀，教師先前存的連結不會因此存不了） |
 | GET | `/api/lessons/:id/sop/versions` | – | `Array<{ version_no, created_at, material_version_no: number \| null }>`，新到舊 |
 | GET | `/api/lessons/:id/sop/versions/:version_no` | – | `SopState`（該版本；`jobs` 皆為 null） |
-| GET | `/api/curriculum` | `?q=`（關鍵字，可空） | `Array<SopCurriculumLink>`（`why` 為空）：教師學校類型適用的課綱條目，依關鍵字排序，最多 20 筆；供教師自己連結，不呼叫 AI |
 | POST | `/api/lessons/:id/sop/analysis` | `{ class_id? }` | 202 `SopJob`：逐段教材分析（第 2 步） |
 | POST | `/api/lessons/:id/sop/objectives` | `{ class_id? }` | 202 `SopJob`：SIOP 內容／語言目標推薦＋課綱連結（第 3 步） |
 | GET | `/api/sop-jobs/:id` | – | `SopJob` |
+
+教師自己連結課綱條目時，前端用 Phase 2.0 的 `GET /api/knowledge/curriculum`（不呼叫 AI）搜尋，把選到的 `item_code` 放進目標的 `links` 再照常儲存；只有正式課綱條目（有 `official_code`）可以連結，知識庫中手寫的示範條目不行。
 
 版本只增不改（append-only）；`version_no` 每個課例從 1 連號。所有端點只能存取自己的課例（其他人的回 404）。
 
@@ -699,10 +892,10 @@ interface SopObjectivesSuggestion {
 
 ### (b) SIOP 目標與課綱連結 `sop_objectives`
 
-1. 可連結的條目由 `curriculum::items_for_track` 取得：`knowledge_items` 中 `category = 'curriculum'`、適用教師學校類型、未停用的最新版本；超過 150 條時以教材與教師目標為關鍵字取前 150 條。清單（代碼｜類別｜條文）放進 prompt。
+1. 可連結的條目由 `curriculum::items_for_track` 取得，底下是 Phase 2.0 的 `retrieval::retrieve_curriculum`：教師學校類型（含 `both`）的正式課綱條目，預設範圍為高中階段、英語相關科目；超過 150 條時以教材與教師目標為關鍵字取前 150 條。清單（代碼｜標題｜條文）放進 prompt。
 2. 檢查：內容目標與語言目標都要有；`item_code` 必須在清單內；目標不可照抄條文（中文二字組重疊 ≥ 80%）；`objective_zh` 為中文、`student_facing_en` 為英文且以 "I can" 開頭。
 3. 未通過 → 第 2 次呼叫（附原因）。之後仍不在清單內的代碼**拿掉**，該目標若因此沒有連結就標 `unlinked`；仍照抄條文或語言不符的目標拿掉；仍缺一種目標類型 → `blocked`。
-4. `link_status` 一律由程式依剩下的連結決定。**條文、來源、版本、頁碼一律依代碼從資料庫帶出**（`SopCurriculumLink`），模型寫的條文不會顯示。沒有任何適用條目時仍會呼叫模型，所有目標都是 `unlinked`（前端顯示「尚未完成課綱連結」）。
+4. `link_status` 一律由程式依剩下的連結決定。**條文、官方代碼、來源、版本、頁碼一律依代碼從資料庫帶出**（`SopCurriculumLink`；儲存時用 `retrieval::curriculum_by_codes` 精確比對 `item_code`），模型寫的條文不會顯示。沒有任何適用條目時仍會呼叫模型，所有目標都是 `unlinked`（前端顯示「尚未完成課綱連結」）。
 5. 教師已寫的目標與「今天要教什麼？」會放進 prompt，請模型不要重複；推薦永遠是另外列出，不會改動教師的目標。
 
 ### 測試用假模型（`AI_PROVIDER=fake`）新增的標記（寫在教材文字裡）

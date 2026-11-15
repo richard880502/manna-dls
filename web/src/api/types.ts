@@ -1,7 +1,12 @@
 // Mirrors docs/API.md (Manna DLS API 合約，Phase 1 + 1.1 + 1.2). Keep in sync with the contract.
 
-export type SchoolTrack = "general" | "vocational";
-export type Role = "teacher" | "pi" | "ra" | "rater" | "engineer";
+export type SchoolTrack = "general" | "vocational" | "comprehensive";
+/** kb_manager（知識庫管理員）管理課綱條目與詞彙表，沒有主持人的其他權限。 */
+export type Role = "teacher" | "pi" | "kb_manager" | "ra" | "rater" | "engineer";
+/** 角色擁有的權限（GET /api/me 的 capabilities）。 */
+export type Capability = "administer" | "manage_knowledge";
+/** 知識庫條目與教師備課經驗的適用類型；both＝各類型共用。 */
+export type ItemTrack = SchoolTrack | "both";
 export type QuestionId = "Q1" | "Q2" | "Q3" | "Q4" | "Q5" | "Q6" | "Q7" | "Q8";
 export type ResponseStatus = "filled" | "blank" | "no_idea";
 export type ContentSource = "self" | "self_after_ai" | "modified_ai_example" | "adopted_ai_example";
@@ -64,6 +69,8 @@ export interface Teacher {
   research_id: string;
   school_track: SchoolTrack;
   role: Role;
+  /** 登入回應沒有這個欄位時，前端依角色推得（lib/permissions.ts）。 */
+  capabilities?: Capability[];
 }
 
 export interface Unit {
@@ -466,7 +473,7 @@ export interface ScaffoldEventRequest {
 
 export interface TeacherCase {
   case_code: string;
-  school_track: "general" | "vocational" | "both";
+  school_track: ItemTrack;
   grade: string;
   topic: string;
   summary: string;
@@ -501,6 +508,221 @@ export interface CreatePromptRequest {
 export interface ImportResult {
   imported: number;
   sha256: string;
+}
+
+// ---- Phase 2.0：知識庫與詞彙 ----
+
+/** 課綱條目或詞彙表匯入的結果；dry_run 時只有統計，沒有寫入。 */
+export interface KnowledgeImportResult extends ImportResult {
+  dry_run: boolean;
+  rows: number;
+  inserted: number;
+  updated: number;
+  unchanged: number;
+  /** 課綱與知識庫條目：各學校類型的列數 */
+  by_track?: Record<string, number>;
+  /** 詞彙表：各級別的列數（appendix＝附錄詞彙） */
+  by_level?: Record<string, number>;
+  batch_id: number | null;
+}
+
+export type ItemKind = "" | "learning_performance" | "learning_content";
+
+export interface KnowledgeSummary {
+  knowledge: {
+    active: number;
+    real_active: number;
+    demo_active: number;
+    groups: { school_track: ItemTrack; category: string; item_kind: ItemKind; demo: boolean; count: number }[];
+  };
+  vocabulary: {
+    active_forms: number;
+    groups: { list_version: string; level: number | null; forms: number; entries: number }[];
+  };
+  recent_batches: {
+    id: number;
+    kind: "knowledge" | "vocabulary";
+    file_sha256: string;
+    row_count: number;
+    inserted: number;
+    updated: number;
+    unchanged: number;
+    imported_by: string | null;
+    created_at: string;
+  }[];
+}
+
+export interface RetireDemoResult {
+  dry_run: boolean;
+  demo_active: number;
+  demo_by_category: Record<string, number>;
+  real_active: number;
+  /** 停用後會沒有任何條目的類別 */
+  categories_left_empty: string[];
+  retired: number;
+}
+
+/** 知識庫條目（課綱條目的 content 是官方條文，一律來自資料庫）。 */
+export interface KnowledgeItem {
+  item_code: string;
+  version: number;
+  category: string;
+  school_track: ItemTrack;
+  title: string;
+  content: string;
+  /** 來源上印的代碼，例如 3-Ⅴ-7；非課綱條目為空字串 */
+  official_code: string;
+  item_kind: ItemKind;
+  strand_name: string;
+  stage: string;
+  subject: string;
+  advanced: boolean;
+  recurring: boolean;
+  source_doc: string;
+  source_version: string;
+  source_page: string;
+}
+
+/** 管理頁看到的條目：多了來源雜湊、匯入批次與停用時間。 */
+export interface KnowledgeItemRow extends KnowledgeItem {
+  source_sha256: string;
+  import_batch_id: number | null;
+  created_at: string;
+  retired_at: string | null;
+}
+
+export interface KnowledgeItemsQuery {
+  q?: string;
+  category?: string;
+  track?: string;
+  kind?: string;
+  status?: "active" | "retired" | "all";
+  limit?: number;
+  offset?: number;
+}
+
+export interface VocabularyRow {
+  word: string;
+  headword: string;
+  level: number | null;
+  pos: string;
+  kind: "base" | "variant" | "derived" | "appendix";
+  appendix_category: string;
+  list_version: string;
+  source_doc: string;
+  source_page: string;
+  source_sha256: string;
+  version: number;
+  import_batch_id: number | null;
+  retired_at: string | null;
+}
+
+export interface VocabularyItemsQuery {
+  q?: string;
+  /** 1–6 或 appendix */
+  level?: string;
+  status?: "active" | "retired" | "all";
+  limit?: number;
+  offset?: number;
+}
+
+export interface Page<T> {
+  total: number;
+  items: T[];
+}
+
+export interface CurriculumQuery {
+  q?: string;
+  track?: SchoolTrack;
+  kind?: Exclude<ItemKind, "">;
+  /** II–V 或 all；預設 V（高中） */
+  stage?: string;
+  /** 科目或 all；預設英語相關科目 */
+  subject?: string;
+  limit?: number;
+}
+
+export interface CurriculumSearchResult {
+  track: SchoolTrack;
+  filter: { kind: string | null; stage: string; subject: string | string[] };
+  /** false：沒有關鍵字，依代碼順序列出 */
+  ranked: boolean;
+  items: { item: KnowledgeItem; score: number; title_score: number }[];
+}
+
+export interface CurriculumByCodeResult {
+  track: SchoolTrack | "all";
+  items: KnowledgeItem[];
+  /** 查不到的代碼：不可自行補上條文 */
+  not_found: string[];
+}
+
+export interface VocabularyAnalyzeRequest {
+  text: string;
+  /** 1–6，預設 4 */
+  target_level?: number;
+  phrases?: string[];
+  list_version?: string;
+}
+
+export type VocabularyMatch =
+  | { match: "exact" }
+  | { match: "inflection" }
+  | { match: "ambiguous"; also_listed_level: number }
+  | { match: "derived"; rule: string };
+
+export interface VocabularyOccurrence {
+  line: number;
+  col: number;
+  note?: string;
+  context?: string;
+  kind?: "hyphenated" | "compound" | "phrase";
+  component_levels?: { part: string; level: number | null }[];
+  listed_as_single_word_level?: number;
+  category?: string;
+}
+
+export interface VocabularyListed {
+  word: string;
+  count: number;
+  occurrences: VocabularyOccurrence[];
+}
+
+export interface VocabularyFlaggedForm {
+  word: string;
+  base: string;
+  level: number;
+  also_listed_level?: number;
+  rule?: string;
+}
+
+/** 規則比對的詞彙級別分析（無 AI）。比例一定要和 basis 的分母、未計入數量一起呈現。 */
+export interface VocabularyAnalysis {
+  wordlist_version: string;
+  target_level: number;
+  basis: {
+    counted_tokens: number;
+    counted_types: number;
+    denominator_note: string;
+    excluded_tokens: { proper_nouns: number; unknown: number; multiword: number; appendix: number };
+    match_types: Partial<Record<"exact" | "inflection" | "derived", number>>;
+  };
+  level_distribution: { level: number; tokens: number; token_ratio: number; types: number; type_ratio: number }[];
+  above_target: {
+    base: string;
+    level: number;
+    count: number;
+    positions: ({ form: string; line: number; col: number; context: string } & VocabularyMatch)[];
+  }[];
+  ambiguous_forms: VocabularyFlaggedForm[];
+  derived_matches: VocabularyFlaggedForm[];
+  multi_level_words: { base: string; levels: number[]; used_level: number }[];
+  proper_nouns: VocabularyListed[];
+  unknown: VocabularyListed[];
+  multiword: VocabularyListed[];
+  appendix_words: VocabularyListed[];
+  limits: string[];
+  disclaimer: string;
 }
 
 export type ApiErrorCode =
@@ -719,6 +941,8 @@ export interface SopAnalysis {
 export interface SopCurriculumLink {
   item_code: string;
   why: string;
+  /** 來源上印的代碼，例如 3-Ⅴ-7（item_code 是知識庫自己的代碼） */
+  official_code: string;
   title: string;
   text: string;
   category: string;

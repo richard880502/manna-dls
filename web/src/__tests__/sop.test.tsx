@@ -182,7 +182,8 @@ const analysisOutput: SopAnalysisSuggestion = {
 const link: SopCurriculumLink = {
   item_code: "108-G-3-V-11",
   why: "這個目標要學生推論",
-  title: "3-Ⅴ-11",
+  official_code: "3-Ⅴ-11",
+  title: "學習表現｜閱讀",
   text: "能閱讀不同體裁、不同主題的文章。",
   category: "curriculum",
   source_doc: "十二年國教課綱語文領域－英語文",
@@ -531,7 +532,8 @@ describe("lesson workspace: Manna's suggestions", () => {
     const linked = within(content.getByRole("group", { name: "Manna 建議 · 內容目標" }));
     expect(linked.getByText("學生能比較鄰居的預期和實際發生的事")).toBeInTheDocument();
     expect(linked.getByText("為什麼建議：第 3 段用 However 轉折，前後對比清楚")).toBeInTheDocument();
-    expect(linked.getByText("108-G-3-V-11")).toBeInTheDocument();
+    // The code shown is the one printed in the curriculum, not the knowledge base's own.
+    expect(linked.getByText("3-Ⅴ-11")).toBeInTheDocument();
     expect(linked.getByText("能閱讀不同體裁、不同主題的文章。")).toBeInTheDocument();
     expect(linked.getByText("來源：十二年國教課綱語文領域－英語文，107 年發布版，第 17 頁")).toBeInTheDocument();
     const unlinked = within(language.getByRole("group", { name: "Manna 建議 · 語言目標" }));
@@ -575,7 +577,35 @@ describe("lesson workspace: Manna's suggestions", () => {
     const api = mockApi(
       routes(sopState(), {
         "GET /api/lessons/7": lessonDetail({ versions_count: 1 }),
-        "GET /api/curriculum": [{ ...link, why: "" }],
+        "GET /api/knowledge/curriculum": {
+          track: "general",
+          filter: { kind: null, stage: "V", subject: ["英語文"] },
+          ranked: true,
+          items: [
+            {
+              score: 2,
+              title_score: 1,
+              item: {
+                item_code: link.item_code,
+                version: 1,
+                category: "curriculum",
+                school_track: "general",
+                title: link.title,
+                content: link.text,
+                official_code: link.official_code,
+                item_kind: "learning_performance",
+                strand_name: "閱讀",
+                stage: "V",
+                subject: "英語文",
+                advanced: false,
+                recurring: false,
+                source_doc: link.source_doc,
+                source_version: link.source_version,
+                source_page: link.source_page,
+              },
+            },
+          ],
+        },
       }),
     );
     const user = userEvent.setup();
@@ -600,8 +630,8 @@ describe("lesson workspace: Manna's suggestions", () => {
     await user.click(content.getByRole("button", { name: "為「學生能說出設立傘架的原因」連結課綱條目" }));
     await user.type(screen.getByRole("searchbox", { name: "找課綱條目" }), "閱讀");
     await user.click(screen.getByRole("button", { name: "搜尋" }));
-    await user.click(await screen.findByRole("button", { name: "連結 108-G-3-V-11" }));
-    expect(api.callsTo("GET", "/api/curriculum")[0]?.url).toContain("q=%E9%96%B1%E8%AE%80");
+    await user.click(await screen.findByRole("button", { name: "連結 3-Ⅴ-11" }));
+    expect(api.callsTo("GET", "/api/knowledge/curriculum")[0]?.url).toContain("q=%E9%96%B1%E8%AE%80");
     expect(content.getByText("已連結 108 課綱")).toBeInTheDocument();
 
     await user.click(language.getByRole("button", { name: "刪除「學生能說明倒裝的語意功能」" }));

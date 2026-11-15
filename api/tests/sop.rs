@@ -15,6 +15,26 @@ const P2: &str = "Her neighbors laughed at the idea. They were sure that every u
 const P3: &str = "In the first month, twelve of the thirty umbrellas did disappear. However, something unexpected followed.";
 const P4: &str = "Today the stand holds more umbrellas than it did at the start. Mrs. Lin says trust is like an umbrella.";
 
+const CURRICULUM_CSV: &str = "item_code,category,school_track,title,content,source_doc,\
+source_version,source_page,official_code,item_kind,strand,strand_name,stage,subject,advanced,\
+recurring,source_sha256
+T-G-3-V-2,curriculum,general,3-Ⅴ-2 學習表現｜測試閱讀,能讀懂測試用的短文並找出主旨。,測試領綱.pdf,測試版,12,3-Ⅴ-2,learning_performance,3,測試閱讀,V,英語文,False,False,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+T-G-3-V-10,curriculum,general,*3-Ⅴ-10 學習表現｜測試閱讀,能分析測試用短文的結構。,測試領綱.pdf,測試版,13,*3-Ⅴ-10,learning_performance,3,測試閱讀,V,英語文,True,False,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+T-G-3-IV-1,curriculum,general,3-Ⅳ-1 學習表現｜測試閱讀,能讀懂國中測試用的短文。,測試領綱.pdf,測試版,11,3-Ⅳ-1,learning_performance,3,測試閱讀,IV,英語文,False,False,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+T-V-3-V-1,curriculum,vocational,3-Ⅴ-1 學習表現｜測試閱讀,能讀懂技高測試用的說明文件。,測試技高領綱.pdf,測試版,9,3-Ⅴ-1,learning_performance,3,測試閱讀,V,英語文,False,False,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+T-V-3-V-2,curriculum,vocational,3-Ⅴ-2 學習表現｜測試閱讀,能擷取技高測試用文件的關鍵資訊。,測試技高領綱.pdf,測試版,9,3-Ⅴ-2,learning_performance,3,測試閱讀,V,英語文,False,False,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+";
+
+/// Official curriculum items (synthetic texts): two senior-high items for 普高, one junior-high
+/// item (out of the default scope) and two for 技高.
+async fn import_curriculum(app: &common::TestApp) {
+    let pi = app.pi_token().await;
+    let (s, v) = app
+        .post_csv("/api/admin/knowledge/import", Some(&pi), CURRICULUM_CSV)
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
 fn passage(marker: &str) -> String {
     format!("{P1}\n\n{P2}\n\n{P3}\n\n{P4} {marker}")
 }
@@ -430,24 +450,7 @@ async fn curriculum_links_take_text_and_source_from_the_knowledge_base() {
     let app = test_app!();
     let t = app.teacher("T-SOP-04", "general").await;
     let id = lesson(&app, &t).await;
-
-    // The teacher's own search: only items for the track, ranked by keyword.
-    let (s, found) = app
-        .get("/api/curriculum?q=%E8%AD%B0%E8%AB%96%E6%96%87", Some(&t))
-        .await;
-    assert_eq!(s, StatusCode::OK, "{found}");
-    assert_eq!(found[0]["item_code"], "DEMO-CUR-002");
-    assert!(found[0]["text"].as_str().unwrap().contains("議論文"));
-    let (_, all) = app.get("/api/curriculum", Some(&t)).await;
-    let codes: Vec<&str> = all
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|i| i["item_code"].as_str().unwrap())
-        .collect();
-    assert_eq!(codes, ["DEMO-CUR-001", "DEMO-CUR-002"]); // 003 is vocational only
-    let (_, none) = app.get("/api/curriculum?q=zzzzzz", Some(&t)).await;
-    assert_eq!(none, json!([]));
+    import_curriculum(&app).await;
 
     // Whatever text a client sends for a link, the stored one is the database's.
     let (s, saved) = put_sop(
@@ -456,39 +459,38 @@ async fn curriculum_links_take_text_and_source_from_the_knowledge_base() {
         id,
         json!({ "objectives": [{
             "id": "o1", "type": "content", "text": "學生能找出作者的論點", "link_status": "unlinked",
-            "links": [{ "item_code": "DEMO-CUR-002", "why": "找論點", "text": "我自己編的條文",
-                        "source_doc": "假的來源", "source_version": "v9" }]
+            "links": [{ "item_code": "T-G-3-V-10", "why": "找論點", "text": "我自己編的條文",
+                        "official_code": "9-9", "source_doc": "假的來源", "source_version": "v9" }]
         }] }),
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{saved}");
     let link = &saved["content"]["objectives"][0]["links"][0];
-    assert!(link["text"]
-        .as_str()
-        .unwrap()
-        .starts_with("（示範）學生能閱讀短篇議論文"));
-    assert_eq!(link["title"], "示範學習表現：閱讀議論文並找出論點與理由");
-    assert_eq!(
-        link["source_doc"],
-        "示範條目（非官方，待主持人提供正式來源）"
-    );
-    assert_eq!(link["source_version"], "");
+    assert_eq!(link["text"], "能分析測試用短文的結構。");
+    assert_eq!(link["official_code"], "*3-Ⅴ-10");
+    assert_eq!(link["title"], "*3-Ⅴ-10 學習表現｜測試閱讀");
+    assert_eq!(link["source_doc"], "測試領綱.pdf");
+    assert_eq!(link["source_version"], "測試版");
+    assert_eq!(link["source_page"], "13");
     assert_eq!(link["why"], "找論點");
     assert_eq!(saved["content"]["objectives"][0]["link_status"], "linked");
 
-    // A code that is not in the knowledge base cannot be linked.
-    let (s, v) = put_sop(
-        &app,
-        &t,
-        id,
-        json!({ "objectives": [{ "id": "o1", "type": "content", "links": [{ "item_code": "9-V-2" }] }] }),
-    )
-    .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
-    assert!(v["error"]["message"].as_str().unwrap().contains("9-V-2"));
+    // A code that is not in the knowledge base cannot be linked; neither can a hand-written
+    // note filed under curriculum (the seeded demo items say they are not curriculum text).
+    for code in ["9-V-2", "DEMO-CUR-002"] {
+        let (s, v) = put_sop(
+            &app,
+            &t,
+            id,
+            json!({ "objectives": [{ "id": "o1", "type": "content", "links": [{ "item_code": code }] }] }),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+        assert!(v["error"]["message"].as_str().unwrap().contains(code));
+    }
 
     // A link saved earlier stays readable after the item is retired.
-    sqlx::query("UPDATE knowledge_items SET retired_at = now() WHERE item_code = 'DEMO-CUR-002'")
+    sqlx::query("UPDATE knowledge_items SET retired_at = now() WHERE item_code = 'T-G-3-V-10'")
         .execute(&app.db)
         .await
         .unwrap();
@@ -496,12 +498,9 @@ async fn curriculum_links_take_text_and_source_from_the_knowledge_base() {
     content["objectives"][0]["text"] = json!("改寫過的目標");
     let (s, v) = put_sop(&app, &t, id, content).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(
-        v["content"]["objectives"][0]["links"][0]["item_code"],
-        "DEMO-CUR-002"
-    );
-    let (_, after) = app.get("/api/curriculum", Some(&t)).await;
-    assert_eq!(after.as_array().unwrap().len(), 1);
+    let kept = &v["content"]["objectives"][0]["links"][0];
+    assert_eq!(kept["item_code"], "T-G-3-V-10");
+    assert_eq!(kept["text"], "能分析測試用短文的結構。");
 }
 
 #[tokio::test]
@@ -939,6 +938,7 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
     let app = test_app!();
     let t = app.teacher("T-SOP-20", "general").await;
     let id = lesson(&app, &t).await;
+    import_curriculum(&app).await;
     put_material(&app, &t, id, &passage("")).await;
     let own = json!({ "objectives": [
         { "id": "mine", "type": "language", "text": "學生能用 Not only … but also 倒裝句", "origin": "teacher" }
@@ -958,16 +958,13 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
     // Type, reason, linked item code, official text and source: all there, text from the DB.
     let link = &objectives[0]["links"][0];
     assert_eq!(objectives[0]["link_status"], "linked");
-    assert_eq!(link["item_code"], "DEMO-CUR-001");
-    assert_eq!(link["title"], "示範學習表現：以簡短口語描述個人經驗");
-    assert!(link["text"]
-        .as_str()
-        .unwrap()
-        .starts_with("（示範）學生能用簡單句型"));
-    assert_eq!(
-        link["source_doc"],
-        "示範條目（非官方，待主持人提供正式來源）"
-    );
+    assert_eq!(link["item_code"], "T-G-3-V-2");
+    assert_eq!(link["official_code"], "3-Ⅴ-2");
+    assert_eq!(link["title"], "3-Ⅴ-2 學習表現｜測試閱讀");
+    assert_eq!(link["text"], "能讀懂測試用的短文並找出主旨。");
+    assert_eq!(link["source_doc"], "測試領綱.pdf");
+    assert_eq!(link["source_version"], "測試版");
+    assert_eq!(link["source_page"], "12");
     assert!(!link["why"].as_str().unwrap().is_empty());
     assert!(!objectives[0]["reason"].as_str().unwrap().is_empty());
     assert!(objectives[0]["student_facing_en"]
@@ -1008,7 +1005,8 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
     .fetch_all(&app.db)
     .await
     .unwrap();
-    assert_eq!(offered, ["DEMO-CUR-001", "DEMO-CUR-002"]);
+    // Senior-high items of the teacher's track only, in reading order (2 before 10).
+    assert_eq!(offered, ["T-G-3-V-2", "T-G-3-V-10"]);
 
     // The recommendation changed nothing in the SOP.
     let sop = get_sop(&app, &t, id).await;
@@ -1022,7 +1020,7 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
         "id": "o-ai-1", "type": "content", "text": "學生能說出傘為什麼回來（我改過）",
         "reason": objectives[0]["reason"], "student_facing_en": objectives[0]["student_facing_en"],
         "paragraph_ids": ["p1"], "origin": "ai_edited",
-        "links": [{ "item_code": "DEMO-CUR-001", "why": link["why"] }]
+        "links": [{ "item_code": "T-G-3-V-2", "why": link["why"] }]
     }));
     let (s, saved) = put_sop(&app, &t, id, content).await;
     assert_eq!(s, StatusCode::OK, "{saved}");
@@ -1061,6 +1059,7 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
 async fn invented_curriculum_codes_never_reach_the_teacher() {
     let app = test_app!();
     let t = app.teacher("T-SOP-21", "general").await;
+    import_curriculum(&app).await;
 
     // Call 1 cites a code that was not offered; the repair call is clean.
     let id = lesson(&app, &t).await;
@@ -1097,10 +1096,7 @@ async fn invented_curriculum_codes_never_reach_the_teacher() {
     assert_eq!(job["result"]["status"], "shown", "{job}");
     assert!(!job["result"].to_string().contains("9-V-99"));
     assert_eq!(out["objectives"][0]["links"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        out["objectives"][0]["links"][0]["item_code"],
-        "DEMO-CUR-001"
-    );
+    assert_eq!(out["objectives"][0]["links"][0]["item_code"], "T-G-3-V-2");
     let rows = interactions(&app, id).await;
     assert_eq!(
         rows[1].check_results.as_ref().unwrap()["repairs"]["dropped_codes"],
@@ -1129,6 +1125,7 @@ async fn invented_curriculum_codes_never_reach_the_teacher() {
 async fn objectives_unlinked_and_single_type_outputs() {
     let app = test_app!();
     let t = app.teacher("T-SOP-22", "vocational").await;
+    import_curriculum(&app).await;
 
     let id = lesson(&app, &t).await;
     put_material(&app, &t, id, &passage("FAKE_SOP_UNLINKED")).await;

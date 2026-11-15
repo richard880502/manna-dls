@@ -240,6 +240,8 @@ pub struct Analysis {
 pub struct CurriculumLink {
     pub item_code: String,
     pub why: String,
+    /// The code as printed in the source (`3-Ⅴ-7`); `item_code` is the knowledge base's own.
+    pub official_code: String,
     pub title: String,
     pub text: String,
     pub category: String,
@@ -253,6 +255,7 @@ impl CurriculumLink {
         Self {
             item_code: item.item_code.clone(),
             why: why.to_string(),
+            official_code: item.official_code.clone(),
             title: item.title.clone(),
             text: item.content.clone(),
             category: item.category.clone(),
@@ -657,6 +660,13 @@ mod tests {
             source_doc: "課綱".into(),
             source_version: "107".into(),
             source_page: "12".into(),
+            official_code: "3-Ⅴ-7".into(),
+            item_kind: "learning_performance".into(),
+            strand_name: String::new(),
+            stage: "V".into(),
+            subject: "英語文".into(),
+            advanced: false,
+            recurring: false,
         };
         let items = HashMap::from([("CUR-1".to_string(), item)]);
         resolve_links(&mut doc, &items).unwrap();
@@ -664,6 +674,7 @@ mod tests {
         assert_eq!(o.links.len(), 1);
         assert_eq!(o.links[0].text, "官方條文");
         assert_eq!(o.links[0].source_doc, "課綱");
+        assert_eq!(o.links[0].official_code, "3-Ⅴ-7");
         assert_eq!(o.links[0].why, "因為");
         assert_eq!(o.link_status, LinkStatus::Linked);
         assert_eq!(doc.objectives[1].link_status, LinkStatus::Unlinked);

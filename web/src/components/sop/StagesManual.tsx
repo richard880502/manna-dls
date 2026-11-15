@@ -323,7 +323,6 @@ export function StageTasks({ sop, onGoToStage }: StageProps) {
               <Quote paragraphs={members} />
               <p className="para-links">
                 {members.length > 1 && <span>{range}合併設計</span>}
-                {members.length > 1 && linked && <span>　·　</span>}
                 {linked && <span>對應：{linked}</span>}
               </p>
               {renderTasks(block)}
