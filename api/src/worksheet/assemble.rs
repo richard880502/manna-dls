@@ -523,21 +523,29 @@ fn letter(index: usize) -> String {
     }
 }
 
-/// The sheet one audience gets for one version. Switched-off blocks are left out, items and
-/// scaffolds follow their `levels`, items are numbered through the whole sheet. Answers,
-/// evidence and teacher notes exist only for [`Audience::Teacher`].
+/// Whether a projected block has anything to print besides its heading. A step that failed
+/// leaves an empty block with a message for the editor; on paper it would only be a heading
+/// over nothing, so it is left out of the sheet.
+fn has_content(b: &SheetBlock) -> bool {
+    !(b.items.is_empty()
+        && b.steps.is_empty()
+        && b.vocabulary.is_empty()
+        && b.supports.is_empty()
+        && b.instructions.is_empty()
+        && b.teacher_notes.is_none())
+}
+
+/// The sheet one audience gets for one version. Switched-off blocks and blocks with nothing to
+/// print in this version are left out, items and scaffolds follow their `levels`, items are
+/// numbered through the whole sheet. Answers, evidence and teacher notes exist only for
+/// [`Audience::Teacher`].
 pub fn project(title: &str, content: &Content, level: Level, audience: Audience) -> Sheet {
     let teacher = audience == Audience::Teacher;
     let mut no = 0;
-    let mut lettered = 0;
     let mut blocks = Vec::new();
     for b in content.blocks.iter().filter(|b| b.enabled) {
-        let label = if b.kind == BlockKind::ExitTicket {
-            String::new()
-        } else {
-            lettered += 1;
-            letter(lettered - 1)
-        };
+        // Lettered below, once the blocks that print are known.
+        let label = String::new();
         let shown = |levels: &[Level]| levels.contains(&level);
         let items = b
             .items
@@ -596,6 +604,14 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             teacher_notes: (teacher && !b.teacher_notes.trim().is_empty())
                 .then(|| b.teacher_notes.trim().to_string()),
         });
+    }
+    blocks.retain(has_content);
+    let mut lettered = 0;
+    for b in &mut blocks {
+        if b.kind != BlockKind::ExitTicket {
+            b.label = letter(lettered);
+            lettered += 1;
+        }
     }
     Sheet {
         title: title.trim().to_string(),
@@ -742,6 +758,54 @@ mod tests {
             levels: all,
             ..Content::default()
         }
+    }
+
+    #[test]
+    fn blocks_of_failed_steps_are_not_printed_and_letters_close_up() {
+        let material = Material::default();
+        let mut c = content();
+        // The warm-up step failed: the editor keeps an empty block with a message.
+        c.blocks[0] = placeholder(BlockKind::Warmup, WARMUP_ID, "暖身沒有產生成功", &material);
+        c.blocks.insert(
+            2,
+            placeholder(
+                BlockKind::Activity,
+                "r1b2",
+                "主要任務沒有產生成功",
+                &material,
+            ),
+        );
+        for audience in [Audience::Student, Audience::Teacher] {
+            let sheet = project("T", &c, Level::Standard, audience);
+            let kinds: Vec<BlockKind> = sheet.blocks.iter().map(|b| b.kind).collect();
+            assert_eq!(kinds, [BlockKind::Activity, BlockKind::ExitTicket]);
+            assert_eq!(
+                sheet.blocks[0].label, "A",
+                "letters skip what is not printed"
+            );
+            assert_eq!(sheet.blocks[0].items[0].no, 1);
+        }
+        // A block that only has items in another version is left out of this one alone.
+        let mut c = content();
+        c.blocks[1].items.retain(|i| i.levels == [Level::Advanced]);
+        c.blocks[1].scaffolds.clear();
+        c.blocks[1].teacher_notes.clear();
+        let standard = project("T", &c, Level::Standard, Audience::Student);
+        assert_eq!(standard.blocks.len(), 2);
+        let advanced = project("T", &c, Level::Advanced, Audience::Student);
+        assert_eq!(advanced.blocks.len(), 3);
+        assert_eq!(advanced.blocks[1].label, "B");
+        // Instructions alone are worth printing (a discussion task without items).
+        let mut c = content();
+        c.blocks[1].items.clear();
+        c.blocks[1].scaffolds.clear();
+        c.blocks[1].instructions = "Discuss with a partner.".into();
+        assert_eq!(
+            project("T", &c, Level::Standard, Audience::Student)
+                .blocks
+                .len(),
+            3
+        );
     }
 
     #[test]

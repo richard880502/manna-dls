@@ -206,10 +206,14 @@ export interface SheetItem {
 
 export interface SheetBlock {
   block: WsBlock;
-  /** "A", "B", … for the warm-up and the activity blocks; "" for the exit ticket. */
+  /** "A", "B", … for the warm-up and the activity blocks that print; "" for the exit ticket and
+   * for a block that does not print. */
   label: string;
   items: SheetItem[];
   scaffolds: WsScaffold[];
+  /** False when the block has nothing to print in this version besides its heading (e.g. a step
+   * that did not succeed): the editor still shows it, the printed sheet and exports leave it out. */
+  printed: boolean;
 }
 
 export interface ProjectedSheet {
@@ -221,11 +225,25 @@ export interface ProjectedSheet {
 
 const letter = (i: number) => (i < 26 ? String.fromCharCode(65 + i) : `A${String.fromCharCode(65 + (i % 26))}`);
 
+/** Whether a block has anything to print in one version besides its heading (the server's rule). */
+function printable(block: WsBlock, items: SheetItem[], scaffolds: WsScaffold[], audience: WsAudience): boolean {
+  return (
+    items.length > 0 ||
+    scaffolds.some((s) =>
+      s.type === "procedural" ? s.steps.some((step) => step.trim() !== "") : s.content.trim() !== "",
+    ) ||
+    block.vocabulary.some((v) => v.word.trim() !== "") ||
+    block.instructions.trim() !== "" ||
+    (audience === "teacher" && block.teacher_notes.trim() !== "")
+  );
+}
+
 /**
  * What one version prints, the way the server assembles it: enabled blocks in order, the items
- * and scaffolds of that version, letters for the warm-up and activity blocks and one running item
- * number. `audience` is carried along; whether answers are drawn is the view's decision (the
- * student view never renders them).
+ * and scaffolds of that version, letters for the warm-up and activity blocks that print and one
+ * running item number. Blocks with nothing to print stay in the list (the editor shows them) with
+ * `printed: false` and no letter. `audience` is carried along; whether answers are drawn is the
+ * view's decision (the student view never renders them).
  */
 export function projectSheet(content: WorksheetContent, level: WsLevel, audience: WsAudience): ProjectedSheet {
   let no = 0;
@@ -233,11 +251,13 @@ export function projectSheet(content: WorksheetContent, level: WsLevel, audience
   const blocks: SheetBlock[] = [];
   for (const block of content.blocks) {
     if (!block.enabled) continue;
-    const label = block.kind === "exit_ticket" ? "" : letter(lettered++);
     const items = block.items
       .filter((it) => it.levels.includes(level))
       .map((item) => ({ item, no: ++no, lines: answerLines(item, level) }));
-    blocks.push({ block, label, items, scaffolds: block.scaffolds.filter((s) => s.levels.includes(level)) });
+    const scaffolds = block.scaffolds.filter((s) => s.levels.includes(level));
+    const printed = printable(block, items, scaffolds, audience);
+    const label = block.kind === "exit_ticket" || !printed ? "" : letter(lettered++);
+    blocks.push({ block, label, items, scaffolds, printed });
   }
   return {
     level,

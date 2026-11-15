@@ -1114,10 +1114,10 @@ interface WsSheet {
 
 | 步驟 | prompt key | 模組 `ai_interactions.module` | 鷹架 | `max_tokens` | 內容 |
 |---|---|---|---|---|---|
-| `tasks` | `worksheet_tasks` | `worksheet_tasks` | `SC-WS-TASKS` | 6000 | 逐段（或合併段落）的活動區塊：資訊處理功能、學生任務、題目、作答方式、參考答案、逐字依據；每題標 `core`／`support`／`challenge` |
-| `warmup` | `worksheet_warmup` | `worksheet_warmup` | `SC-WS-WARMUP` | 3000 | 喚醒背景知識 1–2 個活動＋關鍵字彙（只能從程式算出的候選字挑；級別由 `vocabulary_items` 帶入） |
-| `scaffolds` | `worksheet_scaffolds` | `worksheet_scaffolds` | `SC-WS-SCAFFOLDS` | 5000 | 每個區塊的語言鷹架、教學鷹架，以及**自動加入**的程序鷹架 |
-| `exit_ticket` | `worksheet_exit_ticket` | `worksheet_exit_ticket` | `SC-WS-EXIT` | 1500 | 2–4 題：形成性評量＋學生反思或蒐集問題 |
+| `tasks` | `worksheet_tasks` | `worksheet_tasks` | `SC-WS-TASKS` | 1500 + 600 × 段數（3000–6000） | 逐段（或合併段落）的活動區塊：資訊處理功能、學生任務、題目、作答方式、參考答案、逐字依據；每題標 `core`／`support`／`challenge` |
+| `warmup` | `worksheet_warmup` | `worksheet_warmup` | `SC-WS-WARMUP` | 2000 | 喚醒背景知識 1–2 個活動＋關鍵字彙（只能從程式算出的候選字挑；級別由 `vocabulary_items` 帶入） |
+| `scaffolds` | `worksheet_scaffolds` | `worksheet_scaffolds` | `SC-WS-SCAFFOLDS` | 800 + 350 × 區塊數（2000–5000） | 每個區塊的語言鷹架、教學鷹架，以及**自動加入**的程序鷹架 |
+| `exit_ticket` | `worksheet_exit_ticket` | `worksheet_exit_ticket` | `SC-WS-EXIT` | 1200 | 2–4 題：形成性評量＋學生反思或蒐集問題 |
 
 最後一步的工作會維持 `running`（`phase`「正在把結果組合成學習單」）直到新版本存好，所以輪詢看到 `running = false` 時，`GET /api/worksheets/:id` 一定已是新內容。之後由**程式組裝**（不呼叫模型）：暖身固定在最前、活動區塊依段落順序、Exit ticket 在最後；題號、版本差異、學生版／教師版都由程式決定，存成一個新的學習單版本（`cause = "generate"`）。
 
@@ -1127,9 +1127,11 @@ interface WsSheet {
 - **程序鷹架**：每個區塊至少一個，`auto = true`。模型沒有交出時，程式依作答方式與學生任務產生分步指示（例如有「小組共同完成」就寫明分工步驟），所以一定會有。
 - **自動檢查**（移植自 `research/sop-validation/chain/checks.py`）與處理：
   - 標籤只能來自規格集合；全英文（學生看得到的欄位含中日韓文字即不通過）；逐字依據必須是教材的連續片段；選擇題 4 個不重複選項且答案在選項內、是非題答案為 True/False、填空題要有空格；題幹不可含答案；每段都要被涵蓋、區塊依段落順序；區塊數 ≥ 3 時至少 3 種資訊處理功能；暖身關鍵字只能來自候選清單；鷹架不可含答案原文；Exit ticket 2–4 題且兩種用途都有、不重複主要任務的題目。
-  - 第一次沒過 → **修復一次**，請求一定不同（temperature +0.4，並附上未通過的項目）。
+  - 程式能完全修好的不另外花一次修復呼叫，記為通過並寫明修了什麼（`check_results.checks[].detail` 與 `repairs`）：不逐字的依據改用其中最長、至少 5 個字的逐字片段，沒有就清空（與課例 SOP 的分析一致）；鷹架 target 的寫法差異（`Warm-up`、`warmup`、`b1`、`[B1]`）視為同一個，這次沒有暖身時模型多給的暖身鷹架直接拿掉，重複的 target 只留第一筆；字詞表裡括號中的中文註解拿掉。
+  - 其他檢查第一次沒過 → **修復一次**，請求一定不同（temperature +0.4，並附上未通過的項目）。
   - 修復後仍不過 → 不整份擋下：拿掉不合格的部分（不逐字的依據清空、不合格的題目或鷹架移除），記在 `ai_interactions.check_results.repairs`；整個步驟沒有可用內容時，對應區塊留一個空的區塊並在 `message` 說明（例如「暖身沒有產生成功，你可以自己寫，或按重新產生」），其餘步驟照常進行。
   - 輸出會清掉 LaTeX／Markdown 殘留。
+- **輸出失控**：模型寫到 `max_tokens` 時該次呼叫為 `blocked`（檢查 `max_tokens`，說明是哪一種：`whitespace` 空白、`repetition` 重複、`long` 單純太長），`ai_interactions.output` 留下 `{ truncated_at_max_tokens, runaway, chars, longest_whitespace, runaway_excerpt }`：模型輸出的頭尾各 1500 字、長串空白縮成「⟨N whitespace⟩」（只有模型輸出，不含輸入的教材；刪除教材時與 `evidence` 一起清掉）。送出的 JSON schema 保持撰寫時的欄位順序（`serde_json` 的 `preserve_order`）：閘道的受限解碼會要模型照 schema 的順序寫欄位，按字母排序時模型會在想結束物件的地方只能寫空白而失控（`docs/llm-eval/worksheet-real/`）。
 - 逾時、供應商錯誤、AI 關閉：該步驟 `outcome` = `timeout`／`error`／`disabled`，其餘照上面的方式處理。**任何失敗都不會擋住手動編輯。**
 - 每次呼叫各寫一列 `ai_interactions`（輸入快照中的教材只留字數與雜湊）；`WsJob.interaction_id` 指向教師看到的那一次。教師復原一個重新產生的區塊時，記一筆 `teacher_decisions`（`reject`）。
 - 伺服器重啟會中斷工作：`queued`／`running` 超過 `8 × AI_TIMEOUT_SECS + 60` 秒的在下次讀取時結束為 `error`。
@@ -1185,6 +1187,7 @@ interface WsVocabCheck {
 
 `GET …/export` 由後端即時產生並串流回瀏覽器（不經物件儲存）：
 
+- 沒有內容可印的區塊（例如某一步沒有成功而留下的空區塊，只有標題與 `message`）不會出現在投影、DOCX 與 PDF，後面的區塊字母依序遞補；編輯器仍顯示它與說明，並註明「印出與匯出時會略過」。只有作答指示的區塊（例如討論活動）照常印出。
 - **DOCX**：直接寫 WordprocessingML（`zip` crate），段落、編號、表格、作答線皆為 Word 原生物件，可編輯。
 - **PDF**：純 Rust 產生，字型子集化後內嵌。內嵌的拉丁字型是 Libertinus Serif（OFL，來自 `typst-assets` crate）；中文字由 `WORKSHEET_CJK_FONT`（或映像檔內建的中文字型）提供。學習單含中文而環境沒有中文字型時回 409，請教師改用 DOCX。
 - 檔名：`<filename>_<版本>_<學生版|教師參考版>.<副檔名>`（RFC 5987 `filename*`）。教師參考版在每題下方印參考答案與依據，並印 `teacher_notes`。
@@ -1196,10 +1199,12 @@ interface WsVocabCheck {
 | `FAKE_WS_CJK` | `tasks` 第 1 次有一題題目含中文；修復後改正 |
 | `FAKE_WS_CJK_ALWAYS` | 兩次都含中文 → 該題被拿掉 |
 | `FAKE_WS_BAD_LABEL` | `tasks` 第 1 次用了表外的學生任務標籤；修復後改正 |
-| `FAKE_WS_SPLICE_ALWAYS` | `tasks` 有一筆依據兩次都以「...」拼接 → 依據被清空 |
+| `FAKE_WS_SPLICE_ALWAYS` | `tasks` 有一筆依據以「...」拼接、沒有 5 個字以上的逐字片段 → 依據被清空（不需修復呼叫） |
 | `FAKE_WS_WARMUP_BLOCK` | `warmup` 兩次都不合格 → 暖身區塊留空並附說明 |
 | `FAKE_WS_NO_PROCEDURAL` | `scaffolds` 不交程序鷹架 → 由程式補上 |
 | `FAKE_WS_LEAK` | `scaffolds` 第 1 次有一個鷹架含答案原文；修復後改正 |
+| `FAKE_WS_TARGET_ALIAS` | `scaffolds` 把 target 寫成 `Warm-up`／`b1`，沒有暖身時還多給一筆 `warmup` → 由程式對應，不需修復 |
+| `FAKE_RUNAWAY` | 每一步第 1 次都寫到 `max_tokens`（物件寫到一半後一直輸出空白）；修復呼叫正常 |
 
 既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_REFUSAL`、`FAKE_BLOCK`、`FAKE_SLOW` 照舊（對四個步驟都有效）。
 

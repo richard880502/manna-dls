@@ -8,6 +8,7 @@
 //! | `FAKE_TIMEOUT`    | provider timeout                                                |
 //! | `FAKE_ERROR`      | HTTP 500                                                        |
 //! | `FAKE_REFUSAL`    | model refusal                                                   |
+//! | `FAKE_RUNAWAY`    | first attempt runs to `max_tokens` in whitespace (with the partial output); the regeneration is normal |
 //! | `FAKE_BLOCK`      | output that fails the checks (both attempts → `blocked`)        |
 //! | `FAKE_BLOCK_ONCE` | first attempt fails the checks, the regeneration passes         |
 //! | `FAKE_KB_EMPTY`   | plan suggestions: the model answers `kb_empty` (items irrelevant) |
@@ -54,6 +55,17 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
     }
     if has(req, "FAKE_REFUSAL") {
         return Err(ProviderError::Refusal("fake refusal".into()));
+    }
+    if has(req, "FAKE_RUNAWAY") && req.attempt == 1 {
+        // What gemma does when constrained decoding leaves it nothing it wants to write: an
+        // unfinished object, then whitespace until max_tokens.
+        return Err(ProviderError::MaxTokens {
+            partial: format!(
+                "{{\n  \"{}\": [\n    {{\n      \"title_en\": \"Before you read\"\n    {}",
+                req.schema_name,
+                "    \n".repeat(1500)
+            ),
+        });
     }
     // FAKE_BLOCK_ONCE contains FAKE_BLOCK, so test it first.
     let invalid = if has(req, "FAKE_BLOCK_ONCE") {

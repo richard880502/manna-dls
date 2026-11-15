@@ -32,6 +32,11 @@ impl CheckResult {
         Self::new(name, false, Some(detail.into()))
     }
 
+    /// Passed because the code fixed what was wrong; `detail` says what it changed.
+    pub fn repaired(name: &'static str, detail: impl Into<String>) -> Self {
+        Self::new(name, true, Some(detail.into()))
+    }
+
     fn new(name: &'static str, passed: bool, detail: Option<String>) -> Self {
         Self {
             name,

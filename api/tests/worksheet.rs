@@ -1254,3 +1254,130 @@ async fn pasted_material_goes_to_the_library_and_only_shared_notes_reach_the_mod
     let student = sheet(&app, &t, id, "standard", "student").await;
     assert!(!student.to_string().contains("學生常忽略"));
 }
+
+// ---------------------------------------------------------------- the real model's failure modes
+
+#[tokio::test]
+async fn a_runaway_output_is_kept_for_diagnosis_and_repaired() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(&app, &t, &passage("FAKE_RUNAWAY")).await["id"]
+        .as_i64()
+        .unwrap();
+    let state = generate(&app, &t, id).await;
+    let outcomes: Vec<&str> = state["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| j["outcome"].as_str().unwrap())
+        .collect();
+    assert_eq!(outcomes, ["shown", "shown", "shown", "shown"], "{state}");
+    // Every first call ran away; what it wrote is stored, shortened, with what kind it was.
+    type Row = (String, i32, String, Option<Value>, Option<Value>);
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT module, attempt, status, output, check_results FROM ai_interactions
+          WHERE module LIKE 'worksheet_%' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    let first: Vec<&Row> = rows.iter().filter(|r| r.1 == 1).collect();
+    assert_eq!(first.len(), 4);
+    for (module, _, status, output, checks) in first {
+        assert_eq!(status, "blocked", "{module}");
+        let output = output.as_ref().unwrap();
+        assert_eq!(output["truncated_at_max_tokens"], true);
+        assert_eq!(output["runaway"], "whitespace", "{module}");
+        assert_eq!(output["longest_whitespace"], 7505, "{module}: {output}");
+        let excerpt = output["runaway_excerpt"].as_str().unwrap();
+        assert!(excerpt.contains("⟨7505 whitespace⟩"), "{excerpt}");
+        assert!(excerpt.contains("Before you read"));
+        assert!(excerpt.len() < 600, "collapsed: {excerpt}");
+        let detail = checks.as_ref().unwrap()["checks"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(detail.contains("whitespace runaway"), "{detail}");
+    }
+    assert!(rows.iter().filter(|r| r.1 == 2).all(|r| r.2 == "shown"));
+}
+
+#[tokio::test]
+async fn failed_steps_are_not_printed_and_scaffold_targets_are_forgiving() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(
+        &app,
+        &t,
+        &passage("FAKE_WS_WARMUP_BLOCK FAKE_WS_TARGET_ALIAS FAKE_WS_SPLICE_ALWAYS"),
+    )
+    .await["id"]
+        .as_i64()
+        .unwrap();
+    let state = generate(&app, &t, id).await;
+    let job = |step: &str| {
+        state["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|j| j["step"] == step)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(job("warmup")["outcome"], "blocked");
+    assert_eq!(job("tasks")["outcome"], "shown");
+    assert_eq!(job("scaffolds")["outcome"], "shown");
+    // "b1"-style targets and an unasked "warmup" set cost no repair call; spliced evidence
+    // neither: both are put right in code and recorded as repaired.
+    for module in ["worksheet_scaffolds", "worksheet_tasks"] {
+        let rows: Vec<(i32, String, Value)> = sqlx::query_as(
+            "SELECT attempt, status, check_results FROM ai_interactions
+              WHERE module = $1 ORDER BY id",
+        )
+        .bind(module)
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1, "{module}: {rows:?}");
+        assert_eq!(rows[0].1, "shown");
+        assert_eq!(rows[0].2["passed"], true, "{module}: {}", rows[0].2);
+        assert!(!rows[0].2["repairs"].as_array().unwrap().is_empty());
+    }
+    let activities: Vec<Value> = blocks(&state)
+        .into_iter()
+        .filter(|b| b["kind"] == "activity")
+        .collect();
+    assert!(activities.iter().all(|b| b["scaffolds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["type"] == "verbal")));
+
+    // The editor keeps the empty warm-up with its message; no printed sheet shows it.
+    let warm = &blocks(&state)[0];
+    assert_eq!(warm["kind"], "warmup");
+    assert!(warm["message"]
+        .as_str()
+        .unwrap()
+        .contains("暖身沒有產生成功"));
+    for audience in ["student", "teacher"] {
+        let s = sheet(&app, &t, id, "standard", audience).await;
+        let kinds: Vec<&str> = s["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["kind"].as_str().unwrap())
+            .collect();
+        assert!(!kinds.contains(&"warmup"), "{audience}: {kinds:?}");
+        assert_eq!(s["blocks"][0]["label"], "A");
+        assert!(!s.to_string().contains("沒有產生成功"));
+    }
+    let (s, _, _, bytes) = raw_get(
+        &app,
+        &format!("/api/worksheets/{id}/export?format=docx&level=standard&audience=student"),
+        &t,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(&bytes[..2], b"PK");
+}

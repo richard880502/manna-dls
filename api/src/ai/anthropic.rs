@@ -47,16 +47,12 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
     let model_version = v["model"].as_str().unwrap_or_default().to_string();
 
     // stop_reason first: a refusal or truncated output may not match the schema.
-    match v["stop_reason"].as_str() {
-        Some("refusal") => {
-            let detail = v["stop_details"]["category"]
-                .as_str()
-                .map(|c| format!("category={c}"))
-                .unwrap_or_else(|| "refusal".into());
-            return Err(ProviderError::Refusal(detail));
-        }
-        Some("max_tokens") => return Err(ProviderError::MaxTokens),
-        _ => {}
+    if v["stop_reason"] == "refusal" {
+        let detail = v["stop_details"]["category"]
+            .as_str()
+            .map(|c| format!("category={c}"))
+            .unwrap_or_else(|| "refusal".into());
+        return Err(ProviderError::Refusal(detail));
     }
 
     let text: String = v["content"]
@@ -69,6 +65,10 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
                 .collect()
         })
         .unwrap_or_default();
+    if v["stop_reason"] == "max_tokens" {
+        // Kept for diagnosis only.
+        return Err(ProviderError::MaxTokens { partial: text });
+    }
     if text.trim().is_empty() {
         return Err(ProviderError::InvalidOutput("no text content".into()));
     }
@@ -187,7 +187,12 @@ mod tests {
             "content": [{"type": "text", "text": "{\"level\": 1, \"te"}]
         })
         .to_string();
-        assert_eq!(parse_response(200, &body), Err(ProviderError::MaxTokens));
+        assert_eq!(
+            parse_response(200, &body),
+            Err(ProviderError::MaxTokens {
+                partial: "{\"level\": 1, \"te".into()
+            })
+        );
     }
 
     #[test]

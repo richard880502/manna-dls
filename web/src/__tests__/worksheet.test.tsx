@@ -460,6 +460,27 @@ describe("result editor", () => {
     expect(screen.getByText(/這次由 Manna 決定：素材類型：閱讀文本；版本：基礎版、一般版。/)).toBeInTheDocument();
   });
 
+  it("a block a step left empty is shown in the editor but not lettered or printed", () => {
+    const content = generatedContent();
+    content.blocks[0] = block("warmup", {
+      kind: "warmup",
+      title: "Warm-up",
+      message: "暖身沒有產生成功（AI 目前沒有回應）。你可以自己寫，或按「重新產生」。",
+    });
+    for (const audience of ["student", "teacher"] as const) {
+      const sheet = projectSheet(content, "standard", audience);
+      expect(sheet.blocks.map((b) => [b.block.id, b.label, b.printed])).toEqual([
+        ["warmup", "", false],
+        ["b1", "A", true],
+        ["b2", "B", true],
+        ["exit", "", true],
+      ]);
+    }
+    // Instructions alone are worth printing.
+    content.blocks[0] = { ...content.blocks[0], instructions: "Talk with a partner." };
+    expect(projectSheet(content, "standard", "student").blocks[0]?.label).toBe("A");
+  });
+
   it("answers, evidence and teacher notes exist only in 教師參考版", async () => {
     const api = mockApi(routes(generated()));
     const user = userEvent.setup();

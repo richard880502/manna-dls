@@ -813,13 +813,14 @@ pub async fn used_elsewhere(
 // ---------------------------------------------------------------- deleting
 
 /// Replaces every non-empty string under an `evidence` key. Model outputs of the SOP analysis
-/// quote the material verbatim there and nowhere else.
+/// quote the material verbatim there and nowhere else (an output cut off at `max_tokens` keeps
+/// an excerpt that may, under [`crate::ai::RUNAWAY_EXCERPT_KEY`]).
 pub fn scrub_evidence(value: &mut Value) -> bool {
     match value {
         Value::Object(map) => {
             let mut changed = false;
             for (key, v) in map.iter_mut() {
-                if key == "evidence" {
+                if key == "evidence" || key == crate::ai::RUNAWAY_EXCERPT_KEY {
                     if let Value::String(s) = v {
                         if !s.trim().is_empty() && s != DELETED_MATERIAL_MARK {
                             *s = DELETED_MATERIAL_MARK.to_string();
