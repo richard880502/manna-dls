@@ -1393,6 +1393,8 @@ export interface WsBlock {
   origin: WsOrigin;
   message: string | null;
   sop_block_id: string | null;
+  /** The template section this block was generated from; keep it when saving (regenerate uses it). */
+  template_section_id?: string | null;
 }
 
 export type WsAutoField = "material_types" | "student_tasks" | "answer_formats" | "generation" | "levels" | "minutes";
@@ -1413,7 +1415,8 @@ export interface WorksheetContent {
   notices: string[];
 }
 
-export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket";
+/** `template`: one job for a whole template generation (or one template block regenerate). */
+export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "template";
 export type WsJobOutcome = "shown" | "blocked" | "timeout" | "error" | "disabled" | "skipped";
 
 export interface WsJob {

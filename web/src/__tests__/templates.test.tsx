@@ -512,7 +512,8 @@ describe("學習單: 直接做一份", () => {
     const upload = within(await screen.findByRole("region", { name: "上傳檔案" }));
     expect(screen.getByRole("button", { name: "上傳檔案" })).toHaveAttribute("aria-pressed", "true");
     // Only ready templates are offered; none is the default.
-    const select = screen.getByRole("combobox", { name: /照我的版型/ });
+    // The select appears once the template list has loaded.
+    const select = await screen.findByRole("combobox", { name: /照我的版型/ });
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["不使用版型", "L2 學習單版型（第 1 版）"]);
     expect(select).toHaveValue("");
 

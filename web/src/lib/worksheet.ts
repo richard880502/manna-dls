@@ -74,6 +74,7 @@ export const STEP_LABEL: Record<WsJobStep, string> = {
   warmup: "暖身活動",
   scaffolds: "鷹架",
   exit_ticket: "Exit ticket",
+  template: "照版型產生各區塊",
 };
 
 export const SCAFFOLD_TYPE_LABEL: Record<WsScaffoldType, string> = {
