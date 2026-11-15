@@ -191,7 +191,7 @@ pub async fn suggest(
             .join("\n")
     };
 
-    // ---- retrieval (keyword, track-filtered)
+    // ---- retrieval (track-filtered; keyword + embeddings when available, else keyword)
     let query_text = [
         lesson.title.as_str(),
         &objective,
@@ -208,8 +208,17 @@ pub async fn suggest(
         &request_note,
     ]
     .join("\n");
-    let retrieved =
-        retrieval::retrieve(&state.db, &track, &query_text, state.config.rag_top_k).await?;
+    let retrieval::Retrieval {
+        items: retrieved,
+        trace,
+    } = retrieval::retrieve_hybrid(
+        &state.db,
+        &state.embedder,
+        &track,
+        &query_text,
+        state.config.rag_top_k,
+    )
+    .await?;
     let codes: Vec<String> = retrieved.iter().map(|s| s.item.item_code.clone()).collect();
 
     let prefs = preferences::latest_answers(&state.db, teacher.id()).await?;
@@ -277,8 +286,11 @@ pub async fn suggest(
         "retrieval": {
             "query": query_text,
             "top_k": state.config.rag_top_k,
+            "method": trace.method,
+            "fallback_reason": trace.fallback_reason,
             "items": retrieved.iter().map(|s| json!({
-                "item_code": s.item.item_code, "version": s.item.version, "score": s.score
+                "item_code": s.item.item_code, "version": s.item.version, "score": s.score,
+                "similarity": s.similarity
             })).collect::<Vec<_>>(),
         },
         "prompt": {
@@ -306,15 +318,14 @@ pub async fn suggest(
         None,
     )
     .await?;
-    sqlx::query(
-        "INSERT INTO retrieval_logs (ai_interaction_id, query_text, school_track, item_codes)
-         VALUES ($1, $2, $3, $4)",
+    retrieval::log(
+        &state.db,
+        Some(first_id),
+        &query_text,
+        &track,
+        &codes,
+        &trace,
     )
-    .bind(first_id)
-    .bind(&query_text)
-    .bind(&track)
-    .bind(&codes)
-    .execute(&state.db)
     .await?;
 
     let mut context = ContextList::default();

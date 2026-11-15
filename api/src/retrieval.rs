@@ -1,4 +1,5 @@
-//! Phase 1 keyword retrieval over the (small) knowledge base.
+//! Retrieval over the (small) knowledge base: keyword matching, fused with embedding
+//! similarity when an embedding model is configured (Phase 2.4, at the end of this header).
 //!
 //! * Candidates are filtered by the teacher's school track (`track` or `both`) and exclude
 //!   retired items; only the latest version of each `item_code` is considered.
@@ -9,7 +10,6 @@
 //!   the number of distinct query tokens it contains (title ∪ content) plus the number found in
 //!   its title (a title match counts twice: the title names what the item is about); ties are
 //!   broken by item_code. Items with no match are dropped.
-//! * The `embedding` column is reserved for hybrid search once an approved embedding model exists.
 //!
 //! Phase 2.0 (real 108 curriculum items):
 //! * `comprehensive` (綜合型高中) is a track of its own with its own 領綱; a teacher of any
@@ -20,11 +20,25 @@
 //!   the others are reachable by explicit filter or by exact code.
 //! * [`curriculum_by_codes`] returns the official text of cited codes. Curriculum text shown to
 //!   a teacher must always come from here, never from a model.
+//!
+//! Phase 2.4 (hybrid retrieval, docs/RETRIEVAL_EVAL.md):
+//! * The `*_hybrid` functions rank the same candidates (same track / kind / stage / subject
+//!   filters) by keyword score **and** by cosine similarity between the query's embedding and
+//!   the items' stored embeddings (`knowledge_embeddings`, current model only), and merge the
+//!   two rankings with [`fuse`]. Keyword matching alone finds nothing for an English query
+//!   against the Chinese curriculum text; the embedding does.
+//! * Embeddings are optional. With `EMBEDDING_PROVIDER=none`, an empty query, a slow or failing
+//!   embedding call, or no stored vectors, the result is exactly the keyword ranking and
+//!   [`Trace::fallback_reason`] says why. Nothing here returns an error because of embeddings.
+//! * Items without a vector (not indexed yet, teacher cases) still compete through keywords.
+//! * [`log`] records the method and the fused candidates in `retrieval_logs`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use sqlx::PgPool;
+
+use crate::embedding::{vector_literal, Embedder};
 
 const EN_STOPWORDS: &[&str] = &[
     "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "her", "was",
@@ -267,6 +281,7 @@ pub fn search_curriculum(
             item,
             score: 0,
             title_score: 0,
+            similarity: None,
         })
         .collect();
     listed.sort_by_cached_key(|s| natural_key(&s.item.item_code));
@@ -301,8 +316,12 @@ pub fn match_codes(items: &[KbItem], track: Option<&str>, codes: &[String]) -> V
 #[derive(Debug, Clone, Serialize)]
 pub struct Scored {
     pub item: KbItem,
+    /// Keyword score (0 for an item found only by its embedding).
     pub score: usize,
     pub title_score: usize,
+    /// Cosine similarity to the query, when hybrid retrieval was used and the item has a vector.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f32>,
 }
 
 /// Pure scorer: returns at most `top_k` items with score > 0, best first.
@@ -324,6 +343,7 @@ pub fn rank(query: &str, items: Vec<KbItem>, top_k: usize) -> Vec<Scored> {
                 item,
                 score,
                 title_score,
+                similarity: None,
             })
         })
         .collect();
@@ -334,6 +354,320 @@ pub fn rank(query: &str, items: Vec<KbItem>, top_k: usize) -> Vec<Scored> {
     });
     scored.truncate(top_k);
     scored
+}
+
+// ---------------------------------------------------------------- hybrid retrieval (Phase 2.4)
+
+/// Reciprocal-rank-fusion constant (the usual 60).
+pub const RRF_K: f64 = 60.0;
+/// Weights of the two rankings in [`fuse`]. Tuned in docs/RETRIEVAL_EVAL.md: other settings
+/// were within noise of these.
+pub const KEYWORD_WEIGHT: f64 = 1.0;
+pub const VECTOR_WEIGHT: f64 = 1.0;
+
+/// One fused candidate, as logged in `retrieval_logs.candidates`. Ranks start at 1.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Candidate {
+    pub item_code: String,
+    pub keyword_rank: Option<usize>,
+    pub keyword_score: usize,
+    pub vector_rank: Option<usize>,
+    pub similarity: Option<f32>,
+    pub fused: f64,
+}
+
+/// Weighted reciprocal rank fusion of a keyword ranking and a vector ranking, both best first.
+///
+/// `fused = KEYWORD_WEIGHT · (score / best score) / (RRF_K + keyword rank)
+///        + VECTOR_WEIGHT / (RRF_K + vector rank)`
+///
+/// * Keyword ranks are competition ranks: items with the same keyword score share the rank of
+///   the first of them, so the item_code tie-break of [`rank`] carries no weight.
+/// * The keyword term is scaled by the item's score relative to the best keyword score: an
+///   item sharing one bigram with the query must not count like the item matching ten.
+/// * Ties in the fused score: higher similarity first, then item_code.
+pub fn fuse(keyword: &[(String, usize)], vector: &[(String, f32)]) -> Vec<Candidate> {
+    let mut by_code: HashMap<&str, Candidate> = HashMap::new();
+    let blank = |code: &str| Candidate {
+        item_code: code.to_string(),
+        keyword_rank: None,
+        keyword_score: 0,
+        vector_rank: None,
+        similarity: None,
+        fused: 0.0,
+    };
+    let best = keyword.first().map_or(1, |(_, s)| (*s).max(1)) as f64;
+    let (mut rank, mut prev) = (0usize, None);
+    for (i, (code, score)) in keyword.iter().enumerate() {
+        if prev != Some(*score) {
+            rank = i + 1;
+            prev = Some(*score);
+        }
+        let c = by_code.entry(code).or_insert_with(|| blank(code));
+        c.keyword_rank = Some(rank);
+        c.keyword_score = *score;
+        c.fused += KEYWORD_WEIGHT * (*score as f64 / best) / (RRF_K + rank as f64);
+    }
+    for (i, (code, similarity)) in vector.iter().enumerate() {
+        let c = by_code.entry(code).or_insert_with(|| blank(code));
+        c.vector_rank = Some(i + 1);
+        c.similarity = Some(*similarity);
+        c.fused += VECTOR_WEIGHT / (RRF_K + (i + 1) as f64);
+    }
+    let mut out: Vec<Candidate> = by_code.into_values().collect();
+    out.sort_by(|a, b| {
+        b.fused
+            .total_cmp(&a.fused)
+            .then_with(|| {
+                b.similarity
+                    .unwrap_or(f32::MIN)
+                    .total_cmp(&a.similarity.unwrap_or(f32::MIN))
+            })
+            .then_with(|| a.item_code.cmp(&b.item_code))
+    });
+    out
+}
+
+/// Pure hybrid ranking of already-loaded items: keyword ranking over all of them, vector
+/// ranking over those present in `similarities` (by item_code), fused, cut to `top_k`.
+pub fn rank_hybrid(
+    query: &str,
+    items: Vec<KbItem>,
+    similarities: &HashMap<String, f32>,
+    top_k: usize,
+) -> (Vec<Scored>, Vec<Candidate>) {
+    let keyword = rank(query, items.clone(), usize::MAX);
+    let keyword_list: Vec<(String, usize)> = keyword
+        .iter()
+        .map(|s| (s.item.item_code.clone(), s.score))
+        .collect();
+    let title_scores: HashMap<&str, usize> = keyword
+        .iter()
+        .map(|s| (s.item.item_code.as_str(), s.title_score))
+        .collect();
+    let mut vector: Vec<(String, f32)> = items
+        .iter()
+        .filter_map(|i| {
+            similarities
+                .get(&i.item_code)
+                .map(|s| (i.item_code.clone(), *s))
+        })
+        .collect();
+    vector.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let mut candidates = fuse(&keyword_list, &vector);
+    candidates.truncate(top_k);
+    let mut by_code: HashMap<String, KbItem> = items
+        .into_iter()
+        .map(|i| (i.item_code.clone(), i))
+        .collect();
+    let scored = candidates
+        .iter()
+        .filter_map(|c| {
+            by_code.remove(&c.item_code).map(|item| Scored {
+                score: c.keyword_score,
+                title_score: title_scores.get(c.item_code.as_str()).copied().unwrap_or(0),
+                similarity: c.similarity,
+                item,
+            })
+        })
+        .collect();
+    (scored, candidates)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Method {
+    /// Keyword ranking only.
+    Keyword,
+    /// Keyword and embedding rankings fused.
+    Hybrid,
+    /// No ranking: every item in scope was returned (SOP objectives of a small track).
+    All,
+}
+
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keyword => "keyword",
+            Self::Hybrid => "hybrid",
+            Self::All => "all",
+        }
+    }
+}
+
+/// How a result was produced; stored with it in `retrieval_logs`.
+#[derive(Debug, Clone, Serialize)]
+pub struct Trace {
+    pub method: Method,
+    /// The embedding model, when one was used.
+    pub embedding_model: Option<String>,
+    /// Why an enabled embedding model was not used: `empty_query`, `embedding_timeout`,
+    /// `embedding_failed`, `no_vectors`, `vector_lookup_failed`. `None` when hybrid was used
+    /// or embeddings are simply off.
+    pub fallback_reason: Option<&'static str>,
+    /// The returned items in order, with both ranks.
+    pub candidates: Vec<Candidate>,
+}
+
+impl Trace {
+    pub fn keyword(items: &[Scored], fallback_reason: Option<&'static str>) -> Self {
+        Self {
+            method: Method::Keyword,
+            embedding_model: None,
+            fallback_reason,
+            candidates: items
+                .iter()
+                .enumerate()
+                .map(|(i, s)| Candidate {
+                    item_code: s.item.item_code.clone(),
+                    // Position in the returned list (score 0 = listed, not ranked).
+                    keyword_rank: (s.score > 0).then_some(i + 1),
+                    keyword_score: s.score,
+                    vector_rank: None,
+                    similarity: None,
+                    fused: 0.0,
+                })
+                .collect(),
+        }
+    }
+
+    /// Every item in scope was returned without ranking.
+    pub fn all(codes: &[String]) -> Self {
+        Self {
+            method: Method::All,
+            embedding_model: None,
+            fallback_reason: None,
+            candidates: codes
+                .iter()
+                .map(|c| Candidate {
+                    item_code: c.clone(),
+                    keyword_rank: None,
+                    keyword_score: 0,
+                    vector_rank: None,
+                    similarity: None,
+                    fused: 0.0,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Retrieval {
+    pub items: Vec<Scored>,
+    pub trace: Trace,
+}
+
+/// Cosine similarity between `query` and the stored vectors of `codes` (active items embedded
+/// with `embedder`'s current model and dimensions; others are simply absent).
+///
+/// An exact scan over the filtered candidates: with a knowledge base of a few thousand rows it
+/// takes milliseconds and, unlike an approximate index scan, cannot lose candidates to the
+/// track / stage / subject filters. The HNSW index of migration 0011 is there for an
+/// `ORDER BY … LIMIT` prefilter once the knowledge base is large enough to need one.
+async fn similarities(
+    db: &PgPool,
+    embedder: &Embedder,
+    query: &[f32],
+    codes: &[String],
+) -> sqlx::Result<HashMap<String, f32>> {
+    let rows: Vec<(String, f32)> = sqlx::query_as(
+        "SELECT DISTINCT ON (k.item_code)
+                k.item_code, (1 - (e.embedding <=> $1::vector))::float4
+           FROM knowledge_embeddings e
+           JOIN knowledge_items k ON k.id = e.knowledge_item_id
+          WHERE k.retired_at IS NULL AND e.model = $2 AND e.dims = $3
+            AND k.item_code = ANY($4)
+          ORDER BY k.item_code, k.version DESC",
+    )
+    .bind(vector_literal(query))
+    .bind(embedder.model())
+    .bind(embedder.dims() as i32)
+    .bind(codes)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Ranks `items` for `query`: hybrid when an embedding model is configured and answers in
+/// time, otherwise keyword-only. Never fails.
+pub async fn rank_with_embeddings(
+    db: &PgPool,
+    embedder: &Embedder,
+    query: &str,
+    items: Vec<KbItem>,
+    top_k: usize,
+) -> Retrieval {
+    let keyword_only = |items: Vec<KbItem>, reason: Option<&'static str>| {
+        let items = rank(query, items, top_k);
+        let trace = Trace::keyword(&items, reason);
+        Retrieval { items, trace }
+    };
+    if !embedder.enabled() {
+        return keyword_only(items, None);
+    }
+    if query.trim().is_empty() {
+        return keyword_only(items, Some("empty_query"));
+    }
+    let vector = match embedder.embed_query(query).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "query embedding failed; keyword retrieval only");
+            return keyword_only(items, Some(e.code()));
+        }
+    };
+    let codes: Vec<String> = items.iter().map(|i| i.item_code.clone()).collect();
+    let sims = match similarities(db, embedder, &vector, &codes).await {
+        Ok(s) if s.is_empty() => return keyword_only(items, Some("no_vectors")),
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "vector lookup failed; keyword retrieval only");
+            return keyword_only(items, Some("vector_lookup_failed"));
+        }
+    };
+    let (items, candidates) = rank_hybrid(query, items, &sims, top_k);
+    Retrieval {
+        items,
+        trace: Trace {
+            method: Method::Hybrid,
+            embedding_model: Some(embedder.model().to_string()),
+            fallback_reason: None,
+            candidates,
+        },
+    }
+}
+
+/// Writes one `retrieval_logs` row: the query, the item codes handed on, and how they were
+/// found ([`Trace`]).
+pub async fn log<'e, E>(
+    executor: E,
+    ai_interaction_id: Option<i64>,
+    query_text: &str,
+    track: &str,
+    codes: &[String],
+    trace: &Trace,
+) -> sqlx::Result<()>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    sqlx::query(
+        "INSERT INTO retrieval_logs
+           (ai_interaction_id, query_text, school_track, item_codes, method, embedding_model,
+            fallback_reason, candidates)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+    )
+    .bind(ai_interaction_id)
+    .bind(query_text)
+    .bind(track)
+    .bind(codes)
+    .bind(trace.method.as_str())
+    .bind(&trace.embedding_model)
+    .bind(trace.fallback_reason)
+    .bind(serde_json::to_value(&trace.candidates).unwrap_or_default())
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 async fn active_items(
@@ -356,14 +690,9 @@ async fn active_items(
     .await
 }
 
-/// Loads candidates for `track` and ranks them (plan suggestions). Curriculum items outside the
-/// default scope (other stages, non-English subjects) are not candidates.
-pub async fn retrieve(
-    db: &PgPool,
-    track: &str,
-    query: &str,
-    top_k: usize,
-) -> sqlx::Result<Vec<Scored>> {
+/// Candidates for plan suggestions: the track's active items (curriculum items only within
+/// the default scope) plus approved teacher cases marked `in_rag`.
+async fn suggestion_candidates(db: &PgPool, track: &str) -> sqlx::Result<Vec<KbItem>> {
     let scope = CurriculumFilter::default();
     let mut items: Vec<KbItem> = active_items(db, Some(track), false)
         .await?
@@ -384,7 +713,30 @@ pub async fn retrieve(
     .fetch_all(db)
     .await?;
     items.extend(cases);
-    Ok(rank(query, items, top_k))
+    Ok(items)
+}
+
+/// Loads candidates for `track` and ranks them by keyword. Curriculum items outside the
+/// default scope (other stages, non-English subjects) are not candidates.
+pub async fn retrieve(
+    db: &PgPool,
+    track: &str,
+    query: &str,
+    top_k: usize,
+) -> sqlx::Result<Vec<Scored>> {
+    Ok(rank(query, suggestion_candidates(db, track).await?, top_k))
+}
+
+/// [`retrieve`] with hybrid ranking when embeddings are available (plan suggestions).
+pub async fn retrieve_hybrid(
+    db: &PgPool,
+    embedder: &Embedder,
+    track: &str,
+    query: &str,
+    top_k: usize,
+) -> sqlx::Result<Retrieval> {
+    let items = suggestion_candidates(db, track).await?;
+    Ok(rank_with_embeddings(db, embedder, query, items, top_k).await)
 }
 
 /// Curriculum items of `track` (plus `both`) matching `filter`, ranked by `query`; with an empty
@@ -398,6 +750,42 @@ pub async fn retrieve_curriculum(
 ) -> sqlx::Result<Vec<Scored>> {
     let items = active_items(db, Some(track), true).await?;
     Ok(search_curriculum(items, filter, query, top_k))
+}
+
+/// [`retrieve_curriculum`] with hybrid ranking when embeddings are available. Without a query
+/// the items are listed in code order, as before.
+pub async fn retrieve_curriculum_hybrid(
+    db: &PgPool,
+    embedder: &Embedder,
+    track: &str,
+    filter: &CurriculumFilter,
+    query: &str,
+    top_k: usize,
+) -> sqlx::Result<Retrieval> {
+    let items: Vec<KbItem> = active_items(db, Some(track), true)
+        .await?
+        .into_iter()
+        .filter(|i| is_official_curriculum(i) && filter.accepts(i))
+        .collect();
+    if embedder.enabled() && !query.trim().is_empty() {
+        let found = rank_with_embeddings(db, embedder, query, items.clone(), top_k).await;
+        if found.trace.method == Method::Hybrid {
+            return Ok(found);
+        }
+        // Keyword fallback: keep the listing behaviour for a query without usable tokens.
+        let listed = search_curriculum(items, filter, query, top_k);
+        let trace = Trace::keyword(&listed, found.trace.fallback_reason);
+        return Ok(Retrieval {
+            items: listed,
+            trace,
+        });
+    }
+    let listed = search_curriculum(items, filter, query, top_k);
+    let trace = Trace::keyword(&listed, None);
+    Ok(Retrieval {
+        items: listed,
+        trace,
+    })
 }
 
 /// Active curriculum items with exactly these codes (`item_code` such as `108-G-3-V-7`, or the
@@ -720,6 +1108,120 @@ mod tests {
             vec!["who", "which", "where", "make"]
         );
         assert!(tokenize("（示範）").is_empty());
+    }
+
+    fn kw(pairs: &[(&str, usize)]) -> Vec<(String, usize)> {
+        pairs.iter().map(|(c, s)| (c.to_string(), *s)).collect()
+    }
+
+    fn vecs(pairs: &[(&str, f32)]) -> Vec<(String, f32)> {
+        pairs.iter().map(|(c, s)| (c.to_string(), *s)).collect()
+    }
+
+    fn fused_codes(c: &[Candidate]) -> Vec<&str> {
+        c.iter().map(|c| c.item_code.as_str()).collect()
+    }
+
+    #[test]
+    fn fusion_rewards_agreement_between_the_two_rankings() {
+        // B is second in both lists; A and C each lead one list and are absent from the other.
+        let f = fuse(&kw(&[("A", 4), ("B", 4)]), &vecs(&[("C", 0.9), ("B", 0.8)]));
+        assert_eq!(fused_codes(&f), vec!["B", "C", "A"]);
+        let b = &f[0];
+        // A and B tie on keyword score and share rank 1.
+        assert_eq!((b.keyword_rank, b.vector_rank), (Some(1), Some(2)));
+        let expected = 1.0 / (RRF_K + 1.0) + 1.0 / (RRF_K + 2.0);
+        assert!((b.fused - expected).abs() < 1e-12);
+        // C (vector rank 1) and A (keyword rank 1) have the same fused score: the item with a
+        // similarity goes first.
+        assert_eq!(f[1].fused, f[2].fused);
+    }
+
+    #[test]
+    fn fusion_scales_weak_keyword_matches_down() {
+        // K1 matches 10 tokens, K2 only 1; V1 is the nearest vector.
+        let f = fuse(
+            &kw(&[("K1", 10), ("K2", 1)]),
+            &vecs(&[("V1", 0.9), ("V2", 0.8), ("V3", 0.7)]),
+        );
+        let pos = |c: &str| f.iter().position(|x| x.item_code == c).unwrap();
+        assert!(
+            pos("K1") < pos("V2"),
+            "a strong keyword match keeps its place"
+        );
+        assert!(
+            pos("K2") > pos("V3"),
+            "one shared bigram does not outrank near vectors"
+        );
+        let k2 = &f[pos("K2")];
+        assert_eq!(k2.keyword_rank, Some(2));
+        assert!((k2.fused - 0.1 / (RRF_K + 2.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fusion_of_one_list_keeps_its_order() {
+        let only_kw = fuse(&kw(&[("B", 3), ("A", 2), ("C", 2)]), &[]);
+        assert_eq!(fused_codes(&only_kw), vec!["B", "A", "C"]);
+        let only_vec = fuse(&[], &vecs(&[("Z", 0.9), ("Y", 0.5)]));
+        assert_eq!(fused_codes(&only_vec), vec!["Z", "Y"]);
+        assert!(only_vec[0].keyword_rank.is_none() && only_vec[0].keyword_score == 0);
+        assert!(fuse(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn hybrid_ranking_finds_items_keywords_miss_and_truncates() {
+        let items = vec![
+            item("A", "倒裝句", "Not only 置於句首時倒裝"),
+            item("B", "被動語態", "passive voice"),
+            item("C", "閱讀策略", "skimming"),
+        ];
+        // The query shares no token with B, but B's vector is the nearest.
+        let sims = HashMap::from([("A".to_string(), 0.2), ("B".to_string(), 0.9)]);
+        let (scored, candidates) = rank_hybrid("倒裝句", items.clone(), &sims, 8);
+        assert_eq!(
+            codes(&scored),
+            vec!["A", "B"],
+            "C has neither match nor vector"
+        );
+        assert_eq!(scored[1].score, 0);
+        assert_eq!(scored[1].similarity, Some(0.9));
+        assert!(scored[0].score > 0 && scored[0].title_score > 0);
+        assert_eq!(candidates.len(), 2);
+        let (top, _) = rank_hybrid("倒裝句", items.clone(), &sims, 1);
+        assert_eq!(codes(&top), vec!["A"]);
+        // No vectors at all: exactly the keyword ranking.
+        let (kw_only, _) = rank_hybrid("倒裝句", items.clone(), &HashMap::new(), 8);
+        assert_eq!(codes(&kw_only), codes(&rank("倒裝句", items, 8)));
+    }
+
+    #[tokio::test]
+    async fn disabled_embedder_falls_back_to_keywords_without_touching_the_database() {
+        use crate::embedding::{Embedder, EmbeddingConfig};
+        // A pool that cannot connect: the keyword path must not need it.
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let items = vec![
+            item("A", "倒裝句", "Not only 置於句首時倒裝"),
+            item("B", "被動語態", "passive voice"),
+        ];
+        let off = Embedder::new(EmbeddingConfig::disabled());
+        let r = rank_with_embeddings(&db, &off, "倒裝句", items.clone(), 8).await;
+        assert_eq!(r.trace.method, Method::Keyword);
+        assert_eq!(r.trace.fallback_reason, None);
+        assert_eq!(codes(&r.items), vec!["A"]);
+        assert_eq!(r.trace.candidates[0].keyword_rank, Some(1));
+
+        // Enabled, but the vector lookup fails (no database): still the keyword ranking.
+        let fake = Embedder::new(EmbeddingConfig::fake());
+        let r = rank_with_embeddings(&db, &fake, "倒裝句", items.clone(), 8).await;
+        assert_eq!(r.trace.method, Method::Keyword);
+        assert_eq!(r.trace.fallback_reason, Some("vector_lookup_failed"));
+        assert_eq!(codes(&r.items), vec!["A"]);
+        let r = rank_with_embeddings(&db, &fake, "   ", items, 8).await;
+        assert_eq!(r.trace.fallback_reason, Some("empty_query"));
+        assert!(r.items.is_empty());
     }
 
     #[test]
