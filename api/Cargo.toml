@@ -21,6 +21,7 @@ bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
 encoding_rs = "0.8"
+flate2 = "1"
 futures-util = "0.3"
 hex = "0.4"
 krilla = { version = "0.8", default-features = false, features = ["simple-text"] }
