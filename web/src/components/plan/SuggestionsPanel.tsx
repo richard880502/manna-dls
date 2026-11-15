@@ -331,7 +331,7 @@ export function SuggestionCard({ index, suggestion, sources, interactionId, onAp
         </>
       )}
 
-      {appended && <p className="field-hint appended-note">已加入左側教案步驟，記得按「儲存教案」。</p>}
+      {appended && <p className="field-hint appended-note">已加入教學步驟，會自動儲存。</p>}
       <ErrorText message={error} />
     </article>
   );

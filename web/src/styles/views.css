@@ -648,25 +648,10 @@
   margin-top: var(--space-lg);
 }
 
-/* ================= lesson page (interim, until the seven steps) ================= */
+/* ================= lesson page: head and the overview (本節概要); the steps are in sop.css ================= */
 .lesson-head {
   padding-bottom: var(--space-lg);
   border-bottom: var(--rule-hair) solid var(--color-rule);
-}
-
-.lesson-head .saved {
-  align-self: flex-end;
-}
-
-.lesson-layout {
-  grid-template-columns: minmax(0, 1fr) 22rem;
-  gap: var(--space-3xl);
-  margin-top: var(--space-xl);
-}
-
-.lesson-main,
-.lesson-side {
-  gap: 0;
 }
 
 .lesson-today h2 label {
@@ -695,23 +680,8 @@
   padding-bottom: var(--space-lg);
 }
 
-/* Manna's panel and the extra tools sit beside the plan, a step quieter than it. */
-.lesson-side h2 {
-  font-size: var(--text-lg);
-}
-
 .suggestion-card .head-row {
   align-items: flex-end;
-}
-
-.lesson-main > .suggestion-card {
-  margin-top: var(--space-2xl);
-  padding-top: var(--space-lg);
-  border-top: var(--rule-hair) solid var(--color-rule-strong);
-}
-
-.lesson-tools {
-  margin-top: var(--space-2xl);
 }
 
 /* ================= in-class console ================= */

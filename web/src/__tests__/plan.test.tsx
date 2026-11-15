@@ -10,7 +10,7 @@ import {
   mockApi,
   openSection,
   renderApp,
-  savePlanButton,
+  settleAutosave,
   sectionToggle,
   signIn,
   type MockCall,
@@ -109,7 +109,7 @@ describe("Study & Plan lesson page", () => {
     );
     const user = userEvent.setup();
     await openLesson();
-    expect(screen.getByText(/已儲存 · 第 2 版/)).toBeInTheDocument();
+    expect(screen.getByText("會自動儲存")).toBeInTheDocument();
 
     await user.type(screen.getByLabelText("想請 Manna 特別注意什麼？"), "多一點口說");
     await user.click(screen.getByRole("button", { name: "請 Manna 提供建議" }));
@@ -167,9 +167,8 @@ describe("Study & Plan lesson page", () => {
     });
     expect(await third.findByText("已拒絕")).toBeInTheDocument();
 
-    // teacher saves: a new version with ordered positions
-    await user.click(savePlanButton());
-    expect(await screen.findByText(/已儲存.*第 3 版/)).toBeInTheDocument();
+    // the plan saves itself: a new version with ordered positions
+    await settleAutosave(user);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     expect(saved.objective).toBe("學生能說明倒裝的語意功能");
     expect(saved.steps.map((s) => [s.position, s.activity_type, s.icap_level])).toEqual([
@@ -224,7 +223,7 @@ describe("Study & Plan lesson page", () => {
     expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 
-  it("disables the suggestion button when ai_enabled is false; the editor still saves", async () => {
+  it("disables the suggestion button when ai_enabled is false; the plan still saves", async () => {
     signIn();
     const api = mockApi({
       ...lessonRoutes(),
@@ -240,8 +239,9 @@ describe("Study & Plan lesson page", () => {
     const user = userEvent.setup();
     await openLesson();
     expect(await screen.findByRole("button", { name: "AI 目前未開放" })).toBeDisabled();
-    await user.click(savePlanButton());
-    expect(await screen.findByText(/已儲存.*第 3 版/)).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "今天要教什麼？" }), "！");
+    await settleAutosave(user);
+    expect(api.callsTo("POST", "/api/lessons/7/versions").length).toBeGreaterThan(0);
     expect(api.callsTo("POST", SUGGEST)).toHaveLength(0);
   });
 
@@ -300,11 +300,7 @@ describe("Study & Plan lesson page", () => {
     await user.click(screen.getByRole("button", { name: "步驟 2 上移" }));
     await user.click(screen.getByRole("button", { name: "＋ 新增步驟" }));
     await user.click(screen.getByRole("button", { name: "刪除步驟 3" }));
-    // The steps section repeats 儲存教案 at its end.
-    const stepsSection = within(screen.getByRole("region", { name: /^教學步驟/ }));
-    await user.click(stepsSection.getByRole("button", { name: "儲存教案" }));
-
-    await screen.findByText(/已儲存.*第 3 版/);
+    await settleAutosave(user);
     const saved = api.lastBody("POST", "/api/lessons/7/versions") as SaveLessonVersionRequest;
     const blankDiff = { duration_min: null, support_note: "", extension_note: "" };
     expect(saved.steps).toEqual([

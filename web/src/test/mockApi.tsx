@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { vi } from "vitest";
 import type {
@@ -115,8 +115,17 @@ export function mockApi(routes: Record<string, RouteValue>) {
 /** The lesson page first view: 今天要教什麼？ and 開始上課. */
 export const todayCard = () => within(screen.getByRole("region", { name: "今天要教什麼？" }));
 
-/** 儲存教案 on the first view (the open steps section repeats it at its end). */
-export const savePlanButton = () => todayCard().getByRole("button", { name: "儲存教案" });
+/**
+ * The lesson page has no save button: it saves a moment after an edit, when a field is left,
+ * and when the teacher looks away from the window. Tests use the last one, then wait for the
+ * saved line.
+ */
+export async function settleAutosave(_user?: unknown) {
+  act(() => {
+    window.dispatchEvent(new Event("blur"));
+  });
+  await screen.findByText(/^已自動儲存/);
+}
 
 /** The toggle of a collapsible lesson-page section, by the start of its label (e.g. "SIOP 提示"). */
 export const sectionToggle = (title: string) =>

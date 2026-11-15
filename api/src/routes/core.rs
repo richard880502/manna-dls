@@ -621,6 +621,8 @@ pub async fn assist(
             "goal_emphasis": goal_emphasis,
         }),
         attempt: 1,
+        max_tokens: None,
+        temperature: None,
     };
     let level = req.level;
     let outcome = pipeline::run(

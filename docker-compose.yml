@@ -23,7 +23,7 @@ services:
       # Set AI_PROVIDER=openai_compatible and these in Coolify (never in this file).
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-}
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
-      AI_TIMEOUT_SECS: ${AI_TIMEOUT_SECS:-60}
+      AI_TIMEOUT_SECS: ${AI_TIMEOUT_SECS:-150}
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}

@@ -13,6 +13,9 @@
 //! | `FAKE_KB_EMPTY`   | plan suggestions: the model answers `kb_empty` (items irrelevant) |
 //! | `FAKE_NO_DIFF`    | plan suggestions: differentiation fields left null (fails the check when the teacher's P3 includes differentiation) |
 //!
+//! The lesson SOP stages (`sop_passage_analysis`, `sop_objectives`) add their own markers:
+//! see `crate::sop::fake`.
+//!
 //! Task-specific behaviour read from `fake_context`:
 //! * core assist level 2 with `goal_emphasis: true` names the goal-related dimensions
 //!   (選文理由, 語言以外的內容目標, 課綱及考點);
@@ -68,6 +71,11 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
             has(req, "FAKE_NO_DIFF"),
         ),
         Some("material_focuses") => material_focuses(ctx, invalid),
+        // The lesson SOP stages have their own markers (see `sop::fake`).
+        Some("sop_passage_analysis") => {
+            crate::sop::fake::analysis(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("sop_objectives") => crate::sop::fake::objectives(ctx, req.attempt, &|m| has(req, m)),
         other => {
             return Err(ProviderError::InvalidOutput(format!(
                 "fake provider: unknown task {other:?}"
@@ -216,6 +224,8 @@ mod tests {
             schema: json!({}),
             fake_context: ctx,
             attempt,
+            max_tokens: None,
+            temperature: None,
         }
     }
 

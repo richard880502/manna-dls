@@ -117,6 +117,8 @@ mod tests {
             schema: json!({"type": "object"}),
             fake_context: json!({}),
             attempt: 1,
+            max_tokens: None,
+            temperature: None,
         }
     }
 

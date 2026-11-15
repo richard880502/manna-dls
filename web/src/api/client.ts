@@ -51,11 +51,17 @@ import type {
   ReviewRequest,
   RevokePairingResponse,
   RunDetail,
+  SavedSop,
+  SaveSopMaterialRequest,
   SaveLessonVersionRequest,
   SavePreferencesRequest,
   ScaffoldEventRequest,
   SchoolClass,
   SiopFeature,
+  SopContent,
+  SopJob,
+  SopJobKind,
+  SopState,
   SuggestionsRequest,
   SyncResponse,
   Teacher,
@@ -274,6 +280,18 @@ export const api = {
     post<OkResponse>(`/ai/${interactionId}/decision`, body),
   scaffoldEvent: (body: ScaffoldEventRequest) => post<OkResponse>("/scaffold-events", body),
   listTeacherCases: (q?: string) => get<TeacherCase[]>("/teacher-cases", { q }),
+
+  // 課例 SOP
+  getSop: (lessonId: number) => get<SopState>(`/lessons/${lessonId}/sop`),
+  /** 自動儲存：內容有變才會多一個版本 */
+  saveSop: (lessonId: number, content: SopContent) => put<SavedSop>(`/lessons/${lessonId}/sop`, { content }),
+  /** 教材由伺服器分段；段落 id 在文字不變時沿用 */
+  saveSopMaterial: (lessonId: number, body: SaveSopMaterialRequest) =>
+    put<SopState>(`/lessons/${lessonId}/sop/material`, body),
+  /** 建立背景工作並立刻回來；之後用 getSopJob 輪詢 */
+  startSopJob: (lessonId: number, kind: SopJobKind, classId?: number | null) =>
+    post<SopJob>(`/lessons/${lessonId}/sop/${kind}`, classId ? { class_id: classId } : {}),
+  getSopJob: (jobId: number) => get<SopJob>(`/sop-jobs/${jobId}`),
 
   // Teach & Record
   listRuns: (classId?: number | null) => get<LessonRun[]>("/runs", classQuery(classId)),

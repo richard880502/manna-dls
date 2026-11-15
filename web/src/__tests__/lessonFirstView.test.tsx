@@ -2,6 +2,7 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { autosaveConfig } from "../lib/useAutosave";
 import type { LessonRun, RunDetail, SaveLessonVersionRequest, UpdateLessonRequest } from "../api/types";
 import {
   baseRoutes,
@@ -14,6 +15,7 @@ import {
   renderApp,
   respond,
   sectionToggle,
+  settleAutosave,
   signIn,
   step,
   todayCard,
@@ -184,7 +186,7 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
     const user = userEvent.setup();
     await openLesson();
 
-    // The reported case: type the objective, do not press 儲存教案, press 開始本節課.
+    // The reported case: type the objective and press 開始上課 right away.
     await user.type(objectiveField(), "學生能用 Never 開頭寫倒裝句");
     expect(screen.getByText("尚未儲存")).toBeInTheDocument();
     await user.click(startButton());
@@ -209,11 +211,13 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
     await user.type(objectiveField(), "目標");
     await user.click(startButton());
 
-    expect(await todayCard().findByText("教案沒有儲存成功，所以還沒開始上課：伺服器暫時發生問題")).toBeInTheDocument();
+    expect(await todayCard().findByText("沒有儲存成功，所以還沒開始上課：伺服器暫時發生問題")).toBeInTheDocument();
     expect(api.callsTo("POST", START)).toHaveLength(0);
     expect(screen.getByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
     expect(objectiveField()).toHaveValue("目標");
-    expect(screen.getByText("尚未儲存")).toBeInTheDocument();
+    // The head says so too, with a way to try again.
+    expect(screen.getByText(/^沒有存到：伺服器暫時發生問題/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "再試一次" })).toBeInTheDocument();
   });
 
   it("starts without a new version when nothing changed", async () => {
@@ -249,16 +253,31 @@ describe("開始本節課 never drops unsaved changes (R2a, regression for docs/
 });
 
 describe("leaving the lesson page with unsaved changes (R2b)", () => {
-  it("asks in the page before an in-app navigation: stay keeps the edits, leave drops them", async () => {
+  const failing = { [`POST ${VERSIONS}`]: respond(502, { error: { code: "internal", message: "伺服器暫時發生問題" } }) };
+
+  it("saves what is pending first and goes on without asking", async () => {
     signIn();
     const api = mockApi(routes());
+    const user = userEvent.setup();
+    const { router } = await openLesson();
+    await user.type(objectiveField(), "要存的目標");
+
+    await user.click(screen.getByRole("link", { name: "班級" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    expect(api.lastBody("POST", VERSIONS)).toEqual({ objective: "要存的目標", steps: [] });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("asks in the page when that save fails: stay keeps the edits, leave drops them", async () => {
+    signIn();
+    mockApi(routes(failing));
     const user = userEvent.setup();
     const { router } = await openLesson();
     await user.type(objectiveField(), "還沒存的目標");
 
     await user.click(screen.getByRole("link", { name: "班級" }));
     const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
-    expect(dialog.getByText("離開這頁，尚未儲存的教案或本課背景就會遺失。")).toBeInTheDocument();
+    expect(dialog.getByText("有內容沒有存到。現在離開，這些內容就會遺失。")).toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "留在這頁" })).toHaveFocus();
     await user.click(dialog.getByRole("button", { name: "留在這頁" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -274,24 +293,33 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     await user.click(screen.getByRole("link", { name: "班級" }));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "不儲存，直接離開" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
-    expect(api.callsTo("POST", VERSIONS)).toHaveLength(0);
   });
 
-  it("「儲存後離開」 saves a new version, then goes on", async () => {
+  it("「儲存後離開」 tries again, then goes on", async () => {
     signIn();
-    const api = mockApi(routes());
+    let serverUp = false;
+    const api = mockApi(
+      routes({
+        [`POST ${VERSIONS}`]: (call: MockCall) =>
+          serverUp
+            ? { id: 71, version_no: 1, ...(call.body as SaveLessonVersionRequest), created_at: "2026-11-13T08:00:00Z" }
+            : respond(502, { error: { code: "internal", message: "伺服器暫時發生問題" } }),
+      }),
+    );
     const user = userEvent.setup();
     const { router } = await openLesson();
     await user.type(objectiveField(), "要存的目標");
     await user.click(screen.getByRole("link", { name: "班級" }));
-    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "儲存後離開" }));
+    const dialog = within(await screen.findByRole("alertdialog"));
+    serverUp = true;
+    await user.click(dialog.getByRole("button", { name: "儲存後離開" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(api.lastBody("POST", VERSIONS)).toEqual({ objective: "要存的目標", steps: [] });
   });
 
   it("stays on the page when 「儲存後離開」 cannot save", async () => {
     signIn();
-    mockApi(routes({ [`POST ${VERSIONS}`]: respond(502, { error: { code: "internal", message: "伺服器暫時發生問題" } }) }));
+    mockApi(routes(failing));
     const user = userEvent.setup();
     const { router } = await openLesson();
     await user.type(objectiveField(), "目標");
@@ -318,12 +346,52 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     await user.type(objectiveField(), "目標");
     expect(unload()).toBe(true);
 
-    await user.click(todayCard().getByRole("button", { name: "儲存教案" }));
-    expect(await screen.findByText(/已儲存.*第 1 版/)).toBeInTheDocument();
+    // Leaving the field saves.
+    await settleAutosave(user);
     expect(unload()).toBe(false);
     await user.click(screen.getByRole("link", { name: "班級" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("the plan saves itself (no 儲存教案 button)", () => {
+  it("saves a moment after the last edit and says so in the head", async () => {
+    signIn();
+    const api = mockApi(routes());
+    const user = userEvent.setup();
+    await openLesson();
+    expect(screen.getByText("會自動儲存")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /儲存教案/ })).not.toBeInTheDocument();
+
+    autosaveConfig.delayMs = 20;
+    await user.type(objectiveField(), "學生能用 Never 開頭寫倒裝句");
+    // No blur, no button: the timer saves.
+    expect(await screen.findByText(/^已自動儲存 \d\d:\d\d$/)).toBeInTheDocument();
+    expect(objectiveField()).toHaveFocus();
+    expect(api.lastBody("POST", VERSIONS)).toEqual({ objective: "學生能用 Never 開頭寫倒裝句", steps: [] });
+  });
+
+  it("keeps saying what went wrong when a save fails, and 再試一次 saves", async () => {
+    signIn();
+    let serverUp = false;
+    const api = mockApi(
+      routes({
+        [`POST ${VERSIONS}`]: (call: MockCall) =>
+          serverUp
+            ? { id: 71, version_no: 1, ...(call.body as SaveLessonVersionRequest), created_at: "2026-11-13T08:00:00Z" }
+            : respond(502, { error: { code: "internal", message: "伺服器暫時發生問題" } }),
+      }),
+    );
+    const user = userEvent.setup();
+    await openLesson();
+    await user.type(objectiveField(), "目標");
+    await user.click(screen.getByRole("heading", { level: 1 }));
+    expect(await screen.findByText(/^沒有存到：伺服器暫時發生問題/)).toBeInTheDocument();
+    serverUp = true;
+    await user.click(screen.getByRole("button", { name: "再試一次" }));
+    expect(await screen.findByText(/^已自動儲存/)).toBeInTheDocument();
+    expect(api.lastBody("POST", VERSIONS)).toEqual({ objective: "目標", steps: [] });
   });
 });
 
