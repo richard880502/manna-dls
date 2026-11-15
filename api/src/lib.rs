@@ -19,6 +19,7 @@ pub mod routes;
 pub mod settings;
 pub mod sop;
 pub mod vocabulary;
+pub mod worksheet;
 
 use std::path::PathBuf;
 use std::sync::Arc;

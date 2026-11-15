@@ -19,6 +19,7 @@ axum = { version = "0.8", features = ["macros"] }
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
 hex = "0.4"
+krilla = { version = "0.8", default-features = false, features = ["simple-text"] }
 rand = "0.8"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
@@ -39,6 +40,8 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ttf-parser = "0.25"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

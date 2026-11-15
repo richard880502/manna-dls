@@ -14,7 +14,7 @@
 //! | `FAKE_NO_DIFF`    | plan suggestions: differentiation fields left null (fails the check when the teacher's P3 includes differentiation) |
 //!
 //! The lesson SOP stages (`sop_passage_analysis`, `sop_objectives`) add their own markers:
-//! see `crate::sop::fake`.
+//! see `crate::sop::fake`; the worksheet steps (`worksheet_*`) see `crate::worksheet::fake`.
 //!
 //! Task-specific behaviour read from `fake_context`:
 //! * core assist level 2 with `goal_emphasis: true` names the goal-related dimensions
@@ -76,6 +76,17 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
             crate::sop::fake::analysis(ctx, req.attempt, &|m| has(req, m))
         }
         Some("sop_objectives") => crate::sop::fake::objectives(ctx, req.attempt, &|m| has(req, m)),
+        // The worksheet steps (see `worksheet::fake`).
+        Some("worksheet_tasks") => crate::worksheet::fake::tasks(ctx, req.attempt, &|m| has(req, m)),
+        Some("worksheet_warmup") => {
+            crate::worksheet::fake::warmup(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("worksheet_scaffolds") => {
+            crate::worksheet::fake::scaffolds(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("worksheet_exit_ticket") => {
+            crate::worksheet::fake::exit_ticket(ctx, req.attempt, &|m| has(req, m))
+        }
         other => {
             return Err(ProviderError::InvalidOutput(format!(
                 "fake provider: unknown task {other:?}"
