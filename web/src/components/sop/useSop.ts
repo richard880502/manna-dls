@@ -33,6 +33,13 @@ export interface SopController {
   reload: () => void;
   /** The material as the server stored and split it (null: none yet). */
   material: SopMaterial | null;
+  /** The lesson had a material and the teacher deleted it from the library (「教材已刪除」). */
+  materialDeleted: boolean;
+  /**
+   * Uses a material of the teacher's library for this lesson, or (null) takes the material off
+   * the lesson. Saves what is pending first. Resolves to an error message, or null.
+   */
+  pickMaterial: (materialId: number | null) => Promise<string | null>;
   /** What the teacher is typing in step 1. */
   draft: MaterialDraft;
   setDraft: (patch: Partial<MaterialDraft>) => void;
@@ -64,6 +71,8 @@ export function useSop(lessonId: number, classId: number | null): SopController 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadSeq, setLoadSeq] = useState(0);
   const [material, setMaterial] = useState<SopMaterial | null>(null);
+  const [materialDeleted, setMaterialDeleted] = useState(false);
+  const materialIdRef = useRef<number | null>(null);
   const [draft, setDraftState] = useState<MaterialDraft>({ title: "", source_note: "", text: "" });
   const [content, setContent] = useState<SopContent>(emptyContent);
   const [jobs, setJobs] = useState<SopJobs>({ analysis: null, objectives: null });
@@ -89,6 +98,8 @@ export function useSop(lessonId: number, classId: number | null): SopController 
         setContent(loaded);
         setDraftState(loadedDraft);
         setMaterial(state.material ?? null);
+        setMaterialDeleted(state.material_deleted ?? false);
+        materialIdRef.current = state.material?.id ?? null;
         setJobs({ analysis: state.jobs?.analysis ?? null, objectives: state.jobs?.objectives ?? null });
         setLoadError(null);
         setStatus("ready");
@@ -111,6 +122,15 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     const state = await api.saveSopMaterial(lessonId, draftRef.current);
     // The server split the text: its paragraphs (and their ids) are what the other steps use.
     setMaterial(state.material ?? null);
+    setMaterialDeleted(state.material_deleted ?? false);
+    const nextId = state.material?.id ?? null;
+    if (nextId !== materialIdRef.current) {
+      // Another material: the server set the references to the old one's paragraphs aside.
+      materialIdRef.current = nextId;
+      const moved = normalizeContent(state.content);
+      contentRef.current = moved;
+      setContent(moved);
+    }
     return state.saved_at;
   }, [lessonId]);
   const contentSave = useAutosave(saveContent);
@@ -145,6 +165,32 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     if (failed) return failed;
     return flushContent();
   }, [flushMaterial, flushContent]);
+
+  const pickMaterial = useCallback(
+    async (materialId: number | null) => {
+      // What is being typed belongs to the current material: save it before switching.
+      const failed = await flush();
+      if (failed) return `還沒有存好，所以還沒有換教材：${failed}`;
+      try {
+        const state = await api.saveSopMaterial(lessonId, { material_id: materialId });
+        const next = state.material ?? null;
+        const nextDraft = { title: next?.title ?? "", source_note: next?.source_note ?? "", text: next?.text ?? "" };
+        draftRef.current = nextDraft;
+        setDraftState(nextDraft);
+        setMaterial(next);
+        setMaterialDeleted(state.material_deleted ?? false);
+        materialIdRef.current = next?.id ?? null;
+        // Paragraph references of the previous material were set aside by the server.
+        const moved = normalizeContent(state.content);
+        contentRef.current = moved;
+        setContent(moved);
+        return null;
+      } catch (err) {
+        return errorMessage(err);
+      }
+    },
+    [flush, lessonId],
+  );
 
   // Poll the jobs that are still running; the teacher is free to work on other steps meanwhile.
   const analysisRunning = jobs.analysis?.status === "running" ? jobs.analysis.id : null;
@@ -235,6 +281,8 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     loadError,
     reload,
     material,
+    materialDeleted,
+    pickMaterial,
     draft,
     setDraft,
     content,

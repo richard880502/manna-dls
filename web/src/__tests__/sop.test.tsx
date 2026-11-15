@@ -103,6 +103,7 @@ function routes(sop: SopState = sopState(), extra: Record<string, unknown> = {})
     "GET /api/runs/9": runDetail,
     [`GET ${SOP}`]: sop,
     [`PUT ${SOP}`]: savedSop,
+    "GET /api/materials/1/annotations": [],
     ...extra,
   };
 }
@@ -367,6 +368,72 @@ describe("lesson workspace: quiet saving", () => {
     await user.click(screen.getByRole("button", { name: "改好了，看分段結果" }));
     expect(screen.getByText(P3)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "修改教材" })).toBeInTheDocument();
+  });
+
+  it("step 1 can pick a material from the library; the lesson then uses it", async () => {
+    signIn();
+    const libraryMaterial = {
+      ...material,
+      id: 12,
+      title: "Handout from the library",
+      kind: "document" as const,
+      origin: "upload" as const,
+      has_file: true,
+      text_status: "ready" as const,
+    };
+    const movedContent: SopContent = {
+      ...emptyContent(),
+      analysis: {
+        ...emptyContent().analysis,
+        paragraphs: [{ paragraph_id: "m1-p1", function: "舊教材的開場", summary: "", features: [], origin: "teacher" }],
+      },
+    };
+    const api = mockApi(
+      routes(sopState(), {
+        "GET /api/materials": {
+          materials: [
+            { id: 1, kind: "text", origin: "paste", title: "The Umbrella Stand", source_note: "", url: null, filename: null, content_type: null, size_bytes: 10, sha256: null, has_file: false, text_status: "ready", text_truncated: false, page_count: null, paragraph_count: 3, word_count: 46, revision: 1, created_at: "", updated_at: "", lessons: [], worksheet_count: 0, annotation_count: 0 },
+            { id: 12, kind: "document", origin: "upload", title: "Handout from the library", source_note: "", url: null, filename: "h.pdf", content_type: "application/pdf", size_bytes: 2048, sha256: null, has_file: true, text_status: "ready", text_truncated: false, page_count: 1, paragraph_count: 3, word_count: 46, revision: 1, created_at: "", updated_at: "", lessons: [], worksheet_count: 0, annotation_count: 0 },
+          ],
+          usage: { used_bytes: 2048, quota_bytes: 1073741824, count: 2, max_count: 300 },
+          limits: { files: [], max_pasted_chars: 50000, max_note_chars: 2000 },
+          storage: "fs",
+          uploads_enabled: true,
+        },
+        [`PUT ${SOP}/material`]: sopState({ version_no: 2, material: libraryMaterial, content: movedContent }),
+        "GET /api/materials/12/annotations": [],
+        "POST /api/materials/12/file-link": { url: "/api/materials/12/file?t=1.1.a", expires_at: "2026-11-15T10:00:00Z" },
+      }),
+    );
+    const user = userEvent.setup();
+    await openLesson();
+    expect(stageTitle()).toHaveTextContent("閱讀教材");
+    await user.click(screen.getByRole("button", { name: "換一份教材" }));
+    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
+    const picker = within(await screen.findByRole("list", { name: "教材庫" }));
+    expect(picker.getByText("目前使用中")).toBeInTheDocument();
+    await user.click(picker.getByRole("button", { name: "選用「Handout from the library」" }));
+    await waitFor(() => expect(api.lastBody("PUT", `${SOP}/material`)).toEqual({ material_id: 12 }));
+    await waitFor(() =>
+      expect(document.querySelector(".material-sheet .material-title")).toHaveTextContent("Handout from the library"),
+    );
+    expect(screen.getByRole("link", { name: "下載原檔" })).toBeInTheDocument();
+    // Picking is one request: the SOP content was not saved again from the page.
+    expect(api.callsTo("PUT", SOP)).toHaveLength(0);
+  });
+
+  it("a lesson whose material was deleted says so in step 1 and in 對照教材", async () => {
+    signIn();
+    mockApi(routes(sopState({ material: null, material_deleted: true })));
+    const user = userEvent.setup();
+    await openLesson();
+    await goToStep(user, /閱讀教材/);
+    expect(screen.getByText("教材已刪除。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "從教材庫選" })).toBeInTheDocument();
+    await goToStep(user, /Exit ticket/);
+    await user.click(screen.getByRole("button", { name: "對照教材" }));
+    const viewer = within(screen.getByRole("complementary", { name: "教材" }));
+    expect(viewer.getByRole("button", { name: "到第 1 步放進新的教材" })).toBeInTheDocument();
   });
 
   it("a failed save stays on screen and holds the page until it is saved", async () => {
