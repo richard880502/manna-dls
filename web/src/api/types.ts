@@ -554,6 +554,35 @@ export interface KnowledgeSummary {
   }[];
 }
 
+/** 語意索引（Phase 2.4）：目前設定的模型下，有多少使用中的條目已建立向量。 */
+export interface EmbeddingStatus {
+  /** false：沒有設定語意索引模型，檢索只用關鍵字 */
+  enabled: boolean;
+  provider: "none" | "fake" | "openai_compatible";
+  model: string | null;
+  dims: number | null;
+  active_items: number;
+  /** 有目前模型向量的使用中條目 */
+  embedded: number;
+  /** 舊模型或其他維度的向量：檢索不使用，重建後取代 */
+  other_model: number;
+  running: boolean;
+  job: {
+    id: number;
+    trigger: "import" | "manual" | "startup";
+    model: string;
+    dims: number;
+    status: "running" | "done" | "failed";
+    total: number;
+    embedded: number;
+    error: string | null;
+    created_at: string;
+    finished_at: string | null;
+  } | null;
+  /** 只有 rebuild 的回應有：false 表示已有一次建立在進行 */
+  started?: boolean;
+}
+
 export interface RetireDemoResult {
   dry_run: boolean;
   demo_active: number;
@@ -649,7 +678,10 @@ export interface CurriculumSearchResult {
   filter: { kind: string | null; stage: string; subject: string | string[] };
   /** false：沒有關鍵字，依代碼順序列出 */
   ranked: boolean;
-  items: { item: KnowledgeItem; score: number; title_score: number }[];
+  /** hybrid：關鍵字與語意相似度合併排序；keyword：只用關鍵字（未設定模型或模型沒有及時回應） */
+  method: "keyword" | "hybrid";
+  /** score：關鍵字分數（只靠語意找到的為 0）；similarity：與查詢的語意相似度（hybrid 才有） */
+  items: { item: KnowledgeItem; score: number; title_score: number; similarity?: number }[];
 }
 
 export interface CurriculumByCodeResult {

@@ -43,6 +43,20 @@ cd web && pnpm install && pnpm dev
 | `anthropic` | 示範環境。必須同時設 `DEMO_MODE=true`，否則後端拒絕啟動（規格禁止把真實教師資料送境外） |
 | `openai_compatible` | 國網中心模型（拿到 API 後設定 `OPENAI_COMPAT_BASE_URL`、`OPENAI_COMPAT_API_KEY`） |
 
+### 語意索引（混合檢索）
+
+知識庫檢索預設只用關鍵字。設定下列變數後，條目會建立語意索引，檢索改為關鍵字＋語意相似度（評估見 `docs/RETRIEVAL_EVAL.md`，細節見 `docs/API.md`「Phase 2.4」）。模型無法使用時自動退回關鍵字，不影響啟動與 AI 功能。
+
+| 變數 | 正式環境的值 |
+|---|---|
+| `EMBEDDING_PROVIDER` | `openai_compatible`（預設 `none`；測試用 `fake`） |
+| `EMBEDDING_BASE_URL` | `https://portal.genai.nchc.org.tw/api/v1` |
+| `EMBEDDING_API_KEY` | 國網中心 embeddings 專用金鑰（與對話模型的金鑰不同；只設在 Coolify） |
+| `EMBEDDING_MODEL` | `embeddinggemma-2` |
+| `EMBEDDING_DIMS` | `768` |
+
+設好重新部署後，啟動時會在背景建立索引；到「知識庫管理」的「語意索引」確認「1,352 條中 1,352 條已建立語意索引」，沒完成可按「建立語意索引」續做。
+
 ## 教材檔案儲存（Phase 2.2）
 
 教材原檔（PDF、DOCX、圖片、影音）存在 S3 相容的物件儲存（正式環境用 MinIO）；本機開發與測試存在本機資料夾。瀏覽器從不直接連到儲存空間，下載與預覽一律經過後端並檢查擁有者。

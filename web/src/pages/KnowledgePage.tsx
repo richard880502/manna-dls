@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState, type ChangeEvent, type FormEve
 import { Link } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
+  EmbeddingStatus,
   ItemTrack,
   KnowledgeImportResult,
   KnowledgeItemRow,
@@ -90,6 +91,7 @@ export function KnowledgePage() {
       </div>
 
       <StatusSection summary={summary} error={summaryError} onChanged={onChanged} />
+      <SemanticIndexSection revision={revision} />
 
       <ImportSection
         title="匯入課綱條目"
@@ -307,6 +309,111 @@ function DemoRow({ summary, onChanged }: { summary: KnowledgeSummary; onChanged:
         </div>
       )}
     </li>
+  );
+}
+
+// ---------------------------------------------------------------- 語意索引
+
+/** How often the status is polled while an indexing run is in progress. */
+const EMBEDDING_POLL_MS = 1500;
+
+function SemanticIndexSection({ revision }: { revision: number }) {
+  const [status, setStatus] = useState<EmbeddingStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api.knowledge
+      .embeddings()
+      .then((s) => {
+        setStatus(s);
+        setError(null);
+      })
+      .catch((err: unknown) => setError(errorMessage(err)));
+  }, []);
+
+  // Reload after every import: the import starts an indexing run in the background.
+  useEffect(() => load(), [load, revision]);
+
+  const running = status?.running ?? false;
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(load, EMBEDDING_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [running, load]);
+
+  async function rebuild() {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus(await api.knowledge.rebuildEmbeddings());
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const heading = <h2 id="kb-semantic-heading">語意索引</h2>;
+  if (!status) {
+    return (
+      <section className="section" aria-labelledby="kb-semantic-heading">
+        {heading}
+        {error ? <ErrorText message={error} /> : <Loading />}
+      </section>
+    );
+  }
+  const job = status.job;
+  const missing = status.active_items - status.embedded;
+  return (
+    <section className="section" aria-labelledby="kb-semantic-heading">
+      {heading}
+      <p className="lead">
+        語意索引讓英文的教材或目標也能找到中文的課綱條文：檢索時同時比對關鍵字與語意相似度。沒有索引的條目仍可用關鍵字找到；模型無法使用時自動改用關鍵字，不影響備課功能。
+      </p>
+      {!status.enabled ? (
+        <Notice tone="info">尚未設定語意索引模型，目前只用關鍵字檢索。</Notice>
+      ) : (
+        <ul className="rows is-compact" aria-label="語意索引">
+          <li className="row">
+            <div>
+              <h3>
+                {count(status.active_items)} 條中 {count(status.embedded)} 條已建立語意索引
+              </h3>
+              <p className="meta">
+                模型 {status.model}（{status.dims} 維）
+                {status.other_model > 0 && `；另有 ${count(status.other_model)} 條是舊模型的索引，檢索不使用，重建後取代`}
+              </p>
+              {running && job && (
+                <p className="meta" role="status">
+                  建立中：{count(job.embedded)} / {count(job.total)}
+                </p>
+              )}
+              {!running && job?.status === "failed" && (
+                <p className="meta">
+                  上次建立在 {count(job.embedded)} / {count(job.total)} 時中斷（{job.error ?? "原因不明"}
+                  ）。已完成的部分會保留，再按一次會從缺少的條目繼續。
+                </p>
+              )}
+              {!running && job?.status === "done" && job.finished_at && (
+                <p className="meta">上次建立：{formatDateTime(job.finished_at)}</p>
+              )}
+            </div>
+            <p className="side">
+              <button
+                type="button"
+                className={missing > 0 ? "secondary-button" : "text-link"}
+                disabled={busy || running}
+                onClick={() => void rebuild()}
+              >
+                {running ? "建立中…" : missing > 0 ? "建立語意索引" : "重新檢查"}
+              </button>
+            </p>
+          </li>
+        </ul>
+      )}
+      {error && <ErrorText message={error} />}
+    </section>
   );
 }
 

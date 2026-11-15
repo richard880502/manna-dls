@@ -10,7 +10,9 @@ pub mod config;
 pub mod core_questions;
 pub mod curriculum;
 pub mod db;
+pub mod embedding;
 pub mod error;
+pub mod kb_embeddings;
 pub mod materials;
 pub mod preferences;
 pub mod prompts;
@@ -36,6 +38,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::ai::AiClient;
 use crate::config::Config;
+use crate::embedding::Embedder;
+use crate::kb_embeddings::EmbedJobs;
 use crate::materials::access::LinkSigner;
 use crate::storage::Storage;
 
@@ -44,6 +48,9 @@ pub struct AppState {
     pub db: PgPool,
     pub config: Arc<Config>,
     pub ai: Arc<AiClient>,
+    /// Embedding model for hybrid retrieval; disabled unless `EMBEDDING_PROVIDER` is set.
+    pub embedder: Arc<Embedder>,
+    pub embed_jobs: Arc<EmbedJobs>,
     /// Where original material files live; `None` when uploads are off (`STORAGE_BACKEND=none`
     /// or a broken storage configuration).
     pub storage: Option<Arc<dyn Storage>>,
@@ -56,11 +63,14 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let ai = Arc::new(AiClient::from_config(&config));
+        let embedder = Arc::new(Embedder::new(config.embedding.clone()));
         let storage = config.storage.build();
         Self {
             db,
             config: Arc::new(config),
             ai,
+            embedder,
+            embed_jobs: Arc::default(),
             storage,
             links: Arc::new(LinkSigner::new()),
             upload_slots: Arc::new(tokio::sync::Semaphore::new(

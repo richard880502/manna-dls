@@ -884,7 +884,14 @@ async fn run_objectives(
         clip_chars(&input.material.text, 4000).as_str(),
     ]
     .join("\n");
-    let items = curriculum::items_for_track(db, &input.track, &query, CURRICULUM_LIMIT).await?;
+    let (items, trace) = curriculum::items_for_track_hybrid(
+        db,
+        &state.embedder,
+        &input.track,
+        &query,
+        CURRICULUM_LIMIT,
+    )
+    .await?;
     // The query contains material text, which must stay deletable: the log keeps the teacher's
     // own lines and, for the material, its length and a hash.
     let logged_query = clip_chars(
@@ -965,6 +972,8 @@ async fn run_objectives(
         "retrieval": {
             "query": logged_query,
             "limit": CURRICULUM_LIMIT,
+            "method": trace.method,
+            "fallback_reason": trace.fallback_reason,
             "items": items.iter().map(|i| json!({
                 "item_code": i.item_code, "version": i.version
             })).collect::<Vec<_>>(),
@@ -1015,16 +1024,7 @@ async fn run_objectives(
     };
 
     let a1 = attempt(state, &meta, &snapshot, &req, None).await?;
-    sqlx::query(
-        "INSERT INTO retrieval_logs (ai_interaction_id, query_text, school_track, item_codes)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(a1.id)
-    .bind(&logged_query)
-    .bind(&input.track)
-    .bind(&codes)
-    .execute(db)
-    .await?;
+    crate::retrieval::log(db, Some(a1.id), &logged_query, &input.track, &codes, &trace).await?;
 
     let cited = |e: &ObjectivesEval| -> Vec<String> {
         let mut seen = std::collections::HashSet::new();

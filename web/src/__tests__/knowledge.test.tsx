@@ -1,7 +1,13 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import type { KnowledgeImportResult, KnowledgeItemRow, KnowledgeSummary, VocabularyRow } from "../api/types";
+import type {
+  EmbeddingStatus,
+  KnowledgeImportResult,
+  KnowledgeItemRow,
+  KnowledgeSummary,
+  VocabularyRow,
+} from "../api/types";
 import { can } from "../lib/permissions";
 import { baseRoutes, mockApi, renderApp, respond, signIn, teacher, type MockCall } from "../test/mockApi";
 
@@ -97,10 +103,35 @@ const importResult = (overrides: Partial<KnowledgeImportResult> = {}): Knowledge
   ...overrides,
 });
 
+const embeddings = (overrides: Partial<EmbeddingStatus> = {}): EmbeddingStatus => ({
+  enabled: true,
+  provider: "openai_compatible",
+  model: "test-embedding-model",
+  dims: 768,
+  active_items: 1352,
+  embedded: 1352,
+  other_model: 0,
+  running: false,
+  job: {
+    id: 1,
+    trigger: "import",
+    model: "test-embedding-model",
+    dims: 768,
+    status: "done",
+    total: 1352,
+    embedded: 1352,
+    error: null,
+    created_at: "2026-11-15T02:00:00Z",
+    finished_at: "2026-11-15T02:01:00Z",
+  },
+  ...overrides,
+});
+
 const knowledgeRoutes = (me: typeof manager | typeof pi = manager) => ({
   ...baseRoutes(),
   "GET /api/me": me,
   "GET /api/admin/knowledge/summary": summary(),
+  "GET /api/admin/knowledge/embeddings": embeddings(),
   "GET /api/admin/knowledge/items": { total: 1, items: [item()] },
   "GET /api/admin/vocabulary/items": { total: 1, items: [word()] },
 });
@@ -273,5 +304,70 @@ describe("知識庫管理", () => {
     await user.click(screen.getByRole("button", { name: "確認停用" }));
     expect(await screen.findByText("已停用 16 條示範條目。")).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/admin/knowledge/retire-demo")[1]?.url).toContain("dry_run=false");
+  });
+
+  it("shows the semantic index coverage", async () => {
+    signIn();
+    mockApi(knowledgeRoutes());
+    renderApp("/knowledge");
+    const index = within(await screen.findByRole("list", { name: "語意索引" }));
+    expect(index.getByRole("heading", { name: "1,352 條中 1,352 條已建立語意索引" })).toBeInTheDocument();
+    expect(index.getByText(/test-embedding-model（768 維）/)).toBeInTheDocument();
+    // fully indexed: only a quiet re-check
+    expect(index.getByRole("button", { name: "重新檢查" })).toBeInTheDocument();
+  });
+
+  it("builds the missing part of the index and follows its progress", async () => {
+    signIn();
+    let state = embeddings({
+      embedded: 1000,
+      job: { ...embeddings().job!, status: "failed", total: 1352, embedded: 1000, error: "embedding request timed out" },
+    });
+    const api = mockApi({
+      ...knowledgeRoutes(pi),
+      "GET /api/admin/knowledge/embeddings": () => state,
+      "POST /api/admin/knowledge/embeddings/rebuild": () => {
+        state = embeddings({
+          embedded: 1000,
+          running: true,
+          job: { ...embeddings().job!, trigger: "manual", status: "running", total: 352, embedded: 32, finished_at: null },
+        });
+        return { ...state, started: true };
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/knowledge");
+    const region = within(await screen.findByRole("region", { name: "語意索引" }));
+    expect(await region.findByText(/1,352 條中 1,000 條已建立語意索引/)).toBeInTheDocument();
+    expect(region.getByText(/上次建立在 1,000 \/ 1,352 時中斷（embedding request timed out）/)).toBeInTheDocument();
+
+    await user.click(region.getByRole("button", { name: "建立語意索引" }));
+    expect(api.callsTo("POST", "/api/admin/knowledge/embeddings/rebuild")[0]?.body).toEqual({ force: false });
+    expect(await region.findByText("建立中：32 / 352")).toBeInTheDocument();
+    expect(region.getByRole("button", { name: "建立中…" })).toBeDisabled();
+
+    // the page polls until the run is over
+    state = embeddings();
+    expect(await region.findByText(/1,352 條中 1,352 條已建立語意索引/, {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(region.getByRole("button", { name: "重新檢查" })).toBeEnabled();
+  });
+
+  it("says retrieval is keyword-only when no embedding model is set", async () => {
+    signIn();
+    mockApi({
+      ...knowledgeRoutes(),
+      "GET /api/admin/knowledge/embeddings": embeddings({
+        enabled: false,
+        provider: "none",
+        model: null,
+        dims: null,
+        embedded: 0,
+        job: null,
+      }),
+    });
+    renderApp("/knowledge");
+    const region = within(await screen.findByRole("region", { name: "語意索引" }));
+    expect(await region.findByText("尚未設定語意索引模型，目前只用關鍵字檢索。")).toBeInTheDocument();
+    expect(region.queryByRole("button")).not.toBeInTheDocument();
   });
 });

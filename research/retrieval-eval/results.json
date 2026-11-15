@@ -1,0 +1,878 @@
+{
+ "counts": {
+  "all": 31,
+  "general": 15,
+  "vocational": 16,
+  "zh": 14,
+  "en": 15,
+  "mixed": 2
+ },
+ "summary": {
+  "all": {
+   "keyword": {
+    "recall@8": 0.25916637126314546,
+    "recall@20": 0.3483014297530427,
+    "recall@150": 0.4329493087557604,
+    "mrr": 0.4053763440860215
+   },
+   "vector": {
+    "recall@8": 0.6818976722202529,
+    "recall@20": 0.8106108944818622,
+    "recall@150": 0.9879032258064516,
+    "mrr": 0.8551459293394778
+   },
+   "hybrid": {
+    "recall@8": 0.7083362873685455,
+    "recall@20": 0.8504903698452085,
+    "recall@150": 0.9879032258064516,
+    "mrr": 0.8384408602150538
+   }
+  },
+  "general": {
+   "keyword": {
+    "recall@8": 0.283015873015873,
+    "recall@20": 0.4225396825396825,
+    "recall@150": 0.4677777777777778,
+    "mrr": 0.45555555555555555
+   },
+   "vector": {
+    "recall@8": 0.8001587301587301,
+    "recall@20": 0.9007936507936507,
+    "recall@150": 1.0,
+    "mrr": 0.9222222222222223
+   },
+   "hybrid": {
+    "recall@8": 0.8374603174603175,
+    "recall@20": 0.9174603174603174,
+    "recall@150": 1.0,
+    "mrr": 0.888888888888889
+   }
+  },
+  "vocational": {
+   "keyword": {
+    "recall@8": 0.23680746336996336,
+    "recall@20": 0.27870306776556775,
+    "recall@150": 0.40029761904761907,
+    "mrr": 0.35833333333333334
+   },
+   "vector": {
+    "recall@8": 0.5710279304029304,
+    "recall@20": 0.7260645604395605,
+    "recall@150": 0.9765625,
+    "mrr": 0.7922619047619047
+   },
+   "hybrid": {
+    "recall@8": 0.5872825091575091,
+    "recall@20": 0.7877060439560439,
+    "recall@150": 0.9765625,
+    "mrr": 0.7911458333333333
+   }
+  },
+  "zh": {
+   "keyword": {
+    "recall@8": 0.5432561486132915,
+    "recall@20": 0.7304225536368394,
+    "recall@150": 0.8634353741496599,
+    "mrr": 0.8238095238095238
+   },
+   "vector": {
+    "recall@8": 0.6174843014128728,
+    "recall@20": 0.7684785452642595,
+    "recall@150": 1.0,
+    "mrr": 0.9030612244897959
+   },
+   "hybrid": {
+    "recall@8": 0.6896323914181056,
+    "recall@20": 0.8567830978545264,
+    "recall@150": 1.0,
+    "mrr": 0.8928571428571429
+   }
+  },
+  "en": {
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.7694444444444444,
+    "recall@20": 0.885,
+    "recall@150": 0.975,
+    "mrr": 0.8244444444444444
+   },
+   "hybrid": {
+    "recall@8": 0.7694444444444444,
+    "recall@20": 0.885,
+    "recall@150": 0.975,
+    "mrr": 0.8244444444444444
+   }
+  },
+  "mixed": {
+   "keyword": {
+    "recall@8": 0.21428571428571427,
+    "recall@20": 0.2857142857142857,
+    "recall@150": 0.6666666666666666,
+    "mrr": 0.5166666666666667
+   },
+   "vector": {
+    "recall@8": 0.47619047619047616,
+    "recall@20": 0.5476190476190476,
+    "recall@150": 1.0,
+    "mrr": 0.75
+   },
+   "hybrid": {
+    "recall@8": 0.38095238095238093,
+    "recall@20": 0.5476190476190476,
+    "recall@150": 1.0,
+    "mrr": 0.5625
+   }
+  }
+ },
+ "per_query": [
+  {
+   "id": "G01",
+   "track": "general",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 0.6666666666666666,
+    "mrr": 0.5
+   },
+   "vector": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.5,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   }
+  },
+  {
+   "id": "G02",
+   "track": "general",
+   "lang": "en",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G03",
+   "track": "general",
+   "lang": "zh",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.4,
+    "recall@20": 0.6,
+    "recall@150": 0.6,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.8,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.8,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G04",
+   "track": "general",
+   "lang": "en",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G05",
+   "track": "general",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.5,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.75,
+    "recall@20": 0.75,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.75,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G06",
+   "track": "general",
+   "lang": "en",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G07",
+   "track": "general",
+   "lang": "zh",
+   "kind": "search",
+   "keyword": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G08",
+   "track": "general",
+   "lang": "en",
+   "kind": "search",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G09",
+   "track": "general",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.5,
+    "recall@20": 0.75,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.75,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G10",
+   "track": "general",
+   "lang": "en",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 0.3333333333333333
+   },
+   "hybrid": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 0.3333333333333333
+   }
+  },
+  {
+   "id": "G11",
+   "track": "general",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 0.3333333333333333
+   },
+   "vector": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   }
+  },
+  {
+   "id": "G12",
+   "track": "general",
+   "lang": "en",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G13",
+   "track": "general",
+   "lang": "zh",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.75,
+    "recall@20": 0.75,
+    "recall@150": 0.75,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.75,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.75,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G14",
+   "track": "general",
+   "lang": "en",
+   "kind": "search",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "G15",
+   "track": "general",
+   "lang": "mixed",
+   "kind": "plan",
+   "keyword": {
+    "recall@8": 0.42857142857142855,
+    "recall@20": 0.5714285714285714,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.2857142857142857,
+    "recall@20": 0.42857142857142855,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   },
+   "hybrid": {
+    "recall@8": 0.42857142857142855,
+    "recall@20": 0.42857142857142855,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V01",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V02",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V03",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 0.3333333333333333,
+    "recall@150": 0.5,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   },
+   "hybrid": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V04",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.25,
+    "recall@20": 0.5,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.25,
+    "recall@20": 0.5,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V05",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.8571428571428571,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.5714285714285714,
+    "recall@20": 0.5714285714285714,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.8571428571428571,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V06",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.125,
+    "recall@20": 0.375,
+    "recall@150": 0.625,
+    "mrr": 0.2
+   },
+   "hybrid": {
+    "recall@8": 0.125,
+    "recall@20": 0.375,
+    "recall@150": 0.625,
+    "mrr": 0.2
+   }
+  },
+  {
+   "id": "V07",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "search",
+   "keyword": {
+    "recall@8": 0.375,
+    "recall@20": 0.375,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.375,
+    "recall@20": 0.375,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.375,
+    "recall@20": 0.625,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V08",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "search",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.5,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 0.3333333333333333
+   },
+   "hybrid": {
+    "recall@8": 0.5,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 0.3333333333333333
+   }
+  },
+  {
+   "id": "V09",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 0.2
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V10",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V11",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "material",
+   "keyword": {
+    "recall@8": 0.42857142857142855,
+    "recall@20": 0.5714285714285714,
+    "recall@150": 0.5714285714285714,
+    "mrr": 1.0
+   },
+   "vector": {
+    "recall@8": 0.5714285714285714,
+    "recall@20": 0.8571428571428571,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.5714285714285714,
+    "recall@20": 0.8571428571428571,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V12",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.4,
+    "recall@20": 0.6,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   },
+   "hybrid": {
+    "recall@8": 0.4,
+    "recall@20": 0.6,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   }
+  },
+  {
+   "id": "V13",
+   "track": "vocational",
+   "lang": "zh",
+   "kind": "objective",
+   "keyword": {
+    "recall@8": 0.46153846153846156,
+    "recall@20": 0.8461538461538461,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   },
+   "vector": {
+    "recall@8": 0.07692307692307693,
+    "recall@20": 0.5384615384615384,
+    "recall@150": 1.0,
+    "mrr": 0.14285714285714285
+   },
+   "hybrid": {
+    "recall@8": 0.38461538461538464,
+    "recall@20": 0.8461538461538461,
+    "recall@150": 1.0,
+    "mrr": 0.5
+   }
+  },
+  {
+   "id": "V14",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "search",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 1.0,
+    "recall@20": 1.0,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  },
+  {
+   "id": "V15",
+   "track": "vocational",
+   "lang": "mixed",
+   "kind": "sop",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.3333333333333333,
+    "mrr": 0.03333333333333333
+   },
+   "vector": {
+    "recall@8": 0.6666666666666666,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.3333333333333333,
+    "recall@20": 0.6666666666666666,
+    "recall@150": 1.0,
+    "mrr": 0.125
+   }
+  },
+  {
+   "id": "V16",
+   "track": "vocational",
+   "lang": "en",
+   "kind": "sop",
+   "keyword": {
+    "recall@8": 0.0,
+    "recall@20": 0.0,
+    "recall@150": 0.0,
+    "mrr": 0.0
+   },
+   "vector": {
+    "recall@8": 0.6,
+    "recall@20": 0.8,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   },
+   "hybrid": {
+    "recall@8": 0.6,
+    "recall@20": 0.8,
+    "recall@150": 1.0,
+    "mrr": 1.0
+   }
+  }
+ ]
+}
