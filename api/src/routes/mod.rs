@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod classes;
 pub mod core;
+pub mod embeddings;
 pub mod feedback;
 pub mod knowledge;
 pub mod lessons;
@@ -175,6 +176,11 @@ pub fn api_router() -> Router<AppState> {
             post(admin::import_vocabulary).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),
         )
         .route("/admin/knowledge/summary", get(admin::knowledge_summary))
+        .route("/admin/knowledge/embeddings", get(embeddings::status))
+        .route(
+            "/admin/knowledge/embeddings/rebuild",
+            post(embeddings::rebuild),
+        )
         .route(
             "/admin/knowledge/retire-demo",
             post(admin::retire_demo_knowledge),

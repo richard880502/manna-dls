@@ -892,7 +892,7 @@ interface SopObjectivesSuggestion {
 
 ### (b) SIOP 目標與課綱連結 `sop_objectives`
 
-1. 可連結的條目由 `curriculum::items_for_track` 取得，底下是 Phase 2.0 的 `retrieval::retrieve_curriculum`：教師學校類型（含 `both`）的正式課綱條目，預設範圍為高中階段、英語相關科目；超過 150 條時以教材與教師目標為關鍵字取前 150 條。清單（代碼｜標題｜條文）放進 prompt。
+1. 可連結的條目由 `curriculum::items_for_track_hybrid` 取得，底下是 Phase 2.0 的 `retrieval::retrieve_curriculum`：教師學校類型（含 `both`）的正式課綱條目，預設範圍為高中階段、英語相關科目；超過 150 條時以教材與教師目標排序取前 150 條（Phase 2.4 起為混合檢索，沒有語意索引時只用關鍵字），不足再依代碼補滿。清單（代碼｜標題｜條文）放進 prompt。
 2. 檢查：內容目標與語言目標都要有；`item_code` 必須在清單內；目標不可照抄條文（中文二字組重疊 ≥ 80%）；`objective_zh` 為中文、`student_facing_en` 為英文且以 "I can" 開頭。
 3. 未通過 → 第 2 次呼叫（附原因）。之後仍不在清單內的代碼**拿掉**，該目標若因此沒有連結就標 `unlinked`；仍照抄條文或語言不符的目標拿掉；仍缺一種目標類型 → `blocked`。
 4. `link_status` 一律由程式依剩下的連結決定。**條文、官方代碼、來源、版本、頁碼一律依代碼從資料庫帶出**（`SopCurriculumLink`；儲存時用 `retrieval::curriculum_by_codes` 精確比對 `item_code`），模型寫的條文不會顯示。沒有任何適用條目時仍會呼叫模型，所有目標都是 `unlinked`（前端顯示「尚未完成課綱連結」）。
@@ -1206,3 +1206,100 @@ interface WsVocabCheck {
 
 - `/worksheets`：做過的學習單清單＋「直接做一份」（貼上教材）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
 - 教材欄是一個可替換的插槽（`materialPane`）：這一版放唯讀的教材檢視；教材庫分支的 `MaterialViewer`（含注記）之後接在同一個位置。
+
+---
+
+# Phase 2.4：語意索引與混合檢索
+
+以下為**新增或變更**；未提到的端點維持原樣。Migration `0011_embeddings.sql`。評估見 [`RETRIEVAL_EVAL.md`](RETRIEVAL_EVAL.md)。
+
+## 重點
+
+- 知識庫條目可以建立**語意索引**（embedding 向量）。檢索時同時用原本的關鍵字（英文詞＋中文二字組）與語意相似度排序，再合併（混合檢索）。英文教材或目標因此也找得到中文條文；只用關鍵字時一條都找不到。
+- **語意索引是加分，不是依賴**：沒設定模型（`EMBEDDING_PROVIDER=none`，預設）、模型逾時或出錯、條目還沒建索引時，一律退回只用關鍵字，AI 功能、匯入與啟動都不會因此失敗或變慢超過查詢逾時（預設 2.5 秒）。
+- 過濾條件不變：學校類型（含 `both`）、`kind`、`stage`、`subject`、只取未停用的最新版本，都在排序**之前**套用；語意相似度只在這些候選內排序。
+- 條文仍一律由資料庫依代碼帶出；模型只能引用檢索清單中的代碼（[LLM_VALIDATION.md](LLM_VALIDATION.md)）。語意索引只改變「哪些條目進清單、排第幾」。
+
+## 設定（環境變數）
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `EMBEDDING_PROVIDER` | `none` | `openai_compatible`（國網中心）\| `fake`（測試用，決定性）\| `none` |
+| `EMBEDDING_BASE_URL` | – | `openai_compatible` 必填，例如 `https://portal.genai.nchc.org.tw/api/v1`；呼叫 `{base}/embeddings` |
+| `EMBEDDING_API_KEY` | – | Bearer 金鑰。國網中心的 embeddings 金鑰與對話模型的金鑰**不同** |
+| `EMBEDDING_MODEL` | `embeddinggemma-2` | |
+| `EMBEDDING_DIMS` | `768` | 必須等於模型輸出的維度；不符的回應視為失敗 |
+| `EMBEDDING_QUERY_TIMEOUT_MS` | `2500` | 檢索時等查詢向量的上限，超過就只用關鍵字 |
+| `EMBEDDING_TIMEOUT_SECS` | `60` | 建立索引時每批（32 條）的上限 |
+
+設定值不合法（未知的 provider、缺 `EMBEDDING_BASE_URL`、維度不是數字或超過 16,000）時**不會擋住啟動**：語意索引關閉，啟動紀錄寫一行警告。金鑰不會出現在紀錄或錯誤訊息（錯誤只記 HTTP 狀態碼）。
+
+## 嵌入的內容
+
+每個條目嵌入一段文字（`kb_embeddings::embed_text`）：
+
+- 課綱條目：`科目｜學習表現或學習內容｜類別名稱：條文`，例如 `英語文｜學習表現｜語言能力（讀）：<條文>`。**不含代碼**：代碼對模型只是符號，精確代碼查詢另有 `by-code`。四種寫法的比較見 RETRIEVAL_EVAL.md。
+- 其他條目（文法、SIOP 等）：`標題：內容`。超過 2,000 字的截斷。
+- 教師備課經驗（`teacher_cases`）沒有向量，只用關鍵字參與排序。
+- 查詢：送出的文字去頭尾空白，取前 2,000 字。同一段查詢在同一個執行個體內只嵌入一次（最近 64 筆的快取）。
+
+## 資料表
+
+- `knowledge_items.embedding`（`vector(1024)`，從未使用）**移除**。
+- `knowledge_embeddings`（新）：每個 `knowledge_items` 列（＝一個版本）一筆：`model`、`dims`、`content_hash`（嵌入文字與版本標記的 SHA-256）、`embedding`（`vector`，不固定維度）。檢索**只讀目前設定的 `model`＋`dims`** 的列；換模型時舊向量自動被忽略，重新建立後取代。768 維的列有 HNSW 索引（cosine）；目前的檢索在已過濾的候選內精確計算相似度（幾千條只要數毫秒，也不會因近似搜尋漏掉過濾後的條目）。
+- `embedding_jobs`（新）：每次建立索引一筆：`trigger`（`import` \| `manual` \| `startup`）、`model`、`dims`、`status`（`running` \| `done` \| `failed`）、`total`、`embedded`、`error`、`started_by`、時間。
+- `retrieval_logs` 新增：`method`（`keyword` \| `hybrid` \| `all`＝全部條目都給模型、沒有排序）、`embedding_model`、`fallback_reason`（有設定模型卻沒用上的原因：`empty_query`、`embedding_timeout`、`embedding_failed`、`no_vectors`、`vector_lookup_failed`）、`candidates`（回傳的條目依序：`{ item_code, keyword_rank, keyword_score, vector_rank, similarity, fused }`）。
+
+## 建立索引
+
+- **匯入後自動**：課綱或知識庫匯入**提交之後**，在背景開始；匯入的回應不等它。啟動時也會在背景補做缺少的部分（第一次部署、換模型、上次中斷）。
+- **冪等**：一列的 `model`、`dims`、`content_hash` 都相符就不再嵌入。沒有變動的重複匯入不會開始建立。
+- **可續做**：每批 32 條，每批存一次；失敗的批次重試 2 次，仍失敗就停下並記在 `embedding_jobs.error`，已存的保留，下次從缺少的繼續。
+- 同時只有一個建立在跑；跑的期間又有匯入，結束時會再掃一次。停用（舊版本）條目的向量會被刪除。
+
+## 端點
+
+### 知識庫管理（`pi` 或 `kb_manager`，`manage_knowledge`）
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/admin/knowledge/embeddings` | – | `EmbeddingStatus` |
+| POST | `/api/admin/knowledge/embeddings/rebuild` | `{ force?: boolean }`（可不帶內容；`force` 全部重做，預設只補缺少或過期的） | `202` `EmbeddingStatus & { started: boolean }`（`started: false`：已有一次在跑）；沒設定模型 → `409` |
+
+```ts
+interface EmbeddingStatus {
+  enabled: boolean;              // false：沒設定模型，只用關鍵字
+  provider: "none" | "fake" | "openai_compatible";
+  model: string | null; dims: number | null;
+  active_items: number;          // 使用中的條目（含示範條目）
+  embedded: number;              // 有目前模型向量的使用中條目
+  other_model: number;           // 舊模型或其他維度的向量（檢索不用）
+  running: boolean;
+  job: { id; trigger; model; dims; status; total; embedded; error: string | null; created_at; finished_at } | null;  // 最近一次
+}
+```
+
+`usage_logs` 新事件 `knowledge_embeddings_rebuild`：`{ force, model }`。
+
+### 教師端變更
+
+- `GET /api/knowledge/curriculum`：有 `q` 時用混合檢索；回應多 `method: "keyword" | "hybrid"`，每筆多 `similarity?`（hybrid 才有）；`score` 仍是關鍵字分數，只靠語意找到的條目為 0。`ranked` 在 hybrid 時為 `true`。沒有 `q` 時照舊依代碼列出。
+- `POST /api/lessons/:id/suggestions`：檢索改為混合（範圍不變，`RAG_TOP_K` 筆）；`input_snapshot.retrieval` 多 `method`、`fallback_reason`，每筆多 `similarity`。有設定模型且條目有索引時，幾乎一定會取回條目（語意相似度沒有門檻，理由見 RETRIEVAL_EVAL.md），所以「知識庫查無」主要剩在沒有索引、關鍵字也找不到時。
+- SOP 目標（`POST /api/lessons/:id/sop/objectives`）：條目不超過 150 條的學校類型（普高、綜高）照舊全部給模型（`method: "all"`）；超過的（技高 331 條）以混合檢索取前段、再依代碼補滿 150 條。
+
+## 排序與融合
+
+`retrieval::fuse`：加權倒數排名融合。
+
+```
+fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字名次)
+      + 1.0 / (60 + 向量名次)
+```
+
+- 關鍵字名次為並列名次（同分同名次）；沒有關鍵字命中或沒有向量的條目，該項為 0。
+- 同分依相似度高者、再依代碼。
+- 參數由 RETRIEVAL_EVAL.md 的 31 題決定；k 與權重的其他組合差異在雜訊範圍內。
+
+## 前端
+
+知識庫管理頁多「語意索引」區塊：「1,352 條中 1,352 條已建立語意索引」、模型與維度、舊模型的向量數、最近一次的結果（中斷時顯示原因與已完成數），以及「建立語意索引」按鈕（全部完成時為「重新檢查」）。建立中每 1.5 秒更新進度。沒設定模型時只顯示「尚未設定語意索引模型，目前只用關鍵字檢索。」

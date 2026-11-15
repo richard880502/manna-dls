@@ -888,7 +888,14 @@ async fn run_objectives(
         clip_chars(&input.material.text, 4000).as_str(),
     ]
     .join("\n");
-    let items = curriculum::items_for_track(db, &input.track, &query, CURRICULUM_LIMIT).await?;
+    let (items, trace) = curriculum::items_for_track_hybrid(
+        db,
+        &state.embedder,
+        &input.track,
+        &query,
+        CURRICULUM_LIMIT,
+    )
+    .await?;
     let allowed: HashMap<String, CurriculumItem> = items
         .iter()
         .cloned()
@@ -948,6 +955,8 @@ async fn run_objectives(
         "retrieval": {
             "query": clip_chars(&query, 2000),
             "limit": CURRICULUM_LIMIT,
+            "method": trace.method,
+            "fallback_reason": trace.fallback_reason,
             "items": items.iter().map(|i| json!({
                 "item_code": i.item_code, "version": i.version
             })).collect::<Vec<_>>(),
@@ -998,15 +1007,14 @@ async fn run_objectives(
     };
 
     let a1 = attempt(state, &meta, &snapshot, &req, None).await?;
-    sqlx::query(
-        "INSERT INTO retrieval_logs (ai_interaction_id, query_text, school_track, item_codes)
-         VALUES ($1, $2, $3, $4)",
+    crate::retrieval::log(
+        db,
+        Some(a1.id),
+        &clip_chars(&query, 2000),
+        &input.track,
+        &codes,
+        &trace,
     )
-    .bind(a1.id)
-    .bind(clip_chars(&query, 2000))
-    .bind(&input.track)
-    .bind(&codes)
-    .execute(db)
     .await?;
 
     let cited = |e: &ObjectivesEval| -> Vec<String> {

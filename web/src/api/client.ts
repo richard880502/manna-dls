@@ -21,6 +21,7 @@ import type {
   CurriculumQuery,
   CurriculumSearchResult,
   DecisionRequest,
+  EmbeddingStatus,
   Health,
   ImportResult,
   InviteRequest,
@@ -51,10 +52,10 @@ import type {
   ReviewRequest,
   RevokePairingResponse,
   RunDetail,
-  SavedSop,
-  SaveSopMaterialRequest,
   SaveLessonVersionRequest,
   SavePreferencesRequest,
+  SaveSopMaterialRequest,
+  SavedSop,
   ScaffoldEventRequest,
   SchoolClass,
   SiopFeature,
@@ -422,6 +423,11 @@ export const api = {
     summary: () => get<KnowledgeSummary>("/admin/knowledge/summary"),
     importItems: (csv: string, dryRun: boolean) => importCsv("/admin/knowledge/import", csv, dryRun),
     importVocabulary: (csv: string, dryRun: boolean) => importCsv("/admin/vocabulary/import", csv, dryRun),
+    /** 語意索引的涵蓋率與最近一次建立 */
+    embeddings: () => get<EmbeddingStatus>("/admin/knowledge/embeddings"),
+    /** 在背景建立語意索引（只補缺少或過期的；force 全部重做），回 202 */
+    rebuildEmbeddings: (force = false) =>
+      post<EmbeddingStatus>("/admin/knowledge/embeddings/rebuild", { force }),
     retireDemo: (dryRun: boolean) =>
       request<RetireDemoResult>("POST", "/admin/knowledge/retire-demo", { query: { dry_run: String(dryRun) } }),
     items: (query: KnowledgeItemsQuery = {}) =>

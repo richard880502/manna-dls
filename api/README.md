@@ -56,6 +56,13 @@ when `CI` is set, where they fail. Tests always use the fake AI provider; no net
 | `DEMO_MODE` | `false` | shown by `/api/config`; **required** for `anthropic` |
 | `ADMIN_BOOTSTRAP_CODE` | – | on startup, creates a PI invite (`PI-001`, general) for this code if none exists |
 | `RAG_TOP_K` | `8` | knowledge items retrieved per suggestion request |
+| `EMBEDDING_PROVIDER` | `none` | `openai_compatible` \| `fake` \| `none`: semantic index for hybrid retrieval. Invalid settings disable it with a warning instead of failing startup |
+| `EMBEDDING_BASE_URL` | – | required for `openai_compatible`; we POST `{base}/embeddings` |
+| `EMBEDDING_API_KEY` | – | bearer token (NCHC: separate from the chat key); never logged |
+| `EMBEDDING_MODEL` | `embeddinggemma-2` (`fake-embedding` for fake) | |
+| `EMBEDDING_DIMS` | `768` (`64` for fake) | must match the model's output |
+| `EMBEDDING_QUERY_TIMEOUT_MS` | `2500` | per-request budget for the query vector; past it retrieval is keyword-only |
+| `EMBEDDING_TIMEOUT_SECS` | `60` | per batch of the background indexing job |
 | `RUST_LOG` | `info,tower_http=info` | tracing filter |
 
 **Hard rule:** `AI_PROVIDER=anthropic` without `DEMO_MODE=true` refuses to start. The spec
@@ -73,7 +80,8 @@ forbids sending real teacher data to overseas APIs; Anthropic is for the demo en
 | `src/preferences.rs`, `src/settings.rs` | preference question set + answer types; `app_settings` (`route_choice_enabled`) |
 | `src/ai/` | provider abstraction: `anthropic` (raw HTTP), `openai` (compatible), `fake`; `schemas` (structured output); `pipeline` (log → call → check → regenerate once → blocked/shown/timeout/error) |
 | `src/checks.rs` | automatic output checks (citations, track, language, 大考-level ↔ CEFR/grade heuristic, pasteable-answer heuristic, single question) |
-| `src/retrieval.rs` | keyword retrieval (English words + CJK bigrams), track-filtered |
+| `src/retrieval.rs` | keyword retrieval (English words + CJK bigrams), track-filtered; hybrid ranking (`fuse`: weighted RRF with embedding similarity) with keyword fallback; `retrieval_logs` |
+| `src/embedding.rs`, `src/kb_embeddings.rs` | embedding provider (`openai_compatible`, deterministic `fake`, query cache, timeouts); what is embedded per item and the background indexing job (`knowledge_embeddings`, `embedding_jobs`) |
 | `src/prompts.rs` | prompt versions from `prompt_versions`, `{{placeholder}}` rendering; required context (class profile, length preference…) is appended when a template lacks its placeholder; `redacted` keeps deletable text (materials, 我的範例) out of AI input snapshots |
 | `migrations/` | `0001_init.sql` schema, `0002_seed.sql` prompts v1, scaffolds, DEMO SIOP/knowledge items, `0003_onboarding.sql` preferences, settings, prep routes, step fields, prompts v2 + `material_focuses`, SC-MATERIAL/SC-PREF/SC-CONTEXT |
 

@@ -744,6 +744,11 @@ pub async fn import_knowledge(
     )
     .await?;
     tx.commit().await?;
+    // Embed the new rows in the background, after the commit: the import never waits for (or
+    // fails because of) the embedding provider.
+    if counts.changes() > 0 {
+        crate::kb_embeddings::spawn_sync(&state, "import", Some(teacher.id()), false);
+    }
     Ok(import_response(
         rows.len(),
         counts,

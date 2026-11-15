@@ -10,7 +10,9 @@ pub mod config;
 pub mod core_questions;
 pub mod curriculum;
 pub mod db;
+pub mod embedding;
 pub mod error;
+pub mod kb_embeddings;
 pub mod preferences;
 pub mod prompts;
 pub mod record;
@@ -35,21 +37,29 @@ use tower_http::trace::TraceLayer;
 
 use crate::ai::AiClient;
 use crate::config::Config;
+use crate::embedding::Embedder;
+use crate::kb_embeddings::EmbedJobs;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub config: Arc<Config>,
     pub ai: Arc<AiClient>,
+    /// Embedding model for hybrid retrieval; disabled unless `EMBEDDING_PROVIDER` is set.
+    pub embedder: Arc<Embedder>,
+    pub embed_jobs: Arc<EmbedJobs>,
 }
 
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let ai = Arc::new(AiClient::from_config(&config));
+        let embedder = Arc::new(Embedder::new(config.embedding.clone()));
         Self {
             db,
             config: Arc::new(config),
             ai,
+            embedder,
+            embed_jobs: Arc::default(),
         }
     }
 }

@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use manna_api::config::{AiProviderKind, Config};
-use manna_api::{auth, build_app, db, AppState};
+use manna_api::{auth, build_app, db, kb_embeddings, AppState};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -28,6 +28,9 @@ async fn run() -> anyhow::Result<()> {
             "AI_PROVIDER=anthropic (overseas API): demo environment only, no real teacher data"
         );
     }
+    if let Some(warning) = &config.embedding.warning {
+        tracing::warn!("{warning}; retrieval is keyword-only");
+    }
     if config.ai_provider == AiProviderKind::Fake {
         tracing::warn!("AI_PROVIDER=fake: AI outputs are deterministic test fixtures");
     }
@@ -43,7 +46,11 @@ async fn run() -> anyhow::Result<()> {
         .context("creating bootstrap invite failed")?;
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    let app = build_app(AppState::new(pool, config));
+    let state = AppState::new(pool, config);
+    // Index whatever is not embedded yet (first deploy, model change, interrupted run). In the
+    // background: a slow or failing embedding provider must not delay startup.
+    kb_embeddings::spawn_sync(&state, "startup", None, false);
+    let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("cannot listen on {addr}"))?;
