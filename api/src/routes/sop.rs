@@ -30,6 +30,8 @@ pub struct SopState {
     pub versions_count: i64,
     pub saved_at: Option<DateTime<Utc>>,
     pub material: Option<Material>,
+    /// This version had a material and the teacher has deleted it since (「教材已刪除」).
+    pub material_deleted: bool,
     pub content: SopContent,
     /// The plan's 「今天要教什麼？」 (latest `lesson_versions.objective`): the old single
     /// objective, offered to stage 3 instead of being rewritten into the SOP.
@@ -72,6 +74,8 @@ async fn state_of(
         version_no: version.as_ref().map(|v| v.version_no),
         versions_count: store::versions_count(db, lesson_id).await?,
         saved_at: version.as_ref().map(|v| v.created_at),
+        material_deleted: material.is_none()
+            && version.as_ref().is_some_and(|v| v.material_deleted),
         material,
         content: version.map(|v| v.content).unwrap_or_default(),
         today_objective: today_objective(db, lesson_id).await?,
@@ -91,6 +95,9 @@ pub async fn get(
 
 #[derive(Debug, Deserialize)]
 pub struct PutMaterial {
+    /// Pick a material from the library. `null` (with no text) takes the material off the lesson.
+    #[serde(default, deserialize_with = "crate::routes::double_option")]
+    pub material_id: Option<Option<i64>>,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
@@ -106,29 +113,31 @@ pub async fn put_material(
     ApiJson(req): ApiJson<PutMaterial>,
 ) -> AppResult<Json<SopState>> {
     owned_lesson(&state.db, id, teacher.id()).await?;
-    let title = req.title.unwrap_or_default().trim().to_string();
-    let source_note = req.source_note.unwrap_or_default().trim().to_string();
-    if req.text.chars().count() > MAX_MATERIAL_CHARS {
-        return Err(AppError::bad_request(format!(
-            "教材最多 {MAX_MATERIAL_CHARS} 字。"
-        )));
-    }
-    if title.chars().count() > MAX_TITLE_CHARS {
-        return Err(AppError::bad_request(format!(
-            "教材標題最多 {MAX_TITLE_CHARS} 字。"
-        )));
-    }
-    if source_note.chars().count() > MAX_FIELD_CHARS {
-        return Err(AppError::bad_request(format!(
-            "來源說明最多 {MAX_FIELD_CHARS} 字。"
-        )));
-    }
-    let current = store::latest(&state.db, id).await?;
-    // Nothing stored and nothing pasted: there is no version to make.
-    let version = if current.is_none() && req.text.trim().is_empty() {
-        None
-    } else {
-        Some(store::save_material(&state.db, id, &title, &source_note, &req.text).await?)
+    let version = match req.material_id {
+        // Step 1 by picking from the library (or taking the material off the lesson).
+        Some(material_id) => store::set_material(&state.db, teacher.id(), id, material_id).await?,
+        // Step 1 by pasting.
+        None => {
+            let title = req.title.unwrap_or_default().trim().to_string();
+            let source_note = req.source_note.unwrap_or_default().trim().to_string();
+            if req.text.chars().count() > MAX_MATERIAL_CHARS {
+                return Err(AppError::bad_request(format!(
+                    "教材最多 {MAX_MATERIAL_CHARS} 字。"
+                )));
+            }
+            if title.chars().count() > MAX_TITLE_CHARS {
+                return Err(AppError::bad_request(format!(
+                    "教材標題最多 {MAX_TITLE_CHARS} 字。"
+                )));
+            }
+            if source_note.chars().count() > MAX_FIELD_CHARS {
+                return Err(AppError::bad_request(format!(
+                    "來源說明最多 {MAX_FIELD_CHARS} 字。"
+                )));
+            }
+            store::save_material(&state.db, teacher.id(), id, &title, &source_note, &req.text)
+                .await?
+        }
     };
     Ok(Json(state_of(&state, id, version, true).await?))
 }
@@ -228,7 +237,7 @@ async fn start_job(
     };
     if material.paragraphs.is_empty() {
         return Err(AppError::bad_request(
-            "請先在第 1 步貼上教材，Manna 才有東西可以讀。",
+            "這份教材沒有可以讀的文字（圖片、影音、網址或掃描的 PDF）。請貼上文字，或換一份有文字的教材。",
         ));
     }
     if kind == JobKind::Analysis && material.paragraphs.len() > MAX_AI_PARAGRAPHS {

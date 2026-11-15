@@ -24,7 +24,9 @@ FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates fonts-wqy-microhei \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 app
+ && useradd --system --uid 10001 app \
+ && mkdir -p /app/data/materials \
+ && chown -R app /app/data
 WORKDIR /app
 COPY --from=api /usr/local/bin/manna-api /app/manna-api
 COPY --from=web /src/web/dist /app/web-dist

@@ -15,12 +15,13 @@ use serde_json::json;
 
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
+use crate::materials::store::{self as material_store, LinkTarget};
 use crate::routes::{log_usage, owned_class, owned_lesson, owned_unit, resolved_profile};
 use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::worksheet::ai::{self as ws_ai, Job, RunInput};
 use crate::worksheet::assemble::{project, Sheet};
 use crate::worksheet::export::{self, ExportError};
-use crate::worksheet::material::SOURCE_LESSON_SOP;
+use crate::worksheet::material::{SOURCE_LESSON_SOP, SOURCE_PASTED};
 use crate::worksheet::store::{self, Summary, Worksheet};
 use crate::worksheet::sync::{self, Preview};
 use crate::worksheet::vocab::{self, VocabCheck};
@@ -163,6 +164,33 @@ fn check_pasted(m: &PastedMaterial) -> AppResult<()> {
     Ok(())
 }
 
+/// Pasted text goes into the teacher's material library (so it can be annotated and reused) and
+/// the worksheet keeps a snapshot of it. Blank text stays a blank, library-less material.
+async fn library_material(
+    db: &sqlx::PgPool,
+    teacher_id: i64,
+    previous: Option<&Material>,
+    previous_seq: i32,
+    pasted: &PastedMaterial,
+) -> AppResult<(Material, i32)> {
+    let title = pasted.title.as_deref().unwrap_or_default().trim();
+    let note = pasted.source_note.as_deref().unwrap_or_default().trim();
+    if pasted.text.trim().is_empty() {
+        return Ok(Material::pasted(
+            previous,
+            previous_seq,
+            title,
+            &pasted.text,
+            note,
+        ));
+    }
+    let row = material_store::create_text(db, teacher_id, title, note, &pasted.text).await?;
+    let stored = sop_store::material(db, Some(row.id))
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("material {} vanished", row.id)))?;
+    Ok(Material::from_library(SOURCE_PASTED, None, &stored))
+}
+
 /// What a lesson's SOP carries over: objectives into the document, the rest into the brief.
 fn prefill_from_sop(content: &sop::SopContent) -> (Vec<Objective>, Brief) {
     let objectives = content
@@ -242,15 +270,7 @@ pub async fn create(
     }
     let pasted = req.material.unwrap_or_default();
     check_pasted(&pasted)?;
-    let pasted_material = || {
-        Material::pasted(
-            None,
-            0,
-            pasted.title.as_deref().unwrap_or_default(),
-            &pasted.text,
-            pasted.source_note.as_deref().unwrap_or_default(),
-        )
-    };
+    let pasted_material = library_material(db, teacher.id(), None, 0, &pasted).await?;
 
     let (material, seq, settings, objectives, brief, sop_version_id, lesson_title) =
         match req.lesson_id {
@@ -261,7 +281,7 @@ pub async fn create(
                     sop_store::material(db, version.as_ref().and_then(|v| v.material_id)).await?;
                 let (material, seq) = match &sop_material {
                     Some(m) if !m.paragraphs.is_empty() => Material::from_lesson_sop(lesson_id, m),
-                    _ => pasted_material(),
+                    _ => pasted_material,
                 };
                 let sop_content = version
                     .as_ref()
@@ -280,7 +300,7 @@ pub async fn create(
                 )
             }
             None => {
-                let (material, seq) = pasted_material();
+                let (material, seq) = pasted_material;
                 let settings = suggest_direct(&material);
                 (
                     material,
@@ -322,6 +342,12 @@ pub async fn create(
         },
     )
     .await?;
+    if let (Some(material_id), true) = (
+        material.source.material_id,
+        material.source.kind == SOURCE_PASTED,
+    ) {
+        material_store::link(db, material_id, LinkTarget::Worksheet(id)).await?;
+    }
     log_usage(
         db,
         teacher.id(),
@@ -435,13 +461,11 @@ pub async fn put_material(
             "Manna 正在產生這份學習單，好了之後再換教材。".to_string(),
         ));
     }
-    let (material, seq) = Material::pasted(
-        Some(&ws.material),
-        ws.paragraph_seq,
-        req.title.as_deref().unwrap_or_default(),
-        &req.text,
-        req.source_note.as_deref().unwrap_or_default(),
-    );
+    let (material, seq) =
+        library_material(db, teacher.id(), Some(&ws.material), ws.paragraph_seq, &req).await?;
+    if let Some(material_id) = material.source.material_id {
+        material_store::link(db, material_id, LinkTarget::Worksheet(id)).await?;
+    }
     let suggested = suggest_direct(&material);
     // Selections the teacher never touched follow the new suggestion; her own stay.
     let settings = if ws.settings == ws.suggested {
@@ -869,6 +893,7 @@ pub async fn save_as_lesson(
     if !ws.material.is_empty() {
         sop_store::save_material(
             db,
+            teacher.id(),
             lesson_id,
             &ws.material.title,
             &ws.material.source.note,

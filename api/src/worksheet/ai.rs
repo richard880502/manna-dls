@@ -344,6 +344,9 @@ struct Run {
     objectives: Vec<(String, Objective)>,
     candidates: Vec<Candidate>,
     hard_share: Option<f64>,
+    /// Annotations of the material the teacher marked 「提供給 AI」, as prompt text ("" if none).
+    ai_notes: String,
+    ai_notes_count: usize,
     /// The last step's job: kept open until the result is saved.
     hold: Option<i64>,
 }
@@ -385,7 +388,20 @@ impl Run {
             lexicon.as_ref(),
             &input.worksheet.brief.vocabulary,
         );
+        let notes = match input.worksheet.material.source.material_id {
+            Some(material_id) => {
+                crate::materials::annotations::shared_with_ai(
+                    &state.db,
+                    input.worksheet.teacher_id,
+                    material_id,
+                )
+                .await?
+            }
+            None => Vec::new(),
+        };
         Ok(Self {
+            ai_notes: crate::materials::annotations::ai_context_block(&notes),
+            ai_notes_count: notes.len(),
             state: state.clone(),
             temperature: BASE_TEMPERATURE + 0.1 * earlier.min(6) as f32,
             input,
@@ -440,6 +456,7 @@ impl Run {
             ("passage_numbered", self.input.worksheet.material.numbered()),
             ("student_task_labels", student_tasks().join("、")),
             ("answer_format_labels", ANSWER_FORMATS.join("、")),
+            ("teacher_notes_for_ai", self.ai_notes.clone()),
         ])
     }
 
@@ -449,6 +466,12 @@ impl Run {
             .add(&self.input.class_profile_label, &self.input.class_profile);
         if !self.objectives.is_empty() {
             list.add("學習目標", &format!("{} 項", self.objectives.len()));
+        }
+        if self.ai_notes_count > 0 {
+            list.add(
+                "教師注記（提供給 AI）",
+                &format!("{} 則", self.ai_notes_count),
+            );
         }
         for (label, text) in extra {
             list.add(label, text);
@@ -668,7 +691,15 @@ where
     }
     let prompt = prompt(db, info.key).await?;
     let mut vars = call.vars;
-    let required = [("class_profile", "班級特性")];
+    let mut required = vec![("class_profile", "班級特性")];
+    // Shared annotations reach the model even with prompt versions that do not mention them;
+    // the block carries its own heading saying they are the teacher's notes.
+    if !vars
+        .get("teacher_notes_for_ai")
+        .is_none_or(|n| n.is_empty())
+    {
+        required.push(("teacher_notes_for_ai", "參考資料"));
+    }
     let system = prompts::render(&prompt.system_text, &vars);
     let user = prompts::render_user_with(&prompt, &vars, &required);
     // The material must stay deletable: the logged copy keeps only its length and a hash.

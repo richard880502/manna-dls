@@ -2,6 +2,8 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use manna_api::config::{AiProviderKind, Config};
+use manna_api::storage::s3::S3Storage;
+use manna_api::storage::{StorageBackend, StorageConfig};
 use manna_api::{auth, build_app, db, kb_embeddings, AppState};
 use tracing_subscriber::EnvFilter;
 
@@ -46,6 +48,7 @@ async fn run() -> anyhow::Result<()> {
         .context("creating bootstrap invite failed")?;
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
+    report_storage(&config.storage);
     let state = AppState::new(pool, config);
     // Index whatever is not embedded yet (first deploy, model change, interrupted run). In the
     // background: a slow or failing embedding provider must not delay startup.
@@ -59,6 +62,41 @@ async fn run() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+/// Says once, at startup, where material files go. Storage problems never stop the server:
+/// uploads are refused with a clear message and everything else keeps working.
+fn report_storage(storage: &StorageConfig) {
+    if let Some(problem) = &storage.problem {
+        tracing::error!("material storage is OFF: {problem}");
+        return;
+    }
+    match storage.backend {
+        StorageBackend::None => {
+            tracing::warn!("STORAGE_BACKEND=none: file uploads are off (pasted text still works)")
+        }
+        StorageBackend::Fs => {
+            tracing::info!(dir = %storage.dir.display(), "material files go to the local filesystem")
+        }
+        StorageBackend::S3 => {
+            let Some(settings) = storage.s3.clone() else {
+                return;
+            };
+            tracing::info!(endpoint = %settings.endpoint, bucket = %settings.bucket,
+                "material files go to S3-compatible storage");
+            tokio::spawn(async move {
+                match S3Storage::new(&settings) {
+                    Ok(s3) => match s3.check().await {
+                        Ok(()) => tracing::info!("S3 bucket is reachable"),
+                        Err(e) => tracing::error!(
+                            "S3 bucket check failed (uploads will fail until this is fixed): {e:#}"
+                        ),
+                    },
+                    Err(e) => tracing::error!("S3 settings are invalid: {e:#}"),
+                }
+            });
+        }
+    }
 }
 
 async fn shutdown_signal() {

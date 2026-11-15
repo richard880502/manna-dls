@@ -29,6 +29,10 @@ pub struct MaterialSource {
     pub lesson_id: Option<i64>,
     pub material_version_no: Option<i32>,
     pub note: String,
+    /// The material-library entry this snapshot was taken from (its viewer shows the teacher's
+    /// annotations; the ones shared with the AI go into the prompts). `None` for older rows.
+    #[serde(default)]
+    pub material_id: Option<i64>,
 }
 
 pub const SOURCE_PASTED: &str = "pasted";
@@ -61,6 +65,7 @@ impl Material {
                         id: p.id.clone(),
                         no: i as i32 + 1,
                         text: p.text.clone(),
+                        page: None,
                     })
                     .collect()
             })
@@ -81,6 +86,7 @@ impl Material {
                     lesson_id: None,
                     material_version_no: None,
                     note: note.trim().to_string(),
+                    material_id: None,
                 },
             },
             seq,
@@ -89,6 +95,16 @@ impl Material {
 
     /// A snapshot of the lesson SOP's material: same paragraphs, same ids.
     pub fn from_lesson_sop(lesson_id: i64, m: &crate::sop::store::Material) -> (Self, i32) {
+        Self::from_library(SOURCE_LESSON_SOP, Some(lesson_id), m)
+    }
+
+    /// A snapshot of a material-library entry (pasted text is stored in the library first, so
+    /// paragraph ids match the library's and annotations can be located).
+    pub fn from_library(
+        kind: &str,
+        lesson_id: Option<i64>,
+        m: &crate::sop::store::Material,
+    ) -> (Self, i32) {
         let seq = m
             .paragraphs
             .iter()
@@ -108,10 +124,11 @@ impl Material {
                     })
                     .collect(),
                 source: MaterialSource {
-                    kind: SOURCE_LESSON_SOP.to_string(),
-                    lesson_id: Some(lesson_id),
+                    kind: kind.to_string(),
+                    lesson_id,
                     material_version_no: Some(m.version_no),
                     note: m.source_note.clone(),
+                    material_id: Some(m.id),
                 },
             },
             seq,

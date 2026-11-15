@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from "react";
 import type { SaveWorksheetMaterialRequest, WorksheetMaterial } from "../../api/types";
+import { MaterialViewer } from "../material/MaterialViewer";
 
 /** What the page hands to whatever fills the material slot. */
 export interface MaterialPaneProps {
@@ -84,6 +85,26 @@ export function WorksheetMaterialPane(props: MaterialPaneProps) {
   const empty = material.paragraphs.length === 0;
   const fromLesson = material.source.kind === "lesson_sop";
   const name = material.title.trim() || "教材";
+
+  const libraryId = material.source.material_id ?? null;
+  if (libraryId && !empty && !replacing) {
+    // The library's viewer: the text with the teacher's annotations; notes marked 「提供給 AI」
+    // are what the generator passes to the model.
+    return (
+      <div className="ws-material ws-material-library">
+        <MaterialViewer mode="pane" materialId={libraryId} />
+        <p className="quiet-note">
+          {fromLesson ? "從課例帶入的教材。" : "你貼上的教材，已放進你的教材庫。"}
+          勾了「提供給 AI」的注記會在產生時參考；注記不會出現在學習單上。
+        </p>
+        <p className="quiet-note">
+          <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setReplacing(true)}>
+            換教材
+          </button>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <section className="ws-material" aria-label="教材">

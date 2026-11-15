@@ -4,6 +4,7 @@ AI 輔助英文教師備課的研究型平台（國科會蔓娜計畫）。Phase
 
 - 設計藍圖：[docs/BLUEPRINT.md](docs/BLUEPRINT.md)
 - API 合約：[docs/API.md](docs/API.md)
+- 教材與注記的工程回覆（規格 §12）：[docs/ENGINEERING_REPLY.md](docs/ENGINEERING_REPLY.md)
 
 ## 結構
 
@@ -55,6 +56,35 @@ cd web && pnpm install && pnpm dev
 | `EMBEDDING_DIMS` | `768` |
 
 設好重新部署後，啟動時會在背景建立索引；到「知識庫管理」的「語意索引」確認「1,352 條中 1,352 條已建立語意索引」，沒完成可按「建立語意索引」續做。
+
+## 教材檔案儲存（Phase 2.2）
+
+教材原檔（PDF、DOCX、圖片、影音）存在 S3 相容的物件儲存（正式環境用 MinIO）；本機開發與測試存在本機資料夾。瀏覽器從不直接連到儲存空間，下載與預覽一律經過後端並檢查擁有者。
+
+| 環境變數 | 說明 |
+|---|---|
+| `STORAGE_BACKEND` | `s3`、`fs` 或 `none`。後端程式沒設時是 `fs`；`docker-compose.yml` 預設 `none`。`none` 時上傳回「還沒有設定檔案儲存空間」，貼上文字與網址照常可用。設定有誤（例如少了 `S3_BUCKET`）也只會關掉上傳，不會讓後端起不來 |
+| `STORAGE_DIR` | `fs` 用的資料夾（預設 `./data/materials`；映像內是 `/app/data/materials`） |
+| `S3_ENDPOINT` | 例如 `http://manna-minio:9000`（Coolify 內部網址；path-style） |
+| `S3_BUCKET` | 例如 `manna-materials`。私有、**不要開版本保留（versioning）**，刪除才是真的刪除 |
+| `S3_REGION` | 預設 `us-east-1`（MinIO 不在意，但簽章需要） |
+| `S3_ACCESS_KEY`、`S3_SECRET_KEY` | MinIO 上**只給這個 bucket** 讀寫刪的帳號；只設在 Coolify，不進版本庫 |
+
+主機 nginx（`/etc/nginx/sites-available/manna-dls`）要允許大檔：`client_max_body_size 105m;`（nginx 預設 1 MB，超過時上傳會在 nginx 被擋成 413）。
+
+後端啟動時會在日誌寫一行儲存方式，`s3` 時另外檢查 bucket 連得到（連不到只記錯誤，不會停機）。
+
+本機試 S3 後端：`minio/minio` 映像已不在 Docker Hub，用 Coolify 自己的版本：
+
+```bash
+docker run -d --name manna-minio-test -p 127.0.0.1:59000:9000 \
+  -e MINIO_ROOT_USER=manna-test-access -e MINIO_ROOT_PASSWORD=manna-test-secret-key \
+  ghcr.io/coollabsio/minio server /data
+cd api && S3_TEST_ENDPOINT=http://127.0.0.1:59000 S3_TEST_ACCESS_KEY=manna-test-access \
+  S3_TEST_SECRET_KEY=manna-test-secret-key cargo test --test storage_s3
+```
+
+CI 只用 `fs`（`api/tests/materials.rs`）；`storage_s3` 測試沒有 `S3_TEST_ENDPOINT` 時自動略過。
 
 ## 部署
 

@@ -1207,3 +1207,50 @@ async fn worksheets_belong_to_their_teacher() {
     let (s, _) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn pasted_material_goes_to_the_library_and_only_shared_notes_reach_the_model() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let ws = direct(&app, &t, &passage("")).await;
+    let id = ws["id"].as_i64().unwrap();
+    let material = ws["material"]["source"]["material_id"]
+        .as_i64()
+        .expect("stored in the library");
+    let (s, lib) = app.get("/api/materials", Some(&t)).await;
+    assert_eq!(s, StatusCode::OK, "{lib}");
+    assert!(lib.to_string().contains("The Umbrella Stand"));
+    // One note shared with the AI, one not.
+    for (note, share) in [("學生常忽略這個轉折", true), ("只給我自己看", false)] {
+        let (s, v) = app
+            .post(
+                &format!("/api/materials/{material}/annotations"),
+                Some(&t),
+                json!({ "paragraph_id": "p3", "start": 0, "end": 12, "note": note, "share_with_ai": share }),
+            )
+            .await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+    }
+    let state = generate(&app, &t, id).await;
+    let users: Vec<String> = sqlx::query_scalar(
+        "SELECT input_snapshot -> 'prompt' ->> 'user' FROM ai_interactions WHERE module = 'worksheet_tasks'",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert!(users[0].contains("學生常忽略這個轉折"), "{}", users[0]);
+    assert!(!users[0].contains("只給我自己看"));
+    let tasks_job = state["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["step"] == "tasks")
+        .unwrap()
+        .clone();
+    assert!(tasks_job["context"]
+        .to_string()
+        .contains("教師注記（提供給 AI）"));
+    // Notes never reach the student sheet.
+    let student = sheet(&app, &t, id, "standard", "student").await;
+    assert!(!student.to_string().contains("學生常忽略"));
+}

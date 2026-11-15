@@ -15,14 +15,22 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.8", features = ["macros"] }
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros", "multipart"] }
+bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
 csv = "1"
+encoding_rs = "0.8"
+futures-util = "0.3"
 hex = "0.4"
 krilla = { version = "0.8", default-features = false, features = ["simple-text"] }
+hmac = "0.12"
+pdf-extract = "0.12"
+quick-xml = "0.42"
 rand = "0.8"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+rusty-s3 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -37,6 +45,7 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

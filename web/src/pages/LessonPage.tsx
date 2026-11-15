@@ -15,7 +15,8 @@ import { StepsEditor, hasDiffData, newStep, type EditableStep } from "../compone
 import { SuggestionsPanel } from "../components/plan/SuggestionsPanel";
 import { Rail } from "../components/sop/Rail";
 import { StageAnalysis } from "../components/sop/StageAnalysis";
-import { MaterialViewer, StageMaterial } from "../components/sop/StageMaterial";
+import { MaterialViewer } from "../components/material/MaterialViewer";
+import { StageMaterial } from "../components/sop/StageMaterial";
 import { StageObjectives } from "../components/sop/StageObjectives";
 import { StageExit, StageIntegrate, StageTasks, StageWarmup } from "../components/sop/StagesManual";
 import { useSop } from "../components/sop/useSop";
@@ -630,7 +631,7 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
     }
     switch (step) {
       case 1:
-        return <StageMaterial sop={sop} />;
+        return <StageMaterial sop={sop} lessonId={lessonId} />;
       case 2:
         return <StageAnalysis sop={sop} onGoToMaterial={() => goStage(1)} />;
       case 3:
@@ -756,10 +757,19 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
       </div>
 
       <MaterialViewer
+        mode="panel"
+        materialId={sop.material?.id ?? null}
         material={sop.material}
         open={withViewer}
         onClose={() => setViewerOpen(false)}
-        onGoToMaterial={() => goStage(1)}
+        empty={
+          <p className="quiet-note">
+            {sop.materialDeleted ? "教材已刪除。" : "還沒有教材。"}
+            <button type="button" className="text-link is-plain" onClick={() => goStage(1)}>
+              到第 1 步{sop.materialDeleted ? "放進新的教材" : "貼上教材"}
+            </button>
+          </p>
+        }
       />
 
       {choosingClass && (

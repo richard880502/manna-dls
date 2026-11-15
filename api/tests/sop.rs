@@ -339,8 +339,32 @@ async fn material_is_split_in_code_and_paragraph_ids_are_stable() {
         .get(&format!("/api/lessons/{id}/sop/versions/1"), Some(&t))
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(paragraph_ids(&first), ["p1", "p2", "p3"]);
+    // The SOP document of an old version is still there; the material is not versioned any
+    // more (Phase 2.2): a pasted text is edited in place, so version 1 shows it as it is now
+    // and the first paragraph, rewritten since, is not kept anywhere.
     assert_eq!(first["content"]["analysis"]["paragraphs"], json!([]));
+    assert_eq!(paragraph_ids(&first), ["p2", "p3"]);
+    assert_eq!(first["material"]["version_no"], 3);
+    let kept: Vec<String> = sqlx::query_scalar("SELECT text FROM materials ORDER BY id")
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.len(),
+        2,
+        "the edited material and the one pasted after removing it"
+    );
+    assert!(kept.iter().all(|t| !t.contains("rainy Monday")), "{kept:?}");
+    // The paragraph analysis written against p2 came back with the paragraph.
+    assert_eq!(
+        back["content"]["analysis"]["paragraphs"][0]["paragraph_id"],
+        "p2"
+    );
+    // While the lesson had no material the reference was set aside, not dropped.
+    assert_eq!(
+        removed["content"]["analysis"]["paragraphs"][0]["paragraph_id"],
+        format!("m{}-p2", first["material"]["id"])
+    );
     let (s, _) = app
         .get(&format!("/api/lessons/{id}/sop/versions/99"), Some(&t))
         .await;

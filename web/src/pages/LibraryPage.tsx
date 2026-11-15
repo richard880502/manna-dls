@@ -3,10 +3,12 @@ import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { CreateUnitRequest, PrepRoute, SchoolClass, Unit } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { MaterialsSection } from "../components/material/MaterialLibrary";
 import { RouteOptions } from "../components/unit/RouteOptions";
 import { useApp } from "../context/AppContext";
 import { usedByText } from "../lib/classes";
 import { UNIT_IDEAS_STATUS } from "../lib/labels";
+import { can } from "../lib/permissions";
 import { effectiveRoute } from "../lib/preferences";
 
 /** 加到班級: which classes use one unit. Each tick is saved at once. */
@@ -72,7 +74,7 @@ function AssignClasses({
  * library has no class in play unless only one class uses it.
  */
 export function LibraryPage() {
-  const { routeChoiceEnabled, preferences, setCurrentClassId } = useApp();
+  const { routeChoiceEnabled, preferences, setCurrentClassId, teacher } = useApp();
   const navigate = useNavigate();
   const ids = useId();
   const [units, setUnits] = useState<Unit[] | null>(null);
@@ -268,6 +270,8 @@ export function LibraryPage() {
           })}
         </ul>
       )}
+
+      {can(teacher, "use_materials") && <MaterialsSection />}
     </section>
   );
 }

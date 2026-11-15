@@ -245,13 +245,14 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     if !state.ai.enabled() {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO lesson_sop_jobs
-               (lesson_id, teacher_id, kind, status, sop_version_id, result, finished_at)
-             VALUES ($1, $2, $3, 'done', $4, $5, now()) RETURNING id",
+               (lesson_id, teacher_id, kind, status, sop_version_id, material_id, result, finished_at)
+             VALUES ($1, $2, $3, 'done', $4, $5, $6, now()) RETURNING id",
         )
         .bind(lesson_id)
         .bind(input.teacher_id)
         .bind(kind.as_str())
         .bind(input.version.id)
+        .bind(input.material.id)
         .bind(result_json(AiResult::<Value>::disabled()))
         .fetch_one(&state.db)
         .await?;
@@ -266,8 +267,9 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     .fetch_one(&state.db)
     .await?;
     let created: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO lesson_sop_jobs (lesson_id, teacher_id, kind, status, phase, sop_version_id)
-         VALUES ($1, $2, $3, 'running', $4, $5)
+        "INSERT INTO lesson_sop_jobs
+           (lesson_id, teacher_id, kind, status, phase, sop_version_id, material_id)
+         VALUES ($1, $2, $3, 'running', $4, $5, $6)
          ON CONFLICT (lesson_id, kind) WHERE status = 'running' DO NOTHING
          RETURNING id",
     )
@@ -276,6 +278,7 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     .bind(kind.as_str())
     .bind(kind.first_phase())
     .bind(input.version.id)
+    .bind(input.material.id)
     .fetch_optional(&state.db)
     .await?;
     let Some(job_id) = created else {
@@ -496,8 +499,9 @@ fn not_shown<T: Serialize>(outcome: Outcome<T>, context: Vec<AiContextItem>) -> 
 }
 
 fn material_label(material: &Material) -> String {
+    // Never the text itself: this label is stored with the job result.
     let name = if material.title.trim().is_empty() {
-        clip_chars(&material.text, 24)
+        "未命名教材".to_string()
     } else {
         material.title.trim().to_string()
     };
@@ -551,6 +555,7 @@ async fn run_analysis(
         "class_context": input.profile.snapshot(),
         "sop": {
             "version_no": input.version.version_no,
+            "material_id": input.material.id,
             "material_version_no": input.material.version_no,
             "paragraph_ids": paragraphs.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
         },
@@ -896,6 +901,26 @@ async fn run_objectives(
         CURRICULUM_LIMIT,
     )
     .await?;
+    // The query contains material text, which must stay deletable: the log keeps the teacher's
+    // own lines and, for the material, its length and a hash.
+    let logged_query = clip_chars(
+        &[
+            input.lesson.title.as_str(),
+            own.as_str(),
+            analysis.as_str(),
+            prompts::redacted(
+                "課例教材",
+                &format!(
+                    "{}\n{}",
+                    input.material.title,
+                    clip_chars(&input.material.text, 4000)
+                ),
+            )
+            .as_str(),
+        ]
+        .join("\n"),
+        2000,
+    );
     let allowed: HashMap<String, CurriculumItem> = items
         .iter()
         .cloned()
@@ -950,10 +975,11 @@ async fn run_objectives(
         "class_context": input.profile.snapshot(),
         "sop": {
             "version_no": input.version.version_no,
+            "material_id": input.material.id,
             "material_version_no": input.material.version_no,
         },
         "retrieval": {
-            "query": clip_chars(&query, 2000),
+            "query": logged_query,
             "limit": CURRICULUM_LIMIT,
             "method": trace.method,
             "fallback_reason": trace.fallback_reason,
@@ -1007,15 +1033,7 @@ async fn run_objectives(
     };
 
     let a1 = attempt(state, &meta, &snapshot, &req, None).await?;
-    crate::retrieval::log(
-        db,
-        Some(a1.id),
-        &clip_chars(&query, 2000),
-        &input.track,
-        &codes,
-        &trace,
-    )
-    .await?;
+    crate::retrieval::log(db, Some(a1.id), &logged_query, &input.track, &codes, &trace).await?;
 
     let cited = |e: &ObjectivesEval| -> Vec<String> {
         let mut seen = std::collections::HashSet::new();

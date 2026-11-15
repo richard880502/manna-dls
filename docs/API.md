@@ -817,14 +817,14 @@ interface SopState {
 
 - 教材目前只收貼上的文字（≤ 50,000 字）。**段落由程式切分**：有空行時以空行分段（段內換行視為空白），沒有空行時每一行一段；空白段落略過。
 - 段落 `id` 穩定：新教材中文字（空白正規化後）與前一版相同的段落沿用原 `id`，其餘給新的 `p<n>`（同一課例內不重複使用）。`no` 是目前的順序（從 1）。
-- 教材與 SOP 內容分開存：教材只在文字、標題或來源說明改變時才多一列（`lesson_sop_materials`，只增不改），SOP 版本以 `material_id` 指向它，所以自動儲存不會重複存整篇教材。
+- 教材與 SOP 內容分開存（Phase 2.2 起：教材是教材庫的一份教材，就地修改、不保留舊文字；`lesson_sop_materials` 已刪除），SOP 版本以 `material_id` 指向它，所以自動儲存不會重複存整篇教材。
 
 ## 端點
 
 | Method | Path | 請求 | 回應 |
 |---|---|---|---|
 | GET | `/api/lessons/:id/sop` | – | `SopState` |
-| PUT | `/api/lessons/:id/sop/material` | `{ title?, source_note?, text }` | `SopState`。教材有變才新增教材列，並產生一個指向它的新 SOP 版本（內容不變）；完全相同時不產生版本。`text` 空白＝移除教材（SOP 內容保留） |
+| PUT | `/api/lessons/:id/sop/material` | `{ title?, source_note?, text }` | `SopState`。教材有變才新增教材列，並產生一個指向它的新 SOP 版本（內容不變）；完全相同時不產生版本。`text` 空白＝移除教材（SOP 內容保留）。**Phase 2.2 起教材改存在教材庫、就地修改，並可用 `material_id` 從教材庫選，見「Phase 2.2」** |
 | PUT | `/api/lessons/:id/sop` | `{ content: SopContent }` | `{ version_no, versions_count, saved_at, content }`（`content` 是正規化後的結果：課綱條文與來源已由資料庫帶出）。與最新版本相同時不產生新版本。課綱連結的 `item_code` 在知識庫找不到 → 400（已停用的條目仍可讀，教師先前存的連結不會因此存不了） |
 | GET | `/api/lessons/:id/sop/versions` | – | `Array<{ version_no, created_at, material_version_no: number \| null }>`，新到舊 |
 | GET | `/api/lessons/:id/sop/versions/:version_no` | – | `SopState`（該版本；`jobs` 皆為 null） |
@@ -1303,3 +1303,165 @@ fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字
 ## 前端
 
 知識庫管理頁多「語意索引」區塊：「1,352 條中 1,352 條已建立語意索引」、模型與維度、舊模型的向量數、最近一次的結果（中斷時顯示原因與已完成數），以及「建立語意索引」按鈕（全部完成時為「重新檢查」）。建立中每 1.5 秒更新進度。沒設定模型時只顯示「尚未設定語意索引模型，目前只用關鍵字檢索。」
+
+---
+
+# Phase 2.2：教材與注記
+
+以下為**新增或變更**；未提到的端點維持原樣。Migration `0009_materials.sql`。依據：《學習單產生器：教師選項與 SOP 整合規格》§4.2、§4.4、§9.7、§10 第 23–28 項，`docs/BLUEPRINT.md` §13.3（教材只屬於一位教師、不共用、不訓練；刪除即實際刪除原檔與衍生資料）。給規格 §12 第 1、11、12、13 項的回覆在 `docs/ENGINEERING_REPLY.md`。外部資源搜尋（§4.3）不在這一版。
+
+## 重點
+
+- **教師自己的教材庫**：貼上文字、上傳檔案、或記下一個網址。只有擁有者看得到；其他人存取任何一份都是 404。
+- **原檔放物件儲存**（`STORAGE_BACKEND=s3|fs|none`，見 README「教材檔案儲存」），瀏覽器從不直接連到儲存空間。
+- **刪除是真的刪除**：原檔物件、擷取的文字與段落、注記、課例連結一起刪；課例 SOP 留下「教材已刪除」，逐字引文從 SOP 與 AI 紀錄移除（見「刪除」）。
+- **注記另外存**，不改教材；每則可勾「提供給 AI」（預設不勾）。只有勾了、沒隱藏、找得到位置的注記會給 AI，並標明是教師注記。注記不會出現在學生版或任何學生端輸出。
+- 課例 SOP 第 1 步改用教材庫（貼上、從教材庫選、上傳），舊的 `lesson_sop_materials` 搬進教材庫後刪除。
+
+## 能力（capability）
+
+新增 `use_materials`（教材庫）：目前所有角色都有（每個帳號都可以備課）；放成能力是為了日後要收窄時只改 `auth::role_can` 一處。`GET /api/me` 的 `capabilities` 多這一項；`GET /api/config` 多 `uploads_enabled: boolean`。
+
+## 可以上傳什麼
+
+| 類型 `kind` | 副檔名 | 單檔上限 | 處理 |
+|---|---|---|---|
+| `document` | `.txt` `.docx` `.pdf` | 20 MB | 擷取文字（見下），可注記、可給 Manna 分析 |
+| `image` | `.png` `.jpg`（`.jpeg`）`.webp` `.gif` | 10 MB | 保存、在檢視區顯示；不分析 |
+| `audio` | `.mp3` `.m4a` `.wav` | 30 MB | 保存、瀏覽器內建播放器（可拖曳）；不分析 |
+| `video` | `.mp4` `.webm` | 100 MB | 同上 |
+| `text` | （貼上） | 50,000 字 | 程式分段 |
+| `link` | （網址） | 2,000 字元 | 只存網址、標題、來源說明；**不抓取網頁** |
+
+- 每位教師：檔案合計 1 GB、教材 300 份（任何類型）。上傳時同時最多處理 2 個（其餘排隊）。
+- 先看副檔名，再看檔頭（magic bytes）：副檔名對但內容不符（例如改名的執行檔、叫 `.png` 的 HTML）→ 400。`.doc`、`.ppt`、`.svg`、`.html` 等一律不收。
+- 同一位教師重複上傳同一個檔案（SHA-256 相同）→ 409，訊息說已經在哪一份。
+- 回應的 `Content-Type` 由伺服器依副檔名決定，並一律加 `X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; sandbox`、`Cache-Control: private, no-store`；文件以下載（attachment）回應，圖片與影音以 inline 回應。
+
+## 文字擷取與段落
+
+- **TXT**：UTF-8（含 BOM）、UTF-16（有 BOM）、Big5；分段規則與貼上的文字相同。
+- **DOCX**：讀 `word/document.xml` 的每個段落（含表格內的段落與文字方塊），依文件順序；追蹤修訂中刪除的文字不算；tab 與換行視為空白。
+- **PDF**：純 Rust（`pdf-extract`）逐頁擷取。有空行時以空行分段，沒有時以「句末標點＋明顯短於最長行」判斷段尾；行尾連字號斷字會接回。每段記下起始頁碼（`page`）。
+- **掃描的 PDF**（沒有文字層）：`text_status = "no_text"`，原檔照常保存與下載，**不做 OCR**。讀不出來（加密、損壞）：`failed`。超過 300,000 字的文件只保留前面（`text_truncated = true`），原檔完整保存。
+- 段落 `id`（`p1`…）在同一份教材內穩定且不重複使用：貼上的文字修改後，文字沒變的段落沿用原 id，教材的 `revision` 加 1；**舊文字不保留**。上傳的檔案不能改文字（要換請刪除後重傳，或另外貼上）。
+
+## 型別
+
+```ts
+type MaterialKind = "text" | "document" | "image" | "audio" | "video" | "link";
+type MaterialTextStatus = "ready" | "no_text" | "failed" | "not_applicable";
+
+interface Material {            // 清單用，不含文字
+  id: number; kind: MaterialKind; origin: "paste" | "upload" | "url";
+  title: string; source_note: string; url: string | null; filename: string | null;
+  content_type: string | null; size_bytes: number; sha256: string | null;
+  has_file: boolean;            // 有原檔可預覽／下載
+  text_status: MaterialTextStatus; text_truncated: boolean; page_count: number | null;
+  paragraph_count: number; word_count: number; revision: number;
+  created_at: string; updated_at: string;
+  lessons: Array<{ lesson_id: number; lesson_title: string; unit_title: string }>;
+  worksheet_count: number; annotation_count: number;
+}
+interface MaterialDetail extends Material {
+  text: string;
+  paragraphs: Array<{ id: string; no: number; text: string; page?: number }>;
+}
+
+interface MaterialAnnotation {
+  id: number; material_id: number;
+  quote: string;                // 標記的原文（伺服器從段落取，不採用用戶端送的文字）
+  note: string; share_with_ai: boolean; hidden: boolean;
+  anchor: {                     // 注記「現在」在哪裡，每次讀取時重新定位
+    status: "ok" | "moved" | "lost";     // lost → 前端顯示「需要重新確認位置」
+    paragraph_id: string | null; paragraph_no: number | null;
+    start: number | null; end: number | null;   // 段落文字內的 UTF-16 位置（與瀏覽器選取相同）
+  };
+  created_at: string; updated_at: string;
+}
+```
+
+`SopMaterial`（Phase 2.1）多了 `kind`、`origin`、`url`、`filename`、`has_file`、`text_status`、`text_truncated`、`page_count`，段落可能有 `page`；`version_no` 現在是教材的 `revision`。`SopState` 多 `material_deleted: boolean`；`GET …/sop/versions` 每列多 `material_deleted`。
+
+## 端點（登入即可；只能存取自己的教材，其他人的回 404）
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/materials` | `?lesson_id=`（選填：只列連到該課例的） | `{ materials: Material[], usage: { used_bytes, quota_bytes, count, max_count }, limits: { files: [{ ext, kind, max_bytes }], max_pasted_chars, max_note_chars }, storage: "s3"\|"fs"\|"none", uploads_enabled }`，新到舊 |
+| POST | `/api/materials` | `{ kind: "text", title?, source_note?, text, lesson_id? }` 或 `{ kind: "link", title?, source_note?, url, lesson_id? }` | `MaterialDetail` |
+| POST | `/api/materials/upload` | `multipart/form-data`：`file`（必填）、`title`、`source_note`、`lesson_id` | `MaterialDetail`。`title` 空白時用檔名。儲存未設定 → 503 `unavailable`「這個環境還沒有設定檔案儲存空間…」 |
+| GET | `/api/materials/:id` | – | `MaterialDetail` |
+| PUT | `/api/materials/:id` | `{ title?, source_note?, text?, url? }` | `MaterialDetail`。`text` 只限貼上的教材（不能改成空白：不要了請刪除），`url` 只限網址教材 |
+| DELETE | `/api/materials/:id` | – | `{ deleted: true, annotations: number, lessons: number[] }`（見「刪除」） |
+| POST | `/api/materials/:id/file-link` | – | `{ url, expires_at }`：給 `<img>`／`<audio>`／`<video>` 用的 60 分鐘連結（見下）。沒有原檔 → 404 |
+| GET | `/api/materials/:id/file` | Bearer 權杖，或 `?t=<file-link 的權杖>`；`?download=1` 改為下載；支援 `Range: bytes=…` | 原檔（200 或 206；範圍不合 416） |
+| PUT／DELETE | `/api/lessons/:id/materials/:material_id` | – | 把教材連到課例／取消連結（多對多）。課例 SOP 第 1 步正在用的教材不能在這裡取消（409，請到第 1 步換教材） |
+| GET | `/api/materials/:id/annotations` | – | `MaterialAnnotation[]`，依閱讀順序；隱藏的也列（`hidden: true`），找不到位置的排最後 |
+| POST | `/api/materials/:id/annotations` | `{ paragraph_id, start, end, note?, share_with_ai? }` | `MaterialAnnotation`。範圍必須在該段落內；一份教材最多 500 則；注記 ≤ 2,000 字、標記 ≤ 2,000 字 |
+| PUT | `/api/annotations/:id` | `{ note?, share_with_ai?, hidden?, anchor?: { paragraph_id, start, end } }` | `MaterialAnnotation`。`anchor` 用於教師重新確認位置 |
+| DELETE | `/api/annotations/:id` | – | `{ deleted: true }`。只刪注記，教材不變 |
+| GET | `/api/materials/:id/annotations/ai` | – | `{ material_id, notes: Array<{ annotation_id, paragraph_id, paragraph_no, quote, note }>, prompt_block }`：**只有**勾了提供給 AI、未隱藏、找得到位置的注記 |
+
+### 為什麼是後端串流，不是 MinIO 的 presigned URL
+
+`file-link` 發的是**本站 API** 的連結：權杖以後端程序內的隨機金鑰（HMAC-SHA256）簽章，綁定教材 id、教師 id 與到期時間；使用時仍重新檢查教材存在且屬於該教師。所以 MinIO 不必對外開放、連結外流也打不開別人的東西、教材一刪除連結立即失效。代價是檔案流量經過後端，影音以 Range 分段傳送，對 2 核心主機可以接受。
+
+### 給 AI 管線的注記
+
+Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)` 回傳上述 `notes`，`ai_context_block(&notes)` 產生 prompt 文字，開頭固定為「教師注記（教師自己寫的備課筆記，不是教材原文，也不是外部來源；只供理解教學重點，不得寫進學生版）」。這是注記進入任何 AI 管線的唯一入口；沒勾的注記不會被讀到。輸入快照記錄注記時比照教材：只記 id 與雜湊，不記內容（學習單產生器接上時遵守）。
+
+## 注記的定位
+
+- 存的是：段落 id、段落內 UTF-16 起訖位置、標記的原文（由伺服器從段落取出）、前後各 32 字的上下文，以及做注記時教材的 `revision`。
+- 每次讀取重新定位：同段同位置文字相同 → `ok`；同段內找得到原文（有多處時取上下文最吻合、再取最近）→ `moved`；別的段落中有一處明顯最吻合 → `moved`；否則 `lost`（前端顯示「需要重新確認位置」，注記內容保留，教師可重新選取位置或刪除）。
+- 前端選取若落在英文單字中間，會延伸到整個單字；跨段落的選取不能成為一則注記（請只選一段）。
+
+## 刪除
+
+`DELETE /api/materials/:id` 依序：
+
+1. 刪除儲存空間中的原檔物件。**刪不掉就整個不刪**，回 503「原檔沒有刪除成功…所以這份教材還沒有刪除」；儲存未設定而教材有原檔時同樣不刪。
+2. 同一個交易內：刪除教材列（文字、段落）、注記、課例與學習單連結；用到它的 SOP 版本 `material_id` 設為 null、`material_deleted = true`，指向它段落的參照改名為 `m<id>-p3`（不會被誤認為下一份教材的段落），**從它逐字引用的片段**（分析與語言重點的 `evidence`）換成「［教材已刪除］」；這些課例的 AI 紀錄（`ai_interactions.output`、`lesson_sop_jobs.result`）中的逐字引文與教材名稱同樣移除。教師自己寫的分析、目標、任務都保留。
+3. `material_deletions` 記一筆（教材 id、類型、大小、是否有原檔、注記數、時間；沒有標題、檔名、雜湊或內容），`usage_logs` 記 `material_deleted`。
+
+前端在頁面上確認，明說「永久刪除、無法復原」以及會一起刪掉什麼、哪些課例會顯示「教材已刪除」。
+
+## 課例 SOP（Phase 2.1）的變更
+
+- `PUT /api/lessons/:id/sop/material` 另收 `{ material_id: number }`（從教材庫選）與 `{ material_id: null }`（從課例移除，教材留在教材庫）；原本的 `{ title, source_note, text }`（貼上）照舊。空白 `text` 也是「從課例移除」，**不再**代表刪除。
+- 貼上：課例目前的教材是貼上的、且沒有其他課例或學習單在用 → **就地修改**（revision + 1，舊文字不保留）；否則建立一份新的貼上教材，段落 id 接續原本的教材（文字沒變的段落沿用 id）。
+- 換教材時，SOP 內容裡指向舊教材段落的參照改名為 `m<舊教材 id>-p3`，換回來時復原；前端把找不到的段落顯示為「原段落已變更」。
+- 教材不再隨 SOP 版本保存：舊版本顯示的是教材**現在**的樣子（`material_version_no` 是當時的修訂次數）。這是硬刪除規則的必然結果。
+- 沒有文字的教材（圖片、影音、網址、掃描的 PDF）可以是第 1 步的教材，但請 Manna 分析時回 400「這份教材沒有可以讀的文字…」。
+- AI 紀錄：第 3 步課綱檢索的查詢字串改為只記教師自己的文字與教材的字數＋雜湊（`retrieval_logs.query_text`、`input_snapshot.retrieval.query`）；工作列多 `material_id`。
+
+## 舊資料搬遷（`0009_materials.sql`）
+
+- 每個「最新 SOP 版本仍有教材」的課例：把**最新**那一份 `lesson_sop_materials` 變成該教師的一份貼上教材（標題、來源說明、文字、段落與 id 計數照搬，`revision` = 原本的版本號），並連到該課例；所有指向該課例舊教材列的 SOP 版本改指向它。
+- 較早的教材文字，以及教師已經移除教材的課例的文字：**不搬、隨舊表一起刪除**；曾經有教材的版本標 `material_deleted = true`。
+- 已記錄的 `sop_objectives` 檢索查詢字串改寫為字數＋雜湊。
+- `lesson_sop_materials` 刪除。
+
+## usage_logs 新事件
+
+| event | payload |
+|---|---|
+| `material_created` | `{ material_id, kind, origin, ext?, size_bytes?, text_status? }` |
+| `material_deleted` | `{ material_id, kind, lessons }`（`lessons` 是受影響課例數） |
+
+## 前端
+
+- **`MaterialViewer`**（`web/src/components/material/MaterialViewer.tsx`）：一個元件兩種用法。
+  - `mode="panel"`：課例 SOP 第 2–7 步的「對照教材」、備課庫教材的檢視，從左側滑出。
+  - `mode="pane"`：與工作區並排的一欄，可拖曳或用方向鍵調整寬度（320–760px，記在瀏覽器）、收合成直立的「對照教材」、全螢幕。學習單產生器使用：
+    ```tsx
+    <div className="material-split">
+      <MaterialViewer mode="pane" materialId={id} />
+      <div className="material-split-main">…設定、結果或編修區…</div>
+    </div>
+    ```
+  - Props：`materialId: number | null`、`mode`、`open?`／`onClose?`（panel）、`material?`（已有資料時免再請求）、`empty?`（沒有教材時顯示）、`defaultCollapsed?`（pane）。
+  - 1100px 以下 pane 改為蓋在頁面上；760px 以下兩種都是全螢幕的教材頁，頂端固定「收起教材」。
+  - 內容：印刷樣式、頁邊段落編號、PDF 頁碼分隔、注記（藍色底線＋藍色淡底小塊，絕不用金色）、選取文字出現「加注記」、提供給 AI、修改、隱藏／顯示隱藏的注記、刪除（頁內確認）、重新確認位置；圖片／音訊／影片以瀏覽器內建元件預覽，可下載原檔；網址教材顯示連結（新分頁開啟）。
+- **備課庫 → 教材**：列出教材（類型、段數、頁數、大小、注記數、用在哪些課例）、上傳檔案／貼上文字／加入網址（每種都有隱私與著作權提醒）、改名、永久刪除（頁內確認）。
+- **課例第 1 步**：貼上文字、從教材庫選、上傳檔案；有教材時可修改（貼上的）、換一份、從這個課例移除；教材被刪除時顯示「教材已刪除」。
