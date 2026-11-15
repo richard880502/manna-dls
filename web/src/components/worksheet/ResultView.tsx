@@ -1,0 +1,818 @@
+import { useId, useLayoutEffect, useRef, useState } from "react";
+import { Link } from "react-router";
+import { api, errorMessage } from "../../api/client";
+import type {
+  WorksheetContent,
+  WsAudience,
+  WsBlock,
+  WsExportFormat,
+  WsItem,
+  WsLevel,
+  WsScaffold,
+} from "../../api/types";
+import {
+  ANSWER_FORMATS,
+  AUDIENCE_LABEL,
+  AUTO_FIELD_LABEL,
+  BLOCK_KIND_LABEL,
+  INFO_FUNCTION_LABEL,
+  LEVEL_LABEL,
+  SCAFFOLD_TYPE_LABEL,
+  editedOrigin,
+  isFromManna,
+  moveBlock,
+  newBlock,
+  newId,
+  newItem,
+  projectSheet,
+  toggleIn,
+  type SheetBlock,
+} from "../../lib/worksheet";
+import { ErrorText } from "../common";
+import { LessonLinkControls } from "./LessonLink";
+import { ProgressPanel, RunOutcome } from "./OptionsView";
+import { SopSyncNotice } from "./SopSync";
+import type { WorksheetController } from "./useWorksheet";
+
+/** A text field that reads as text on the sheet and grows with what is typed. */
+function SheetText({
+  label,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  className = "",
+  lang = "en",
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+  placeholder?: string;
+  className?: string;
+  lang?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !el.scrollHeight) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      className={`ws-text ${className}`}
+      rows={1}
+      lang={lang}
+      aria-label={label}
+      value={value}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+function LevelChips({
+  name,
+  all,
+  value,
+  disabled,
+  onChange,
+}: {
+  name: string;
+  all: WsLevel[];
+  value: WsLevel[];
+  disabled: boolean;
+  onChange: (next: WsLevel[]) => void;
+}) {
+  if (all.length < 2) return null;
+  return (
+    <span className="ws-levels" role="group" aria-label={`${name}出現的版本`}>
+      {all.map((level) => (
+        <label key={level}>
+          <input
+            type="checkbox"
+            checked={value.includes(level)}
+            disabled={disabled}
+            aria-label={`${name}出現在${LEVEL_LABEL[level]}`}
+            onChange={() => onChange(toggleIn(value, level, all))}
+          />
+          <span>{LEVEL_LABEL[level]}</span>
+        </label>
+      ))}
+    </span>
+  );
+}
+
+interface BlockProps {
+  ws: WorksheetController;
+  view: SheetBlock;
+  index: number;
+  count: number;
+  audience: WsAudience;
+  locked: boolean;
+  dragging: string | null;
+  setDragging: (id: string | null) => void;
+}
+
+function BlockSection({ ws, view, index, count, audience, locked, dragging, setDragging }: BlockProps) {
+  const { block, label } = view;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [over, setOver] = useState(false);
+  const levels = ws.state?.content.levels ?? [];
+  const teacher = audience === "teacher";
+  const name = label || BLOCK_KIND_LABEL[block.kind];
+  const undoable = ws.state?.undoable.includes(block.id) ?? false;
+  const toggleName = block.kind === "warmup" ? "暖身" : block.kind === "exit_ticket" ? "Exit ticket" : null;
+
+  const patch = (change: (b: WsBlock) => WsBlock, touchOrigin = true) =>
+    ws.setContent((c) => ({
+      ...c,
+      blocks: c.blocks.map((b) =>
+        b.id === block.id ? { ...change(b), origin: touchOrigin ? editedOrigin(b.origin) : b.origin } : b,
+      ),
+    }));
+  const patchItem = (id: string, change: (it: WsItem) => WsItem) =>
+    patch((b) => ({
+      ...b,
+      items: b.items.map((it) => (it.id === id ? { ...change(it), origin: editedOrigin(it.origin) } : it)),
+    }));
+  const patchScaffold = (id: string, change: (s: WsScaffold) => WsScaffold) =>
+    patch((b) => ({
+      ...b,
+      scaffolds: b.scaffolds.map((s) => (s.id === id ? { ...change(s), origin: editedOrigin(s.origin) } : s)),
+    }));
+  const move = (to: number) => ws.setContent((c) => ({ ...c, blocks: moveBlock(c.blocks, block.id, to) }));
+
+  const procedural = view.scaffolds.filter((s) => s.type === "procedural");
+  const supports = view.scaffolds.filter((s) => s.type !== "procedural");
+
+  return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- drop target for the drag handle; 上移／下移 are the keyboard way
+    <section
+      className={`ws-block${isFromManna(block.origin) ? " is-manna" : ""}${over ? " is-drop" : ""}`}
+      aria-label={`區塊 ${name}`}
+      onDragOver={(e) => {
+        if (dragging && dragging !== block.id) {
+          e.preventDefault();
+          setOver(true);
+        }
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        if (dragging && dragging !== block.id) {
+          ws.setContent((c) => ({ ...c, blocks: moveBlock(c.blocks, dragging, index) }));
+        }
+        setDragging(null);
+      }}
+    >
+      <div className="ws-tools" lang="zh-Hant">
+        <span
+          className="ws-drag"
+          draggable={!locked}
+          aria-hidden="true"
+          title="拖曳調整順序"
+          onDragStart={(e) => {
+            e.dataTransfer?.setData("text/plain", block.id);
+            setDragging(block.id);
+          }}
+          onDragEnd={() => setDragging(null)}
+        >
+          ⠿
+        </span>
+        <button type="button" className="text-link is-plain" disabled={locked || index === 0} onClick={() => move(index - 1)}>
+          上移
+        </button>
+        <button
+          type="button"
+          className="text-link is-plain"
+          disabled={locked || index === count - 1}
+          onClick={() => move(index + 1)}
+        >
+          下移
+        </button>
+        <button
+          type="button"
+          className="text-link is-plain is-gold"
+          disabled={locked}
+          onClick={() => void ws.regenerate(block.id)}
+        >
+          重新產生
+        </button>
+        {undoable && (
+          <button
+            type="button"
+            className="text-link is-plain is-gold"
+            disabled={locked}
+            onClick={() => void ws.undo(block.id)}
+          >
+            復原上一版
+          </button>
+        )}
+        {toggleName && (
+          <button
+            type="button"
+            className="text-link is-plain"
+            disabled={locked}
+            onClick={() => patch((b) => ({ ...b, enabled: false }), false)}
+          >
+            關掉{toggleName === "暖身" ? toggleName : ` ${toggleName}`}
+          </button>
+        )}
+        {confirmDelete ? (
+          <span className="ws-confirm" role="group" aria-label="確認刪除">
+            確定刪除這個區塊？
+            <button
+              type="button"
+              className="text-link is-danger"
+              onClick={() => ws.setContent((c) => ({ ...c, blocks: c.blocks.filter((b) => b.id !== block.id) }))}
+            >
+              確定刪除
+            </button>
+            <button type="button" className="text-link is-plain" onClick={() => setConfirmDelete(false)}>
+              不刪
+            </button>
+          </span>
+        ) : (
+          <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setConfirmDelete(true)}>
+            刪除
+          </button>
+        )}
+      </div>
+
+      <h3 className="ws-block-head">
+        {label && <span className="ws-letter">{label}.</span>}
+        <SheetText
+          label={`區塊標題 ${name}`}
+          className="is-title"
+          value={block.title}
+          placeholder="Title"
+          disabled={locked}
+          onChange={(title) => patch((b) => ({ ...b, title }))}
+        />
+      </h3>
+      {isFromManna(block.origin) && (
+        <p className="manna-label ws-origin" lang="zh-Hant">
+          <span className="star" aria-hidden="true" />
+          {block.origin === "ai" ? "Manna 產生" : "Manna 產生，你改過"}
+          {block.info_function ? ` · ${INFO_FUNCTION_LABEL[block.info_function]}` : ""}
+        </p>
+      )}
+      {block.message && (
+        <p className="ws-message" lang="zh-Hant" role="note">
+          {block.message}
+        </p>
+      )}
+
+      <SheetText
+        label={`作答指示 ${name}`}
+        className="is-steps"
+        value={block.instructions}
+        placeholder="Instructions"
+        disabled={locked}
+        onChange={(instructions) => patch((b) => ({ ...b, instructions }))}
+      />
+
+      {procedural.map((s) => (
+        <div key={s.id} className="ws-procedure" role="group" aria-label={`程序鷹架 ${name}`}>
+          <p className="ws-support-head" lang="zh-Hant">
+            <span className={s.auto ? "ws-auto" : ""}>
+              {SCAFFOLD_TYPE_LABEL.procedural}
+              {s.auto ? " · 自動產生" : ""}
+            </span>
+            <LevelChips
+              name="這個鷹架"
+              all={levels}
+              value={s.levels}
+              disabled={locked}
+              onChange={(next) => patchScaffold(s.id, (x) => ({ ...x, levels: next }))}
+            />
+            <button
+              type="button"
+              className="text-link is-plain"
+              disabled={locked}
+              aria-label="刪除程序鷹架"
+              onClick={() => patch((b) => ({ ...b, scaffolds: b.scaffolds.filter((x) => x.id !== s.id) }))}
+            >
+              刪除
+            </button>
+          </p>
+          <ol>
+            {s.steps.map((stepText, i) => (
+              // oxlint-disable-next-line react/no-array-index-key -- plain strings, edited in place
+              <li key={i}>
+                <SheetText
+                  label={`步驟 ${i + 1}（${name}）`}
+                  value={stepText}
+                  disabled={locked}
+                  onChange={(text) =>
+                    patchScaffold(s.id, (x) => ({ ...x, steps: x.steps.map((v, j) => (j === i ? text : v)) }))
+                  }
+                />
+              </li>
+            ))}
+          </ol>
+        </div>
+      ))}
+
+      {block.vocabulary.length > 0 && (
+        <table className="ws-vocab" aria-label={`字詞表 ${name}`}>
+          <thead>
+            <tr>
+              <th scope="col">Word</th>
+              <th scope="col">Meaning</th>
+              <th scope="col" lang="zh-Hant">
+                級別
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {block.vocabulary.map((v, i) => (
+              <tr key={`${v.word}-${i}`}>
+                <td>{v.word}</td>
+                <td>
+                  <SheetText
+                    label={`${v.word} 的解釋`}
+                    value={v.definition}
+                    disabled={locked}
+                    onChange={(definition) =>
+                      patch((b) => ({
+                        ...b,
+                        vocabulary: b.vocabulary.map((x, j) => (j === i ? { ...x, definition } : x)),
+                      }))
+                    }
+                  />
+                </td>
+                <td lang="zh-Hant" className="ws-vocab-level">
+                  {v.level === null ? "級別未知" : `第 ${v.level} 級`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {supports.map((s) => (
+        <div key={s.id} className="ws-support" role="group" aria-label={`鷹架 ${s.kind}`}>
+          <p className="ws-support-head" lang="zh-Hant">
+            <span>
+              {SCAFFOLD_TYPE_LABEL[s.type]} · {s.kind}
+            </span>
+            <LevelChips
+              name="這個鷹架"
+              all={levels}
+              value={s.levels}
+              disabled={locked}
+              onChange={(next) => patchScaffold(s.id, (x) => ({ ...x, levels: next }))}
+            />
+            <button
+              type="button"
+              className="text-link is-plain"
+              disabled={locked}
+              aria-label={`刪除鷹架 ${s.kind}`}
+              onClick={() => patch((b) => ({ ...b, scaffolds: b.scaffolds.filter((x) => x.id !== s.id) }))}
+            >
+              刪除
+            </button>
+          </p>
+          <SheetText
+            label={`${s.kind}（${name}）`}
+            value={s.content}
+            disabled={locked}
+            onChange={(text) => patchScaffold(s.id, (x) => ({ ...x, content: text }))}
+          />
+        </div>
+      ))}
+
+      <ol className="ws-items">
+        {view.items.map(({ item, no, lines }) => {
+          const hasOptions =
+            item.options.length > 0 || ["選擇題", "是非題", "配對題"].includes(item.answer_format ?? "");
+          return (
+            <li key={item.id} value={no}>
+              <SheetText
+                label={`題目 ${no}`}
+                value={item.prompt}
+                placeholder="Question"
+                disabled={locked}
+                onChange={(prompt) => patchItem(item.id, (it) => ({ ...it, prompt }))}
+              />
+              {hasOptions && (
+                <SheetText
+                  label={`選項 ${no}（每行一個）`}
+                  className="is-options"
+                  value={item.options.join("\n")}
+                  placeholder="One option per line"
+                  disabled={locked}
+                  onChange={(text) =>
+                    patchItem(item.id, (it) => ({ ...it, options: text.split("\n").map((o) => o.trimStart()) }))
+                  }
+                />
+              )}
+              {!teacher &&
+                Array.from({ length: lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
+              {teacher && (
+                <div className="ws-answer" lang="zh-Hant">
+                  <div className="ws-answer-row">
+                    <span>參考答案</span>
+                    <SheetText
+                      label={`參考答案 ${no}`}
+                      value={item.answer}
+                      disabled={locked}
+                      onChange={(answer) => patchItem(item.id, (it) => ({ ...it, answer }))}
+                    />
+                  </div>
+                  <div className="ws-answer-row">
+                    <span>依據（教材原文）</span>
+                    <SheetText
+                      label={`依據 ${no}`}
+                      value={item.evidence}
+                      disabled={locked}
+                      onChange={(evidence) => patchItem(item.id, (it) => ({ ...it, evidence }))}
+                    />
+                  </div>
+                </div>
+              )}
+              <p className="ws-item-tools" lang="zh-Hant">
+                <label>
+                  <span className="sr-only">作答方式 {no}</span>
+                  <select
+                    aria-label={`作答方式 ${no}`}
+                    value={item.answer_format ?? ""}
+                    disabled={locked}
+                    onChange={(e) =>
+                      patchItem(item.id, (it) => ({ ...it, answer_format: e.target.value === "" ? null : e.target.value }))
+                    }
+                  >
+                    <option value="">未指定</option>
+                    {ANSWER_FORMATS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <LevelChips
+                  name={`題目 ${no} `}
+                  all={levels}
+                  value={item.levels}
+                  disabled={locked}
+                  onChange={(next) => patchItem(item.id, (it) => ({ ...it, levels: next }))}
+                />
+                <button
+                  type="button"
+                  className="text-link is-plain"
+                  aria-label={`刪除題目 ${no}`}
+                  disabled={locked}
+                  onClick={() => patch((b) => ({ ...b, items: b.items.filter((it) => it.id !== item.id) }))}
+                >
+                  刪除
+                </button>
+              </p>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="ws-add" lang="zh-Hant">
+        <button
+          type="button"
+          className="text-link is-plain"
+          disabled={locked}
+          onClick={() => patch((b) => ({ ...b, items: [...b.items, newItem(levels)] }))}
+        >
+          加一題
+        </button>
+      </p>
+
+      {teacher && (
+        <div className="ws-answer ws-notes" lang="zh-Hant">
+          <div className="ws-answer-row">
+            <span>教師備註</span>
+            <SheetText
+              label={`教師備註 ${name}`}
+              lang="zh-Hant"
+              value={block.teacher_notes}
+              disabled={locked}
+              onChange={(teacher_notes) => patch((b) => ({ ...b, teacher_notes }))}
+            />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) {
+  const ids = useId();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const state = ws.state;
+  if (!state) return null;
+
+  async function run(format: WsExportFormat, audience: WsAudience) {
+    const key = `${audience}-${format}`;
+    setBusy(key);
+    setError(null);
+    try {
+      const failed = await ws.flush();
+      if (failed) throw new Error(failed);
+      const { blob, filename } = await api.exportWorksheet(state!.id, { format, level, audience });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      setError(err instanceof Error && !("status" in err) ? `沒有匯出：${err.message}` : errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const combos: Array<[WsAudience, WsExportFormat]> = [
+    ["student", "docx"],
+    ["student", "pdf"],
+    ["teacher", "docx"],
+    ["teacher", "pdf"],
+  ];
+  return (
+    <section className="ws-export" aria-labelledby={`${ids}-h`}>
+      <h2 id={`${ids}-h`}>匯出</h2>
+      <p className="quiet-note">
+        匯出目前這個分頁（{LEVEL_LABEL[level]}）。DOCX 可以再用 Word 編輯；參考答案只在教師參考版。
+      </p>
+      <div className="actions">
+        {combos.map(([audience, format]) => (
+          <button
+            key={`${audience}-${format}`}
+            type="button"
+            className="secondary-button"
+            disabled={busy !== null || state.running}
+            onClick={() => void run(format, audience)}
+          >
+            {busy === `${audience}-${format}` ? "匯出中…" : `${AUDIENCE_LABEL[audience]} ${format.toUpperCase()}`}
+          </button>
+        ))}
+      </div>
+      <label className="ws-filename" htmlFor={`${ids}-fn`}>
+        檔名
+        <input id={`${ids}-fn`} type="text" value={state.filename} onChange={(e) => ws.setFilename(e.target.value)} />
+      </label>
+      <ErrorText message={error} />
+    </section>
+  );
+}
+
+function chosenLine(content: WorksheetContent): string | null {
+  const chosen = content.chosen;
+  if (!chosen || chosen.auto.length === 0) return null;
+  const parts = chosen.auto.map((field) => {
+    const s = chosen.settings;
+    const values =
+      field === "levels"
+        ? s.levels.map((l) => LEVEL_LABEL[l])
+        : field === "minutes"
+          ? [`主要任務約 ${chosen.item_budget} 題`]
+          : s[field];
+    return `${AUTO_FIELD_LABEL[field]}：${values.length > 0 ? values.join("、") : "依教材判斷"}`;
+  });
+  return `這次由 Manna 決定：${parts.join("；")}。`;
+}
+
+interface ResultViewProps {
+  ws: WorksheetController;
+  onAdjust: () => void;
+}
+
+/**
+ * The generated worksheet, edited in place: version tabs (only the selected ones), student or
+ * teacher view, block tools, quiet saving. Answers exist in the page only in the teacher view.
+ */
+export function ResultView({ ws, onAdjust }: ResultViewProps) {
+  const state = ws.state;
+  const levels = state?.content.levels ?? [];
+  const [level, setLevel] = useState<WsLevel>(levels[0] ?? "standard");
+  const [audience, setAudience] = useState<WsAudience>("student");
+  const [dragging, setDragging] = useState<string | null>(null);
+  const radioName = useId();
+
+  // The selected tab must be one of this worksheet's versions (they can change after a new run).
+  const current: WsLevel = levels.includes(level) ? level : (levels[0] ?? "standard");
+
+  if (!state) return null;
+  const { content } = state;
+  const locked = state.running || ws.busy;
+  const sheet = projectSheet(content, current, audience);
+  const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
+  const chosen = chosenLine(content);
+
+  return (
+    <div className="ws-result">
+      <SopSyncNotice ws={ws} />
+
+      <div className="ws-tabs" role="tablist" aria-label="版本">
+        {levels.map((l) => (
+          <button
+            key={l}
+            type="button"
+            role="tab"
+            aria-selected={l === current}
+            className={l === current ? "is-current" : ""}
+            onClick={() => setLevel(l)}
+          >
+            {LEVEL_LABEL[l]}
+          </button>
+        ))}
+        <button type="button" className="text-link is-plain ws-adjust" onClick={onAdjust}>
+          調整設定
+        </button>
+      </div>
+
+      <div className="ws-tool-row">
+        <div className="ws-seg" role="radiogroup" aria-label="顯示版本">
+          {(["student", "teacher"] as const).map((a) => (
+            <label key={a}>
+              <input type="radio" name={radioName} checked={audience === a} onChange={() => setAudience(a)} />
+              <span>{AUDIENCE_LABEL[a]}</span>
+            </label>
+          ))}
+        </div>
+        <label className="check-row ws-show-objectives">
+          <input
+            type="checkbox"
+            checked={content.show_objectives}
+            disabled={locked}
+            onChange={(e) => ws.setContent((c) => ({ ...c, show_objectives: e.target.checked }))}
+          />
+          <span>顯示學習目標</span>
+        </label>
+        <Link className="text-link" to={`/worksheets/${state.id}/check`}>
+          詞彙級別檢查
+        </Link>
+      </div>
+
+      {state.running && <ProgressPanel jobs={state.jobs} />}
+      {!state.running && <RunOutcome jobs={state.jobs} />}
+      <ErrorText message={ws.actionError} />
+
+      <p className="manna-label ws-draft-note">
+        <span className="star" aria-hidden="true" />
+        Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除。
+        {audience === "teacher" ? "參考答案只在教師參考版。" : ""}
+      </p>
+      {chosen && <p className="quiet-note ws-chosen">{chosen}</p>}
+      {content.chosen?.reasons.map((r) => (
+        <p key={r} className="quiet-note">
+          {r}
+        </p>
+      ))}
+      {content.notices.length > 0 && (
+        <ul className="ws-notices" aria-label="產生時的提醒">
+          {content.notices.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      )}
+
+      <article className="ws" lang="en" aria-label={`${LEVEL_LABEL[current]} ${AUDIENCE_LABEL[audience]}`}>
+        <input
+          className="ws-title"
+          type="text"
+          aria-label="學習單標題"
+          value={state.title}
+          onChange={(e) => ws.setTitle(e.target.value)}
+        />
+        <p className="ws-meta">
+          <span>Class ______</span>
+          <span>No. ______</span>
+          <span>Name ____________</span>
+        </p>
+
+        {content.show_objectives && (
+          <section className="ws-block ws-objectives" aria-label="學習目標">
+            <h3>Today I can …</h3>
+            <ol>
+              {content.objectives.map((o, i) => (
+                <li key={o.id}>
+                  <SheetText
+                    label={`學習目標 ${i + 1}`}
+                    value={o.student_facing_en}
+                    placeholder={o.text || "I can …"}
+                    disabled={locked}
+                    onChange={(text) =>
+                      ws.setContent((c) => ({
+                        ...c,
+                        objectives: c.objectives.map((x) =>
+                          x.id === o.id ? { ...x, student_facing_en: text, origin: editedOrigin(x.origin) } : x,
+                        ),
+                      }))
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="text-link is-plain"
+                    lang="zh-Hant"
+                    aria-label={`刪除學習目標 ${i + 1}`}
+                    disabled={locked}
+                    onClick={() =>
+                      ws.setContent((c) => ({ ...c, objectives: c.objectives.filter((x) => x.id !== o.id) }))
+                    }
+                  >
+                    刪除
+                  </button>
+                </li>
+              ))}
+            </ol>
+            <p className="ws-add" lang="zh-Hant">
+              <button
+                type="button"
+                className="text-link is-plain"
+                disabled={locked}
+                onClick={() =>
+                  ws.setContent((c) => ({
+                    ...c,
+                    objectives: [
+                      ...c.objectives,
+                      { id: newId("o"), type: "content", text: "", student_facing_en: "", origin: "teacher", sop_id: null },
+                    ],
+                  }))
+                }
+              >
+                加一項目標
+              </button>
+            </p>
+          </section>
+        )}
+
+        {content.blocks.map((block, index) => {
+          const view = views.get(block.id);
+          if (!view) {
+            const name = BLOCK_KIND_LABEL[block.kind];
+            return (
+              <section key={block.id} className="ws-block is-off" aria-label={`區塊 ${name}（已關掉）`} lang="zh-Hant">
+                <p className="quiet-note">
+                  {name}已關掉，不會印出。內容還留著。
+                  <button
+                    type="button"
+                    className="text-link is-plain"
+                    disabled={locked}
+                    onClick={() =>
+                      ws.setContent((c) => ({
+                        ...c,
+                        blocks: c.blocks.map((b) => (b.id === block.id ? { ...b, enabled: true } : b)),
+                      }))
+                    }
+                  >
+                    加回{block.kind === "exit_ticket" ? ` ${name}` : name}
+                  </button>
+                </p>
+              </section>
+            );
+          }
+          return (
+            <BlockSection
+              key={block.id}
+              ws={ws}
+              view={view}
+              index={index}
+              count={content.blocks.length}
+              audience={audience}
+              locked={locked}
+              dragging={dragging}
+              setDragging={setDragging}
+            />
+          );
+        })}
+
+        <p className="ws-add" lang="zh-Hant">
+          <button
+            type="button"
+            className="text-link is-plain"
+            disabled={locked}
+            onClick={() =>
+              ws.setContent((c) => {
+                const exit = c.blocks.findIndex((b) => b.kind === "exit_ticket");
+                const added = newBlock(c.levels);
+                const blocks = [...c.blocks];
+                blocks.splice(exit < 0 ? blocks.length : exit, 0, added);
+                return { ...c, blocks };
+              })
+            }
+          >
+            加一個區塊
+          </button>
+        </p>
+      </article>
+
+      <ExportArea ws={ws} level={current} />
+      <LessonLinkControls ws={ws} />
+    </div>
+  );
+}

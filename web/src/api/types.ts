@@ -1104,3 +1104,250 @@ export interface SaveSopMaterialRequest {
   source_note?: string;
   text: string;
 }
+
+// ---- Phase 2.3：學習單產生器 ----
+
+export type WsLevel = "basic" | "standard" | "advanced";
+export type WsAudience = "student" | "teacher";
+/** 教師寫的｜Manna 產生的｜Manna 產生後教師改過 */
+export type WsOrigin = "teacher" | "ai" | "ai_edited";
+export type WsBlockKind = "warmup" | "activity" | "exit_ticket";
+/** 語言／教學／程序鷹架 */
+export type WsScaffoldType = "verbal" | "instructional" | "procedural";
+
+/** 四個區塊的選取（規格 §5 的標籤，逐字）；都可以是空陣列。 */
+export interface WorksheetSettings {
+  material_types: string[];
+  student_tasks: string[];
+  answer_formats: string[];
+  generation: string[];
+  levels: WsLevel[];
+  minutes: number | null;
+}
+
+/** 教材接縫：產生器只認這個形狀。 */
+export interface WorksheetMaterial {
+  title: string;
+  paragraphs: { id: string; text: string }[];
+  source: {
+    kind: "pasted" | "lesson_sop";
+    lesson_id: number | null;
+    material_version_no: number | null;
+    note: string;
+  };
+}
+
+export interface WsObjective {
+  id: string;
+  type: ObjectiveType;
+  text: string;
+  student_facing_en: string;
+  origin: WsOrigin;
+  sop_id: string | null;
+}
+
+export interface WsSeedTask {
+  id: string;
+  paragraph_ids: string[];
+  function: InfoFunction | null;
+  text: string;
+  sop_block_id: string | null;
+  sop_task_id: string | null;
+}
+
+/** 產生前可以編修的「帶入內容」。 */
+export interface WorksheetBrief {
+  tasks: WsSeedTask[];
+  warmup: string[];
+  vocabulary: string[];
+  exit_ticket: { kind: ExitKind; text: string }[];
+}
+
+export interface WsVocab {
+  word: string;
+  /** 由伺服器查詞彙表；查不到是 null */
+  level: number | null;
+  definition: string;
+  context: string;
+  paragraph_id: string | null;
+}
+
+export interface WsItem {
+  id: string;
+  answer_format: string | null;
+  prompt: string;
+  options: string[];
+  /** 只出現在教師參考版 */
+  answer: string;
+  /** 只出現在教師參考版 */
+  evidence: string;
+  purpose: ExitKind | null;
+  levels: WsLevel[];
+  origin: WsOrigin;
+}
+
+export interface WsScaffold {
+  id: string;
+  type: WsScaffoldType;
+  kind: string;
+  content: string;
+  steps: string[];
+  levels: WsLevel[];
+  /** 系統自動加入的程序鷹架 */
+  auto: boolean;
+  origin: WsOrigin;
+}
+
+export interface WsBlock {
+  id: string;
+  kind: WsBlockKind;
+  enabled: boolean;
+  title: string;
+  instructions: string;
+  paragraph_ids: string[];
+  info_function: InfoFunction | null;
+  student_tasks: string[];
+  objective_ids: string[];
+  vocabulary: WsVocab[];
+  items: WsItem[];
+  scaffolds: WsScaffold[];
+  teacher_notes: string;
+  origin: WsOrigin;
+  message: string | null;
+  sop_block_id: string | null;
+}
+
+export type WsAutoField = "material_types" | "student_tasks" | "answer_formats" | "generation" | "levels" | "minutes";
+
+export interface WsChosen {
+  settings: WorksheetSettings;
+  auto: WsAutoField[];
+  item_budget: number;
+  reasons: string[];
+}
+
+export interface WorksheetContent {
+  objectives: WsObjective[];
+  show_objectives: boolean;
+  blocks: WsBlock[];
+  levels: WsLevel[];
+  chosen: WsChosen | null;
+  notices: string[];
+}
+
+export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket";
+export type WsJobOutcome = "shown" | "blocked" | "timeout" | "error" | "disabled" | "skipped";
+
+export interface WsJob {
+  id: number;
+  worksheet_id: number;
+  run_no: number;
+  step: WsJobStep;
+  block_id: string | null;
+  status: "queued" | "running" | "done";
+  outcome: WsJobOutcome | null;
+  phase: string;
+  message: string | null;
+  interaction_id: number | null;
+  context: AiContextItem[];
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface WorksheetSummary {
+  id: number;
+  title: string;
+  filename: string;
+  lesson: { id: number; title: string; unit_id: number; unit_title: string } | null;
+  class_id: number | null;
+  generated: boolean;
+  levels: WsLevel[];
+  version_no: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorksheetState extends WorksheetSummary {
+  material: WorksheetMaterial;
+  settings: WorksheetSettings;
+  /** 系統建議的（畫面上打星號） */
+  suggested: WorksheetSettings;
+  brief: WorksheetBrief;
+  versions_count: number;
+  saved_at: string;
+  content: WorksheetContent;
+  jobs: WsJob[];
+  running: boolean;
+  /** 有上一版可以復原的區塊 id */
+  undoable: string[];
+  sop_sync: { linked: boolean; changes: number };
+}
+
+export interface WsJobsState {
+  running: boolean;
+  jobs: WsJob[];
+  version_no: number;
+}
+
+export interface CreateWorksheetRequest {
+  lesson_id?: number;
+  class_id?: number;
+  material?: { title?: string; text: string; source_note?: string };
+}
+
+export interface SaveWorksheetRequest {
+  title?: string;
+  filename?: string;
+  settings?: WorksheetSettings;
+  brief?: WorksheetBrief;
+  content?: WorksheetContent;
+}
+
+export interface SaveWorksheetMaterialRequest {
+  title?: string;
+  text: string;
+  source_note?: string;
+}
+
+export interface SopSyncChange {
+  key: string;
+  target: "objective" | "task_block";
+  action: "add" | "update" | "remove";
+  label: string;
+  before: string;
+  after: string;
+}
+
+export interface SopSyncPreview {
+  lesson_id: number;
+  sop_version_no: number | null;
+  changes: SopSyncChange[];
+  /** 預留：建議補充至單元想法（CoRe）；這一版永遠是空的 */
+  core_suggestions: unknown[];
+}
+
+export interface SopSyncResult {
+  sop_version_no: number;
+  applied: number;
+}
+
+export interface WsVocabCheck {
+  id: number;
+  level: WsLevel;
+  audience: "student";
+  target_level: number;
+  version_no: number;
+  checked_at: string;
+  stale: boolean;
+  analysis: VocabularyAnalysis;
+  /** analysis 中 position.line（從 1）對應的位置說明 */
+  lines: string[];
+}
+
+export type WsExportFormat = "docx" | "pdf";
+
+export interface WsExportQuery {
+  format: WsExportFormat;
+  level: WsLevel;
+  audience: WsAudience;
+}

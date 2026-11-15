@@ -17,6 +17,8 @@ import { RemotePage } from "./pages/RemotePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
 import { RunReviewPage } from "./pages/RunReviewPage";
 import { UnitPage } from "./pages/UnitPage";
+import { WorksheetCheckPage } from "./pages/WorksheetCheckPage";
+import { WorksheetPage } from "./pages/WorksheetPage";
 import { WorksheetsPage } from "./pages/WorksheetsPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -77,6 +79,8 @@ export function AppRoutes() {
         <Route path="runs/:runId" element={<RunConsolePage />} />
         <Route path="runs/:runId/review" element={<RunReviewPage />} />
         <Route path="worksheets" element={<WorksheetsPage />} />
+        <Route path="worksheets/:worksheetId" element={<WorksheetPage />} />
+        <Route path="worksheets/:worksheetId/check" element={<WorksheetCheckPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />

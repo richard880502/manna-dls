@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { LessonDetail, LessonRun, LessonStep, Unit } from "../api/types";
+import type { LessonDetail, LessonRun, LessonStep, Unit, WorksheetSummary } from "../api/types";
 import { StartClassDialog } from "../components/classes/StartClassDialog";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
@@ -306,6 +306,47 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
     return flushSop();
   }, [flushPlan, flushSop]);
 
+  // 學習單: made from this lesson at any step (spec §4.1); nothing in the SOP has to be finished.
+  const [worksheets, setWorksheets] = useState<WorksheetSummary[]>([]);
+  const [makingWorksheet, setMakingWorksheet] = useState(false);
+  const [worksheetError, setWorksheetError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .listWorksheets(lessonId)
+      .then((rows) => {
+        if (alive && Array.isArray(rows)) setWorksheets(rows);
+      })
+      .catch(() => {
+        // The list is a convenience; the lesson page does not depend on it.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [lessonId]);
+
+  /** 產生學習單: saves what is pending, makes a worksheet prefilled from this lesson, and opens it. */
+  async function makeWorksheet() {
+    setWorksheetError(null);
+    setMakingWorksheet(true);
+    try {
+      const failed = await saveAll();
+      if (failed) {
+        setWorksheetError(`沒有儲存成功，所以還沒建立學習單：${failed}`);
+        return;
+      }
+      const created = await api.createWorksheet({
+        lesson_id: lessonId,
+        ...(activeClassId !== null ? { class_id: activeClassId } : {}),
+      });
+      navigate(`/worksheets/${created.id}`);
+    } catch (err) {
+      setWorksheetError(errorMessage(err));
+    } finally {
+      setMakingWorksheet(false);
+    }
+  }
+
   /** Leaving a field saves the plan and the SOP now, without waiting for the timer. */
   const saveOnBlur = useCallback(() => {
     void flushPlan().then((failed) => (failed ? failed : flushSop()));
@@ -485,6 +526,16 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
             {sopStepsDone > 0 ? `已經做了 ${sopStepsDone} 步。` : "每一步都可以略過。"}
           </span>
         </p>
+        {worksheets.length > 0 && (
+          <p className="sop-entry">
+            <span className="quiet-note">這節課做過的學習單：</span>
+            {worksheets.map((w) => (
+              <Link key={w.id} className="text-link is-plain" to={`/worksheets/${w.id}`}>
+                {w.title || "未命名的學習單"}
+              </Link>
+            ))}
+          </p>
+        )}
         <div className="plan-sections">
           {prepOrder.map(([key, node]) => (
             <Fragment key={key}>{node}</Fragment>
@@ -627,6 +678,14 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
               </>
             )}
           </p>
+          <button
+            type="button"
+            className="text-link"
+            onClick={() => void makeWorksheet()}
+            disabled={makingWorksheet || starting}
+          >
+            {makingWorksheet ? "建立中…" : "產生學習單"}
+          </button>
           {step !== null && (
             <button type="button" className="secondary-button" onClick={() => void start()} disabled={starting}>
               {startLabel}
@@ -635,6 +694,7 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
         </div>
       </div>
       {step !== null && <ErrorText message={startError} />}
+      <ErrorText message={worksheetError} />
 
       {lesson.previous_next_change && (
         <Notice tone="warn">

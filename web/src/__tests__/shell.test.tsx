@@ -46,18 +46,16 @@ describe("app shell", () => {
     },
   );
 
-  it("學習單 is an honest placeholder: it says what is coming and offers nothing to operate", async () => {
+  it("學習單 opens the generator: paste material to make one, and an honest empty list", async () => {
     signIn();
-    mockApi(baseRoutes());
+    mockApi({ ...baseRoutes(), "GET /api/worksheets": [] });
     const user = userEvent.setup();
     renderApp("/");
     await user.click(await screen.findByRole("link", { name: "學習單" }));
 
-    const page = within(await screen.findByRole("region", { name: "學習單產生器開發中" }));
-    expect(page.getByText(/這個功能還在開發/)).toBeInTheDocument();
-    expect(page.queryByRole("button")).not.toBeInTheDocument();
-    expect(page.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(page.getByRole("link", { name: "備課庫" })).toHaveAttribute("href", "/library");
+    expect(await screen.findByRole("heading", { name: "學習單", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "貼上教材文字" })).toBeInTheDocument();
+    expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
     expect(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "學習單" })).toHaveAttribute(
       "aria-current",
       "page",
