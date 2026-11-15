@@ -16,6 +16,7 @@ pub mod material;
 pub mod schemas;
 pub mod store;
 pub mod sync;
+pub mod template;
 pub mod vocab;
 
 use std::collections::HashSet;
@@ -500,6 +501,9 @@ pub struct Block {
     /// Why this block has no generated content, when a step failed. Never blocks editing.
     pub message: Option<String>,
     pub sop_block_id: Option<String>,
+    /// The template section this block was generated from (a worksheet made from a template):
+    /// regenerating the block re-runs that section.
+    pub template_section_id: Option<String>,
 }
 
 impl Default for Block {
@@ -521,6 +525,7 @@ impl Default for Block {
             origin: Origin::Teacher,
             message: None,
             sop_block_id: None,
+            template_section_id: None,
         }
     }
 }
@@ -618,6 +623,12 @@ impl Content {
             check_text("區塊標題", &b.title)?;
             check_text("作答指示", &b.instructions)?;
             check_text("教師備註", &b.teacher_notes)?;
+            if b.template_section_id
+                .as_ref()
+                .is_some_and(|id| id.chars().count() > MAX_ID_CHARS)
+            {
+                return Err(format!("版型區塊的 id 最多 {MAX_ID_CHARS} 個字元。"));
+            }
             b.student_tasks = normalise_labels("學生任務", &b.student_tasks, &all_tasks)?;
             check_ids("鷹架", b.scaffolds.iter().map(|s| s.id.as_str()))?;
             for i in &mut b.items {

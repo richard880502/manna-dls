@@ -51,6 +51,10 @@ pub const STEP_TASKS: &str = "tasks";
 pub const STEP_WARMUP: &str = "warmup";
 pub const STEP_SCAFFOLDS: &str = "scaffolds";
 pub const STEP_EXIT: &str = "exit_ticket";
+/// A generation from a template: one job, one model call per block.
+pub const STEP_TEMPLATE: &str = "template";
+
+pub mod template;
 
 // Output budgets: about twice the longest output measured with gemma-4-31B-it
 // (docs/llm-eval/worksheet-real/README.md: tasks ≈ 500 tokens per paragraph + 500, warm-up
@@ -726,6 +730,7 @@ where
         "tasks_summary",
         "vocab_candidates",
         "teacher_tasks",
+        "done_titles",
     ] {
         if let Some(v) = vars.get(key).cloned() {
             vars.insert(key, prompts::redacted("由教材衍生的內容", &v));
@@ -1432,6 +1437,10 @@ fn check_material(worksheet: &Worksheet) -> AppResult<()> {
 /// Creates the four jobs of a generation (or joins the run in progress) and starts the work.
 pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()> {
     check_material(&input.worksheet)?;
+    // A worksheet made from a template follows it instead of the four steps.
+    if let Some(tpl) = template::for_generation(&state.db, &input.worksheet).await? {
+        return template::start_generation(state, input, tpl).await;
+    }
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
     let steps = [STEP_TASKS, STEP_WARMUP, STEP_SCAFFOLDS, STEP_EXIT];
@@ -1700,6 +1709,10 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
         .block(block_id)
         .cloned()
         .ok_or_else(|| AppError::not_found("找不到這個區塊。"))?;
+    // A block generated from a template section re-runs that section's call.
+    if let Some((tpl, section)) = template::for_block(&state.db, &input.worksheet, &block).await? {
+        return template::start_block(state, input, block, tpl, section).await;
+    }
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
     let steps: &[&'static str] = match block.kind {
@@ -1768,7 +1781,7 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
         .collect();
     const SKIPPED: &str = "前一步沒有成功，所以沒有執行。";
 
-    let (mut block, interaction_id) = match old.kind {
+    let (block, interaction_id) = match old.kind {
         BlockKind::Activity => {
             let mut nos: Vec<i64> = old
                 .paragraph_ids
@@ -1867,6 +1880,19 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             (block, interaction_id)
         }
     };
+    replace_block(run, &old, block, interaction_id).await
+}
+
+/// Puts a regenerated block in place of `old` in the worksheet as it is now, keeping `old` for
+/// undo.
+async fn replace_block(
+    run: &Run,
+    old: &Block,
+    mut block: Block,
+    interaction_id: i64,
+) -> AppResult<()> {
+    let db = run.db();
+    let ws = &run.input.worksheet;
     block.id = old.id.clone();
     block.enabled = old.enabled;
     block.sop_block_id = old.sop_block_id.clone();

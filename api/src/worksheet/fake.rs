@@ -18,6 +18,16 @@
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)          |
 //!
 //! `FAKE_WS_SPLICE_ALWAYS` evidence has no verbatim piece of five words, so it is cleared.
+//!
+//! Templates (我的學習單版型), see [`template_outline`], [`template_details`] and
+//! [`template_section`]:
+//!
+//! | marker                   | effect                                                              |
+//! |--------------------------|---------------------------------------------------------------------|
+//! | `## <title>` lines       | extraction: each is one outline item; `[n]` in it → `per_paragraph`, "video"/「影片」 → `needs_external_material` |
+//! | `FAKE_TPL_BAD_LABEL`     | extraction: details use labels outside the fixed sets and `item_count` 40 (the server drops / clamps them) |
+//! | `FAKE_BLOCK`             | extraction: unreadable output in both calls (the template fails); in a section's title: that block fails |
+//! | `FAKE_RUNAWAY`           | every call: the first attempt runs to `max_tokens` (the retry succeeds) |
 
 use serde_json::{json, Value};
 
@@ -440,3 +450,152 @@ const ALL_FORMATS_COVERED: [&str; 8] = [
     FMT_ORGANIZER,
     FMT_PARAGRAPH,
 ];
+
+// ---------------------------------------------------------------- templates (我的學習單版型)
+
+/// Call A: every `## <title>` line of the worksheet is one outline item (three generic ones
+/// when there are none).
+pub fn template_outline(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    if has("FAKE_BLOCK") {
+        return json!({ "not_an_outline": true });
+    }
+    let text = ctx["text"].as_str().unwrap_or_default();
+    let mut outline: Vec<Value> = text
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("## "))
+        .map(|title| {
+            json!({ "title_pattern": title.trim(), "per_paragraph": title.contains("[n]") })
+        })
+        .collect();
+    if outline.is_empty() {
+        outline = ["Warm-up: [主題]", "Reading: [主題]", "Exit ticket"]
+            .iter()
+            .map(|t| json!({ "title_pattern": t, "per_paragraph": false }))
+            .collect();
+    }
+    json!({
+        "worksheet_kind": "課文深度閱讀",
+        "instruction_language": "英文",
+        "header_fields": ["Name", "No", "Class"],
+        "shows_objectives": text.contains("Objective"),
+        "includes_passage_text": false,
+        "outline": outline,
+    })
+}
+
+/// Call B: one section per outline item, its design guessed from the title.
+pub fn template_details(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    if has("FAKE_BLOCK") {
+        return json!({ "sections": "unreadable" });
+    }
+    let bad = has("FAKE_TPL_BAD_LABEL");
+    let outline = ctx["outline"].as_array().cloned().unwrap_or_default();
+    let sections: Vec<Value> = outline
+        .iter()
+        .map(|o| {
+            let title = o["title_pattern"].as_str().unwrap_or_default();
+            let lower = title.to_lowercase();
+            let per_paragraph = o["per_paragraph"] == true;
+            let external = lower.contains("video") || title.contains("影片");
+            let block_kind = if lower.starts_with("warm") {
+                "warmup"
+            } else if lower.contains("exit") || lower.contains("reflection") {
+                "exit_ticket"
+            } else {
+                "activity"
+            };
+            let format = if lower.contains("vocab") {
+                FMT_BLANK
+            } else if lower.contains("writ") {
+                FMT_PARAGRAPH
+            } else if lower.contains("choice") {
+                FMT_CHOICE
+            } else {
+                FMT_SHORT
+            };
+            let mut tasks = vec!["理解內容"];
+            let mut formats = vec![format];
+            if bad {
+                tasks.push("探究");
+                formats.push("SDGs");
+            }
+            json!({
+                "title_pattern": title,
+                "purpose": "（測試）讓學生依段落找出細節並說明作者的寫法。",
+                "block_kind": block_kind,
+                "student_tasks": tasks,
+                "answer_formats": formats,
+                "item_count": if bad { 40 } else if format == FMT_PARAGRAPH { 1 } else { 3 },
+                "text_scope": if per_paragraph { "逐段" } else if external { "課文外" } else { "全文" },
+                "scaffolds": if bad { vec![KIND_GUIDING, "高層次思考"] } else { vec![KIND_GUIDING] },
+                "instruction_style": "英文祈使句，一句話",
+                "item_patterns": ["What does [人物] do in paragraph [n]?"],
+                "needs_external_material": external,
+            })
+        })
+        .collect();
+    json!({
+        "sections": sections,
+        "generation_options": if bad { vec![GEN_GUIDING_LABEL, "SEL"] } else { vec![GEN_GUIDING_LABEL] },
+        "style_notes": ["每段先問細節再問寫作手法", "指示語都是一句英文"],
+    })
+}
+
+const GEN_GUIDING_LABEL: &str = "提供引導問題";
+
+/// One block from a template section: `item_count + 1` items (the server keeps `item_count`)
+/// of the section's first answer format, about the target paragraph (or the first one). A
+/// section that needs the teacher's own material gets placeholder items only.
+pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    let section = &ctx["section"];
+    let title = section["title_pattern"].as_str().unwrap_or("Section");
+    if has("FAKE_BLOCK") {
+        return json!({ "title": title, "instructions": "", "scaffold": "", "items": [] });
+    }
+    let paragraphs: Vec<String> = strings(&ctx["paragraphs"]);
+    let paragraph = ctx["paragraph"].as_u64().map(|p| p as usize);
+    let no = paragraph.unwrap_or(1);
+    let text = paragraphs
+        .get(no.saturating_sub(1))
+        .cloned()
+        .unwrap_or_default();
+    let sentence = first_sentence(&text);
+    let label = match paragraph {
+        Some(p) => format!("paragraph {p}"),
+        None => "the text".to_string(),
+    };
+    let format = strings(&section["answer_formats"])
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| FMT_SHORT.to_string());
+    let count = (ctx["item_count"].as_u64().unwrap_or(3) as usize + 1).min(12);
+    let external = section["needs_external_material"] == true;
+    let run_no = ctx["run_no"].as_i64().unwrap_or(1);
+    let items: Vec<Value> = (1..=count)
+        .map(|k| {
+            if external {
+                return json!({
+                    "answer_format": format,
+                    "prompt": format!("After you study the material your teacher gives you, write down key point {k}: ______"),
+                    "options": [],
+                    "answer": "Answers depend on the material the teacher provides.",
+                });
+            }
+            let raw = item(&format, &label, &sentence, k, TIER_CORE_LABEL);
+            json!({
+                "answer_format": format,
+                "prompt": format!("{} [v{run_no}.{attempt}]", raw["prompt_en"].as_str().unwrap_or_default()),
+                "options": raw["options"],
+                "answer": raw["answer_en"],
+            })
+        })
+        .collect();
+    json!({
+        "title": title.replace("[n]", &no.to_string()),
+        "instructions": format!("Read {label} and answer the questions."),
+        "scaffold": if external { String::new() } else { "Look for the key words in the paragraph first.".to_string() },
+        "items": items,
+    })
+}
+
+const TIER_CORE_LABEL: &str = "core";

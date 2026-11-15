@@ -165,7 +165,7 @@ pub fn verbatim_piece(quote: &str, passage: &str) -> Option<String> {
 }
 
 /// An answer of four words or more that appears word for word in `text`.
-fn contains_answer(text: &str, answer: &str) -> bool {
+pub(crate) fn contains_answer(text: &str, answer: &str) -> bool {
     let a = norm(answer).to_lowercase();
     word_count(&a) >= 4 && norm(text).to_lowercase().contains(&a)
 }
@@ -1121,10 +1121,303 @@ pub fn is_warmup_target(target: &str) -> bool {
     target == TARGET_WARMUP
 }
 
+// ---------------------------------------------------------------- a block made from a template
+
+/// One block generated from a template section (instructions may be Chinese: the template's
+/// instruction language decides, so there is no English-only check here).
+pub struct SectionCtx<'a> {
+    /// The new material, paragraphs joined.
+    pub passage: &'a str,
+    pub item_count: usize,
+    pub needs_external: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CleanSectionItem {
+    pub answer_format: String,
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub answer: String,
+    /// The answer's verbatim support in the material, when there is one (teacher version).
+    pub evidence: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CleanSection {
+    pub title: String,
+    pub instructions: String,
+    pub scaffold: String,
+    pub items: Vec<CleanSectionItem>,
+}
+
+const SECTION_CHECKS: [&str; 6] = [
+    "labels_from_spec_sets",
+    "items_wellformed",
+    "answer_not_in_prompt",
+    "item_count_within_template",
+    "has_items",
+    "no_invented_material",
+];
+
+/// Text that names a resource from outside the material: a web address or a video site.
+fn names_a_resource(text: &str) -> bool {
+    let t = text.to_lowercase();
+    [
+        "http://", "https://", "www.", "youtube", "youtu.be", "ted.com", ".com/", ".org/",
+    ]
+    .iter()
+    .any(|k| t.contains(k))
+}
+
+/// Checks one generated template block: fixed answer-format labels, well-formed closed items
+/// (a choice item's answer is one of its options), no answer in the stem, at most the
+/// section's item count, at least one item, and, for a block that needs the teacher's own
+/// material, no named or invented resource. An answer quoted from the material gets that quote
+/// as its evidence (material grounding for the teacher version).
+pub fn evaluate_section(
+    raw: &crate::worksheet::template::RawSectionOut,
+    ctx: &SectionCtx<'_>,
+) -> Eval<CleanSection> {
+    let mut t = Tally::new(&SECTION_CHECKS);
+    let mut out = CleanSection {
+        title: clean(&raw.title),
+        instructions: clean(&raw.instructions),
+        scaffold: clean(&raw.scaffold),
+        items: Vec::new(),
+    };
+    if ctx.needs_external {
+        for (what, field) in [
+            ("title", &mut out.title),
+            ("instructions", &mut out.instructions),
+            ("scaffold", &mut out.scaffold),
+        ] {
+            if names_a_resource(field) {
+                t.fail(
+                    "no_invented_material",
+                    format!("{what} 寫出了外部素材（網址或影片網站）；這一區的素材要由教師提供，不可以寫出或編造。"),
+                    "清空這個欄位",
+                );
+                field.clear();
+            }
+        }
+    }
+    for (ii, it) in raw.items.iter().enumerate() {
+        let iname = format!("第 {} 題", ii + 1);
+        let format = it.answer_format.trim().to_string();
+        if !ANSWER_FORMATS.contains(&format.as_str()) {
+            t.fail(
+                "labels_from_spec_sets",
+                format!(
+                    "{iname} 的 answer_format「{}」不在允許的清單內。",
+                    it.answer_format
+                ),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        let mut item = CleanSectionItem {
+            answer_format: format,
+            prompt: clean(&it.prompt),
+            options: clean_all(&it.options),
+            answer: clean(&it.answer),
+            evidence: None,
+        };
+        if item.prompt.is_empty() {
+            t.fail(
+                "items_wellformed",
+                format!("{iname} 的題目是空的。"),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        if item.answer_format == FMT_CHOICE {
+            let distinct: HashSet<&str> = item.options.iter().map(|o| o.trim()).collect();
+            // A bare letter ("B") names the option in that position.
+            let letter = item
+                .answer
+                .trim()
+                .trim_matches(|c| c == '(' || c == ')' || c == '.');
+            let matches = item.options.iter().any(|o| o.trim() == item.answer.trim());
+            if !matches && letter.len() == 1 {
+                if let Some(c) = letter.chars().next().filter(char::is_ascii_alphabetic) {
+                    let idx = (c.to_ascii_uppercase() as u8 - b'A') as usize;
+                    if let Some(option) = item.options.get(idx) {
+                        item.answer = option.clone();
+                    }
+                }
+            }
+            if item.options.len() < 2 || distinct.len() != item.options.len() {
+                t.fail(
+                    "items_wellformed",
+                    format!("{iname}（選擇題）要有至少 2 個不重複的選項。"),
+                    "拿掉這一題",
+                );
+                continue;
+            }
+            if !item.options.iter().any(|o| o.trim() == item.answer.trim()) {
+                t.fail(
+                    "items_wellformed",
+                    format!("{iname}（選擇題）的 answer 必須與其中一個選項完全相同。"),
+                    "拿掉這一題",
+                );
+                continue;
+            }
+        }
+        if item.answer_format == FMT_MATCHING && item.options.len() < 2 {
+            t.fail(
+                "items_wellformed",
+                format!("{iname}（配對題）的 options 至少要 2 個。"),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        if contains_answer(&item.prompt, &item.answer) {
+            t.fail(
+                "answer_not_in_prompt",
+                format!("{iname} 的題幹直接寫出了答案。"),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        if ctx.needs_external {
+            let texts = std::iter::once(&item.prompt).chain(item.options.iter());
+            if texts.into_iter().any(|x| names_a_resource(x)) {
+                t.fail(
+                    "no_invented_material",
+                    format!("{iname} 寫出了外部素材（網址或影片網站）；題目只能留空位給教師提供的素材。"),
+                    "拿掉這一題",
+                );
+                continue;
+            }
+        } else {
+            item.evidence = verbatim_piece(&item.answer, ctx.passage);
+        }
+        out.items.push(item);
+    }
+    if out.items.len() > ctx.item_count {
+        t.fixed(
+            "item_count_within_template",
+            format!(
+                "交出 {} 題，版型這一區是 {} 題。",
+                out.items.len(),
+                ctx.item_count
+            ),
+            "只留前面幾題",
+        );
+        out.items.truncate(ctx.item_count);
+    }
+    if out.items.is_empty() {
+        t.fail(
+            "has_items",
+            "沒有交出可以用的題目；這一區至少要有 1 題。".to_string(),
+            "",
+        );
+        return t.finish(None);
+    }
+    t.finish(Some(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::worksheet::schemas::{RawProcedure, RawSupport};
+
+    fn out_item(
+        format: &str,
+        prompt: &str,
+        options: &[&str],
+        answer: &str,
+    ) -> crate::worksheet::template::RawOutItem {
+        crate::worksheet::template::RawOutItem {
+            answer_format: format.into(),
+            prompt: prompt.into(),
+            options: options.iter().map(|o| o.to_string()).collect(),
+            answer: answer.into(),
+        }
+    }
+
+    #[test]
+    fn template_sections_are_checked_and_grounded() {
+        let passage = paragraphs().join("\n");
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Paragraph 1: Details".into(),
+            instructions: "請閱讀第一段並回答。".into(),
+            scaffold: "".into(),
+            items: vec![
+                out_item(
+                    FMT_CHOICE,
+                    "Which sentence is in paragraph 1?",
+                    &[P1, "No.", "Yes."],
+                    "A",
+                ),
+                out_item(FMT_CHOICE, "Pick one.", &["a", "a"], "a"),
+                out_item("探究", "Explore.", &[], "x"),
+                out_item("簡答題", &format!("Why? {P2}"), &[], P2),
+                out_item("簡答題", "What happened first?", &[], "Something happened."),
+                out_item("簡答題", "And then?", &[], "More."),
+            ],
+        };
+        let e = evaluate_section(
+            &raw,
+            &SectionCtx {
+                passage: &passage,
+                item_count: 1,
+                needs_external: false,
+            },
+        );
+        assert!(e.needs_repair());
+        let out = e.output.unwrap();
+        // Chinese instructions are fine here (the template's language decides).
+        assert_eq!(out.instructions, "請閱讀第一段並回答。");
+        assert_eq!(out.items.len(), 1, "capped at item_count");
+        assert_eq!(out.items[0].answer, P1, "a bare letter names the option");
+        assert_eq!(out.items[0].evidence.as_deref(), Some(P1));
+
+        let external = crate::worksheet::template::RawSectionOut {
+            title: "Watch https://youtube.com/x".into(),
+            instructions: "Watch the video your teacher gives you.".into(),
+            scaffold: "".into(),
+            items: vec![
+                out_item(
+                    "簡答題",
+                    "See www.ted.com/talk and answer: ______",
+                    &[],
+                    "x",
+                ),
+                out_item(
+                    "簡答題",
+                    "After the material, write one key point: ______",
+                    &[],
+                    P1,
+                ),
+            ],
+        };
+        let e = evaluate_section(
+            &external,
+            &SectionCtx {
+                passage: &passage,
+                item_count: 3,
+                needs_external: true,
+            },
+        );
+        let out = e.output.unwrap();
+        assert_eq!(out.title, "");
+        assert_eq!(out.items.len(), 1);
+        assert_eq!(out.items[0].evidence, None);
+        let empty = crate::worksheet::template::RawSectionOut {
+            items: Vec::new(),
+            ..external
+        };
+        let e = evaluate_section(
+            &empty,
+            &SectionCtx {
+                passage: &passage,
+                item_count: 3,
+                needs_external: true,
+            },
+        );
+        assert!(e.output.is_none() && e.needs_repair());
+    }
 
     const P1: &str = "Mrs. Lin put an umbrella stand outside her shop on a rainy Monday.";
     const P2: &str =
