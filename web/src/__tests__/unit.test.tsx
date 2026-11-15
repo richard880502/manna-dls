@@ -1,10 +1,20 @@
-// 單元頁 (docs/DESIGN_OVERHAUL.md step 1): lessons as ruled rows with one filled action, and
-// 單元想法 (CoRe) beside them as a companion that never blocks.
+// 單元頁: lessons as ruled rows with one filled action, the page's main content, and 單元想法
+// (CoRe) as one summary line that opens on click and never blocks.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { Lesson, LessonRun } from "../api/types";
-import { baseRoutes, coreVersion, focus, mockApi, renderApp, signIn, unitWith } from "../test/mockApi";
+import {
+  baseRoutes,
+  classRef,
+  coreVersion,
+  focus,
+  mockApi,
+  renderApp,
+  schoolClass,
+  signIn,
+  unitWith,
+} from "../test/mockApi";
 
 const lesson = (id: number, title: string): Lesson => ({
   id,
@@ -37,7 +47,6 @@ describe("unit page", () => {
     mockApi({
       ...baseRoutes(),
       "GET /api/units/1/lessons": [lesson(7, "第 1 節 讀懂故事"), lesson(8, "第 2 節 精讀")],
-      "GET /api/units/1/materials": [],
       "GET /api/units/1/core": coreVersion([]),
       "GET /api/runs": [taught(7, "高一 3 班")],
     });
@@ -57,12 +66,11 @@ describe("unit page", () => {
     expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
   });
 
-  it("shows 單元想法 as a companion: what is written so far, and a way to write a little more", async () => {
+  it("shows 單元想法 as one line, 「寫了 2/8 題」, that opens on click to the eight questions", async () => {
     signIn();
     mockApi({
       ...baseRoutes(),
       "GET /api/units/1/lessons": [lesson(7, "第 1 節")],
-      "GET /api/units/1/materials": [],
       "GET /api/units/1/core": coreVersion([
         focus(11, 1, "用倒裝句強調", {
           Q1: { answer: "用倒裝句強調，不只讀懂字面。", status: "filled" },
@@ -71,39 +79,85 @@ describe("unit page", () => {
         }),
       ]),
     });
+    const user = userEvent.setup();
     renderApp("/units/1");
 
-    const ideas = within(await screen.findByRole("complementary", { name: "單元想法" }));
+    const summary = await screen.findByText("：寫了 2/8 題");
+    const details = summary.closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    // The lessons come first; 單元想法 follows them.
+    const lessons = screen.getByRole("region", { name: "課例" });
+    expect(lessons.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(summary);
+    expect(details.open).toBe(true);
+    const ideas = within(details);
     // CoRe stays in small print; nothing here is required.
-    expect(await ideas.findByText(/8 題寫了 2 題。想到再寫，不影響備課。/)).toBeInTheDocument();
     expect(ideas.getByText("CoRe")).toBeInTheDocument();
+    expect(ideas.getByText("想到再寫，不影響備課。")).toBeInTheDocument();
     expect(ideas.getByText("要學會什麼：用倒裝句強調，不只讀懂字面。")).toBeInTheDocument();
     expect(ideas.getByText("可能哪裡難教：助動詞要搬到主詞前面。")).toBeInTheDocument();
     expect(ideas.getByRole("link", { name: "Q2 為什麼重要：寫一點" })).toHaveAttribute("href", "/units/1/core");
-    expect(ideas.getByRole("link", { name: "Q5 學生可能怎麼想：寫一點" })).toBeInTheDocument();
-    expect(ideas.getByRole("link", { name: "看全部 8 題" })).toHaveAttribute("href", "/units/1/core");
+    expect(ideas.getByRole("link", { name: "Q8 怎麼知道學生懂了：寫一點" })).toBeInTheDocument();
+    expect(ideas.getAllByRole("link", { name: /寫一點$/ })).toHaveLength(6);
+    expect(ideas.getByRole("link", { name: "打開單元想法" })).toHaveAttribute("href", "/units/1/core");
     expect(ideas.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("does not create a CoRe version just by looking: an untouched unit shows the empty ledger", async () => {
+  it("keeps to the lessons: no prep menu, class profile or materials on the unit page", async () => {
+    signIn();
+    const c = schoolClass();
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/units/1": unitWith({ class_profile: "單元自己的班級特性", classes: [classRef(c)] }),
+      "GET /api/units/1/lessons": [lesson(7, "第 1 節")],
+      "GET /api/units/1/core": coreVersion([]),
+    });
+    renderApp("/units/1");
+    expect(await screen.findByRole("heading", { name: "倒裝句單元", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "課例", level: 2 })).toBeInTheDocument();
+    for (const gone of [/備課菜單/, /班級特性/, /單元教材/, /候選學習重點/, /順序只是建議/]) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole("textbox", { name: /班級特性/ })).not.toBeInTheDocument();
+  });
+
+  it("does not create a CoRe version just by looking: an untouched unit says nothing is written yet", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/units/1": unitWith({ core_status: "none", lesson_count: 0 }),
       "GET /api/units/1/lessons": [],
-      "GET /api/units/1/materials": [],
     });
     const user = userEvent.setup();
     renderApp("/units/1");
 
-    const ideas = within(await screen.findByRole("complementary", { name: "單元想法" }));
-    expect(ideas.getByText(/還沒寫。想到再寫，不影響備課。/)).toBeInTheDocument();
-    expect(ideas.getAllByRole("link", { name: /寫一點$/ })).toHaveLength(5);
+    expect(await screen.findByText("：還沒寫")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "開始寫單元想法（8 題）" })).toHaveAttribute("href", "/units/1/core");
     expect(api.callsTo("GET", "/api/units/1/core")).toHaveLength(0);
 
-    // With no lesson yet the form is open, and creating one is the page's filled action.
+    // With no lesson yet the form is open, and creating one is the page's filled action. The
+    // class profile is not asked for per lesson any more: only a title and a date.
     await user.type(screen.getByLabelText("課例名稱"), "第 1 節");
+    expect(screen.queryByLabelText(/班級描述/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "建立課例" })).toHaveClass("primary-button");
     expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
+  });
+
+  it("creates a lesson with a title and a date only", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/units/1/lessons": [],
+      "GET /api/units/1/core": coreVersion([]),
+      "POST /api/units/1/lessons": lesson(9, "第 1 節"),
+    });
+    const user = userEvent.setup();
+    renderApp("/units/1");
+    await user.type(await screen.findByLabelText("課例名稱"), "第 1 節");
+    await user.click(screen.getByRole("button", { name: "建立課例" }));
+    await waitFor(() => expect(api.callsTo("POST", "/api/units/1/lessons")).toHaveLength(1));
+    expect(api.lastBody("POST", "/api/units/1/lessons")).toEqual({ title: "第 1 節" });
+    expect(await screen.findByRole("link", { name: "第 1 節" })).toHaveAttribute("href", "/lessons/9");
   });
 });

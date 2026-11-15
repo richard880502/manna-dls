@@ -122,7 +122,7 @@ export function LessonLinkControls({ ws }: { ws: WorksheetController }) {
       </p>
       {mode !== null && units !== null && units.length === 0 && (
         <p className="quiet-note">
-          備課庫裡還沒有單元。先到<Link to="/library">備課庫</Link>建立一個單元。
+          備課庫裡還沒有單元。先到<Link to="/units">備課庫</Link>建立一個單元。
         </p>
       )}
       {mode === "link" && units !== null && units.length > 0 && (

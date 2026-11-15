@@ -1005,13 +1005,13 @@ async fn ai_context_uses_the_class_profile_by_precedence() {
     // The class has no profile: the unit's legacy profile.
     let r = assist(legacy, legacy_focus, Some(no_profile)).await;
     assert_eq!(context_preview(&r, "班級特性（單元設定）"), "單元舊描述");
-    // Neither has one: the preference answer P6.
+    // Neither has one: nothing. P6 is no longer used (it is not shown to teachers any more).
     let r = assist(bare, bare_focus, Some(no_profile)).await;
-    assert_eq!(context_preview(&r, "班級特性（備課偏好）"), "問卷寫的班級");
+    assert!(!labels(&r).iter().any(|l| l.starts_with("班級特性")), "{r}");
     let snap = snapshot(r).await;
-    assert_eq!(snap["class_context"]["class_profile_source"], "preference");
+    assert_eq!(snap["class_context"]["class_profile_source"], "none");
 
-    // Lesson level: the lesson's own class description overrides everything.
+    // Lesson level: an old per-lesson description no longer overrides the class.
     let lesson = app.create_lesson(&t, legacy, "第 1 節").await;
     let detail = |class: Option<i64>| {
         let (app, t) = (&app, &t);
@@ -1065,14 +1065,17 @@ async fn ai_context_uses_the_class_profile_by_precedence() {
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["effective_class_profile"], "今天只有半班");
-    assert_eq!(v["class_profile_source"], "lesson");
+    assert_eq!(v["effective_class_profile"], "三班：不太敢開口");
+    assert_eq!(v["class_profile_source"], "class");
     let r = suggest(with_profile).await;
-    assert_eq!(context_preview(&r, "班級特性（本課覆寫）"), "今天只有半班");
+    assert_eq!(
+        context_preview(&r, "班級特性（高一 3 班）"),
+        "三班：不太敢開口"
+    );
     let snap = snapshot(r).await;
     assert_eq!(
         snap["class_context"],
-        json!({ "class_id": with_profile, "class_profile_source": "lesson" })
+        json!({ "class_id": with_profile, "class_profile_source": "class" })
     );
 
     // 教材優先 candidates take the class too.

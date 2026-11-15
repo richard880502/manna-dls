@@ -2,12 +2,12 @@
 
 The visual system of the web app (`web/`). Every screen reads it; change it on purpose. The source of truth for values is `web/src/styles/tokens.css`; this file says what each token is for and how the parts are put together. The direction and the reasons are in [`DESIGN_OVERHAUL.md`](DESIGN_OVERHAUL.md); the approved mockups are in [`design/overhaul/`](design/overhaul/index.html), and before/after screenshots of what is built so far are in [`design/overhaul/implemented/`](design/overhaul/implemented/).
 
-**Status:** overhaul steps 1 (shell and list pages) and 2 (the seven-step lesson workspace, direction A) are in the app; the CoRe editor, 課後補寫, preferences and admin keep their layout and take the new tokens, heads and frameless panels.
+**Status:** overhaul steps 1 (shell and list pages) and 2 (the seven-step lesson workspace, direction A) are in the app; the CoRe editor, 課後補寫, preferences and admin keep their layout and take the new tokens, heads and frameless panels. The simplification of 2026-11 made the teacher's path 班級 → 單元 → 課例（七步）→ 學習單 the only one on screen: the lesson page is the seven steps, the unit page is its lessons, class traits live on the class page only, and materials have their own destination.
 
 ## System
 
 - Genre: editorial, at app scope (screens someone works in, not pages someone reads once)
-- Shape: a 56px top bar with three destinations; pages are a column of sections
+- Shape: a 56px top bar with three destinations (班級, 學習單, 教材); pages are a column of sections
 - Vibe: "a calm research notebook in two inks", with a third voice for print
 - Axes: light paper / serif heads / ink-blue accent. Posture: restrained, plus one gold with one job
 - Modes: light only (see "Not done")
@@ -71,7 +71,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 
 ## Layout
 
-- **Top bar** (`.top`, 56px, sticky under the demo banner): the star and 「Manna」, the three destinations (班級, 備課庫, 學習單), and at the right the account links (知識庫管理 for the project lead and knowledge-base managers, 後台管理 for the project lead, 「研究編號 · 備課偏好」, 登出). Under 760px the three destinations move to a fixed bar at the bottom (60px) and the research ID drops out of the top bar.
+- **Top bar** (`.top`, 56px, sticky under the demo banner): the star and 「Manna」, the three destinations (班級, 學習單, 教材), and at the right the account links (知識庫管理 for the project lead and knowledge-base managers, 後台管理 for the project lead, 「研究編號 · 備課偏好」, 登出). Under 760px the three destinations move to a fixed bar at the bottom (60px) and the research ID drops out of the top bar.
 - A page that takes over the bar renders into its slot (`TopBarSlot`): during a lesson the bar shows only 「上課中 · 已同步」 and 「結束本節課」, and the bottom bar is gone, so nothing invites a stray tap.
 - **Frames** (`.workspace`): list pages 1040px; working pages with two columns (lesson, 單元想法, 課後補寫, admin) 1200px; the in-class console 880px; single-column text pages 800px.
 - **Breakpoints:** 760px (shell, rows, single column), 1100px (the lesson page's side column goes under the main one), plus the older 75rem / 60rem / 40rem inside screens not rebuilt yet.
@@ -83,15 +83,15 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 - **Focal block** (`.next`): on the home and class pages, the next lesson: a quiet kicker (「接下來 · 高一 3 班」), the title as the page's `h1`, one sentence, and the filled 「開始上課」 with 「繼續備課」 as a text link. Closed by a strong rule.
 - **Page head** (`.page-head`, `.crumbs`, `.lead`, `.head-row`): crumbs in 14px muted, the `h1`, a lead paragraph; a `head-row` puts a section's one action at the right of its heading.
 - **Forms opened in place** (`.inline-form-block`): between two strong rules, no frame.
-- **Companion** (`.with-side` > `.companion`, `.ledger`): on the unit page, 單元想法 sits beside the lessons as a 320px column: a quiet progress line with CoRe in small print, the first five questions as a ledger (written ones in ink with an accent Q number, empty ones muted with 「寫一點」), and a link to all eight. It never gates anything.
+- **單元想法 on the unit page** (`.unit-ideas`, `.ledger`): one summary line under the lessons, 「單元想法：寫了 2/8 題」 with CoRe in small print, that opens on click to the eight questions as a ledger (written ones in ink with an accent Q number, empty ones muted with 「寫一點」) and a link to the 單元想法 page. It never gates anything. Units, lessons and the list of every unit (備課庫, `/units`, reached from 班級) all count as 班級 in the top bar.
 - **Dialog** (`.scrim` > `.dialog`, `.radio-rows`): only for 「這節課在哪一班上？」. Focus starts on the chosen class, Tab stays inside, Escape cancels, focus returns to the button that opened it.
 - **Fields.** Label above (14px, 600), helper below in muted 14px, a 1px `--color-field-edge` border that never changes width. Selects keep native behaviour with a drawn chevron.
 - **Manna content** (`help-entry`, `ai-suggestion`, `candidate-card`, `ai-status`, `manna-label`): a gold well, no border; it opens with the star and 「Manna」; its sources sit under a gold hairline; secondary text inside it is `--color-ink-2`. On the lesson page her panel sits in the side column, a step quieter than the plan.
-- **Lesson workspace** (`.guided` > `.rail` + `.stage`, `sop.css`): the progress rail (232px, sticky; under 760px one line, 「第 3 步，共 7 步　看全部步驟」) lists 本節概要 and the seven steps, each with what it already holds; a tick means "has something", never "required". The stage shows one step: its title (30px) with 「對照教材」 at the right, a lead sentence, blocks parted by space, and at the bottom 上一步 / 先略過這一步 / the view's one filled button, 「下一步：…」. 「開始上課」 is an outline button in the page head on every step, and the filled big button on 本節概要.
+- **Lesson workspace** (`.guided` > `.rail` + `.stage`, `sop.css`): the whole lesson page. The progress rail (232px, sticky; under 760px one line, 「第 3 步，共 7 步　看全部步驟」) lists the seven steps, each with what it already holds, and ends below a hairline with 「產生學習單」 (`.rail-end`); a tick means "has something", never "required". The page opens on the step of the last visit, else step 1. The stage shows one step: its title (30px) with 「對照教材」 at the right, a lead sentence, blocks parted by space, and at the bottom 上一步 / 先略過這一步 / the view's one filled button, 「下一步：…」; on step 7 that button is the big 「產生學習單」. 「開始上課」 is a secondary button in the page head on every step.
 - **Teacher's writing** (`.mine`): ink on a ruled line with quiet tools (修改, 刪除) at the right. A form opened in place (`.stage-form`) sits between two strong rules.
 - **Manna in a step** (`.manna-well`, `.decide`): a gold well directly under the paragraph or objective type it is about: star, 「Manna 建議 · 第 3 段」, the suggestion, 為什麼建議, sources under a gold hairline, then 採用 (ink-blue edge) / 修改後採用 / 不用. While she works the same well says what she is doing and for how long (`.manna-progress`). 「尚未完成課綱連結」 is the one amber tag (`.warn-tag`).
 - **Print** (`.material-sheet`, `.sop-quote`, `.material-viewer`): the source text is serif on the lightest sheet with `¶n` in the margin; a paragraph quoted above its tasks uses the same face without the sheet. 「對照教材」 slides the sheet in from the left: beside the step from 1100px up (the rail gives way), over the page below that.
-- **Collapsible sections** (`plan-section` inside `.plan-sections`): on 本節概要 everything past the first view is a hairline row with a count (「教學步驟（3）」). The body stays mounted while closed.
+- **Collapsible sections** (`plan-section`): **retired** with 本節概要 (the lesson page's old first view). Its CSS is still in `app.css`.
 - **Saved state** (`.saved`): plain words at the right of a working page's head: 「會自動儲存」, 「尚未儲存」, 「儲存中…」, 「已自動儲存 14:32」, or 「沒有存到：…　再試一次」. There is no save button on the lesson page.
 - **Panels** (`panel-card`): **retired.** Screens not rebuilt yet still carry the class; it is now only a block parted from the one before it by space and one hairline. Do not use it in new code. A page has at most one layer of filled surface.
 - **Tags** (`soft-tag`, `status-pill`, `record-pill`): 13px, only where they carry a fact (a mark's kind, a selection count). No 「選用」「可略過」 labels: what can be skipped is said once, in a sentence.

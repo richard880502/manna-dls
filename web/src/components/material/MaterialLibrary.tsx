@@ -300,10 +300,11 @@ function deleteConsequences(m: Material): string {
 }
 
 /**
- * 備課庫 → 教材: the teacher's own material library. List, add (upload, paste, link), open,
- * rename, and delete for good after an in-page confirmation.
+ * 教材: the teacher's own material library. List, add (upload, paste, link), open,
+ * rename, and delete for good after an in-page confirmation. On its own page (`asPage`, the top
+ * bar's 教材) the heading is the page title; elsewhere it is a section.
  */
-export function MaterialsSection() {
+export function MaterialsSection({ asPage = false }: { asPage?: boolean } = {}) {
   const ids = useId();
   const { library, error, reload } = useMaterialLibrary();
   const [adding, setAdding] = useState<AddWay | null>(null);
@@ -353,10 +354,10 @@ export function MaterialsSection() {
   }
 
   return (
-    <section className="materials-section" aria-labelledby={`${ids}-heading`}>
-      <div className="head-row">
+    <section className={`materials-section${asPage ? " is-page" : ""}`} aria-labelledby={`${ids}-heading`}>
+      <div className={`head-row${asPage ? " page-head" : ""}`}>
         <div>
-          <h2 id={`${ids}-heading`}>教材</h2>
+          {asPage ? <h1 id={`${ids}-heading`}>教材</h1> : <h2 id={`${ids}-heading`}>教材</h2>}
           <p className="lead">
             你的課文、講義、圖片與影音。只有你看得到；一份教材可以用在好幾個課例和學習單。
           </p>

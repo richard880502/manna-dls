@@ -533,7 +533,7 @@ export function StageExit({ sop }: { sop: SopController }) {
     <>
       <p className="lead">下課前兩三分鐘，想知道什麼？題數少一點。學習單上會放在最後，可以拿掉。</p>
       <section className="stage-block" aria-label="Exit ticket 的題目">
-        {items.length === 0 && <p className="quiet-note">還沒有題目。這一步可以整個略過。</p>}
+        {items.length === 0 && <p className="quiet-note">還沒有題目。</p>}
         {items.map((item, index) => (
           <div key={item.id} className="stage-form" role="group" aria-label={`Exit ticket 第 ${index + 1} 題`}>
             <label className="field-label" htmlFor={`exit-${item.id}-kind`}>

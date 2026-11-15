@@ -229,7 +229,7 @@ export function RunConsolePage() {
           </ol>
         )}
         <p className="quiet-note console-foot">
-          現在按一下就好，細節下課後再補寫。上課中不會呼叫 AI，也不錄音、不拍照。只記錄整體課堂觀察，不要寫學生姓名。書籤先存在這台裝置；Safari
+          現在按一下就好，細節下課後再補寫。上課中不會呼叫 AI，也不錄音、不拍照。只記錄整體課堂觀察。書籤先存在這台裝置；Safari
           久未使用會清除網站暫存，建議「加入主畫面」並在下課後連上網路。
         </p>
       </section>

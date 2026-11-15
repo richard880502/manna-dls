@@ -357,20 +357,47 @@
   margin-top: var(--space-xl);
 }
 
-/* ================= unit page: lessons, with 單元想法 beside them ================= */
-.with-side {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
-  align-items: start;
-  gap: 4.5rem;
+/* ================= unit page: the lessons, then 單元想法 as one line that opens ================= */
+.unit-lessons {
   margin-top: 2.5rem;
 }
 
-.companion h2 {
-  font-size: var(--text-lg);
+.unit-ideas {
+  max-width: 40rem;
+  padding-top: var(--space-sm);
+  border-top: var(--rule-hair) solid var(--color-rule);
 }
 
-.companion .progress,
+.unit-ideas > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3xs);
+  width: fit-content;
+  min-height: var(--control-h-sm);
+  cursor: pointer;
+}
+
+.unit-ideas-title {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-strong);
+}
+
+.unit-ideas-count {
+  color: var(--color-ink-2);
+}
+
+.unit-ideas > summary .en {
+  margin-left: var(--space-2xs);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.unit-ideas > .quiet-note {
+  margin-top: var(--space-2xs);
+}
+
 .companion-focus,
 .companion-more {
   margin-top: var(--space-3xs);
@@ -901,12 +928,6 @@
     justify-content: flex-start;
     max-width: none;
     text-align: left;
-  }
-
-  .with-side {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2.5rem;
-    margin-top: var(--space-xl);
   }
 
   .head-row.page-head > .primary-button {

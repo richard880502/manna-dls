@@ -115,7 +115,7 @@ async function openLesson() {
 }
 
 const rail = () => within(screen.getByRole("navigation", { name: "備課步驟" }));
-/** The title of the step on screen (the overview has its own heading). */
+/** The title of the step on screen. */
 const stageTitle = () => document.querySelector(".stage-head .stage-title") as HTMLElement;
 const goToStep = async (user: ReturnType<typeof userEvent.setup>, name: RegExp) =>
   user.click(rail().getByRole("button", { name }));
@@ -217,32 +217,36 @@ const objectivesOutput: SopObjectivesSuggestion = {
 };
 
 describe("lesson workspace: steps", () => {
-  it("a lesson without SOP content opens on 本節概要; the rail and 下一步 walk the seven steps in any order", async () => {
+  it("a lesson opens on step 1; the rail and 下一步 walk the seven steps in any order and end at 產生學習單", async () => {
     signIn();
     mockApi(routes(blankSop));
     const user = userEvent.setup();
     await openLesson();
 
-    // R1 is intact: one question, and the filled 開始上課 below it.
-    expect(screen.getByRole("textbox", { name: "今天要教什麼？" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "開始上課" })).toHaveClass("primary-button");
-    expect(rail().getByRole("button", { name: /^本節概要/ })).toHaveAttribute("aria-current", "step");
-    expect(rail().getAllByRole("listitem")).toHaveLength(7);
-
-    await user.click(screen.getByRole("button", { name: "一步一步備課" }));
+    // The seven steps are the page: no first view in front of them.
     expect(stageTitle()).toHaveTextContent("閱讀教材");
-    expect(stageTitle()).toHaveFocus();
     expect(rail().getByText("第 1 步，共 7 步")).toBeInTheDocument();
     expect(rail().getByRole("button", { name: /閱讀教材/ })).toHaveAttribute("aria-current", "step");
-    // The overview is out of the way, not gone.
+    expect(rail().getAllByRole("listitem")).toHaveLength(7);
+    expect(rail().queryByRole("button", { name: /本節概要/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "今天要教什麼？" })).not.toBeInTheDocument();
+    // The rail ends where the steps lead.
+    expect(rail().getByRole("button", { name: /產生學習單/ })).toBeInTheDocument();
+    // 開始上課 is a secondary button in the head; the step's own action is the one filled button.
+    expect(screen.getByRole("button", { name: "開始上課" })).toHaveClass("secondary-button");
+    expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "上一步" })).not.toBeInTheDocument();
 
     for (const name of ["分析寫作特色", "內容目標與語言目標", "逐段整合目標", "逐段問題或任務", "暖身", "Exit ticket"]) {
       await user.click(screen.getByRole("button", { name: `下一步：${name}` }));
       expect(stageTitle()).toHaveTextContent(name);
+      expect(stageTitle()).toHaveFocus();
     }
     expect(rail().getByText("第 7 步，共 7 步")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "先略過這一步" })).not.toBeInTheDocument();
+    // The end of the steps: a prominent 產生學習單.
+    const make = within(document.querySelector(".stage-nav") as HTMLElement).getByRole("button", { name: "產生學習單" });
+    expect(make).toHaveClass("primary-button");
 
     await user.click(screen.getByRole("button", { name: "上一步" }));
     expect(stageTitle()).toHaveTextContent("暖身");
@@ -251,8 +255,45 @@ describe("lesson workspace: steps", () => {
     expect(stageTitle()).toHaveTextContent("內容目標與語言目標");
     await user.click(screen.getByRole("button", { name: "先略過這一步" }));
     expect(stageTitle()).toHaveTextContent("逐段整合目標");
-    await goToStep(user, /^本節概要/);
-    expect(screen.getByRole("textbox", { name: "今天要教什麼？" })).toBeInTheDocument();
+  });
+
+  it("shows no second way to prepare: the old suggestions, steps, SIOP and lesson background are gone", async () => {
+    signIn();
+    const api = mockApi(routes(sopState(), { "GET /api/lessons/7": lessonDetail() }));
+    await openLesson();
+    for (const gone of [/Manna 備課建議/, /請 Manna 提供建議/, /教學步驟/, /SIOP/, /本課背景/, /單元想法的重點/, /想多準備一點/]) {
+      expect(screen.queryByText(gone)).not.toBeInTheDocument();
+    }
+    expect(api.callsTo("GET", "/api/siop")).toHaveLength(0);
+    expect(api.callsTo("POST", "/api/lessons/7/suggestions")).toHaveLength(0);
+    // The lesson's earlier 今天要教什麼？ line is still offered where objectives are written.
+    const user = userEvent.setup();
+    await goToStep(user, /內容目標與語言目標/);
+    expect(screen.getByText("學生能說明倒裝的語意功能")).toBeInTheDocument();
+  });
+
+  it("產生學習單 at the end of the steps saves what is pending, then opens the new worksheet", async () => {
+    signIn();
+    const api = mockApi(
+      routes(sopState(), {
+        "GET /api/worksheets": [{ id: 3, title: "上次的學習單" }],
+        "POST /api/worksheets": { id: 12 },
+        "GET /api/worksheets/12": respond(404, { error: { code: "not_found", message: "測試不載入" } }),
+      }),
+    );
+    const user = userEvent.setup();
+    const { router } = await openLesson();
+    await goToStep(user, /Exit ticket/);
+    expect(await screen.findByRole("link", { name: "上次的學習單" })).toHaveAttribute("href", "/worksheets/3");
+    await user.click(screen.getByRole("button", { name: "＋ 學生反思" }));
+    await user.type(screen.getByRole("textbox", { name: "題目" }), "Why?");
+    await user.click(within(document.querySelector(".stage-nav") as HTMLElement).getByRole("button", { name: "產生學習單" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/worksheets/12"));
+    expect(api.lastBody("POST", "/api/worksheets")).toEqual({ lesson_id: 7 });
+    expect(lastSaved(api).exit_ticket.items[0]?.text).toBe("Why?");
+    const putAt = api.calls.findIndex((c) => c.method === "PUT" && c.path === SOP);
+    const postAt = api.calls.findIndex((c) => c.method === "POST" && c.path === "/api/worksheets");
+    expect(putAt).toBeLessThan(postAt);
   });
 
   it("a lesson with SOP content opens on its steps, shows what each step holds, and remembers the step", async () => {
@@ -290,7 +331,6 @@ describe("lesson workspace: steps", () => {
     const api = mockApi(routes(blankSop));
     const user = userEvent.setup();
     const { router } = await openLesson();
-    await user.click(screen.getByRole("button", { name: "一步一步備課" }));
     for (const name of ["分析寫作特色", "內容目標與語言目標", "逐段整合目標", "逐段問題或任務"]) {
       expect(screen.getByRole("button", { name: "開始上課" })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: `下一步：${name}` }));
@@ -302,7 +342,7 @@ describe("lesson workspace: steps", () => {
     expect(api.callsTo("PUT", SOP)).toHaveLength(0);
   });
 
-  it("the overview and 開始上課 still work when the SOP cannot be loaded", async () => {
+  it("開始上課 still works when the SOP cannot be loaded", async () => {
     signIn();
     const api = mockApi(routes(blankSop, { [`GET ${SOP}`]: respond(500, { error: { code: "internal", message: "伺服器暫時發生問題" } }) }));
     const user = userEvent.setup();
@@ -323,7 +363,7 @@ describe("lesson workspace: quiet saving", () => {
     const user = userEvent.setup();
     await openLesson();
     await goToStep(user, /Exit ticket/);
-    expect(screen.getByText("還沒有題目。這一步可以整個略過。")).toBeInTheDocument();
+    expect(screen.getByText("還沒有題目。")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /儲存/ })).not.toBeInTheDocument();
 
     autosaveConfig.delayMs = 20;
@@ -351,9 +391,8 @@ describe("lesson workspace: quiet saving", () => {
     );
     const user = userEvent.setup();
     await openLesson();
-    await user.click(screen.getByRole("button", { name: "一步一步備課" }));
 
-    await user.type(screen.getByRole("textbox", { name: "教材標題" }), "The Umbrella Stand");
+    await user.type(await screen.findByRole("textbox", { name: "教材標題" }), "The Umbrella Stand");
     await user.click(screen.getByRole("textbox", { name: "教材文字" }));
     await user.paste(material.text);
     expect(screen.getByText("尚未儲存")).toBeInTheDocument();
@@ -454,7 +493,7 @@ describe("lesson workspace: quiet saving", () => {
     expect(await screen.findByText(/^沒有存到：伺服器暫時發生問題/)).toBeInTheDocument();
 
     // Leaving now would lose it: the page asks.
-    await user.click(screen.getByRole("link", { name: "班級" }));
+    await user.click(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "班級" }));
     const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
     serverUp = true;
     await user.click(dialog.getByRole("button", { name: "儲存後離開" }));

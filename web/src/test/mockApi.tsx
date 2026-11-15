@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { vi } from "vitest";
 import type {
@@ -112,9 +112,6 @@ export function mockApi(routes: Record<string, RouteValue>) {
 
 // ---------- lesson page helpers ----------
 
-/** The lesson page first view: 今天要教什麼？ and 開始上課. */
-export const todayCard = () => within(screen.getByRole("region", { name: "今天要教什麼？" }));
-
 /**
  * The lesson page has no save button: it saves a moment after an edit, when a field is left,
  * and when the teacher looks away from the window. Tests use the last one, then wait for the
@@ -125,16 +122,6 @@ export async function settleAutosave(_user?: unknown) {
     window.dispatchEvent(new Event("blur"));
   });
   await screen.findByText(/^已自動儲存/);
-}
-
-/** The toggle of a collapsible lesson-page section, by the start of its label (e.g. "SIOP 提示"). */
-export const sectionToggle = (title: string) =>
-  screen.getByRole("button", { name: new RegExp(`^${title.replace(/[()（）]/g, "\\$&")}`) });
-
-/** Opens a lesson-page section if it is collapsed. */
-export async function openSection(user: { click: (el: Element) => Promise<void> }, title: string) {
-  const toggle = sectionToggle(title);
-  if (toggle.getAttribute("aria-expanded") !== "true") await user.click(toggle);
 }
 
 /** Renders the app in a memory data router (as main.tsx does), so pages can use useBlocker. */

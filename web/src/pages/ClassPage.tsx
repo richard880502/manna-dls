@@ -379,7 +379,12 @@ export function ClassPage() {
 
         {picking && (
           <section className="inline-form-block" aria-labelledby={`${ids}-picker`}>
-            <h3 id={`${ids}-picker`}>從備課庫加入單元</h3>
+            <div className="head-row">
+              <h3 id={`${ids}-picker`}>從備課庫加入單元</h3>
+              <Link className="text-link is-plain" to="/units">
+                看所有單元
+              </Link>
+            </div>
             {!library ? (
               <Loading />
             ) : available.length === 0 ? (
@@ -527,7 +532,7 @@ export function ClassPage() {
               }}
             />
             <p className="field-hint">
-              Manna 提建議時會參考這段（課例可以另外覆寫）。不要寫學生姓名或個人資料。（
+              在這個班級備課時，Manna 的每次協助都會參考這段。不要寫學生姓名或個人資料。（
               {profile.length.toLocaleString()} / {CLASS_PROFILE_MAX_CHARS.toLocaleString()} 字）
             </p>
             <div className="button-row">
@@ -558,7 +563,7 @@ export function ClassPage() {
             <p className={detail.class_profile ? "lead" : "empty-line"}>
               {detail.class_profile || "還沒有寫。幾句話就夠，例如人數、程度落差、討論時的樣子。"}
             </p>
-            <p className="quiet-note">Manna 提建議時會參考這段。不要寫學生姓名或個人資料。</p>
+            <p className="quiet-note">在這個班級備課時，Manna 的每次協助都會參考這段。</p>
           </>
         )}
         {profileSaved && <Notice tone="success">已儲存班級特性。</Notice>}

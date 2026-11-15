@@ -11,6 +11,7 @@ import { KnowledgePage } from "./pages/KnowledgePage";
 import { LessonPage } from "./pages/LessonPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MaterialsPage } from "./pages/MaterialsPage";
 import { PreferencesPage } from "./pages/PreferencesPage";
 import { RecordIndexPage } from "./pages/RecordIndexPage";
 import { RemotePage } from "./pages/RemotePage";
@@ -69,9 +70,12 @@ export function AppRoutes() {
       >
         <Route index element={<HomePage />} />
         <Route path="classes/:classId" element={<ClassPage />} />
-        <Route path="library" element={<LibraryPage />} />
-        {/* Old links keep working: /plan was the library; removed pages fall through to home. */}
-        <Route path="plan" element={<LibraryPage />} />
+        {/* 備課庫 (every unit, to reuse one in another class) is reached from 班級, not the top bar. */}
+        <Route path="units" element={<LibraryPage />} />
+        <Route path="materials" element={<MaterialsPage />} />
+        {/* Old links keep working: /library and /plan were the library; removed pages fall through to home. */}
+        <Route path="library" element={<Navigate to="/units" replace />} />
+        <Route path="plan" element={<Navigate to="/units" replace />} />
         <Route path="units/:unitId" element={<UnitPage />} />
         <Route path="units/:unitId/core" element={<CorePage />} />
         <Route path="lessons/:lessonId" element={<LessonPage />} />

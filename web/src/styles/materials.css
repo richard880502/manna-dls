@@ -409,9 +409,13 @@ mark.anno.is-focused {
   line-height: var(--leading-ui);
 }
 
-/* ================= 備課庫 → 教材 ================= */
+/* ================= 教材 ================= */
 .materials-section {
   margin-top: var(--space-section);
+}
+
+.materials-section.is-page {
+  margin-top: 0;
 }
 
 .materials-section > .head-row {
