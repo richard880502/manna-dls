@@ -961,8 +961,13 @@ interface WorksheetSettings {
 interface WorksheetMaterial {
   title: string;
   paragraphs: Array<{ id: string; text: string }>;       // id 例如 "p3"；由程式分段
-  source: { kind: "pasted" | "lesson_sop"; lesson_id: number | null; material_version_no: number | null; note: string };
+  source: { kind: "pasted" | "lesson_sop"; lesson_id: number | null; material_version_no: number | null; note: string;
+            material_id: number | null };   // 教材庫（Phase 2.2）裡的那一份
 }
+// 貼上的文字先存進教師的教材庫（`materials`，並以 `material_links` 連到這份學習單），學習單保存當時的快照；
+// 從課例進入時用課例目前的教材庫教材。教材欄顯示教材庫的 MaterialViewer（含注記）。
+// 產生時，該教材上教師勾了「提供給 AI」的注記（`materials::annotations::shared_with_ai`）會以
+// 「教師注記」的標題放進每一步的 prompt，並列在「Manna 已帶入的資訊」；其他注記不會送出，也不會出現在學習單上。
 
 interface WsObjective {
   id: string; type: "content" | "language";

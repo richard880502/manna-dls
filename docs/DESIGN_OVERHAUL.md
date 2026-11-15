@@ -1,6 +1,6 @@
 # 改版設計提案：班級、課例 SOP、學習單產生器
 
-> 狀態：**方向已定（2026-11-14），第 1 步「外殼與清單頁」、第 2 步「課例七步（方向 A）」與第 3 步「學習單產生器」的核心已實作**（截圖在 [`implemented/sop/`](design/overhaul/implemented/sop/)、[`implemented/worksheet/`](design/overhaul/implemented/worksheet/)；第 3 步的教材注記由教材庫分支接上，外部資源搜尋、歷屆考題分析尚未做）；第 4 步尚未開始。產品負責人的決定：課例採 A 加滑出的教材檢視；CoRe 在介面上叫「單元想法」、小字保留 CoRe；「學習單」獨立一項；不做課表（首頁顯示最近上過課的班級的下一節）；手機只做上課標記與查看，備課以電腦為主但 375px 不能壞；「AI 資深教師」只放按鈕。
+> 狀態：**方向已定（2026-11-14），第 1 步「外殼與清單頁」、第 2 步「課例七步（方向 A）」與第 3 步「學習單產生器」的核心已實作**（截圖在 [`implemented/sop/`](design/overhaul/implemented/sop/)、[`implemented/worksheet/`](design/overhaul/implemented/worksheet/)；第 3 步的教材並排與注記用教材庫的檢視元件；外部資源搜尋、歷屆考題分析尚未做）；第 4 步尚未開始。產品負責人的決定：課例採 A 加滑出的教材檢視；CoRe 在介面上叫「單元想法」、小字保留 CoRe；「學習單」獨立一項；不做課表（首頁顯示最近上過課的班級的下一節）；手機只做上課標記與查看，備課以電腦為主但 375px 不能壞；「AI 資深教師」只放按鈕。
 > 第 1 步實作前後的截圖在 [`docs/design/overhaul/implemented/`](design/overhaul/implemented/)，與設計稿不同的地方列在該步驟的 PR。
 > 設計稿：[`docs/design/overhaul/index.html`](design/overhaul/index.html)（直接用瀏覽器開，可點著走一遍）。截圖在 [`docs/design/overhaul/screens/`](design/overhaul/screens/)。
 > 依據：《學習單產生器：教師選項與 SOP 整合規格》(2026-11-14)、`BLUEPRINT.md`、`DESIGN.md`、`TEACHER_NEEDS.md`、`feature/classes-library` 的 API Phase 1.4。
