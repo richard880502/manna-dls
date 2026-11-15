@@ -1305,7 +1305,8 @@ export interface WorksheetMaterial {
   title: string;
   paragraphs: { id: string; text: string }[];
   source: {
-    kind: "pasted" | "lesson_sop";
+    /** library：從教材庫選或上傳的那一份（`material_id`） */
+    kind: "pasted" | "lesson_sop" | "library";
     lesson_id: number | null;
     material_version_no: number | null;
     note: string;
@@ -1392,6 +1393,8 @@ export interface WsBlock {
   origin: WsOrigin;
   message: string | null;
   sop_block_id: string | null;
+  /** The template section this block was generated from; keep it when saving (regenerate uses it). */
+  template_section_id?: string | null;
 }
 
 export type WsAutoField = "material_types" | "student_tasks" | "answer_formats" | "generation" | "levels" | "minutes";
@@ -1412,7 +1415,8 @@ export interface WorksheetContent {
   notices: string[];
 }
 
-export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket";
+/** `template`: one job for a whole template generation (or one template block regenerate). */
+export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "template";
 export type WsJobOutcome = "shown" | "blocked" | "timeout" | "error" | "disabled" | "skipped";
 
 export interface WsJob {
@@ -1458,6 +1462,8 @@ export interface WorksheetState extends WorksheetSummary {
   /** 有上一版可以復原的區塊 id */
   undoable: string[];
   sop_sync: { linked: boolean; changes: number };
+  /** 照哪個版型產生（docs/WORKSHEET_TEMPLATES_CONTRACT.md）；舊的伺服器沒有這一欄 */
+  template?: WsTemplateRef | null;
 }
 
 export interface WsJobsState {
@@ -1470,6 +1476,10 @@ export interface CreateWorksheetRequest {
   lesson_id?: number;
   class_id?: number;
   material?: { title?: string; text: string; source_note?: string };
+  /** 教材庫裡有文字的一份；優先於貼上的 material */
+  material_id?: number;
+  /** 自己的、已讀好（ready）的版型 */
+  template_id?: number;
 }
 
 export interface SaveWorksheetRequest {
@@ -1478,6 +1488,8 @@ export interface SaveWorksheetRequest {
   settings?: WorksheetSettings;
   brief?: WorksheetBrief;
   content?: WorksheetContent;
+  /** 設定版型：記下目前版本並依版型重設 settings；null 拿掉版型（settings 不動）。產生中送出會 409。 */
+  template_id?: number | null;
 }
 
 export interface SaveWorksheetMaterialRequest {
@@ -1527,4 +1539,83 @@ export interface WsExportQuery {
   format: WsExportFormat;
   level: WsLevel;
   audience: WsAudience;
+}
+
+// ---- 我的學習單版型（docs/WORKSHEET_TEMPLATES_CONTRACT.md）----
+
+export type WsTemplateStatus = "extracting" | "ready" | "failed";
+export type WsInstructionLanguage = "英文" | "中文" | "中英並用";
+
+export interface WsTemplateSection {
+  /** "s1"、"s2"…；編修後不變 */
+  id: string;
+  title_pattern: string;
+  purpose: string;
+  block_kind: WsBlockKind;
+  /** 新教材的每一段各做一次 */
+  per_paragraph: boolean;
+  /** 固定標籤（學生任務） */
+  student_tasks: string[];
+  /** 固定標籤（作答方式） */
+  answer_formats: string[];
+  /** 1–12 */
+  item_count: number;
+  text_scope: string;
+  /** 固定的鷹架種類 */
+  scaffolds: string[];
+  instruction_style: string;
+  item_patterns: string[];
+  /** 需要老師提供影片、錄音、圖片或另一篇文字 */
+  needs_external_material: boolean;
+}
+
+export interface WsTemplate {
+  worksheet_kind: string;
+  instruction_language: WsInstructionLanguage;
+  header_fields: string[];
+  shows_objectives: boolean;
+  includes_passage_text: boolean;
+  /** 1–12 */
+  sections: WsTemplateSection[];
+  /** 固定標籤（產生設定） */
+  generation_options: string[];
+  /** 0–8，每則 ≤200 字 */
+  style_notes: string[];
+}
+
+export interface WsTemplateSummary {
+  id: number;
+  title: string;
+  status: WsTemplateStatus;
+  section_count: number;
+  source_material: { id: number; title: string } | null;
+  version_no: number | null;
+  updated_at: string;
+}
+
+export interface WsTemplateDetail extends WsTemplateSummary {
+  error: string | null;
+  content: WsTemplate | null;
+}
+
+export interface WsTemplateList {
+  templates: WsTemplateSummary[];
+}
+
+export interface CreateWsTemplateRequest {
+  material_id: number;
+  title?: string;
+}
+
+export interface UpdateWsTemplateRequest {
+  title?: string;
+  /** 有 content 就多一個版本（origin=teacher） */
+  content?: WsTemplate;
+}
+
+/** 學習單記下的版型與版本 */
+export interface WsTemplateRef {
+  id: number;
+  title: string;
+  version_no: number;
 }

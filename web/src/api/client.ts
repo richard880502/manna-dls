@@ -96,6 +96,10 @@ import type {
   WsJobsState,
   WsLevel,
   WsVocabCheck,
+  CreateWsTemplateRequest,
+  UpdateWsTemplateRequest,
+  WsTemplateDetail,
+  WsTemplateList,
 } from "./types";
 
 export class ApiError extends Error {
@@ -403,6 +407,24 @@ export const api = {
   /** 後端即時產生的檔案；回傳 Blob 與檔名 */
   exportWorksheet: (id: number, query: WsExportQuery) =>
     download(`/worksheets/${id}/export`, { ...query }, `worksheet.${query.format}`),
+  /** 設定或拿掉版型；伺服器依版型重設 settings（拿掉時 settings 不動） */
+  setWorksheetTemplate: (id: number, templateId: number | null) =>
+    put<WorksheetState>(`/worksheets/${id}`, { template_id: templateId }),
+
+  // ---- 我的學習單版型（docs/WORKSHEET_TEMPLATES_CONTRACT.md）
+  /** 新的在前 */
+  listWorksheetTemplates: () => get<WsTemplateList>("/worksheet-templates"),
+  /** 202：在背景讀這份學習單的設計（status=extracting），之後輪詢 */
+  createWorksheetTemplate: (body: CreateWsTemplateRequest) => post<WsTemplateDetail>("/worksheet-templates", body),
+  getWorksheetTemplate: (id: number) => get<WsTemplateDetail>(`/worksheet-templates/${id}`),
+  /** 有 content 就存成新的一版；讀取中 409 */
+  updateWorksheetTemplate: (id: number, body: UpdateWsTemplateRequest) =>
+    put<WsTemplateDetail>(`/worksheet-templates/${id}`, body),
+  /** 只有 failed 可以重來 */
+  retryWorksheetTemplate: (id: number) => post<WsTemplateDetail>(`/worksheet-templates/${id}/retry`),
+  /** 永久刪除版型與所有版本 */
+  deleteWorksheetTemplate: (id: number) => del<OkResponse>(`/worksheet-templates/${id}`),
+
   // ---- 教材庫與注記（Phase 2.2）
   /** 自己的教材、用量與上傳限制；帶 lessonId 時只列連到那個課例的教材 */
   listLibraryMaterials: (lessonId?: number) =>

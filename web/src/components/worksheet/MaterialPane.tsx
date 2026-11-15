@@ -94,7 +94,11 @@ export function WorksheetMaterialPane(props: MaterialPaneProps) {
       <div className="ws-material ws-material-library">
         <MaterialViewer mode="pane" materialId={libraryId} />
         <p className="quiet-note">
-          {fromLesson ? "從課例帶入的教材。" : "你貼上的教材，已放進你的教材庫。"}
+          {fromLesson
+            ? "從課例帶入的教材。"
+            : material.source.kind === "library"
+              ? "從你的教材庫取用的教材。"
+              : "你貼上的教材，已放進你的教材庫。"}
           勾了「提供給 AI」的注記會在產生時參考；注記不會出現在學習單上。
         </p>
         <p className="quiet-note">

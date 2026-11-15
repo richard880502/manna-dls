@@ -17,6 +17,7 @@ import { RecordIndexPage } from "./pages/RecordIndexPage";
 import { RemotePage } from "./pages/RemotePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
 import { RunReviewPage } from "./pages/RunReviewPage";
+import { TemplatePage } from "./pages/TemplatePage";
 import { UnitPage } from "./pages/UnitPage";
 import { WorksheetCheckPage } from "./pages/WorksheetCheckPage";
 import { WorksheetPage } from "./pages/WorksheetPage";
@@ -73,6 +74,7 @@ export function AppRoutes() {
         {/* 備課庫 (every unit, to reuse one in another class) is reached from 班級, not the top bar. */}
         <Route path="units" element={<LibraryPage />} />
         <Route path="materials" element={<MaterialsPage />} />
+        <Route path="templates/:templateId" element={<TemplatePage />} />
         {/* Old links keep working: /library and /plan were the library; removed pages fall through to home. */}
         <Route path="library" element={<Navigate to="/units" replace />} />
         <Route path="plan" element={<Navigate to="/units" replace />} />

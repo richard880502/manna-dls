@@ -79,6 +79,12 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
             )}
           </p>
           <h1>{shown === "options" ? "做一份學習單" : state.title || "未命名的學習單"}</h1>
+          {state.template && (
+            <p className="quiet-note ws-template-line">
+              依版型：<Link to={`/templates/${state.template.id}`}>{state.template.title.trim() || "未命名的版型"}</Link>{" "}
+              第 {state.template.version_no} 版
+            </p>
+          )}
         </div>
         <p className={`saved${ws.saveError ? " is-failed" : ""}`} role="status">
           {savedLine}

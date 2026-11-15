@@ -56,7 +56,7 @@ describe("app shell", () => {
     },
   );
 
-  it("學習單 opens the generator: paste material to make one, and an honest empty list", async () => {
+  it("學習單 opens the generator: upload, pick or paste material to make one, and an honest empty list", async () => {
     signIn();
     mockApi({ ...baseRoutes(), "GET /api/worksheets": [] });
     const user = userEvent.setup();
@@ -64,6 +64,10 @@ describe("app shell", () => {
     await user.click(await screen.findByRole("link", { name: "學習單" }));
 
     expect(await screen.findByRole("heading", { name: "學習單", level: 1 })).toBeInTheDocument();
+    const ways = within(screen.getByRole("group", { name: "教材從哪裡來" }));
+    expect(ways.getAllByRole("button").map((b) => b.textContent)).toEqual(["上傳檔案", "從教材庫選", "貼上文字"]);
+    expect(ways.getByRole("button", { name: "上傳檔案" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(ways.getByRole("button", { name: "貼上文字" }));
     expect(screen.getByRole("textbox", { name: "貼上教材文字" })).toBeInTheDocument();
     expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
     expect(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "學習單" })).toHaveAttribute(

@@ -18,6 +18,7 @@ import {
 } from "../../lib/worksheet";
 import { AiContextPanel } from "../AiContextPanel";
 import { ErrorText } from "../common";
+import { TemplateOption } from "./TemplateOption";
 import type { WorksheetController } from "./useWorksheet";
 
 type ListField = "material_types" | "student_tasks" | "answer_formats" | "generation";
@@ -217,6 +218,8 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
           </div>
         </div>
       </section>
+
+      <TemplateOption ws={ws} locked={locked} />
 
       {hasCarried && (
         <section className="ws-carried" aria-labelledby={`${ids}-carried`}>

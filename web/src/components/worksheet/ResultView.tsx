@@ -28,6 +28,7 @@ import {
   toggleIn,
   type SheetBlock,
 } from "../../lib/worksheet";
+import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { LessonLinkControls } from "./LessonLink";
 import { ProgressPanel, RunOutcome } from "./OptionsView";
@@ -262,11 +263,17 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
           {block.info_function ? ` · ${INFO_FUNCTION_LABEL[block.info_function]}` : ""}
         </p>
       )}
-      {block.message && (
-        <p className="ws-message" lang="zh-Hant" role="note">
-          {block.message}
-        </p>
-      )}
+      {block.message &&
+        (needsMaterial(block.message) ? (
+          <div className="ws-message is-needs-material" lang="zh-Hant" role="note" aria-label="需要你提供素材">
+            <p className="ws-message-label">需要你提供素材</p>
+            <p>{block.message}</p>
+          </div>
+        ) : (
+          <p className="ws-message" lang="zh-Hant" role="note">
+            {block.message}
+          </p>
+        ))}
       {!view.printed && (
         <p className="quiet-note ws-not-printed" lang="zh-Hant">
           這個區塊目前沒有內容，印出與匯出時會略過；寫入題目或作答指示後就會出現在學習單上。
@@ -617,6 +624,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const sheet = projectSheet(content, current, audience);
   const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
   const chosen = chosenLine(content);
+  const needsCount = content.blocks.filter((b) => b.enabled && needsMaterial(b.message)).length;
 
   return (
     <div className="ws-result">
@@ -678,6 +686,11 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
           {r}
         </p>
       ))}
+      {needsCount > 0 && (
+        <p className="ws-needs-summary" role="note">
+          有 {needsCount} 個區塊需要你提供素材（影片、錄音、圖片或另一篇文章）。Manna 不會自己編造，請在發給學生前補上。
+        </p>
+      )}
       {content.notices.length > 0 && (
         <ul className="ws-notices" aria-label="產生時的提醒">
           {content.notices.map((n) => (
