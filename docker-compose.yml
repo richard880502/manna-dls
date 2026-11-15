@@ -24,6 +24,15 @@ services:
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-}
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
       AI_TIMEOUT_SECS: ${AI_TIMEOUT_SECS:-150}
+      # Semantic index for hybrid retrieval (docs/API.md「Phase 2.4」). Off by default; set
+      # EMBEDDING_PROVIDER=openai_compatible and the rest in Coolify. The NCHC embeddings key is
+      # separate from the chat key. Any failure falls back to keyword retrieval.
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-none}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma-2}
+      EMBEDDING_DIMS: ${EMBEDDING_DIMS:-768}
+      EMBEDDING_QUERY_TIMEOUT_MS: ${EMBEDDING_QUERY_TIMEOUT_MS:-2500}
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}

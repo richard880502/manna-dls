@@ -100,7 +100,7 @@ def keyword_rank(query: str, items: list[dict]) -> list[tuple[str, int]]:
     return out
 
 
-# ---------------------------------------------------------------- port of embedding.rs
+# ---------------------------------------------------------------- port of kb_embeddings.rs (embed_text)
 
 KIND_LABEL = {"learning_performance": "學習表現", "learning_content": "學習內容"}
 QUERY_CHARS = 2000

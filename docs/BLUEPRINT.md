@@ -71,7 +71,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 ```
 教師按「需要協助」或「取得建議」
  → 建立 ai_interactions（status=pending，存輸入來源快照、鷹架編號、提示詞版本）
- → 檢索 knowledge_items（先依普高／技高過濾，再全文＋trigram；向量欄位預留）→ retrieval_logs
+ → 檢索 knowledge_items（先依學校類型與範圍過濾，再以關鍵字＋語意向量混合排序；沒有語意索引時只用關鍵字）→ retrieval_logs（記方法與候選）
  → 呼叫模型（JSON schema 結構化輸出，逾時 30 秒）
  → 自動檢核：
      ・有無引用、引用的條目編號是否在本次檢索結果中
@@ -102,7 +102,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | SIOP | `siop_features`、`lesson_siop_focus` | 建（資料待主持人核准） |
 | AI | `ai_interactions`、`teacher_decisions`、`retrieval_logs`、`prompt_versions` | 建 |
 | 鷹架 | `scaffolds`、`scaffold_events` | 建 |
-| 知識庫 | `knowledge_items`（含 `embedding vector` 欄位預留）、`teacher_cases` | 建 |
+| 知識庫 | `knowledge_items`、`knowledge_embeddings`（每版本一筆向量，記模型與維度）、`embedding_jobs`、`teacher_cases` | 建（向量：Phase 2.4，migration `0011_embeddings.sql`） |
 | 書籤 | `lesson_runs`、`record_events`、`record_event_revisions`、`run_pairings`、`run_remotes` | 建（Phase 1.2，migration `0004_teach_record.sql`） |
 | 反思 | `reflections`、`carry_forward_links`、`progress_logs` | 預留 |
 | 系統 | `notifications`、`export_logs`、`access_logs`、`system_versions`、`usage_logs` | 預留 |
@@ -197,7 +197,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 
 | 項目 | 需要誰 |
 |---|---|
-| 國網中心模型 API（端點、JSON 結構化輸出、embedding、速率） | 共同主持人 |
+| 國網中心模型 API（端點、JSON 結構化輸出、速率）；embedding 已取得另一把金鑰並採用 `embeddinggemma-2`（2026-11-15） | 共同主持人 |
 | ~~知識庫條目的整理檔~~ **課綱與大考詞彙表已可匯入**（2026-11-15）：108 課綱 1,352 條（普高、技高、綜高、外語群）與大考中心參考詞彙表 6,012 詞條已擷取成匯入檔，由主持人或知識庫管理員在「知識庫管理」頁上傳到正式環境（`docs/API.md`「Phase 2.0」）。**仍缺**：文法 76 項、SIOP 摘要的正式整理檔（目前只有內建的示範條目） | 主持人 |
 | **學測、統測歷屆考題：完全沒有取得。** 規格 §9.6 的「歷屆考題能力對應度」無資料可做；需決定來源（大考中心、技專校院入學測驗中心的公開試題）、年度範圍與授權方式 | 主持人 |
 | 知識庫來源的待確認事項：各文件的官方原始連結（交付的 PDF 沒有附網址）、技高與綜高語文領綱的發布日期、大考中心詞彙表的使用授權（頁首聲明限非營利並須註明出處）；確認前資料不進 repo | 主持人 |
@@ -251,6 +251,7 @@ AI 供應商 ◄──────────────┘（只經後端；�
 | 項目 | 狀態 |
 |---|---|
 | 知識庫與詞彙（Phase 2.0） | **已完成**：課綱條目（含綜高）與大考詞彙表的資料表、匯入（預覽、重複匯入不變動、只停用不刪除）、課綱檢索與依代碼取條文、純規則的詞彙級別分析、知識庫管理員角色與管理頁。資料本身不在 repo，需在管理頁上傳 |
+| 語意索引與混合檢索（Phase 2.4） | **已完成**：國網中心 `embeddinggemma-2`（768 維）為知識庫條目建立向量（匯入後背景建立、可續做、換模型自動重建），課綱查詢、教案建議、SOP 目標改用關鍵字＋向量的混合排序；模型不可用時自動只用關鍵字。31 題評估：recall@8 0.26 → 0.71（`docs/RETRIEVAL_EVAL.md`）。需在 Coolify 設 `EMBEDDING_*` 並在知識庫管理頁確認索引完成 |
 | 歷屆考題分析（規格 §9.6） | 未開始；沒有考題資料（見 §12） |
 | 教師端的課綱連結與詞彙分析畫面 | 待課例 SOP、學習單產生器接上；API 已有 |
 | Google 登入＋白名單（規格第一年正式版） | 延後；雛形沿用邀請碼 |
