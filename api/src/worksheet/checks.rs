@@ -41,8 +41,18 @@ impl<T> Eval<T> {
 struct Tally {
     names: Vec<&'static str>,
     failures: BTreeMap<&'static str, Vec<String>>,
+    /// Problems the code fixed completely: reported, but no reason for a repair call.
+    fixed: BTreeMap<&'static str, Vec<String>>,
     problems: Vec<String>,
     repairs: Vec<String>,
+}
+
+fn joined(list: &[String]) -> String {
+    list.iter()
+        .take(5)
+        .map(|s| clip_chars(s, 160))
+        .collect::<Vec<_>>()
+        .join("；")
 }
 
 impl Tally {
@@ -50,6 +60,7 @@ impl Tally {
         Self {
             names: names.to_vec(),
             failures: BTreeMap::new(),
+            fixed: BTreeMap::new(),
             problems: Vec::new(),
             repairs: Vec::new(),
         }
@@ -66,21 +77,28 @@ impl Tally {
         self.problems.push(problem);
     }
 
+    /// Records a problem the code has fully repaired (`repair` says how). The check still
+    /// passes: on its own it never costs a repair call, but if one is made for another reason
+    /// the model is told about this too.
+    fn fixed(&mut self, name: &'static str, problem: String, repair: &str) {
+        debug_assert!(self.names.contains(&name), "undeclared check {name}");
+        let note = format!("{repair}：{}", clip_chars(&problem, 160));
+        self.fixed.entry(name).or_default().push(note.clone());
+        self.repairs.push(note);
+        self.problems.push(problem);
+    }
+
     fn finish<T>(self, output: Option<T>) -> Eval<T> {
         let results = self
             .names
             .iter()
-            .map(|name| match self.failures.get(name) {
-                None => CheckResult::pass(name),
-                Some(list) => CheckResult::fail(
-                    name,
-                    list.iter()
-                        .take(5)
-                        .map(|s| clip_chars(s, 160))
-                        .collect::<Vec<_>>()
-                        .join("；"),
-                ),
-            })
+            .map(
+                |name| match (self.failures.get(name), self.fixed.get(name)) {
+                    (Some(list), _) => CheckResult::fail(name, joined(list)),
+                    (None, Some(list)) => CheckResult::repaired(name, joined(list)),
+                    (None, None) => CheckResult::pass(name),
+                },
+            )
             .collect();
         Eval {
             output,
@@ -104,6 +122,46 @@ fn clean_all(list: &[String]) -> Vec<String> {
         .map(|s| clean(s))
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// Shorter pieces of a spliced quote are fragments, not evidence.
+pub const MIN_EVIDENCE_WORDS: usize = 5;
+
+/// The longest piece of a quote that is word for word in `passage` and at least five words
+/// long ([`MIN_EVIDENCE_WORDS`]). The quote is cut where the model joined pieces: at "..." / "…"
+/// and at sentence ends.
+pub fn verbatim_piece(quote: &str, passage: &str) -> Option<String> {
+    let mut pieces: Vec<String> = Vec::new();
+    for part in quote.replace('…', "...").split("...") {
+        // Where sentences may end; every run of consecutive sentences is a candidate (so an
+        // abbreviation such as "Mrs." does not cut a sentence in two).
+        let mut cuts = vec![0];
+        let chars: Vec<(usize, char)> = part.char_indices().collect();
+        for (k, (i, c)) in chars.iter().enumerate() {
+            let next_is_space = chars.get(k + 1).is_none_or(|(_, n)| n.is_whitespace());
+            if matches!(c, '.' | '!' | '?' | ';') && next_is_space {
+                cuts.push(i + c.len_utf8());
+            }
+        }
+        if cuts.last() != Some(&part.len()) {
+            cuts.push(part.len());
+        }
+        for a in 0..cuts.len() {
+            for b in a + 1..cuts.len() {
+                pieces.push(part[cuts[a]..cuts[b]].to_string());
+            }
+        }
+    }
+    pieces
+        .into_iter()
+        .map(|p| {
+            p.trim()
+                .trim_matches(|c: char| c == '"' || c == '\'' || c == '“' || c == '”')
+                .trim()
+                .to_string()
+        })
+        .filter(|p| word_count(p) >= MIN_EVIDENCE_WORDS && is_verbatim(p, passage))
+        .max_by_key(|p| p.chars().count())
 }
 
 /// An answer of four words or more that appears word for word in `text`.
@@ -368,19 +426,27 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 );
                 continue;
             }
+            // Evidence is only a note for the teacher: one that is not verbatim is cut down to
+            // its longest verbatim piece, or dropped, in code (as the SOP analysis drops it).
+            // It never costs the step a repair call on its own.
             item.evidence = match it.evidence.as_deref().map(clean) {
                 Some(e) if e.is_empty() => None,
                 Some(e) if is_verbatim(&e, &passage) => Some(e),
                 Some(e) => {
-                    t.fail(
+                    let piece = verbatim_piece(&e, &passage);
+                    t.fixed(
                         "evidence_verbatim",
                         format!(
                             "{iname} 的 evidence「{}」不是教材的連續片段。請逐字複製一段連續文字，不可用「...」省略或拼接；找不到就填 null。",
                             clip_chars(&e, 120)
                         ),
-                        "清空這一題的依據",
+                        if piece.is_some() {
+                            "只留下其中逐字的一段"
+                        } else {
+                            "清空這一題的依據"
+                        },
                     );
-                    None
+                    piece
                 }
                 None => None,
             };
@@ -711,23 +777,105 @@ const SCAFFOLD_CHECKS: [&str; 5] = [
     "no_answer_leak",
 ];
 
+/// `text` without its parenthesised Chinese glosses ("routine (常規)", "routine（常規）"), when
+/// that leaves English only; `None` when there is Chinese elsewhere too.
+pub fn without_cjk_glosses(text: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find(['(', '（']) {
+        let after = &rest[open..];
+        let close = after.find([')', '）'])?;
+        let inner = &after[after.chars().next()?.len_utf8()..close];
+        out.push_str(&rest[..open]);
+        if english_only(inner) {
+            out.push_str(&after[..close + after[close..].chars().next()?.len_utf8()]);
+        } else {
+            // Drop the space before the gloss too.
+            while out.ends_with(' ') {
+                out.pop();
+            }
+        }
+        rest = &after[close + after[close..].chars().next()?.len_utf8()..];
+    }
+    out.push_str(rest);
+    let out = out.trim().to_string();
+    (!out.is_empty() && english_only(&out)).then_some(out)
+}
+
+/// A target id the way the model may spell it: "warm_up", "Warm-up" and "warmup" are one,
+/// as are "B1", "b1" and "[B1]".
+fn target_key(s: &str) -> String {
+    s.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+/// The requested target the model meant, if any.
+pub fn canonical_target(written: &str, targets: &[String]) -> Option<String> {
+    let key = target_key(written);
+    targets
+        .iter()
+        .find(|t| !key.is_empty() && target_key(t) == key)
+        .cloned()
+}
+
 pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Vec<RawScaffoldSet>> {
     let mut t = Tally::new(&SCAFFOLD_CHECKS);
     let mut sets: Vec<RawScaffoldSet> = Vec::new();
     for s in &raw.scaffolds {
-        let target = s.target.trim().to_string();
-        if !ctx.targets.contains(&target) || sets.iter().any(|x| x.target == target) {
-            t.fail(
+        let written = s.target.trim().to_string();
+        let target = match canonical_target(&written, ctx.targets) {
+            Some(target) => target,
+            // The prompt names the warm-up's target even when the warm-up failed and was not
+            // sent: a set for it is simply not needed.
+            None if target_key(&written) == target_key(TARGET_WARMUP) => {
+                t.fixed(
+                    "targets_match_blocks_and_warmup",
+                    format!("這次沒有暖身，不需要 target「{written}」。"),
+                    "拿掉這一筆",
+                );
+                continue;
+            }
+            None => {
+                t.fail(
+                    "targets_match_blocks_and_warmup",
+                    format!(
+                        "target「{written}」不在要設計的區塊裡；只能用：{}。",
+                        ctx.targets.join("、")
+                    ),
+                    "拿掉這一筆",
+                );
+                continue;
+            }
+        };
+        if sets.iter().any(|x| x.target == target) {
+            t.fixed(
                 "targets_match_blocks_and_warmup",
-                format!("target「{target}」不在要設計的區塊裡（或重複了）。"),
-                "拿掉這一筆",
+                format!("target「{target}」重複了。"),
+                "只留第一筆",
             );
             continue;
         }
         let mut support = |list: &[super::schemas::RawSupport], kinds: &[&str], what: &str| {
             let mut out = Vec::new();
             for sup in list {
-                let content = clean(&sup.content_en);
+                let mut content = clean(&sup.content_en);
+                // A word bank with Chinese glosses, "behavior (行為), routine (常規)": the
+                // glosses go, the English stays.
+                if !english_only(&content) {
+                    if let Some(english) = without_cjk_glosses(&content) {
+                        t.fixed(
+                            "english_only",
+                            format!(
+                                "{target} 的{what}「{}」在括號裡加了中文；鷹架只能用英文。",
+                                sup.kind
+                            ),
+                            "拿掉括號裡的中文",
+                        );
+                        content = english;
+                    }
+                }
                 if !kinds.contains(&sup.kind.as_str()) {
                     t.fail(
                         "kinds_from_spec_sets",
@@ -1100,7 +1248,6 @@ mod tests {
         for expected in [
             "labels_from_spec_sets",
             "english_only",
-            "evidence_verbatim",
             "items_wellformed",
             "answer_not_in_prompt",
             "objective_refs_valid",
@@ -1118,8 +1265,83 @@ mod tests {
         assert_eq!(blocks[1].student_tasks, vec!["理解內容".to_string()]);
         assert!(blocks[1].objective_refs.is_empty());
         assert_eq!(blocks[1].items.len(), 1);
+        // The spliced evidence has no verbatim piece of five words: cleared in code, reported
+        // as repaired (not as a failure).
         assert_eq!(blocks[2].items[0].evidence, None);
+        let evidence = e
+            .results
+            .iter()
+            .find(|r| r.name == "evidence_verbatim")
+            .unwrap();
+        assert!(evidence.passed);
+        assert!(evidence
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("清空這一題的依據"));
         assert!(!e.repairs.is_empty() && !e.problems.is_empty());
+    }
+
+    #[test]
+    fn spliced_evidence_is_cut_to_its_verbatim_piece_without_a_repair_call() {
+        let p = paragraphs();
+        let passage = p.join("\n");
+        // Two sentences that are not next to each other (the model's habit), and a "..." splice.
+        assert_eq!(
+            verbatim_piece(
+                "Mrs. Lin put an umbrella stand outside her shop on a rainy Monday. However, something unexpected followed.",
+                &passage
+            )
+            .as_deref(),
+            Some("Mrs. Lin put an umbrella stand outside her shop on a rainy Monday.")
+        );
+        assert_eq!(
+            verbatim_piece(
+                "In the first month, twelve umbrellas did disappear … something unexpected",
+                &passage
+            )
+            .as_deref(),
+            Some("In the first month, twelve umbrellas did disappear")
+        );
+        assert_eq!(
+            verbatim_piece("Her neighbors ... the idea.", &passage),
+            None
+        );
+        assert_eq!(
+            verbatim_piece("Nothing like the text at all here.", &passage),
+            None
+        );
+
+        let mut spliced = item(
+            "簡答題",
+            "What happened in the first month?",
+            "Twelve went.",
+        );
+        spliced.evidence = Some(
+            "In the first month, twelve umbrellas did disappear. ... something unexpected followed."
+                .into(),
+        );
+        let raw = RawTasks {
+            blocks: vec![
+                block(&[1], "發現資訊", vec![item("簡答題", "Where?", "Outside.")]),
+                block(&[2], "分析資訊", vec![spliced]),
+                block(
+                    &[3],
+                    "創造資訊",
+                    vec![item("段落寫作", "Write.", "Varies.")],
+                ),
+            ],
+        };
+        let e = evaluate_tasks(&raw, &tasks_ctx(&p, &[]));
+        assert!(!e.needs_repair(), "{:?}", failed(&e.results));
+        let blocks = e.output.unwrap();
+        assert_eq!(
+            blocks[1].items[0].evidence.as_deref(),
+            Some("In the first month, twelve umbrellas did disappear.")
+        );
+        assert!(e.repairs.iter().any(|r| r.contains("只留下其中逐字的一段")));
+        // If a repair call is made for another reason, the model hears about it too.
+        assert!(e.problems.iter().any(|p| p.contains("evidence")));
     }
 
     #[test]
@@ -1293,6 +1515,108 @@ mod tests {
         assert_eq!(sets.len(), 2);
         assert_eq!(sets[1].verbal.len(), 1);
         assert!(sets[1].instructional.is_empty() && sets[1].procedural.is_empty());
+    }
+
+    #[test]
+    fn chinese_glosses_are_taken_out_of_a_word_bank() {
+        assert_eq!(
+            without_cjk_glosses("Word Bank: behavior (行為), automatic（自動的）, effort (try)")
+                .as_deref(),
+            Some("Word Bank: behavior, automatic, effort (try)")
+        );
+        assert_eq!(without_cjk_glosses("請用這個句型 (frame)"), None);
+        assert_eq!(without_cjk_glosses("(行為)"), None);
+        assert_eq!(without_cjk_glosses("unclosed (行為"), None);
+
+        let raw = RawScaffolds {
+            scaffolds: vec![RawScaffoldSet {
+                target: "B1".into(),
+                verbal: vec![RawSupport {
+                    kind: "字詞表".into(),
+                    content_en: "Word Bank: habit (習慣), routine (常規)".into(),
+                }],
+                instructional: vec![],
+                procedural: vec![RawProcedure {
+                    kind: "清楚的分步指示及完成順序".into(),
+                    steps_en: vec!["Read.".into(), "Write.".into()],
+                }],
+            }],
+        };
+        let e = evaluate_scaffolds(
+            &raw,
+            &ScaffoldsCtx {
+                targets: &["B1".to_string()],
+                answers: &[],
+            },
+        );
+        assert!(!e.needs_repair(), "{:?}", failed(&e.results));
+        assert_eq!(
+            e.output.unwrap()[0].verbal[0].content_en,
+            "Word Bank: habit, routine"
+        );
+    }
+
+    #[test]
+    fn scaffold_targets_are_matched_however_they_are_spelled() {
+        let set = |target: &str| RawScaffoldSet {
+            target: target.into(),
+            verbal: vec![],
+            instructional: vec![],
+            procedural: vec![RawProcedure {
+                kind: "清楚的分步指示及完成順序".into(),
+                steps_en: vec!["Read.".into(), "Write.".into()],
+            }],
+        };
+        assert_eq!(
+            canonical_target("Warm-up", &["warm_up".into()]).as_deref(),
+            Some("warm_up")
+        );
+        assert_eq!(
+            canonical_target("[b2]", &["B1".into(), "B2".into()]).as_deref(),
+            Some("B2")
+        );
+        assert_eq!(canonical_target("", &["B1".into()]), None);
+
+        // The warm-up failed, so only the blocks were sent; the model still wrote a warm-up
+        // set (the prompt describes its target) and spelled the blocks its own way.
+        let targets = vec!["B1".to_string(), "B2".to_string()];
+        let raw = RawScaffolds {
+            scaffolds: vec![set("warmup"), set("b1"), set("[B2]"), set("B2")],
+        };
+        let e = evaluate_scaffolds(
+            &raw,
+            &ScaffoldsCtx {
+                targets: &targets,
+                answers: &[],
+            },
+        );
+        assert!(!e.needs_repair(), "{:?}", failed(&e.results));
+        let sets = e.output.unwrap();
+        let names: Vec<&str> = sets.iter().map(|s| s.target.as_str()).collect();
+        assert_eq!(names, ["B1", "B2"]);
+        let check = e
+            .results
+            .iter()
+            .find(|r| r.name == "targets_match_blocks_and_warmup")
+            .unwrap();
+        assert!(check.detail.as_deref().unwrap().contains("沒有暖身"));
+
+        // With the warm-up requested, "warm-up" is its set; a made-up target still fails.
+        let targets = vec!["warm_up".to_string(), "B1".to_string()];
+        let raw = RawScaffolds {
+            scaffolds: vec![set("Warm-up"), set("B1"), set("B7")],
+        };
+        let e = evaluate_scaffolds(
+            &raw,
+            &ScaffoldsCtx {
+                targets: &targets,
+                answers: &[],
+            },
+        );
+        assert_eq!(failed(&e.results), ["targets_match_blocks_and_warmup"]);
+        let sets = e.output.unwrap();
+        assert_eq!(sets[0].target, "warm_up");
+        assert_eq!(sets.len(), 2);
     }
 
     #[test]

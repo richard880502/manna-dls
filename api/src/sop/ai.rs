@@ -36,7 +36,7 @@ use super::{numbered_passage, Paragraph};
 use crate::ai::pipeline::{
     self, AiContextItem, AiResult, ContextList, Finish, InteractionMeta, Outcome, Source,
 };
-use crate::ai::{LlmRequest, LlmResponse, ProviderError};
+use crate::ai::{LlmRequest, LlmResponse, ProviderError, Runaway, RUNAWAY_EXCERPT_KEY};
 use crate::checks::{self, CheckResult};
 use crate::config::AiProviderKind;
 use crate::curriculum::{self, CurriculumItem};
@@ -416,6 +416,10 @@ pub(crate) async fn finish_failure(
     a: &Attempt,
     error: &ProviderError,
 ) -> sqlx::Result<Failure> {
+    // What a runaway wrote is kept (shortened) so it can be looked at later; it is model output,
+    // never the material itself, and its excerpt is scrubbed with the evidence when a material
+    // is deleted (`materials::store::scrub_evidence`).
+    let mut output = None;
     let (status, check, detail, kind) = match error {
         ProviderError::Timeout => (
             "timeout",
@@ -435,15 +439,22 @@ pub(crate) async fn finish_failure(
             None,
             Failure::Retryable,
         ),
-        ProviderError::MaxTokens => (
-            "blocked",
-            Some(CheckResult::fail(
-                "max_tokens",
-                "output ran to max_tokens (runaway repetition)",
-            )),
-            None,
-            Failure::Retryable,
-        ),
+        ProviderError::MaxTokens { partial } => {
+            let runaway = Runaway::of(partial);
+            output = Some(json!({
+                "truncated_at_max_tokens": true,
+                "runaway": runaway.kind,
+                "chars": runaway.chars,
+                "longest_whitespace": runaway.longest_whitespace,
+                RUNAWAY_EXCERPT_KEY: runaway.excerpt,
+            }));
+            (
+                "blocked",
+                Some(CheckResult::fail("max_tokens", runaway.summary())),
+                None,
+                Failure::Retryable,
+            )
+        }
         e => ("error", None, Some(e.to_string()), Failure::Error),
     };
     if matches!(kind, Failure::Error) {
@@ -454,7 +465,7 @@ pub(crate) async fn finish_failure(
         a.id,
         Finish {
             status,
-            output: None,
+            output,
             citations: Vec::new(),
             check_results: check.map(|c| checks::report(&[c])),
             model_version: None,

@@ -12,11 +12,16 @@
 //! | `FAKE_WS_WARMUP_BLOCK`   | warm-up: both calls are unusable                                    |
 //! | `FAKE_WS_NO_PROCEDURAL`  | scaffolds: no procedural scaffold (the program adds its own)        |
 //! | `FAKE_WS_LEAK`           | scaffolds: call 1 puts a reference answer into a scaffold           |
+//! | `FAKE_WS_TARGET_ALIAS`   | scaffolds: targets spelled "Warm-up" / "b1", plus a "warmup" set nobody asked for |
 //! | `FAKE_BLOCK`             | every step: output with nothing usable                              |
+//! | `FAKE_RUNAWAY`           | every step: call 1 runs to `max_tokens` in whitespace (see `ai::fake`) |
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)          |
+//!
+//! `FAKE_WS_SPLICE_ALWAYS` evidence has no verbatim piece of five words, so it is cleared.
 
 use serde_json::{json, Value};
 
+use super::schemas::TARGET_WARMUP;
 use super::{
     task_for_function, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
     FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE, INFO_FUNCTIONS, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING,
@@ -324,7 +329,7 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
         .iter()
         .map(|t| {
             let target = t["target"].as_str().unwrap_or_default();
-            let warm = target == super::schemas::TARGET_WARMUP;
+            let warm = target == TARGET_WARMUP;
             let kinds: Vec<&str> = if selected.is_empty() {
                 vec![KIND_FRAMES]
             } else {
@@ -367,6 +372,25 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
             })
         })
         .collect();
+    let mut sets = sets;
+    if has("FAKE_WS_TARGET_ALIAS") {
+        // The model's own spellings ("Warm-up", "b1"), and a warm-up set nobody asked for.
+        let asked_warmup = sets.iter().any(|s| s["target"] == TARGET_WARMUP);
+        for s in &mut sets {
+            let alias = match s["target"].as_str().unwrap_or_default() {
+                TARGET_WARMUP => "Warm-up".to_string(),
+                other => other.to_lowercase(),
+            };
+            s["target"] = json!(alias);
+        }
+        if !asked_warmup {
+            if let Some(first) = sets.first().cloned() {
+                let mut extra = first;
+                extra["target"] = json!("warmup");
+                sets.insert(0, extra);
+            }
+        }
+    }
     json!({ "scaffolds": sets })
 }
 

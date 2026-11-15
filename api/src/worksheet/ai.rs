@@ -52,10 +52,26 @@ pub const STEP_WARMUP: &str = "warmup";
 pub const STEP_SCAFFOLDS: &str = "scaffolds";
 pub const STEP_EXIT: &str = "exit_ticket";
 
+// Output budgets: about twice the longest output measured with gemma-4-31B-it
+// (docs/llm-eval/worksheet-real/README.md: tasks ≈ 500 tokens per paragraph + 500, warm-up
+// ≤ 810, scaffolds ≈ 220 per target, exit ticket ≤ 434). A budget only matters when the model
+// runs away, and then a smaller one ends the wasted call sooner (≈ 170 tokens per second).
+/// The tasks budget for the whole material; see [`tasks_max_tokens`].
 pub const TASKS_MAX_TOKENS: u32 = 6000;
-pub const WARMUP_MAX_TOKENS: u32 = 3000;
+pub const WARMUP_MAX_TOKENS: u32 = 2000;
+/// The scaffolds budget for many blocks; see [`scaffolds_max_tokens`].
 pub const SCAFFOLDS_MAX_TOKENS: u32 = 5000;
-pub const EXIT_MAX_TOKENS: u32 = 1500;
+pub const EXIT_MAX_TOKENS: u32 = 1200;
+
+/// Output budget of the tasks step for `paragraphs` paragraphs.
+pub fn tasks_max_tokens(paragraphs: usize) -> u32 {
+    (1500 + 600 * paragraphs.min(50) as u32).clamp(3000, TASKS_MAX_TOKENS)
+}
+
+/// Output budget of the scaffolds step for `targets` blocks.
+pub fn scaffolds_max_tokens(targets: usize) -> u32 {
+    (800 + 350 * targets.min(50) as u32).clamp(2000, SCAFFOLDS_MAX_TOKENS)
+}
 const BASE_TEMPERATURE: f32 = 0.2;
 /// Added for the repair call, so it is never the request the gateway has cached.
 const REPAIR_TEMPERATURE_STEP: f32 = 0.4;
@@ -71,7 +87,6 @@ struct StepInfo {
     module: &'static str,
     scaffold: &'static str,
     schema_name: &'static str,
-    max_tokens: u32,
     phase: &'static str,
     repair_phase: &'static str,
 }
@@ -81,7 +96,6 @@ const TASKS: StepInfo = StepInfo {
     module: "worksheet_tasks",
     scaffold: "SC-WS-TASKS",
     schema_name: schemas::TASKS_SCHEMA_NAME,
-    max_tokens: TASKS_MAX_TOKENS,
     phase: "正在依段落設計問題與任務",
     repair_phase: "有幾題沒有通過檢查，正在修正",
 };
@@ -90,7 +104,6 @@ const WARMUP: StepInfo = StepInfo {
     module: "worksheet_warmup",
     scaffold: "SC-WS-WARMUP",
     schema_name: schemas::WARMUP_SCHEMA_NAME,
-    max_tokens: WARMUP_MAX_TOKENS,
     phase: "正在設計暖身活動與關鍵字彙",
     repair_phase: "正在修正暖身活動",
 };
@@ -99,7 +112,6 @@ const SCAFFOLDS: StepInfo = StepInfo {
     module: "worksheet_scaffolds",
     scaffold: "SC-WS-SCAFFOLDS",
     schema_name: schemas::SCAFFOLDS_SCHEMA_NAME,
-    max_tokens: SCAFFOLDS_MAX_TOKENS,
     phase: "正在為每個區塊安排鷹架",
     repair_phase: "正在修正鷹架",
 };
@@ -108,7 +120,6 @@ const EXIT: StepInfo = StepInfo {
     module: "worksheet_exit_ticket",
     scaffold: "SC-WS-EXIT",
     schema_name: schemas::EXIT_SCHEMA_NAME,
-    max_tokens: EXIT_MAX_TOKENS,
     phase: "正在設計 Exit ticket",
     repair_phase: "正在修正 Exit ticket",
 };
@@ -643,6 +654,8 @@ struct StepCall {
     vars: HashMap<&'static str, String>,
     schema: Value,
     fake_context: Value,
+    /// Always set: the gateway hangs on a runaway output without one.
+    max_tokens: u32,
 }
 
 enum StepResult<T> {
@@ -733,7 +746,7 @@ where
         "prompt": { "key": info.key, "version_no": prompt.version_no,
                     "system": system, "user": logged_user },
         "schema": info.schema_name,
-        "request": { "temperature": run.temperature, "max_tokens": info.max_tokens },
+        "request": { "temperature": run.temperature, "max_tokens": call.max_tokens },
     });
     let meta = InteractionMeta {
         teacher_id: run.input.worksheet.teacher_id,
@@ -750,7 +763,7 @@ where
         schema: call.schema,
         fake_context: call.fake_context,
         attempt: 1,
-        max_tokens: Some(info.max_tokens),
+        max_tokens: Some(call.max_tokens),
         temperature: Some(run.temperature),
     };
 
@@ -1074,6 +1087,7 @@ async fn step_tasks(
             vars,
             schema: schemas::tasks_schema(),
             fake_context,
+            max_tokens: tasks_max_tokens(only_nos.as_ref().map_or(run.paragraphs.len(), Vec::len)),
         },
         |raw: &RawTasks| {
             evaluate_tasks(
@@ -1196,6 +1210,7 @@ async fn step_warmup(
             vars,
             schema: schemas::warmup_schema(),
             fake_context,
+            max_tokens: WARMUP_MAX_TOKENS,
         },
         |raw: &RawWarmup| {
             evaluate_warmup(
@@ -1316,6 +1331,7 @@ async fn step_scaffolds(
             vars,
             schema: schemas::scaffolds_schema(),
             fake_context,
+            max_tokens: scaffolds_max_tokens(targets.len()),
         },
         |raw: &RawScaffolds| {
             evaluate_scaffolds(
@@ -1377,6 +1393,7 @@ async fn step_exit(
             vars,
             schema: schemas::exit_schema(),
             fake_context,
+            max_tokens: EXIT_MAX_TOKENS,
         },
         |raw: &RawExit| {
             evaluate_exit(
@@ -1898,6 +1915,19 @@ pub fn core_items(blocks: &[RawBlock]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn budgets_follow_the_size_of_the_request() {
+        // Measured: 4 paragraphs ≈ 2,100 tokens, 6 paragraphs ≈ 2,650.
+        assert_eq!(tasks_max_tokens(1), 3000);
+        assert_eq!(tasks_max_tokens(4), 3900);
+        assert_eq!(tasks_max_tokens(6), 5100);
+        assert_eq!(tasks_max_tokens(40), TASKS_MAX_TOKENS);
+        // Measured: 7 targets ≈ 1,550 tokens.
+        assert_eq!(scaffolds_max_tokens(1), 2000);
+        assert_eq!(scaffolds_max_tokens(7), 3250);
+        assert_eq!(scaffolds_max_tokens(30), SCAFFOLDS_MAX_TOKENS);
+    }
 
     #[test]
     fn sentences_are_split_at_closing_marks() {

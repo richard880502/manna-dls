@@ -47,7 +47,12 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
         return Err(ProviderError::Refusal(clip(refusal, 500)));
     }
     match choice["finish_reason"].as_str() {
-        Some("length") => return Err(ProviderError::MaxTokens),
+        Some("length") => {
+            let partial = choice["message"]["content"].as_str().unwrap_or_default();
+            return Err(ProviderError::MaxTokens {
+                partial: partial.to_string(),
+            });
+        }
         Some("content_filter") => return Err(ProviderError::Refusal("content_filter".into())),
         _ => {}
     }
@@ -140,7 +145,13 @@ mod tests {
         let length = json!({"model": "m", "choices": [{"finish_reason": "length",
             "message": {"content": "{"}}]})
         .to_string();
-        assert_eq!(parse_response(200, &length), Err(ProviderError::MaxTokens));
+        // What was written before the cut is handed back for diagnosis.
+        assert_eq!(
+            parse_response(200, &length),
+            Err(ProviderError::MaxTokens {
+                partial: "{".into()
+            })
+        );
         let refusal = json!({"model": "m", "choices": [{"finish_reason": "stop",
             "message": {"content": null, "refusal": "no"}}]})
         .to_string();

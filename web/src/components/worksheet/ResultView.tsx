@@ -267,6 +267,11 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
           {block.message}
         </p>
       )}
+      {!view.printed && (
+        <p className="quiet-note ws-not-printed" lang="zh-Hant">
+          這個區塊目前沒有內容，印出與匯出時會略過；寫入題目或作答指示後就會出現在學習單上。
+        </p>
+      )}
 
       <SheetText
         label={`作答指示 ${name}`}

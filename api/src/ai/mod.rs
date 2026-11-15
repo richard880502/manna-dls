@@ -48,8 +48,10 @@ pub enum ProviderError {
     /// The model declined (Anthropic `stop_reason: "refusal"`, OpenAI `refusal`/`content_filter`).
     #[error("model refused: {0}")]
     Refusal(String),
+    /// The output ran to `max_tokens`. `partial` is what the model wrote until then, kept for
+    /// diagnosis only (see [`Runaway`]); it is never parsed.
     #[error("output truncated at max_tokens")]
-    MaxTokens,
+    MaxTokens { partial: String },
     #[error("HTTP {status}: {body}")]
     Http { status: u16, body: String },
     #[error("network error: {0}")]
@@ -80,6 +82,96 @@ pub(crate) fn clip(s: &str, max: usize) -> String {
         out.push('…');
         out
     }
+}
+
+/// How an output that ran to `max_tokens` went wrong, for `ai_interactions`
+/// (docs/LLM_VALIDATION.md section 2: gemma loops in whitespace or repeats one value).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Runaway {
+    /// `whitespace` (a run of blank characters it never left), `repetition` (the same text
+    /// over and over at the end) or `long` (neither: the output was simply too long).
+    pub kind: &'static str,
+    /// Characters the model wrote.
+    pub chars: usize,
+    pub longest_whitespace: usize,
+    /// The output with long whitespace runs collapsed; head and tail only.
+    pub excerpt: String,
+}
+
+/// Key of the runaway excerpt in a stored `ai_interactions.output`. It may quote the material,
+/// so deleting a material scrubs it like `evidence`.
+pub const RUNAWAY_EXCERPT_KEY: &str = "runaway_excerpt";
+
+/// A whitespace run at least this long is a runaway, not formatting.
+const RUNAWAY_WHITESPACE: usize = 200;
+/// Characters of the collapsed output kept at each end of the excerpt.
+const RUNAWAY_EXCERPT: usize = 1500;
+
+impl Runaway {
+    pub fn of(partial: &str) -> Self {
+        let mut collapsed = String::new();
+        let mut longest = 0;
+        let mut run = String::new();
+        let flush = |run: &mut String, out: &mut String, longest: &mut usize| {
+            let n = run.chars().count();
+            *longest = (*longest).max(n);
+            if n > 8 {
+                out.push_str(&format!("⟨{n} whitespace⟩"));
+            } else {
+                out.push_str(run);
+            }
+            run.clear();
+        };
+        for c in partial.chars() {
+            if c.is_whitespace() {
+                run.push(c);
+            } else {
+                flush(&mut run, &mut collapsed, &mut longest);
+                collapsed.push(c);
+            }
+        }
+        flush(&mut run, &mut collapsed, &mut longest);
+        let kind = if longest >= RUNAWAY_WHITESPACE {
+            "whitespace"
+        } else if repeats_at_end(&collapsed) {
+            "repetition"
+        } else {
+            "long"
+        };
+        let n = collapsed.chars().count();
+        let excerpt = if n <= 2 * RUNAWAY_EXCERPT {
+            collapsed
+        } else {
+            let head: String = collapsed.chars().take(RUNAWAY_EXCERPT).collect();
+            let tail: String = collapsed.chars().skip(n - RUNAWAY_EXCERPT).collect();
+            format!("{head} …[{} chars]… {tail}", n - 2 * RUNAWAY_EXCERPT)
+        };
+        Self {
+            kind,
+            chars: partial.chars().count(),
+            longest_whitespace: longest,
+            excerpt,
+        }
+    }
+
+    /// One line for `check_results`.
+    pub fn summary(&self) -> String {
+        format!(
+            "output ran to max_tokens: {} runaway ({} chars, longest whitespace run {})",
+            self.kind, self.chars, self.longest_whitespace
+        )
+    }
+}
+
+/// True when the last 40 characters occur at least three times in the last 3000.
+fn repeats_at_end(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() < 120 {
+        return false;
+    }
+    let window: String = chars[chars.len() - 40..].iter().collect();
+    let recent: String = chars[chars.len().saturating_sub(3000)..].iter().collect();
+    recent.matches(window.as_str()).count() >= 3
 }
 
 pub struct AiClient {
@@ -149,5 +241,107 @@ impl AiClient {
             Ok(r) => r,
             Err(_) => Err(ProviderError::Timeout),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every structured output the server asks for.
+    fn all_schemas() -> Vec<(&'static str, Value)> {
+        vec![
+            ("core_assist", schemas::core_assist_schema()),
+            ("plan_suggest", schemas::plan_suggest_schema()),
+            ("material_focuses", schemas::material_focuses_schema()),
+            ("sop_analysis", crate::sop::schemas::analysis_schema()),
+            ("sop_objectives", crate::sop::schemas::objectives_schema()),
+            ("worksheet_tasks", crate::worksheet::schemas::tasks_schema()),
+            (
+                "worksheet_warmup",
+                crate::worksheet::schemas::warmup_schema(),
+            ),
+            (
+                "worksheet_scaffolds",
+                crate::worksheet::schemas::scaffolds_schema(),
+            ),
+            ("worksheet_exit", crate::worksheet::schemas::exit_schema()),
+        ]
+    }
+
+    fn check_order(path: &str, v: &Value, problems: &mut Vec<String>) {
+        match v {
+            Value::Object(o) => {
+                if let (Some(Value::Object(props)), Some(Value::Array(required))) =
+                    (o.get("properties"), o.get("required"))
+                {
+                    let keys: Vec<&str> = props.keys().map(String::as_str).collect();
+                    let req: Vec<&str> = required.iter().filter_map(Value::as_str).collect();
+                    if keys != req {
+                        problems.push(format!("{path}: properties {keys:?} vs required {req:?}"));
+                    }
+                }
+                for (k, x) in o {
+                    check_order(&format!("{path}.{k}"), x, problems);
+                }
+            }
+            Value::Array(a) => {
+                for (i, x) in a.iter().enumerate() {
+                    check_order(&format!("{path}[{i}]"), x, problems);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The gateway's constrained decoding makes the model write properties in the order the
+    /// schema lists them. Sorted alphabetically (serde_json without `preserve_order`), the tasks
+    /// schema asked for `answer_en` before `prompt_en` and put `title_en` after `items`; the
+    /// model then wanted to close the object early and, with only whitespace allowed, wrote
+    /// whitespace until `max_tokens` (docs/llm-eval/worksheet-real). The schemas must reach the
+    /// provider in the order they are written: the order of `required`.
+    #[test]
+    fn schemas_keep_their_written_property_order() {
+        let mut problems = Vec::new();
+        for (name, schema) in all_schemas() {
+            check_order(name, &schema, &mut problems);
+            // And the serialised body keeps it too.
+            let s = schema.to_string();
+            let back: Value = serde_json::from_str(&s).unwrap();
+            check_order(&format!("{name} (reparsed)"), &back, &mut problems);
+        }
+        assert!(problems.is_empty(), "{problems:#?}");
+        let tasks = crate::worksheet::schemas::tasks_schema().to_string();
+        let at = |k: &str| tasks.find(&format!("\"{k}\"")).unwrap();
+        assert!(at("prompt_en") < at("answer_en"));
+        assert!(at("title_en") < at("instructions_en"));
+        assert!(at("instructions_en") < at("design_reason_zh"));
+    }
+
+    #[test]
+    fn runaway_whitespace_is_named_and_collapsed() {
+        let partial = format!(
+            "{{\n  \"background_activities\": [{{\"student_tasks\": [\"討論／分享\"]{}",
+            "    \n".repeat(2000)
+        );
+        let r = Runaway::of(&partial);
+        assert_eq!(r.kind, "whitespace");
+        assert_eq!(r.longest_whitespace, 10_000);
+        assert!(r.excerpt.contains("⟨10000 whitespace⟩"), "{}", r.excerpt);
+        assert!(r.excerpt.len() < 400);
+        assert!(r.summary().contains("whitespace runaway"));
+    }
+
+    #[test]
+    fn runaway_repetition_and_plain_long_output() {
+        let looped = format!("{{\"student_tasks\": [{}", "\"理解內容\", ".repeat(800));
+        let r = Runaway::of(&looped);
+        assert_eq!(r.kind, "repetition");
+        // Head and tail only.
+        assert!(r.excerpt.contains("chars]…"));
+        assert!(r.excerpt.chars().count() < 3 * RUNAWAY_EXCERPT);
+        let long: String = (0..400).map(|i| format!("word{i} ")).collect();
+        assert_eq!(Runaway::of(&long).kind, "long");
+        assert_eq!(Runaway::of("").kind, "long");
     }
 }
