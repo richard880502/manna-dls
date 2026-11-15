@@ -478,7 +478,7 @@ describe("result editor", () => {
     }
     // Instructions alone are worth printing.
     content.blocks[0] = { ...content.blocks[0], instructions: "Talk with a partner." };
-    expect(projectSheet(content, "standard", "student").blocks[0].label).toBe("A");
+    expect(projectSheet(content, "standard", "student").blocks[0]?.label).toBe("A");
   });
 
   it("answers, evidence and teacher notes exist only in 教師參考版", async () => {
