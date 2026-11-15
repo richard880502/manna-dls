@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use sqlx::PgPool;
 
-use crate::retrieval::{self, CurriculumFilter, KbItem};
+use crate::embedding::Embedder;
+use crate::retrieval::{self, CurriculumFilter, KbItem, Trace};
 
 /// A curriculum item as the knowledge base stores it.
 pub type CurriculumItem = KbItem;
@@ -49,6 +50,39 @@ pub async fn items_for_track(
         }
     }
     Ok(picked)
+}
+
+/// [`items_for_track`] with hybrid ranking when the track has more items than `limit` and an
+/// embedding model is available; also says how the items were chosen (for `retrieval_logs`).
+/// The ranked items come first, then the rest in code order up to `limit`.
+pub async fn items_for_track_hybrid(
+    db: &PgPool,
+    embedder: &Embedder,
+    track: &str,
+    query: &str,
+    limit: usize,
+) -> sqlx::Result<(Vec<CurriculumItem>, Trace)> {
+    let scope = CurriculumFilter::default();
+    let all: Vec<KbItem> = retrieval::retrieve_curriculum(db, track, &scope, "", ALL)
+        .await?
+        .into_iter()
+        .map(|s| s.item)
+        .collect();
+    if all.len() <= limit {
+        let codes: Vec<String> = all.iter().map(|i| i.item_code.clone()).collect();
+        return Ok((all, Trace::all(&codes)));
+    }
+    let found = retrieval::rank_with_embeddings(db, embedder, query, all.clone(), limit).await;
+    let mut picked: Vec<KbItem> = found.items.into_iter().map(|s| s.item).collect();
+    for item in all {
+        if picked.len() >= limit {
+            break;
+        }
+        if !picked.iter().any(|p| p.item_code == item.item_code) {
+            picked.push(item);
+        }
+    }
+    Ok((picked, found.trace))
 }
 
 /// Exact lookup by `item_code` for the links a teacher saves. Active items come from the

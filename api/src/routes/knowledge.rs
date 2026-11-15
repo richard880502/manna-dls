@@ -55,8 +55,8 @@ pub struct CurriculumQuery {
     pub limit: Option<i64>,
 }
 
-/// Curriculum items for a track, ranked by the keywords in `q` (listed in code order without
-/// `q`). Defaults to senior-high items of English subjects; `stage=all` / `subject=all` widen.
+/// Curriculum items for a track, ranked by `q` — keywords, fused with embedding similarity
+/// when an embedding model is configured (`method`) — or listed in code order without `q`. Defaults to senior-high items of English subjects; `stage=all` / `subject=all` widen.
 pub async fn search_curriculum(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -78,7 +78,17 @@ pub async fn search_curriculum(
     };
     let query = q.q.unwrap_or_default();
     let limit = limit_of(q.limit) as usize;
-    let items = retrieval::retrieve_curriculum(&state.db, &track, &filter, &query, limit).await?;
+    let found = retrieval::retrieve_curriculum_hybrid(
+        &state.db,
+        &state.embedder,
+        &track,
+        &filter,
+        &query,
+        limit,
+    )
+    .await?;
+    let method = found.trace.method;
+    let items = found.items;
     Ok(Json(json!({
         "track": track,
         "filter": {
@@ -89,7 +99,8 @@ pub async fn search_curriculum(
                 Some(s) => json!(s),
             },
         },
-        "ranked": !retrieval::tokenize(&query).is_empty(),
+        "ranked": method == retrieval::Method::Hybrid || !retrieval::tokenize(&query).is_empty(),
+        "method": method,
         "items": items,
     })))
 }
