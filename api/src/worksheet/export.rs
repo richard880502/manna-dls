@@ -1244,10 +1244,10 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
         color: MUTED,
         ..Style::body()
     };
-    for i in 0..total {
+    for (i, page) in layout.pages.iter_mut().enumerate() {
         let text = format!("{} · {}/{}", sheet.level.english(), i + 1, total);
         let w = fonts.width(Weight::Regular, &text, footer.size);
-        layout.pages[i].push(Op::Text {
+        page.push(Op::Text {
             x: PAGE_W - MARGIN - w,
             y: PAGE_H - MARGIN + 18.0,
             face: Weight::Regular as u8,
