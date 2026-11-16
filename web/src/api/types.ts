@@ -1950,3 +1950,89 @@ export interface CreatePrepTurnRequest {
   kind?: PrepKind;
   request: string;
 }
+
+// =============================================================================================
+// 教材與範本管理（admin library）— agent F2. docs/API.md「Phase 2.9：教材參考、我的教材、學習單範本」,
+// "Admin APIs". ManageKnowledge (pi, kb_manager) only. The card fields mirror the browse API's
+// MaterialCard and TemplateCard; they are named apart here so this section merges on its own.
+// =============================================================================================
+
+/** A platform material as the admin APIs return it (POST /api/admin/library, PATCH). */
+export interface AdminLibraryMaterial {
+  id: number;
+  title: string;
+  scope: "personal" | "platform";
+  /** 教材參考's fixed list: 學測英文、統測英文、課綱、詞彙表、考試說明、其他 */
+  category: string;
+  tags: string[];
+  kind: string;
+  /** pdf / docx / text / image / audio / video / link */
+  file_type: string;
+  page_count: number | null;
+  paragraph_count: number;
+  word_count: number;
+  /** The first ~280 characters of the text ("" when there is none). */
+  excerpt: string;
+  text_status: string;
+  looks_like_worksheet: boolean;
+  created_at: string;
+  owner_label: string;
+}
+
+/** A platform template as the admin APIs return it (POST /api/admin/library/templates, PATCH, retry). */
+export interface AdminLibraryTemplate {
+  id: number;
+  title: string;
+  scope: "personal" | "platform";
+  status: "extracting" | "ready" | "failed";
+  /** The sample list (字彙、文法句型…); "" while the server has not suggested one yet. */
+  category: string;
+  tags: string[];
+  worksheet_kind: string;
+  instruction_language: string;
+  section_count: number;
+  /** The first 6 section titles. */
+  section_titles: string[];
+  source_material: { id: number; title: string; file_type: string; page_count: number | null } | null;
+  updated_at: string;
+  owner_label: string;
+}
+
+/** What the admin list adds to a card. */
+export interface AdminLibraryRowExtra {
+  /** The uploading admin's research id (null if that account is gone). */
+  uploaded_by: string | null;
+  size_bytes: number;
+}
+
+export type AdminLibraryMaterialRow = AdminLibraryMaterial & AdminLibraryRowExtra;
+export type AdminLibraryTemplateRow = AdminLibraryTemplate & AdminLibraryRowExtra;
+
+/** GET /api/admin/library?kind=materials|templates */
+export interface AdminLibraryList<T> {
+  items: T[];
+  total?: number;
+  next_cursor?: string | null;
+}
+
+export interface AdminLibraryQuery {
+  q?: string;
+  category?: string;
+  cursor?: string;
+}
+
+/** The multipart fields of an admin upload, besides the file. */
+export interface AdminLibraryUploadFields {
+  title?: string;
+  /** Required for materials; "" for a template means 自動判斷 */
+  category?: string;
+  tags?: string[];
+  source_note?: string;
+}
+
+/** PATCH /api/admin/library/:id and /api/admin/library/templates/:id */
+export interface AdminLibraryUpdate {
+  title?: string;
+  category?: string;
+  tags?: string[];
+}

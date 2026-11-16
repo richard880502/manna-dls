@@ -256,6 +256,14 @@ export function Sidebar({
           {can(teacher, "manage_knowledge") && (
             <SideLink to="/knowledge" icon="knowledge" label="知識庫管理" current={inside(pathname === "/knowledge", false)} />
           )}
+          {can(teacher, "manage_knowledge") && (
+            <SideLink
+              to="/admin/library"
+              icon="library"
+              label="教材與範本管理"
+              current={inside(pathname === "/admin/library", false)}
+            />
+          )}
           {can(teacher, "administer") && (
             <SideLink to="/admin" icon="admin" label="後台管理" current={inside(pathname === "/admin", false)} />
           )}

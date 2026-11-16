@@ -1,0 +1,326 @@
+/* 教材與範本管理 (/admin/library). Tokens only (styles/tokens.css); every selector starts with
+ * .adlib so the page's rules never reach another page, whatever order the sheets load in. */
+
+/* ================= tabs ================= */
+.adlib-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin-top: var(--space-xl);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+}
+
+.adlib-tabs [role="tab"] {
+  min-height: var(--hit);
+  margin-bottom: -1px;
+  padding: var(--space-xs) var(--space-md);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.adlib-tabs [role="tab"].is-current {
+  border-bottom-color: var(--color-accent);
+  color: var(--color-accent-text);
+  font-weight: var(--weight-strong);
+}
+
+@media (hover: hover) {
+  .adlib-tabs [role="tab"]:not(.is-current):hover {
+    color: var(--color-ink);
+  }
+}
+
+.adlib-panel {
+  padding-top: var(--space-lg);
+}
+
+/* ================= the drop zone ================= */
+.adlib-drop {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xl) var(--space-lg);
+  border: 2px dashed var(--color-rule-strong);
+  border-radius: var(--radius-card);
+  background: var(--color-field);
+  text-align: center;
+}
+
+.adlib-drop.is-dragging {
+  border-color: var(--color-accent);
+  background: var(--color-accent-wash);
+}
+
+.adlib-drop .adlib-drop-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  color: var(--color-accent-text);
+}
+
+.adlib-drop-title {
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+.adlib-drop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-xs);
+}
+
+.adlib-drop .quiet-note {
+  max-width: 44rem;
+}
+
+/* The file inputs are hidden in their labels; the label shows the focus instead. */
+.adlib-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.adlib-pick:focus-within {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* ================= the files waiting to go ================= */
+.adlib-queue-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-lg);
+  margin-top: var(--space-lg);
+}
+
+.adlib-summary {
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.adlib-progress {
+  flex: 1 1 10rem;
+  max-width: 16rem;
+  height: 0.5rem;
+  accent-color: var(--color-accent);
+}
+
+.adlib-queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+  margin-left: auto;
+}
+
+.adlib-queue-head,
+.adlib-file-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(8rem, 1fr) minmax(8rem, 1.1fr) minmax(10rem, 1.3fr);
+  gap: var(--space-xs) var(--space-sm);
+  align-items: start;
+}
+
+.adlib-queue-head {
+  margin-top: var(--space-md);
+  padding-bottom: var(--space-2xs);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.adlib-queue {
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  list-style: none;
+}
+
+.adlib-file {
+  padding: var(--space-sm) 0;
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+.adlib-file-title,
+.adlib-field {
+  min-width: 0;
+}
+
+.adlib-field {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+/* Each field's name: shown on narrow screens, where the column heads are not. */
+.adlib-field-name {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.adlib-path {
+  margin-top: var(--space-3xs);
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adlib-file-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-sm);
+  min-height: var(--control-h);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.adlib-file-state .error-text {
+  margin: 0;
+}
+
+.adlib-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  color: var(--color-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.adlib-state.is-uploading,
+.adlib-state.is-queued {
+  color: var(--color-accent-text);
+}
+
+.adlib-state.is-done {
+  color: var(--color-success);
+}
+
+.adlib-state.is-warn {
+  color: var(--color-warn-ink);
+}
+
+.adlib-state.is-failed {
+  color: var(--color-error);
+  font-weight: var(--weight-strong);
+}
+
+.adlib-state.is-working {
+  color: var(--color-manna-ink);
+}
+
+.adlib-file.is-done .adlib-file-fields input,
+.adlib-file.is-done .adlib-file-fields select {
+  opacity: 1;
+  color: var(--color-ink-2);
+}
+
+.adlib-file .adlib-file-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* ================= the admin list ================= */
+.adlib-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 0 var(--space-md);
+  max-width: 44rem;
+}
+
+.adlib-rows .meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-xs);
+}
+
+.adlib-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin-top: var(--space-2xs);
+}
+
+.adlib-edit {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(8rem, 1fr) minmax(8rem, 1fr);
+  gap: 0 var(--space-sm);
+  align-items: end;
+  max-width: 52rem;
+}
+
+.adlib-edit .field-label {
+  margin-top: 0;
+}
+
+.adlib-edit-actions {
+  grid-column: 1 / -1;
+  margin-top: var(--space-sm);
+}
+
+.adlib-delete {
+  display: grid;
+  gap: var(--space-xs);
+  max-width: 44rem;
+  padding: var(--space-md);
+  border-left: 3px solid var(--color-error);
+  background: var(--color-error-wash);
+  line-height: var(--leading-ui);
+}
+
+/* ================= wide screens: the column heads name the fields ================= */
+@media (min-width: 56.0625rem) {
+  .adlib-field-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* ================= narrow screens: each file's fields stack ================= */
+@media (max-width: 56rem) {
+  .adlib-queue-head {
+    display: none;
+  }
+
+  .adlib-file-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .adlib-file-title,
+  .adlib-file-state {
+    grid-column: 1 / -1;
+  }
+
+  .adlib-file-state {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 40rem) {
+  .adlib-drop {
+    padding: var(--space-lg) var(--space-md);
+  }
+
+  .adlib-file-fields,
+  .adlib-filters,
+  .adlib-edit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adlib-queue-actions {
+    margin-left: 0;
+  }
+}

@@ -588,3 +588,60 @@ export const remoteApi = {
   sync: (token: string, ops: RecordOp[]) =>
     request<SyncResponse>("POST", "/remote/events/sync", { json: { ops }, token, skipAuthHandler: true }),
 };
+
+// =============================================================================================
+// 教材與範本管理（admin library）— agent F2. ManageKnowledge only; others get 403.
+// docs/API.md「Phase 2.9：教材參考、我的教材、學習單範本」, "Admin APIs".
+// =============================================================================================
+
+// Imports are hoisted; kept here so this section merges on its own.
+import type {
+  AdminLibraryList,
+  AdminLibraryMaterial,
+  AdminLibraryMaterialRow,
+  AdminLibraryQuery,
+  AdminLibraryTemplate,
+  AdminLibraryTemplateRow,
+  AdminLibraryUpdate,
+  AdminLibraryUploadFields,
+} from "./types";
+
+/** Multipart body of an admin upload: the fields first, then the file (as the teacher upload). */
+function adminLibraryForm(file: File, fields: AdminLibraryUploadFields): FormData {
+  const form = new FormData();
+  if (fields.title) form.append("title", fields.title);
+  if (fields.category) form.append("category", fields.category);
+  if (fields.tags && fields.tags.length > 0) form.append("tags", fields.tags.join(","));
+  if (fields.source_note) form.append("source_note", fields.source_note);
+  form.append("file", file, file.name);
+  return form;
+}
+
+/** The list as an envelope even if the server answers with a bare array. */
+const adminLibraryList = <T>(res: AdminLibraryList<T> | T[]): AdminLibraryList<T> =>
+  Array.isArray(res) ? { items: res, total: res.length, next_cursor: null } : res;
+
+export const adminLibraryApi = {
+  listMaterials: (query: AdminLibraryQuery = {}) =>
+    get<AdminLibraryList<AdminLibraryMaterialRow>>("/admin/library", { kind: "materials", ...query }).then(
+      adminLibraryList,
+    ),
+  listTemplates: (query: AdminLibraryQuery = {}) =>
+    get<AdminLibraryList<AdminLibraryTemplateRow>>("/admin/library", { kind: "templates", ...query }).then(
+      adminLibraryList,
+    ),
+  /** A platform material (purpose material), extracted as a teacher upload is. */
+  uploadMaterial: (file: File, fields: AdminLibraryUploadFields) =>
+    request<AdminLibraryMaterial>("POST", "/admin/library", { form: adminLibraryForm(file, fields) }),
+  /** A platform sample and its template; the template comes back with status extracting. */
+  uploadTemplate: (file: File, fields: AdminLibraryUploadFields) =>
+    request<AdminLibraryTemplate>("POST", "/admin/library/templates", { form: adminLibraryForm(file, fields) }),
+  updateMaterial: (id: number, body: AdminLibraryUpdate) =>
+    request<AdminLibraryMaterial>("PATCH", `/admin/library/${id}`, { json: body }),
+  updateTemplate: (id: number, body: AdminLibraryUpdate) =>
+    request<AdminLibraryTemplate>("PATCH", `/admin/library/templates/${id}`, { json: body }),
+  /** Hard delete; a template made from it keeps working (its source_material becomes null). */
+  deleteMaterial: (id: number) => del<unknown>(`/admin/library/${id}`),
+  deleteTemplate: (id: number) => del<unknown>(`/admin/library/templates/${id}`),
+  retryTemplate: (id: number) => post<AdminLibraryTemplate>(`/admin/library/templates/${id}/retry`),
+};
