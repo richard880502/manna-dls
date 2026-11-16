@@ -497,7 +497,7 @@ describe("lesson workspace: quiet saving", () => {
     const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
     serverUp = true;
     await user.click(dialog.getByRole("button", { name: "儲存後離開" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(lastSaved(api).warmup.vocabulary[0]?.word).toBe("trust");
   });
 });

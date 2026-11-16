@@ -5,14 +5,17 @@ import { Layout } from "./components/Layout";
 import { AppProvider, useApp } from "./context/AppContext";
 import { AdminPage } from "./pages/AdminPage";
 import { ClassPage } from "./pages/ClassPage";
+import { ClassesPage } from "./pages/ClassesPage";
 import { CorePage } from "./pages/CorePage";
-import { HomePage } from "./pages/HomePage";
 import { KnowledgePage } from "./pages/KnowledgePage";
 import { LessonPage } from "./pages/LessonPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MaterialsPage } from "./pages/MaterialsPage";
 import { PreferencesPage } from "./pages/PreferencesPage";
+import { PrepHomePage } from "./pages/PrepHomePage";
+import { PrepListPage } from "./pages/PrepListPage";
+import { PrepSessionPage } from "./pages/PrepSessionPage";
 import { RecordIndexPage } from "./pages/RecordIndexPage";
 import { RemotePage } from "./pages/RemotePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
@@ -69,7 +72,11 @@ export function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route index element={<HomePage />} />
+        {/* 備課: one input bar that starts a prep conversation (the class dashboard moved to /classes). */}
+        <Route index element={<PrepHomePage />} />
+        <Route path="prep" element={<PrepListPage />} />
+        <Route path="prep/:sessionId" element={<PrepSessionPage />} />
+        <Route path="classes" element={<ClassesPage />} />
         <Route path="classes/:classId" element={<ClassPage />} />
         {/* 備課庫 (every unit, to reuse one in another class) is reached from 班級, not the top bar. */}
         <Route path="units" element={<LibraryPage />} />

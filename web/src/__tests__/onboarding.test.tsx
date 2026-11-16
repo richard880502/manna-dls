@@ -14,12 +14,12 @@ const echoPreferences =
   };
 
 describe("備課偏好 is optional", () => {
-  it("a teacher who never answered it goes straight to 班級; the page is in the top bar and saves P1–P5", async () => {
+  it("a teacher who never answered it goes straight to 備課; the page is in the top bar and saves P1–P5", async () => {
     signIn();
     const api = mockApi({ ...baseRoutes({}, null), [`PUT ${PREFS}`]: echoPreferences() });
     const user = userEvent.setup();
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "班級", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "老師，今天要教哪一課？", level: 1 })).toBeInTheDocument();
     expect(screen.queryByText(/初次使用設定/)).not.toBeInTheDocument();
     expect(api.callsTo("PUT", PREFS)).toHaveLength(0);
 

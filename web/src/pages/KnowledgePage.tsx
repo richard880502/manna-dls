@@ -67,7 +67,7 @@ export function KnowledgePage() {
           </p>
         </div>
         <p className="after-rows">
-          <Link className="text-link" to="/">
+          <Link className="text-link" to="/classes">
             回到班級
           </Link>
         </p>

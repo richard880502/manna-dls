@@ -296,7 +296,7 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
       <div className="head-row page-head lesson-head">
         <div>
           <p className="crumbs">
-            <Link to="/">班級</Link> /{" "}
+            <Link to="/classes">班級</Link> /{" "}
             {activeClass ? (
               <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
             ) : (

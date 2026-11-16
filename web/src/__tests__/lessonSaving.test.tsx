@@ -143,7 +143,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     await writeExitTicket(user, "要存的題目");
 
     await user.click(navLink("班級"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(savedText(api)).toBe("要存的題目");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
@@ -165,14 +165,14 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     expect(screen.getByRole("textbox", { name: "題目" })).toHaveValue("還沒存的題目");
 
     // Escape stays too.
-    await user.click(navLink("學習單"));
+    await user.click(navLink("我的備課"));
     await screen.findByRole("alertdialog");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 
     await user.click(navLink("班級"));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "不儲存，直接離開" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
   });
 
   it("「儲存後離開」 tries again, then goes on; it stays when it still cannot save", async () => {
@@ -190,7 +190,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
 
     serverUp = true;
     await user.click(dialog.getByRole("button", { name: "儲存後離開" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(savedText(api)).toBe("要存的題目");
   });
 
@@ -213,7 +213,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     await settleAutosave(user);
     expect(unload()).toBe(false);
     await user.click(navLink("班級"));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });

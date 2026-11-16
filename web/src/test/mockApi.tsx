@@ -11,6 +11,7 @@ import type {
   CoreVersion,
   LessonDetail,
   LessonStep,
+  MaterialLibrary,
   PreferenceAnswers,
   Preferences,
   QuestionId,
@@ -309,5 +310,24 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     "GET /api/classes": [],
     "GET /api/core/questions": questions,
     "GET /api/worksheet-templates": { templates: [] },
+    // 備課 (the home page) lists recent prep sessions and offers the material library.
+    "GET /api/prep-sessions": { sessions: [] },
+    "GET /api/materials": emptyLibrary(),
   };
 }
+
+/** A material library with nothing in it (uploads allowed). */
+export const emptyLibrary = (): MaterialLibrary => ({
+  materials: [],
+  usage: { used_bytes: 0, quota_bytes: 1024 * 1024 * 1024, count: 0, max_count: 300 },
+  limits: {
+    files: [
+      { ext: "docx", kind: "document", max_bytes: 20 * 1024 * 1024 },
+      { ext: "pdf", kind: "document", max_bytes: 20 * 1024 * 1024 },
+    ],
+    max_pasted_chars: 50000,
+    max_note_chars: 2000,
+  },
+  storage: "fs",
+  uploads_enabled: true,
+});
