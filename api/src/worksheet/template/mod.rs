@@ -338,15 +338,15 @@ fn b() -> Value {
 /// A string with a length cap. The gateway enforces `maxLength`/`maxItems` while decoding, which
 /// is what stops gemma's repetition runaways inside long strings (a real-model run lost about
 /// half its blocks to an answer repeating one sentence until max_tokens).
-fn s_max(max: usize) -> Value {
+pub(crate) fn s_max(max: usize) -> Value {
     json!({ "type": "string", "maxLength": max })
 }
 
-fn strings_max(items: usize, chars: usize) -> Value {
+pub(crate) fn strings_max(items: usize, chars: usize) -> Value {
     json!({ "type": "array", "items": s_max(chars), "maxItems": items })
 }
 
-fn enum_of(labels: &[&str]) -> Value {
+pub(crate) fn enum_of(labels: &[&str]) -> Value {
     json!({ "type": "string", "enum": labels })
 }
 
@@ -356,7 +356,7 @@ fn enum_array(labels: &[&str]) -> Value {
 
 /// An object whose properties are required, in the order written (the gateway emits fields in
 /// schema order; alphabetical order made gemma run away in whitespace).
-fn obj(props: Vec<(&str, Value)>) -> Value {
+pub(crate) fn obj(props: Vec<(&str, Value)>) -> Value {
     let required: Vec<&str> = props.iter().map(|(k, _)| *k).collect();
     let mut map = serde_json::Map::new();
     for (k, v) in props {

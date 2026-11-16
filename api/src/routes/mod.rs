@@ -10,6 +10,7 @@ pub mod lessons;
 pub mod library;
 pub mod materials;
 pub mod preferences;
+pub mod prep;
 pub mod remote;
 pub mod runs;
 pub mod sop;
@@ -145,6 +146,13 @@ pub fn api_router() -> Router<AppState> {
                 .delete(templates::delete),
         )
         .route("/worksheet-templates/{id}/retry", post(templates::retry))
+        // 備課對話 (Phase 2.6)
+        .route("/prep-sessions", get(prep::list).post(prep::create))
+        .route(
+            "/prep-sessions/{id}",
+            get(prep::get).patch(prep::patch).delete(prep::delete),
+        )
+        .route("/prep-sessions/{id}/turns", post(prep::create_turn))
         // material library, original files and annotations (Phase 2.2)
         .route("/materials", get(library::list).post(library::create))
         .route(

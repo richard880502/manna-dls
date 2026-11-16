@@ -122,6 +122,8 @@ pub struct Summary {
     pub filename: String,
     pub lesson: Option<LessonInfo>,
     pub class_id: Option<i64>,
+    /// The 備課對話 that made this worksheet (「回到備課對話」); cleared when it is deleted.
+    pub prep_session_id: Option<i64>,
     pub generated: bool,
     pub levels: Vec<Level>,
     pub version_no: i32,
@@ -139,6 +141,7 @@ struct SummaryRow {
     unit_id: Option<i64>,
     unit_title: Option<String>,
     class_id: Option<i64>,
+    prep_session_id: Option<i64>,
     generated: bool,
     levels: Option<serde_json::Value>,
     version_no: i32,
@@ -163,6 +166,7 @@ impl From<SummaryRow> for Summary {
             filename: r.filename,
             lesson,
             class_id: r.class_id,
+            prep_session_id: r.prep_session_id,
             generated: r.generated,
             levels: r
                 .levels
@@ -176,7 +180,8 @@ impl From<SummaryRow> for Summary {
 }
 
 const SUMMARY_SELECT: &str = "SELECT w.id, w.title, w.filename, l.id AS lesson_id,
-        l.title AS lesson_title, l.unit_id, u.title AS unit_title, w.class_id, w.generated,
+        l.title AS lesson_title, l.unit_id, u.title AS unit_title, w.class_id, w.prep_session_id,
+        w.generated,
         v.content -> 'levels' AS levels, v.version_no, w.created_at, w.updated_at
    FROM worksheets w
    LEFT JOIN lessons l ON l.id = w.lesson_id AND l.deleted_at IS NULL
@@ -224,6 +229,8 @@ pub struct NewWorksheet<'a> {
     pub content: &'a Content,
     /// (template id, version number)
     pub template: Option<(i64, i32)>,
+    /// The 備課對話 the worksheet is made in.
+    pub prep_session_id: Option<i64>,
 }
 
 /// Creates the worksheet with its first version. `settings` starts as the suggestion.
@@ -232,8 +239,8 @@ pub async fn insert(db: &PgPool, new: NewWorksheet<'_>) -> AppResult<i64> {
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO worksheets (teacher_id, lesson_id, class_id, title, filename, material,
                                  paragraph_seq, settings, suggested, brief, source_sop_version_id,
-                                 template_id, template_version_no)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12) RETURNING id",
+                                 template_id, template_version_no, prep_session_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13) RETURNING id",
     )
     .bind(new.teacher_id)
     .bind(new.lesson_id)
@@ -247,6 +254,7 @@ pub async fn insert(db: &PgPool, new: NewWorksheet<'_>) -> AppResult<i64> {
     .bind(new.source_sop_version_id)
     .bind(new.template.map(|(id, _)| id))
     .bind(new.template.map(|(_, no)| no))
+    .bind(new.prep_session_id)
     .fetch_one(&mut *tx)
     .await?;
     insert_version(&mut tx, id, new.content, "created").await?;

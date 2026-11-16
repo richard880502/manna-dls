@@ -1618,3 +1618,144 @@ interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "temp
 ## 試用真模型
 
 prompt key：`worksheet_template_outline`、`worksheet_template_details`、`worksheet_template_section`（可在管理頁改版本）。程式進入點：`worksheet::template::extract::extract`（兩次呼叫，回傳 `WsTemplate`）與 `worksheet::ai::start_generation`（有 `template_id` 的學習單會走 `worksheet::ai::template`）。
+
+---
+
+# Phase 2.6：備課對話
+
+以下為**新增**；既有端點只多了一個回應欄位（`WorksheetSummary.prep_session_id`）。Migration `0013_prep_sessions.sql`。
+
+老師帶著這一課的課文（上傳、從教材庫選或貼上；沒有課文時也可以只寫主題），按一個動作（做學習單／規劃教學活動／設計評量／找教學資源），或直接問 AI。每一個請求是對話裡的一**輪**（turn），結果依序顯示；之後可以接著做下一步，或在底部輸入框用一句話修改剛做好的學習單。互動方式參考築學網。做出來的學習單就是一般的學習單：編輯器、檢查、匯出、版型、班級／單元／SOP 全部照舊。
+
+## 資料
+
+- `prep_sessions`：`id`、`teacher_id`（只有擁有者能存取，其他人的 id 回 404）、`title`（≤200；預設為教材標題，沒有教材時為主題，再沒有就是第一個請求的前 40 字）、`material_id`（教材庫教材；教材刪除時變成 null）、`topic`（≤200，沒有教材時用）、`class_id`、`template_id`（刪除時都變成 null）、`created_at`、`updated_at`。
+- `prep_turns`：`id`、`session_id`（刪除對話時一起刪除）、`seq`（對話內從 1 起編號）、`kind`、`request`（≤2000：老師打的字，或按鈕的名稱）、`status`（`running`｜`done`｜`failed`）、`error`（失敗原因，中文）、`worksheet_id`（這一輪做出的學習單）、`result`（JSONB）、`interaction_id`（產生結果的 `ai_interactions`）、`created_at`、`finished_at`。同一個對話同時只會有一輪在跑（部分唯一索引）。
+- **刪除對話是真的刪除**：對話與所有輪次都刪掉。在對話裡做的學習單完整保留（仍在 /worksheets），只是 `prep_session_id` 變成 null。
+- `worksheets` 新增 `prep_session_id`（做出這份學習單的對話）。`worksheet_versions.cause` 新增 `revise`。
+- `prompt_versions` 新增 `prep_activity`、`prep_ask`、`prep_revise`。`scaffolds` 新增 `SC-PREP-ACTIVITY`、`SC-PREP-ASK`、`SC-PREP-REVISE`。
+- 每次模型呼叫一列 `ai_interactions`（`module` = prompt key）；輸入快照裡的教材（以及由教材衍生的學習單內容、先前的對話摘要）只記字數與雜湊。檢索記在 `retrieval_logs`（查詢文字含教材時同樣只記字數與雜湊）。
+
+## 型別
+
+```ts
+type PrepKind = "worksheet" | "assessment" | "activity" | "resources" | "ask" | "revise";
+interface PrepSessionSummary {
+  id: number; title: string;
+  material: { id: number; title: string } | null; topic: string | null;
+  class: { id: number; name: string } | null;
+  template: { id: number; title: string } | null;
+  turn_count: number; last_kind: PrepKind | null; updated_at: string; created_at: string;
+}
+interface PrepTurn {
+  id: number; seq: number; kind: PrepKind; request: string;
+  status: "running" | "done" | "failed"; error: string | null;
+  worksheet: { id: number; title: string; version_no: number; running: boolean } | null;   // 學習單已刪除時為 null
+  result: ActivityPlan | Resources | { answer: string; follow_ups: string[] }
+        | { reply: string; changed_block_ids: string[]; version_no: number | null } | null;
+  interaction_id: number | null;   // 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs: "up"|"down" }
+  created_at: string; finished_at: string | null;
+}
+interface PrepSession extends PrepSessionSummary {
+  turns: PrepTurn[];               // 依 seq
+  running: boolean;
+  next: PrepKind[];                // 建議的下一步：[worksheet, activity, assessment, resources] 中這個對話還沒有 done 的，
+                                   // 依這個順序；前三個只在有教材時出現，resources 只在有教材或主題時出現
+}
+interface ActivityPlan {
+  title: string;                                                    // ≤100
+  goals: Array<{ text: string; curriculum_codes: string[] }>;       // 1–4；text ≤150；codes ≤3
+  steps: Array<{
+    phase: "引起動機" | "發展活動" | "統整與評量";
+    title: string;                                                  // ≤60
+    minutes: number;                                                // 1–50
+    idea: string;                                                   // ≤300，教學思路
+    options: Array<{ title: string; idea: string; script: string[]; minutes: number }>;  // 0–3，只有引起動機；script 每行 ≤200、≤4 行
+    script: string[];                                               // ≤6 行、每行 ≤200，英文課堂用語
+    stuck_tip: string;                                              // ≤200，卡住了怎麼辦；可為 ""
+  }>;                                                               // 3–6
+  curriculum: Array<{ code: string; text: string }>;                // 實際引用的條目，條文由知識庫帶出
+}
+interface Resources {
+  curriculum: Array<{ code: string; text: string; school_track: string | null; similarity: number | null }>;
+  materials: Array<{ id: number; title: string }>;
+  note: string;
+}
+interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | null; }   // 「回到備課對話」
+```
+
+課綱的 `code` 是知識庫的 `item_code`（例如 `108-G-3-V-7`），`text` 是條文內容。
+
+## 端點（皆需登入；只能存取自己的對話，其他人的 id 回 404）
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/prep-sessions` | – | `{ sessions: PrepSessionSummary[] }`，依 `updated_at` 新到舊 |
+| POST | `/api/prep-sessions` | `{ kind, request?, material_id?, material?: { title?, text }, topic?, class_id?, template_id? }` | 201 `PrepSession`（第一輪已開始） |
+| GET | `/api/prep-sessions/:id` | – | `PrepSession`（輪詢用） |
+| PATCH | `/api/prep-sessions/:id` | `{ title?, class_id?: number \| null, template_id?: number \| null }` | `PrepSession`（之後的輪次才會用到） |
+| DELETE | `/api/prep-sessions/:id` | – | `{ ok: true }`（真的刪除；學習單保留） |
+| POST | `/api/prep-sessions/:id/turns` | `{ kind?, request }` | 202 `PrepSession` |
+
+**建立對話**
+
+- `kind` 不可以是 `revise`（400）。`request` 選填（≤2000）；沒有時記成按鈕名稱（做學習單、設計評量、規劃教學活動、找教學資源）。
+- 教材：`material_id` 必須是自己教材庫裡、已擷取到文字的教材（不是自己的 → 400「找不到這份教材。」；讀不到文字 → 400「這份檔案讀不到文字（可能是掃描檔）…」）。`material`（貼上的文字）先存進教材庫（和建立學習單時一樣），再當作 `material_id`；兩者都給時以 `material_id` 為準。
+- `class_id` 不是自己的 → 404；`template_id` 必須是自己的、`ready` 的版型 → 否則 400。
+- **需要什麼（400，訊息為中文）**：`worksheet`、`assessment`、`activity` 需要教材；`resources` 需要教材或 `topic`；`ask` 需要 `request`。
+
+**新增一輪**
+
+- 沒有 `kind`（底部輸入框）：對話裡有學習單／評量的輪次 → `revise`，否則 → `ask`。`ask`、`revise` 需要 `request`；其他 kind 沒有 `request` 時記成按鈕名稱。需要什麼的規則同上，用的是對話目前的教材、主題、班級與版型。
+- 409：另一輪還在跑（「Manna 還在處理上一個請求…」）；`revise` 但對話裡沒有學習單；`revise` 但那份學習單正在產生。
+
+**背景與輪詢**：每一輪都在背景執行，前端在有輪次 `running` 時每 2 秒 `GET /api/prep-sessions/:id`。伺服器重啟會中斷工作：`running` 超過 `8 × AI_TIMEOUT_SECS + 60` 秒的輪次，下次讀取時改成 `failed`（「這次處理中斷了…請按「再試一次」」）。失敗的輪次可以用同樣的 `kind` 與 `request` 再送一次。
+
+## 各種輪次
+
+### `worksheet`（做學習單）
+
+用建立學習單的同一段程式（`material_id` = 對話的教材，`class_id`、`template_id` = 對話的設定）建立學習單，再開始產生（等同 `POST /api/worksheets/:id/generate`）。`worksheet_id` 立刻有值；學習單產生中這一輪是 `running`，工作結束就是 `done`（即使某個區塊失敗：區塊的 `message` 會說明），只有建立或開始失敗時是 `failed`（例如教材超過 40 段）。對話裡已有 `done` 的 `activity`、而且沒有用版型時，那份規劃的引起動機想法（`標題：想法`，有選項時是每個選項）放進學習單的 `brief.warmup`。
+
+### `assessment`（設計評量）
+
+和 `worksheet` 一樣，但：標題「評量：<教材標題>」，不用版型，`settings` 固定為 `student_tasks` = 理解內容、字彙練習、文法／句型練習，`answer_formats` = 選擇題、是非題、填空題、配對題、簡答題，`generation` = 顯示學習目標（沒有暖身），`levels` = 一般版。
+
+### `activity`（規劃教學活動）
+
+一次呼叫（`prep_activity`，`max_tokens` 6000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）。輸出 `ActivityPlan`（不含 `curriculum`），schema 裡每個字串與陣列都有 `maxLength`／`maxItems`，`curriculum_codes` 是候選代碼的 enum。伺服器檢查：不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。沒有目標或可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。
+
+### `resources`（找教學資源）
+
+不呼叫模型。混合檢索：有教材時用「教材標題＋前兩段」，否則用 `topic`，取前 8 個課綱條目（知識庫課綱搜尋的同一套檢索，只列出有關聯的條目）。另外以關鍵字比對老師自己教材庫的教材（標題與內文），取前 5 份，不含這個對話的教材。兩者都沒有時 `note` =「知識庫裡沒有找到相關條目。」；`note` 最後一律是「外部資源（影片、網站）搜尋還沒有開放。」。`interaction_id` 為 null。
+
+### `ask`（直接問 AI）
+
+一次呼叫（`prep_ask`，`max_tokens` 3000）。輸入：問題；教材（有的話，同樣加段落標記）；班級特性；以問題做混合檢索得到的前 5 個課綱條目；這個對話前 3 輪的 `{kind, request, 摘要}`（摘要是回覆文字；學習單是它的區塊標題；活動規劃是標題與各步驟；資源是找到的代碼）。輸出 `{ answer ≤1500, follow_ups ≤3（每個 ≤40） }`。純文字：伺服器拿掉 Markdown 的標題記號與粗體，空的 `follow_ups` 拿掉。答案是空的、輸出失控或讀不懂時重試一次。
+
+### `revise`（用一句話修改學習單）
+
+套用在對話裡最新一個 `worksheet`／`assessment` 輪次的學習單。一次呼叫（`prep_revise`，`max_tokens` 6000）。輸入：老師的指示、加段落標記的教材（學習單自己的教材快照）、學習單目前的區塊 `{block_id, label（學生版上的 A、B…）, kind, title, instructions, items[{answer_format, prompt, options, answer}]}`。輸出 `{ reply ≤300, changes ≤6: [{ block_id（enum）, title, instructions, items ≤12 }] }`。
+
+- 每個 change 用照版型產生時的同一個檢查（`evaluate_section`，題數上限 12、不需要外部素材）：作答方式只能用固定標籤、選擇題的答案必須是選項之一、題幹不可含答案、音節題依字典修正…。有 change 沒通過時重試一次（附上沒通過的區塊與原因）；重試後還沒通過的 change 不套用，`reply` 後面加上「（B 區沒有改成：修改沒有通過學習單的檢查，維持原樣。）」。
+- 通過的 change 取代該區塊的 `title`、`instructions` 與 `items`：新題目 `origin = "ai"`、`levels` = 學習單的所有版本，出口卡的 `purpose` 依位置保留；鷹架與字詞保留。被取代的區塊先放進 `worksheet_block_history`（編輯器的「復原」照常可用），全部改動寫成**一個**新版本（`cause = "revise"`）。內容沒有實際改變的區塊不算。
+- 沒有改動 → 不新增版本（`reply` 本身就是回答，例如一個澄清問題）。`result = { reply, changed_block_ids, version_no }`。
+- 呼叫期間學習單開始產生時，這一輪 `failed`，不套用。
+
+## 測試用假模型（`AI_PROVIDER=fake`）
+
+| 標記（寫在請求或教材裡） | 效果 |
+|---|---|
+| `FAKE_BLOCK` | activity／ask：兩次都交出不能用的輸出 → `failed` |
+| `FAKE_BLOCK_ONCE` | activity／ask：第一次不能用，重試成功 |
+| `FAKE_PREP_BAD_REVISE` | revise：兩次的 change 都用了固定標籤以外的作答方式 → 不套用，`reply` 說明 |
+
+假模型的活動規劃引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
+
+## usage_logs 新事件
+
+`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+
+## 試用真模型
+
+prompt key：`prep_activity`、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`。

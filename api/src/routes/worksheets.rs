@@ -316,26 +316,47 @@ pub async fn create(
         serde_json::from_slice(&body)
             .map_err(|e| AppError::bad_request(format!("請求內容格式不正確：{e}")))?
     };
-    let db = &state.db;
+    let id = create_worksheet(&state.db, teacher.id(), req, CreateOverrides::default()).await?;
+    Ok((StatusCode::CREATED, Json(state_of(&state, id).await?)))
+}
+
+/// What a worksheet made somewhere else (a 備課對話 turn) changes in the usual creation.
+#[derive(Debug, Default)]
+pub struct CreateOverrides {
+    pub title: Option<String>,
+    /// Replaces the suggested settings (and wins over a template's).
+    pub settings: Option<Settings>,
+    /// Warm-up ideas added to the brief.
+    pub warmup: Vec<String>,
+    pub prep_session_id: Option<i64>,
+}
+
+/// Creates a worksheet as `POST /api/worksheets` does and returns its id.
+pub async fn create_worksheet(
+    db: &sqlx::PgPool,
+    teacher_id: i64,
+    req: CreateWorksheet,
+    overrides: CreateOverrides,
+) -> AppResult<i64> {
     if let Some(class_id) = req.class_id {
-        owned_class(db, class_id, teacher.id()).await?;
+        owned_class(db, class_id, teacher_id).await?;
     }
     let template = match req.template_id {
-        Some(template_id) => Some(tpl_store::ready_for_use(db, teacher.id(), template_id).await?),
+        Some(template_id) => Some(tpl_store::ready_for_use(db, teacher_id, template_id).await?),
         None => None,
     };
     let pasted = req.material.unwrap_or_default();
     check_pasted(&pasted)?;
     // A library material wins over pasted text (which is then not stored).
     let pasted_material = match req.material_id {
-        Some(material_id) => chosen_material(db, teacher.id(), material_id).await?,
-        None => library_material(db, teacher.id(), None, 0, &pasted).await?,
+        Some(material_id) => chosen_material(db, teacher_id, material_id).await?,
+        None => library_material(db, teacher_id, None, 0, &pasted).await?,
     };
 
     let (material, seq, settings, objectives, brief, sop_version_id, lesson_title) =
         match req.lesson_id {
             Some(lesson_id) => {
-                let lesson = owned_lesson(db, lesson_id, teacher.id()).await?;
+                let lesson = owned_lesson(db, lesson_id, teacher_id).await?;
                 let version = sop_store::latest(db, lesson_id).await?;
                 let sop_material =
                     sop_store::material(db, version.as_ref().and_then(|v| v.material_id)).await?;
@@ -379,11 +400,21 @@ pub async fn create(
         Some((_, _, content)) => prefill_settings(&settings, content),
         None => settings,
     };
+    let settings = match overrides.settings {
+        Some(s) => s.normalised().map_err(AppError::bad_request)?,
+        None => settings,
+    };
+    let mut brief = brief;
+    brief.warmup.extend(overrides.warmup);
+    brief.validate().map_err(AppError::bad_request)?;
     let mut title = auto_title(&material);
     if material.title.trim().is_empty() {
         if let Some(t) = &lesson_title {
             title = format!("{}: Worksheet", t.trim());
         }
+    }
+    if let Some(t) = overrides.title {
+        title = crate::routes::clip_chars(t.trim(), MAX_TITLE_CHARS - 1);
     }
     let filename = auto_filename(&material, lesson_title.as_deref());
     let content = Content {
@@ -394,7 +425,7 @@ pub async fn create(
     let id = store::insert(
         db,
         store::NewWorksheet {
-            teacher_id: teacher.id(),
+            teacher_id,
             lesson_id: req.lesson_id,
             class_id: req.class_id,
             title: &title,
@@ -406,6 +437,7 @@ pub async fn create(
             source_sop_version_id: sop_version_id,
             content: &content,
             template: template.as_ref().map(|(row, no, _)| (row.id, *no)),
+            prep_session_id: overrides.prep_session_id,
         },
     )
     .await?;
@@ -417,16 +449,16 @@ pub async fn create(
     }
     log_usage(
         db,
-        teacher.id(),
+        teacher_id,
         "worksheet_created",
         json!({
             "worksheet_id": id, "lesson_id": req.lesson_id, "class_id": req.class_id,
             "material_source": material.source.kind, "paragraphs": material.paragraphs.len(),
-            "template_id": req.template_id,
+            "template_id": req.template_id, "prep_session_id": overrides.prep_session_id,
         }),
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(state_of(&state, id).await?)))
+    Ok(id)
 }
 
 pub async fn get(
@@ -582,11 +614,17 @@ pub async fn put_material(
 
 // ---------------------------------------------------------------- generation
 
-async fn run_input(state: &AppState, teacher: &AuthTeacher, ws: Worksheet) -> AppResult<RunInput> {
+/// What a generation of `ws` works with, for the teacher who owns it.
+pub async fn run_input(
+    state: &AppState,
+    teacher_id: i64,
+    track: &str,
+    ws: Worksheet,
+) -> AppResult<RunInput> {
     let db = &state.db;
     let content = store::latest(db, ws.id).await?.content;
     let lesson = match ws.lesson_id {
-        Some(lesson_id) => owned_lesson(db, lesson_id, teacher.id()).await.ok(),
+        Some(lesson_id) => owned_lesson(db, lesson_id, teacher_id).await.ok(),
         None => None,
     };
     let (description, unit_profile) = lesson
@@ -594,10 +632,10 @@ async fn run_input(state: &AppState, teacher: &AuthTeacher, ws: Worksheet) -> Ap
         .map(|l| (l.class_description.clone(), l.unit_class_profile.clone()))
         .unwrap_or_default();
     let profile =
-        resolved_profile(db, teacher.id(), ws.class_id, &description, &unit_profile).await?;
+        resolved_profile(db, teacher_id, ws.class_id, &description, &unit_profile).await?;
     Ok(RunInput {
         content,
-        track: teacher.track().to_string(),
+        track: track.to_string(),
         class_profile: profile.text.clone(),
         class_profile_label: profile.context_label(),
         class_snapshot: profile.snapshot(),
@@ -612,7 +650,7 @@ pub async fn generate(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<(StatusCode, Json<WorksheetState>)> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
-    let input = run_input(&state, &teacher, ws).await?;
+    let input = run_input(&state, teacher.id(), teacher.track(), ws).await?;
     ws_ai::start_generation(&state, input).await?;
     Ok((StatusCode::ACCEPTED, Json(state_of(&state, id).await?)))
 }
@@ -645,7 +683,7 @@ pub async fn regenerate_block(
     ApiPath((id, block_id)): ApiPath<(i64, String)>,
 ) -> AppResult<(StatusCode, Json<WorksheetState>)> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
-    let input = run_input(&state, &teacher, ws).await?;
+    let input = run_input(&state, teacher.id(), teacher.track(), ws).await?;
     ws_ai::start_block(&state, input, &block_id).await?;
     Ok((StatusCode::ACCEPTED, Json(state_of(&state, id).await?)))
 }

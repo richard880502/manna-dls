@@ -15,6 +15,7 @@ pub mod error;
 pub mod kb_embeddings;
 pub mod materials;
 pub mod preferences;
+pub mod prep;
 pub mod prompts;
 pub mod record;
 pub mod retrieval;
