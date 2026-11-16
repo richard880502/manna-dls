@@ -14,10 +14,11 @@ use super::schemas::{
     RawBlock, RawExitItem, RawScaffoldSet, TARGET_WARMUP, TIER_CHALLENGE, TIER_SUPPORT,
 };
 use super::{
-    info_function_from_label, Audience, Block, BlockKind, Content, Item, Level, Material, Origin,
-    Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE, FMT_MATCHING,
-    FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING,
-    GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS, KIND_WORD_LIST,
+    info_function_from_label, Audience, Block, BlockKind, Bloom, Content, Item, Level, Material,
+    Origin, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE,
+    FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE, GEN_FRAMES,
+    GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS,
+    KIND_WORD_LIST,
 };
 use crate::sop::ExitKind;
 
@@ -272,6 +273,8 @@ pub fn activity_block(
                 purpose: None,
                 levels: shown,
                 origin: Origin::Ai,
+                bloom: it.bloom.as_deref().and_then(Bloom::parse),
+                hint: String::new(),
             })
         })
         .collect();
@@ -400,6 +403,7 @@ pub fn exit_block(
                 purpose: Some(purpose(&it.purpose)),
                 levels: levels.to_vec(),
                 origin: Origin::Ai,
+                ..Item::default()
             })
             .collect(),
         origin: Origin::Ai,
@@ -469,6 +473,13 @@ pub struct SheetItem {
     pub answer: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
+    /// Teacher version only: the question's Bloom level (`null` when it has none). Absent from
+    /// the student version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom: Option<Option<Bloom>>,
+    /// 基礎版 only (both audiences): the hint printed under the question.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -485,6 +496,10 @@ pub struct SheetBlock {
     pub items: Vec<SheetItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub teacher_notes: Option<String>,
+    /// Teacher version only: 「Bloom：記憶 2、理解 1」 for the questions of this version, when any
+    /// of them has a Bloom level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -514,7 +529,7 @@ pub fn support_heading(kind: &str) -> &'static str {
     }
 }
 
-fn letter(index: usize) -> String {
+pub(crate) fn letter(index: usize) -> String {
     let c = (b'A' + (index % 26) as u8) as char;
     if index < 26 {
         c.to_string()
@@ -547,6 +562,11 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         // Lettered below, once the blocks that print are known.
         let label = String::new();
         let shown = |levels: &[Level]| levels.contains(&level);
+        // A block of one Bloom level whose questions are all in other versions (分層練習) is
+        // not part of this one.
+        if b.bloom.is_some() && !b.items.is_empty() && !b.items.iter().any(|i| shown(&i.levels)) {
+            continue;
+        }
         let items = b
             .items
             .iter()
@@ -563,9 +583,25 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                         .then(|| i.answer.trim().to_string()),
                     evidence: (teacher && !i.evidence.trim().is_empty())
                         .then(|| i.evidence.trim().to_string()),
+                    bloom: teacher.then_some(i.bloom),
+                    hint: (level == Level::Basic && !i.hint.trim().is_empty())
+                        .then(|| i.hint.trim().to_string()),
                 }
             })
-            .collect();
+            .collect::<Vec<SheetItem>>();
+        let bloom_summary = teacher
+            .then(|| {
+                let counts: Vec<(Bloom, usize)> = Bloom::ALL
+                    .into_iter()
+                    .map(|bl| {
+                        let n = items.iter().filter(|it| it.bloom == Some(Some(bl))).count();
+                        (bl, n)
+                    })
+                    .filter(|(_, n)| *n > 0)
+                    .collect();
+                (!counts.is_empty()).then(|| super::bloom::summary(&counts))
+            })
+            .flatten();
         let scaffolds: Vec<&Scaffold> = b.scaffolds.iter().filter(|s| shown(&s.levels)).collect();
         blocks.push(SheetBlock {
             id: b.id.clone(),
@@ -603,6 +639,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             items,
             teacher_notes: (teacher && !b.teacher_notes.trim().is_empty())
                 .then(|| b.teacher_notes.trim().to_string()),
+            bloom_summary,
         });
     }
     blocks.retain(has_content);
@@ -611,6 +648,10 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         if b.kind != BlockKind::ExitTicket {
             b.label = letter(lettered);
             lettered += 1;
+            // 「Part B · Look Closer」 follows the printed letter.
+            if let Some((_, name)) = super::bloom::split_part_title(&b.title) {
+                b.title = format!("Part {} · {name}", b.label);
+            }
         }
     }
     Sheet {
@@ -680,6 +721,9 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
             push(format!("{name} · 第 {} 題", it.no), &it.prompt);
             for o in &it.options {
                 push(format!("{name} · 第 {} 題選項", it.no), o);
+            }
+            if let Some(h) = &it.hint {
+                push(format!("{name} · 第 {} 題提示", it.no), h);
             }
         }
     }
@@ -913,6 +957,69 @@ mod tests {
         assert_eq!(
             item_levels("support", &[Level::Standard]),
             Vec::<Level>::new()
+        );
+    }
+
+    #[test]
+    fn bloom_tags_are_for_teachers_and_hints_for_the_basic_version() {
+        let mut c = content();
+        c.blocks[1].title = "Part B · Look Closer".into();
+        c.blocks[1].items[1].bloom = Some(Bloom::Analyze);
+        c.blocks[1].items[1].hint = "Look at the second sentence.".into();
+        c.blocks[1].items[0].hint = "Start with: The writer …".into();
+        for level in Level::ALL {
+            let student = project("T", &c, level, Audience::Student);
+            let json = serde_json::to_value(&student).unwrap().to_string();
+            assert!(!json.contains("\"bloom\"") && !json.contains("bloom_summary"));
+            let hints: Vec<&SheetItem> = student
+                .blocks
+                .iter()
+                .flat_map(|b| &b.items)
+                .filter(|i| i.hint.is_some())
+                .collect();
+            if level == Level::Basic {
+                assert_eq!(hints.len(), 2);
+                assert!(json.contains("Look at the second sentence."));
+            } else {
+                assert!(hints.is_empty(), "{level:?}");
+                assert!(!json.contains("Look at the second sentence."));
+            }
+        }
+        // The teacher version tags every question (null when it has no level) and sums up
+        // each block; hints still only in 基礎版.
+        let teacher = project("T", &c, Level::Standard, Audience::Teacher);
+        let item = &teacher.blocks[1].items[0];
+        assert_eq!(item.bloom, Some(Some(Bloom::Analyze)));
+        assert_eq!(item.hint, None);
+        assert_eq!(teacher.blocks[0].items[0].bloom, Some(None));
+        assert_eq!(
+            teacher.blocks[1].bloom_summary.as_deref(),
+            Some("Bloom：分析 1")
+        );
+        assert_eq!(teacher.blocks[0].bloom_summary, None);
+        let json = serde_json::to_value(&teacher).unwrap();
+        assert_eq!(
+            json["blocks"][0]["items"][0]["bloom"],
+            serde_json::Value::Null
+        );
+        assert!(json["blocks"][0]["items"][0].get("bloom").is_some());
+        assert_eq!(json["blocks"][1]["items"][0]["bloom"], "analyze");
+        let basic = project("T", &c, Level::Basic, Audience::Teacher);
+        assert_eq!(
+            basic.blocks[1].items[0].hint.as_deref(),
+            Some("Start with: The writer …")
+        );
+        // The Part letter follows the printed letter.
+        assert_eq!(teacher.blocks[1].title, "Part B · Look Closer");
+        c.blocks[0].enabled = false;
+        let s = project("T", &c, Level::Standard, Audience::Student);
+        assert_eq!(s.blocks[0].title, "Part A · Look Closer");
+        assert!(
+            text_lines(&project("T", &c, Level::Basic, Audience::Student))
+                .iter()
+                .any(
+                    |(place, text)| place.ends_with("題提示") && text == "Start with: The writer …"
+                )
         );
     }
 

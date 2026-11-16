@@ -1759,3 +1759,182 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 ## 試用真模型
 
 prompt key：`prep_activity`、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`。
+
+---
+
+# Phase 2.7：Bloom 認知層次與閱讀理解題／分層練習
+
+以下為**新增**；既有端點只多了選填欄位與回應欄位，舊的學習單照常讀寫。Migration `0014_bloom.sql`。
+
+學習單產生器多了兩種產出：**閱讀理解題**（`comprehension`）與**分層練習**（`tiered`）。兩者都依 Bloom 認知層次出題：每個層次一次模型呼叫，再由另一次呼叫獨立判斷每一題的層次。原本的完整學習單（`worksheet`）流程不變，只是 `tasks` 步驟的每一題也標上 Bloom 層次。
+
+## Bloom（固定六個；伺服器只接受這些 id）
+
+| id | 中文 | 學生要做的事 | 適合的作答方式 | 區塊標題 | 區塊的 `student_tasks` |
+|---|---|---|---|---|---|
+| `remember` | 記憶 | 回想或找出文本明白寫出的事實 | 選擇題、是非題、填空題、配對題、簡答題 | Find the Facts | 理解內容 |
+| `understand` | 理解 | 解釋、改述、摘要、從上下文推知詞義 | 選擇題、填空題、簡答題、配對題 | Understand the Text | 理解內容 |
+| `apply` | 應用 | 把文本的概念或語言用在新的情境 | 簡答題、填空題 | Use It | 字彙練習 |
+| `analyze` | 分析 | 因果、比較、結構、目的、事實與意見 | 表格整理、圖像組織、簡答題、選擇題 | Look Closer | 推論／預測、比較／分類 |
+| `evaluate` | 評鑑 | 根據證據判斷並說明理由 | 簡答題、段落寫作 | What Do You Think? | 評估／提出理由 |
+| `create` | 創造 | 根據文本產出新的東西 | 段落寫作、簡答題 | Make Something New | 寫作 |
+
+順序一律是 remember → create。表外的值（設定、題目、`bloom_counts` 的鍵）→ 400，訊息「「x」不是 Bloom 認知層次的選項（remember、understand、apply、analyze、evaluate、create）。」（在「請求內容格式不正確：」之後）。
+
+## 型別變更
+
+```ts
+type Bloom = "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
+type WsOutput = "worksheet" | "comprehension" | "tiered";
+
+interface WorksheetSettings {
+  /* …既有欄位… */
+  output: WsOutput;                       // 預設 "worksheet"（原本的流程）
+  bloom: Bloom[];                         // 目標層次，依 Bloom 順序、去重；空陣列＝六個都出
+  question_count: number | null;          // 3–30；null＝預設（閱讀理解題 8、分層練習 12）
+  bloom_counts: Partial<Record<Bloom, number>> | null;   // 每個層次的題數（各 0–12，合計 3–30）；有值時取代 bloom 與 question_count
+  objective: string | null;               // 教師寫的學習目標（≤300，前後空白去掉，空字串變 null）
+}
+interface WsItem {
+  /* …既有欄位… */
+  bloom: Bloom | null;                    // 這一題的 Bloom 層次；舊資料是 null。教師可以改或清空
+  hint: string;                           // 提示或句子開頭，預設 ""；只印在基礎版
+}
+interface WsBlock {
+  /* …既有欄位… */
+  bloom: Bloom | null;                    // 依 Bloom 層次產生的區塊：它的層次（重新產生時重跑這個層次）；其他區塊是 null
+}
+interface WorksheetState { /* …既有欄位… */ request: string; }   // 「教師的要求」（≤2000），沒有時是 ""
+interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "template" | "bloom" | "bloom_check"; /* … */ }
+
+// WsSheet（GET …/sheet 與匯出用同一份）
+interface WsSheetItem { /* …既有欄位… */
+  bloom?: Bloom | null;                   // 只有教師版有這個鍵（沒有層次時是 null）
+  hint?: string;                          // 只有基礎版（學生版與教師版）、而且有提示時才有
+}
+interface WsSheetBlock { /* …既有欄位… */
+  bloom_summary?: string;                 // 只有教師版：這個版本裡這一區題目的層次，例如「Bloom：記憶 2、理解 1」；沒有任何題目有層次時沒有這個鍵
+}
+```
+
+- `WsItem.bloom`、`WsItem.hint` 在 `PUT …/:id { content }` 時重新驗證：層次不在表內 → 400；`hint` 最多 4000 字。
+- `bloom_counts` 依 Bloom 順序回傳，值為 0 的鍵保留（「有指定、不出」）；只有值大於 0 的層次會產生。
+
+## 端點變更
+
+| Method | Path | 變更 |
+|---|---|---|
+| POST | `/api/worksheets` | 新增 `settings?`（**部分** `WorksheetSettings`：有給的欄位取代建議值，沒給的照今天的預設／版型預填）與 `request?`（≤2000） |
+| PUT | `/api/worksheets/:id` | `settings` 改為**部分更新**：有給的欄位取代目前的值，沒給的不變（送完整的 `WorksheetSettings` 和以前一樣整份取代）；`minutes`、`question_count`、`bloom_counts`、`objective` 送 `null` 會清空。新增 `request?: string \| null`（`null` 或 `""` 清空） |
+| PUT | `/api/worksheets/:id/material` | 換教材時，`output`、`bloom`、`question_count`、`bloom_counts`、`objective` 與 `request` 保留（不是依教材建議的） |
+
+**驗證（400，訊息為中文）**
+
+- `question_count` 不在 3–30 →「題數需為 3 到 30 題；也可以不填。」
+- `bloom_counts` 有任一個不在 0–12，或合計不在 3–30 →「每個 Bloom 層次的題數需為 0 到 12 題，合計 3 到 30 題。」
+- `objective` 超過 300 字 →「學習目標最多 300 字。」；`request` 超過 2000 字 →「給 Manna 的要求最多 2000 字。」
+- `output` 不是三個值之一 →「「x」不是「要做什麼」的選項（worksheet、comprehension、tiered）。」
+- **版型只用在完整學習單**：建立或儲存後，學習單有版型而 `output ≠ "worksheet"` →「版型只適用於完整學習單。」。要把有版型的學習單改成閱讀理解題，同一個請求送 `template_id: null`。
+
+## 教師的要求與學習目標
+
+`request`（存在 `worksheets.request`）與 `settings.objective` 會送進這份學習單**每一次**模型呼叫：
+
+- 新的 prompt（`worksheet_bloom_level`）有自己的變數 `{{teacher_request}}`、`{{teacher_objective}}`（沒有時是「（沒有）」）。
+- 既有的 prompt（`worksheet_tasks`、`worksheet_warmup`、`worksheet_scaffolds`、`worksheet_exit_ticket`、`worksheet_template_section`）不必改：它們接在教材注記（`teacher_notes_for_ai`）同一段後面，各自一行「學習目標（教師寫的）：…」「教師的要求：…」。
+- 兩者都列在工作的 `context`（「Manna 已帶入的資訊」），只顯示前 80 字。
+- 例外：判斷層次的 `worksheet_bloom_check` 不帶這兩者，讓判斷不受教師期待影響。
+
+## 產生：閱讀理解題（`output = "comprehension"`）
+
+`POST …/generate` 建立一輪兩個工作：`bloom`（所有層次的出題呼叫）與 `bloom_check`（判斷、重出與第二次判斷）。後者維持 `running` 直到新版本存好（`phase`「正在把結果組合成學習單」）。
+
+**題數分配**（`worksheet::bloom::plan`）
+
+- `bloom_counts` 有值：照它（值大於 0 的層次）。
+- 否則：層次＝`bloom`（空的＝六個），總題數＝`question_count`（沒有時 8）。每個層次至少 1 題，其餘從低的層次開始依序輪流加（記憶、理解、應用、分析、評鑑、創造、再回到記憶…）。8 題六個層次＝2、2、1、1、1、1；12 題＝各 2。
+
+**作答方式**：每個層次可用的作答方式＝該層次適合的作答方式 ∩ 教師勾的 `answer_formats`；交集是空的就用教師勾的；教師沒勾就用該層次適合的全部。
+
+**每個層次一次呼叫**（`worksheet_bloom_level`，鷹架 `SC-WS-BLOOM`），最多同時 3 個，`WsJob.phase` 例如「正在出『分析』層次的題目」。`max_tokens` = 400 + 300 × 題數（1500–6000）。
+
+- 輸入：層次的定義、英文題幹、可用的作答方式、題數、學校類型、班級特性、學習目標、教師的要求、加了段落代號（`[P1]`…）的教材、較低層次已經出好的題目（不要重複；同時開始的層次彼此看不到），以及教師注記（有勾「提供給 AI」時）。
+- 輸出 schema（欄位照撰寫順序，每個字串與陣列都有上限）：`{ instructions ≤200, items: [正好 n 題] { answer_format: 該層次可用的作答方式（enum）, prompt ≤500, options ≤6×150, answer ≤400, evidence ≤300, paragraph_ids: ["P1"…]（enum，≤3）, hint ≤150 } }`。`paragraph_ids` 由伺服器換成教材的段落 id，聯集成區塊的 `paragraph_ids`。
+- **檢查**（和照版型產生的 `evaluate_section` 同一套）：作答方式只能是這個層次可用的；選擇題至少 2 個不重複選項、答案必須是其中之一（只寫字母時換成該選項）；配對題至少 2 個選項；填空題要有 `___`；題幹不可含答案；音節題依字典修正；是非題沒給選項時補 True／False；超過題數由程式只留前面幾題。**記憶、理解**層次每一題都要有逐字依據：不是逐字的依據改成其中最長、至少 5 個字的逐字片段；找不到就算這一題沒通過。其他層次不需要依據，不是逐字的直接清空。
+- 沒通過 → **修復一次**（temperature +0.4，附上沒通過的項目）；還是沒通過的題目拿掉；一題都沒有時，這個層次的區塊留空並在 `message` 說明。
+
+**判斷層次**（`worksheet_bloom_check`，鷹架 `SC-WS-BLOOM-CHECK`，`max_tokens` = 300 + 80 × 題數（1000–3000））：所有層次出完後，一次呼叫獨立判斷每一題（不告訴模型原本的目標）：`{ items: [{ id: "Q1"…（enum）, bloom（enum）, reason ≤80 }] }`，每題一筆；漏掉的題目修復一次，之後仍沒判斷的維持目標層次。
+
+- **不符**的定義：目標是分析、評鑑、創造而判斷的層次比目標低；或（其他情況）兩者相差 2 層以上。
+- 不符的題目**重出一次**：每個受影響的層次一次呼叫（同一個 prompt，`phase`「正在重出層次不符的『評鑑』題目」），附上判斷的層次與理由；新題目取代原題、再判斷一次（只判斷新題目）。
+- 仍不符（或重出沒有成功）的題目保留，`bloom` 改成判斷的層次，並在 `content.notices` 加一行，例如「第 7 題原本要出『評鑑』，Manna 判斷是『理解』，已改標為『理解』。」（題號是整份學習單依序的編號）。
+- 判斷呼叫失敗時題目都標出題時的目標層次，`notices` 說明檢查沒有完成。
+
+**組裝**（程式）：
+
+- 每個層次一個區塊，依 Bloom 順序；`kind = "activity"`；`bloom` = 該層次；標題固定為「Part A · Find the Facts」這種形式，字母依序配（只選了理解與分析時是「Part A · Understand the Text」「Part B · Look Closer」）；`instructions` 是模型寫的一句英文（沒有時用預設句）；`student_tasks` 見上表；沒有鷹架、沒有暖身、沒有 Exit ticket。
+- 題目：`origin = "ai"`，`bloom` = 層次（被改標的是判斷的層次），`hint` 照模型輸出，`levels` = 學習單的版本（`settings.levels`，沒有時是一般版）。
+- 一個新的學習單版本（`cause = "generate"`）。
+- `content.chosen`：`settings` 是實際用的（`levels`、`bloom` = 實際產生的層次、`question_count` = 總題數），`item_budget` = 總題數，`reasons` 第一條是「Bloom：記憶 2、理解 2、應用 1、分析 1、評鑑 1、創造 1」，再說明題數與版本怎麼決定。
+
+## 產生：分層練習（`output = "tiered"`）
+
+和閱讀理解題相同，差別：
+
+- 版本一律是基礎版、一般版、進階版（不論 `settings.levels`）；預設 12 題。
+- 每一題的 `levels` 依它的 Bloom 層次（被改標的題目依判斷的層次）：
+
+  | Bloom | 出現在 |
+  |---|---|
+  | 記憶 | 基礎版 |
+  | 理解、應用 | 三個版本（核心） |
+  | 分析 | 一般版、進階版 |
+  | 評鑑、創造 | 進階版 |
+
+- 每一題都請模型給 `hint`，只印在基礎版。
+- `content.chosen.reasons` 另加「基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造」。
+- 投影時，依 Bloom 層次產生的區塊在某個版本裡沒有任何題目，就不出現在那個版本（區塊字母依序遞補，標題的「Part X」跟著印出的字母）。
+
+## 原本的完整學習單（`output = "worksheet"`）
+
+流程不變。唯一的變更：`worksheet_tasks` 新增**第 2 版** prompt（第 1 版保留），多一條規則請模型為每一題標 `bloom`，schema 的題目多一個 `bloom` 欄位（六個 id 的 enum）。表外的值由伺服器丟掉（`bloom = null`）。暖身與 Exit ticket 的題目沒有層次。
+
+## 單一區塊重新產生與復原
+
+- 依 Bloom 層次產生的學習單（`content.chosen.settings.output` 是 `comprehension` 或 `tiered`）裡、有層次的區塊（`WsBlock.bloom`；沒有時依固定標題，再沒有時依多數題目的 `bloom`）：`POST …/blocks/:block_id/regenerate` 重跑那個層次的呼叫（題數＝區塊原本的題數；原本沒有題目時用分配的題數），其他區塊的題目列為不要重複；再**只判斷這個區塊**（不符的重出一次、仍不符的改標並加 `notices`）。工作是 `bloom` 與 `bloom_check`，`block_id` 為該區塊。標題保留原本的字母。
+- 失敗時區塊維持原樣（`bloom_check` 為 `skipped`）。`undo` 照舊。
+- 教師自己新增、沒有層次的區塊，用原本的流程重新產生。
+
+## 學生版與教師版
+
+- **教師版**：投影（`GET …/sheet`）的每一題有 `bloom`；DOCX／PDF 在題目後面印「〔Bloom：分析 Analyze〕」，每個區塊標題下印 `bloom_summary`（例如「Bloom：記憶 2」）。這些是中文字，所以教師版 PDF 需要中文字型（和教師備註一樣）。
+- **學生版**永遠沒有 Bloom 標記（投影沒有 `bloom`、`bloom_summary` 這兩個鍵）。
+- **基礎版**（學生版與教師版）在題目下方印「Hint: …」；投影的題目有 `hint`。其他版本沒有。
+- 詞彙級別檢查會把基礎版印出的提示一起分析（位置寫「第 n 題提示」）。
+
+## 測試用假模型（`AI_PROVIDER=fake`）
+
+每個層次的呼叫依可用的作答方式輪流出題，題目根據各段的第一句；記憶、理解層次以那一句作為依據；每題都有提示。判斷呼叫一律判為目標層次。
+
+| 標記（寫在教材裡） | 效果 |
+|---|---|
+| `FAKE_BLOOM_MISMATCH` | 判斷把第一個評鑑／創造題判為 `understand`，兩次判斷都一樣 → 重出一次後改標，`notices` 有一行說明 |
+| `FAKE_BLOOM_NO_EVIDENCE` | 第一個記憶題的依據不在教材裡，只有第 1 次 → 修復呼叫改正 |
+| `FAKE_BLOCK` | 每個層次的呼叫只用表外的作答方式 → 區塊留空並附說明 |
+
+既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
+
+## 資料
+
+- `worksheets.request`（`TEXT NOT NULL DEFAULT ''`，≤2000）。`output`、`bloom`、`question_count`、`bloom_counts`、`objective` 在 `worksheets.settings`（JSONB）裡。
+- `worksheet_jobs.step` 新增 `bloom`、`bloom_check`。
+- `prompt_versions` 新增 `worksheet_bloom_level`（第 1 版）、`worksheet_bloom_check`（第 1 版）、`worksheet_tasks`（第 2 版）。`scaffolds` 新增 `SC-WS-BLOOM`、`SC-WS-BLOOM-CHECK`。
+- 每次呼叫一列 `ai_interactions`（`module` = prompt key）；輸入快照裡的教材、已出過的題目與要判斷的題目只記字數與雜湊。
+
+## usage_logs
+
+`worksheet_created` 多了 `output`。依 Bloom 層次產生時，`worksheet_generated` 多了 `output`、`bloom`（`[層次, 題數]`）、`failed_blocks`、`relabelled`。
+
+## 試用真模型
+
+prompt key：`worksheet_bloom_level`、`worksheet_bloom_check`、`worksheet_tasks`（第 2 版）。程式進入點：`worksheet::ai::start_generation`（`settings.output` 是 `comprehension`／`tiered` 時走 `worksheet::ai::bloom`）；題數分配、版本對應、不符的定義與 JSON schema 在 `worksheet::bloom`，檢查在 `worksheet::checks::evaluate_bloom_level`／`evaluate_bloom_check`。

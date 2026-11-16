@@ -197,7 +197,7 @@ async fn section_call(
         ("paragraph_count", material.paragraphs.len().to_string()),
         ("passage_numbered", marked_passage(material)),
         ("class_profile", or_blank(&run.input.class_profile)),
-        ("teacher_notes_for_ai", run.ai_notes.clone()),
+        ("teacher_notes_for_ai", run.notes_for_ai()),
     ]);
     let fake_context = json!({
         "task": KEY_SECTION,
@@ -310,6 +310,7 @@ fn section_block(
             purpose: None,
             levels: levels.to_vec(),
             origin: Origin::Ai,
+            ..Item::default()
         })
         .collect();
     Block {
@@ -672,5 +673,5 @@ async fn regenerate(
         &levels,
         &tpl.content.instruction_language,
     );
-    replace_block(run, &old, block, interaction_id).await
+    replace_block(run, &old, block, interaction_id, Vec::new()).await
 }

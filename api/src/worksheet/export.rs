@@ -31,9 +31,11 @@ pub enum ExportError {
     Other(#[from] anyhow::Error),
 }
 
-/// The printed name of a block: "A. Warm-up"; the exit ticket has no letter.
+/// The printed name of a block: "A. Warm-up"; the exit ticket has no letter. A title that
+/// already carries the letter (「Part A · Find the Facts」) is printed as it is.
 fn heading(b: &SheetBlock) -> String {
-    if b.label.is_empty() {
+    let lettered = super::bloom::split_part_title(&b.title).is_some_and(|(l, _)| l == b.label);
+    if b.label.is_empty() || lettered {
         b.title.clone()
     } else if b.title.is_empty() {
         format!("{}.", b.label)
@@ -197,18 +199,34 @@ const DOCX_WIDTH: u32 = 9638;
 const TEACHER_INK: &str = "7A5200";
 const MUTED_INK: &str = "595959";
 
+/// The Bloom tag printed after a question in the teacher version.
+fn bloom_tag(it: &SheetItem) -> Option<String> {
+    it.bloom.flatten().map(|b| b.tag())
+}
+
 fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
+    let mut runs = vec![
+        run(
+            &format!("{}.\t", it.no),
+            RunStyle {
+                bold: true,
+                ..RunStyle::default()
+            },
+        ),
+        run(&it.prompt, RunStyle::default()),
+    ];
+    if let Some(tag) = bloom_tag(it).filter(|_| teacher) {
+        runs.push(run(
+            &format!(" {tag}"),
+            RunStyle {
+                color: Some(TEACHER_INK),
+                size: Some(20),
+                ..RunStyle::default()
+            },
+        ));
+    }
     out.push_str(&para(
-        &[
-            run(
-                &format!("{}.\t", it.no),
-                RunStyle {
-                    bold: true,
-                    ..RunStyle::default()
-                },
-            ),
-            run(&it.prompt, RunStyle::default()),
-        ],
+        &runs,
         &ParaStyle {
             indent: 400,
             hanging: 400,
@@ -225,6 +243,33 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
             )],
             &ParaStyle {
                 indent: 700,
+                ..ParaStyle::default()
+            },
+        ));
+    }
+    if let Some(h) = &it.hint {
+        out.push_str(&para(
+            &[
+                run(
+                    "Hint: ",
+                    RunStyle {
+                        bold: true,
+                        color: Some(MUTED_INK),
+                        ..RunStyle::default()
+                    },
+                ),
+                run(
+                    h,
+                    RunStyle {
+                        italic: true,
+                        color: Some(MUTED_INK),
+                        ..RunStyle::default()
+                    },
+                ),
+            ],
+            &ParaStyle {
+                indent: 400,
+                before: 40,
                 ..ParaStyle::default()
             },
         ));
@@ -369,6 +414,23 @@ fn document_xml(sheet: &Sheet) -> String {
                 ..ParaStyle::default()
             },
         ));
+        if let Some(summary) = &b.bloom_summary {
+            body.push_str(&para(
+                &[run(
+                    summary,
+                    RunStyle {
+                        color: Some(TEACHER_INK),
+                        size: Some(20),
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    after: 60,
+                    keep_next: true,
+                    ..ParaStyle::default()
+                },
+            ));
+        }
         if !b.instructions.is_empty() {
             body.push_str(&para(
                 &[run(
@@ -1002,6 +1064,18 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
         l.draw_line(line, MARGIN + indent, body);
         l.y += Layout::line_height(body.size);
     }
+    if let Some(tag) = bloom_tag(it).filter(|_| teacher) {
+        l.paragraph(
+            &tag,
+            Style {
+                color: GOLD,
+                size: 9.5,
+                indent,
+                after: 1.0,
+                ..body
+            },
+        );
+    }
     for (i, o) in it.options.iter().enumerate() {
         l.paragraph(
             &format!("({}) {o}", option_letter(i)),
@@ -1010,6 +1084,21 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
                 after: 1.0,
                 ..body
             },
+        );
+    }
+    if let Some(h) = &it.hint {
+        l.labelled(
+            "Hint: ",
+            h,
+            Style {
+                weight: Weight::Italic,
+                color: MUTED,
+                size: 10.5,
+                indent,
+                before: 2.0,
+                after: 1.0,
+            },
+            Weight::Bold,
         );
     }
     match boxed(it) {
@@ -1104,6 +1193,17 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         // Keep a heading with what follows it.
         l.ensure(80.0);
         l.paragraph(&heading(b), heading_style);
+        if let Some(summary) = &b.bloom_summary {
+            l.paragraph(
+                summary,
+                Style {
+                    color: GOLD,
+                    size: 9.5,
+                    after: 3.0,
+                    ..body
+                },
+            );
+        }
         if !b.instructions.is_empty() {
             l.paragraph(
                 &b.instructions,
@@ -1211,8 +1311,11 @@ fn printed_text(sheet: &Sheet) -> String {
                 .flat_map(|v| [v.word.clone(), v.definition.clone()]),
         );
         out.extend(b.supports.iter().map(|s| s.content.clone()));
+        out.extend(b.bloom_summary.iter().cloned());
         for it in &b.items {
             out.push(it.prompt.clone());
+            out.extend(bloom_tag(it));
+            out.extend(it.hint.iter().cloned());
             out.extend(it.options.iter().cloned());
             out.extend(it.answer.iter().cloned());
             out.extend(it.evidence.iter().cloned());
@@ -1392,9 +1495,12 @@ mod tests {
                         lines: 3,
                         answer: teacher.then(|| "Because they thought every umbrella would be gone.".to_string()),
                         evidence: teacher.then(|| "They were sure every umbrella would be gone.".to_string()),
+                        bloom: None,
+                        hint: None,
                     })
                     .collect(),
                 teacher_notes: teacher.then(|| "先找出關鍵句再推論。".to_string()),
+                bloom_summary: None,
             }],
         }
     }
@@ -1415,6 +1521,66 @@ mod tests {
         std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
             .unwrap();
         assert!(xml.contains("Answer: ") && xml.contains("先找出關鍵句"));
+    }
+
+    fn document(bytes: Vec<u8>) -> String {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+            .unwrap();
+        xml
+    }
+
+    #[test]
+    fn bloom_tags_print_in_the_teacher_version_and_hints_in_basic() {
+        use crate::worksheet::{Block, Bloom, Content, Item};
+        let content = Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                title: "Part A · Look Closer".into(),
+                bloom: Some(Bloom::Analyze),
+                items: vec![Item {
+                    id: "i1".into(),
+                    answer_format: Some("簡答題".into()),
+                    prompt: "Why does the writer compare trust to an umbrella?".into(),
+                    answer: "Both protect people.".into(),
+                    levels: Level::ALL.to_vec(),
+                    bloom: Some(Bloom::Analyze),
+                    hint: "Think about what an umbrella does.".into(),
+                    ..Item::default()
+                }],
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        };
+        let sheet =
+            |level, audience| crate::worksheet::assemble::project("T", &content, level, audience);
+        let teacher = document(docx(&sheet(Level::Standard, Audience::Teacher)).unwrap());
+        assert!(teacher.contains("〔Bloom：分析 Analyze〕"));
+        assert!(teacher.contains("Bloom：分析 1"), "block summary line");
+        assert!(
+            teacher.contains(">Part A · Look Closer<"),
+            "no second letter"
+        );
+        assert!(!teacher.contains("Think about what an umbrella does."));
+        for level in Level::ALL {
+            let student = document(docx(&sheet(level, Audience::Student)).unwrap());
+            assert!(!student.contains("Bloom"), "{level:?}");
+            assert_eq!(
+                student.contains("Hint: ")
+                    && student.contains("Think about what an umbrella does."),
+                level == Level::Basic,
+                "{level:?}"
+            );
+        }
+        let basic_teacher = document(docx(&sheet(Level::Basic, Audience::Teacher)).unwrap());
+        assert!(basic_teacher.contains("Think about what an umbrella does."));
+        // PDF: the student version has no Chinese, so no CJK font is needed for it.
+        let pdf_bytes = pdf(&sheet(Level::Basic, Audience::Student)).unwrap();
+        assert!(pdf_bytes.starts_with(b"%PDF-"));
+        assert!(sheet_has_cjk(&sheet(Level::Standard, Audience::Teacher)));
+        assert!(!sheet_has_cjk(&sheet(Level::Basic, Audience::Student)));
     }
 
     #[test]

@@ -1014,6 +1014,9 @@ fn revised_block(
             purpose: old.items.get(k).and_then(|i| i.purpose),
             levels: levels.to_vec(),
             origin: Origin::Ai,
+            // Like the purpose, the Bloom label and the hint stay with the position.
+            bloom: old.items.get(k).and_then(|i| i.bloom),
+            hint: old.items.get(k).map(|i| i.hint.clone()).unwrap_or_default(),
         })
         .collect();
     block.message = None;
@@ -1204,6 +1207,7 @@ pub fn assessment_settings() -> Settings {
         generation: vec![GEN_OBJECTIVES.to_string()],
         levels: vec![Level::Standard],
         minutes: None,
+        ..Settings::default()
     }
 }
 

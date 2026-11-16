@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{
-    student_tasks, ANSWER_FORMATS, EXIT_PURPOSES, INFO_FUNCTIONS, INSTRUCTIONAL_KINDS,
+    student_tasks, Bloom, ANSWER_FORMATS, EXIT_PURPOSES, INFO_FUNCTIONS, INSTRUCTIONAL_KINDS,
     PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 
@@ -33,6 +33,9 @@ pub struct RawItem {
     pub options: Vec<String>,
     pub answer_en: String,
     pub evidence: Option<String>,
+    /// The item's Bloom level (prompt version 2); checked against the fixed set.
+    #[serde(default)]
+    pub bloom: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -71,6 +74,7 @@ fn nullable_string() -> Value {
 
 pub fn tasks_schema() -> Value {
     let functions: Vec<&str> = INFO_FUNCTIONS.iter().map(|(_, l)| *l).collect();
+    let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
     json!({
         "type": "object",
         "properties": {
@@ -97,10 +101,11 @@ pub fn tasks_schema() -> Value {
                                     "prompt_en": { "type": "string" },
                                     "options": strings(),
                                     "answer_en": { "type": "string" },
-                                    "evidence": nullable_string()
+                                    "evidence": nullable_string(),
+                                    "bloom": enum_of(&blooms)
                                 },
                                 "required": ["item_id", "answer_format", "tier", "prompt_en",
-                                             "options", "answer_en", "evidence"],
+                                             "options", "answer_en", "evidence", "bloom"],
                                 "additionalProperties": false
                             }
                         },

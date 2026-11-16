@@ -9,6 +9,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use super::bloom::{Bloom, RawBloomCheck, RawBloomLevel, HINT_CHARS, REASON_CHARS};
 use super::schemas::{
     RawBlock, RawExit, RawExitItem, RawItem, RawScaffoldSet, RawScaffolds, RawTasks, RawWarmup,
     TARGET_WARMUP, TIER_CHALLENGE, TIER_CORE, TIER_SUPPORT,
@@ -386,6 +387,12 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             item.prompt_en = clean(&it.prompt_en);
             item.answer_en = clean(&it.answer_en);
             item.options = clean_all(&it.options);
+            // A label outside the fixed set (a provider that ignores the schema) is dropped.
+            item.bloom = it
+                .bloom
+                .as_deref()
+                .and_then(Bloom::parse)
+                .map(|b| b.as_str().to_string());
             if !ANSWER_FORMATS.contains(&item.answer_format.as_str()) {
                 t.fail(
                     "labels_from_spec_sets",
@@ -1228,6 +1235,70 @@ fn syllable_answer_from_dictionary(
     true
 }
 
+/// The checks every generated item shares: a prompt, a well-formed choice item (a bare letter
+/// answer "B" names the option in that position; at least 2 distinct options; the answer is one
+/// of them), a matching item with options, and no answer in the stem. Records what failed;
+/// returns whether the item is kept.
+fn item_checks(item: &mut CleanSectionItem, iname: &str, t: &mut Tally) -> bool {
+    if item.prompt.is_empty() {
+        t.fail(
+            "items_wellformed",
+            format!("{iname} 的題目是空的。"),
+            "拿掉這一題",
+        );
+        return false;
+    }
+    if item.answer_format == FMT_CHOICE {
+        let distinct: HashSet<&str> = item.options.iter().map(|o| o.trim()).collect();
+        let letter = item
+            .answer
+            .trim()
+            .trim_matches(|c| c == '(' || c == ')' || c == '.');
+        let matches = item.options.iter().any(|o| o.trim() == item.answer.trim());
+        if !matches && letter.len() == 1 {
+            if let Some(c) = letter.chars().next().filter(char::is_ascii_alphabetic) {
+                let idx = (c.to_ascii_uppercase() as u8 - b'A') as usize;
+                if let Some(option) = item.options.get(idx) {
+                    item.answer = option.clone();
+                }
+            }
+        }
+        if item.options.len() < 2 || distinct.len() != item.options.len() {
+            t.fail(
+                "items_wellformed",
+                format!("{iname}（選擇題）要有至少 2 個不重複的選項。"),
+                "拿掉這一題",
+            );
+            return false;
+        }
+        if !item.options.iter().any(|o| o.trim() == item.answer.trim()) {
+            t.fail(
+                "items_wellformed",
+                format!("{iname}（選擇題）的 answer 必須與其中一個選項完全相同。"),
+                "拿掉這一題",
+            );
+            return false;
+        }
+    }
+    if item.answer_format == FMT_MATCHING && item.options.len() < 2 {
+        t.fail(
+            "items_wellformed",
+            format!("{iname}（配對題）的 options 至少要 2 個。"),
+            "拿掉這一題",
+        );
+        return false;
+    }
+    if contains_answer(&item.prompt, &item.answer) {
+        t.fail(
+            "answer_not_in_prompt",
+            format!("{iname} 的題幹直接寫出了答案。"),
+            "拿掉這一題",
+        );
+        return false;
+    }
+    true
+}
+
 /// Checks one generated template block: fixed answer-format labels, well-formed closed items
 /// (a choice item's answer is one of its options), no answer in the stem, at most the
 /// section's item count, at least one item, and, for a block that needs the teacher's own
@@ -1300,61 +1371,7 @@ pub fn evaluate_section(
             answer: clean(&it.answer),
             evidence: None,
         };
-        if item.prompt.is_empty() {
-            t.fail(
-                "items_wellformed",
-                format!("{iname} 的題目是空的。"),
-                "拿掉這一題",
-            );
-            continue;
-        }
-        if item.answer_format == FMT_CHOICE {
-            let distinct: HashSet<&str> = item.options.iter().map(|o| o.trim()).collect();
-            // A bare letter ("B") names the option in that position.
-            let letter = item
-                .answer
-                .trim()
-                .trim_matches(|c| c == '(' || c == ')' || c == '.');
-            let matches = item.options.iter().any(|o| o.trim() == item.answer.trim());
-            if !matches && letter.len() == 1 {
-                if let Some(c) = letter.chars().next().filter(char::is_ascii_alphabetic) {
-                    let idx = (c.to_ascii_uppercase() as u8 - b'A') as usize;
-                    if let Some(option) = item.options.get(idx) {
-                        item.answer = option.clone();
-                    }
-                }
-            }
-            if item.options.len() < 2 || distinct.len() != item.options.len() {
-                t.fail(
-                    "items_wellformed",
-                    format!("{iname}（選擇題）要有至少 2 個不重複的選項。"),
-                    "拿掉這一題",
-                );
-                continue;
-            }
-            if !item.options.iter().any(|o| o.trim() == item.answer.trim()) {
-                t.fail(
-                    "items_wellformed",
-                    format!("{iname}（選擇題）的 answer 必須與其中一個選項完全相同。"),
-                    "拿掉這一題",
-                );
-                continue;
-            }
-        }
-        if item.answer_format == FMT_MATCHING && item.options.len() < 2 {
-            t.fail(
-                "items_wellformed",
-                format!("{iname}（配對題）的 options 至少要 2 個。"),
-                "拿掉這一題",
-            );
-            continue;
-        }
-        if contains_answer(&item.prompt, &item.answer) {
-            t.fail(
-                "answer_not_in_prompt",
-                format!("{iname} 的題幹直接寫出了答案。"),
-                "拿掉這一題",
-            );
+        if !item_checks(&mut item, &iname, &mut t) {
             continue;
         }
         if ctx.needs_external {
@@ -1399,10 +1416,261 @@ pub fn evaluate_section(
     t.finish(Some(out))
 }
 
+// ---------------------------------------------------------------- questions of one Bloom level
+
+/// One call of `worksheet_bloom_level`: the level, the formats it may use, the material and how
+/// many questions were asked for.
+pub struct BloomCtx<'a> {
+    pub bloom: Bloom,
+    pub formats: &'a [&'static str],
+    /// The material, paragraphs joined.
+    pub passage: &'a str,
+    /// "P1"…, in material order.
+    pub paragraph_codes: &'a [String],
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CleanBloomItem {
+    /// Format, prompt, options, answer and the verbatim evidence (if any).
+    pub item: CleanSectionItem,
+    /// 1-based paragraph numbers the question is about.
+    pub paragraph_nos: Vec<usize>,
+    pub hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CleanBloomLevel {
+    pub instructions: String,
+    pub items: Vec<CleanBloomItem>,
+}
+
+const BLOOM_CHECKS: [&str; 7] = [
+    "labels_from_spec_sets",
+    "items_wellformed",
+    "answer_not_in_prompt",
+    "evidence_verbatim",
+    "item_count_within_plan",
+    "has_items",
+    "syllables_match_dictionary",
+];
+
+/// Checks the questions of one level the way a template block is checked (fixed labels, the
+/// level's formats only, well-formed closed items, no answer in the stem, the dictionary's
+/// syllables), plus: a fill-in item has a blank, and a remember / understand question quotes
+/// the text word for word as its evidence (cut down to its longest verbatim piece of five
+/// words or more; with none the question fails). Other levels need no evidence: one that is
+/// not verbatim is cleared. More questions than asked for are cut.
+pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<CleanBloomLevel> {
+    let mut t = Tally::new(&BLOOM_CHECKS);
+    let mut out = CleanBloomLevel {
+        instructions: clean(&raw.instructions),
+        items: Vec::new(),
+    };
+    let needs_evidence = ctx.bloom.needs_evidence();
+    for (ii, it) in raw.items.iter().enumerate() {
+        let iname = format!("第 {} 題", ii + 1);
+        let format = it.answer_format.trim().to_string();
+        if !ctx.formats.contains(&format.as_str()) {
+            t.fail(
+                "labels_from_spec_sets",
+                format!(
+                    "{iname} 的 answer_format「{}」不能用在這個層次；只能用：{}。",
+                    it.answer_format,
+                    ctx.formats.join("、")
+                ),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        let mut item = CleanSectionItem {
+            answer_format: format,
+            prompt: clean(&it.prompt),
+            options: clean_all(&it.options),
+            answer: clean(&it.answer),
+            evidence: None,
+        };
+        if item.answer_format == FMT_TRUE_FALSE && item.options.is_empty() {
+            item.options = vec!["True".to_string(), "False".to_string()];
+        }
+        if !item_checks(&mut item, &iname, &mut t) {
+            continue;
+        }
+        if item.answer_format == FMT_BLANK && !item.prompt.contains("___") {
+            t.fail(
+                "items_wellformed",
+                format!("{iname}（填空題）的 prompt 要用 ______ 表示空格。"),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        let evidence = clean(&it.evidence);
+        item.evidence = if evidence.is_empty() {
+            None
+        } else if is_verbatim(&evidence, ctx.passage) {
+            Some(evidence.clone())
+        } else {
+            verbatim_piece(&evidence, ctx.passage)
+        };
+        if needs_evidence {
+            match &item.evidence {
+                None => {
+                    t.fail(
+                        "evidence_verbatim",
+                        if evidence.is_empty() {
+                            format!("{iname} 沒有 evidence；這個層次的每一題都要從教材逐字複製一段連續文字當作依據。")
+                        } else {
+                            format!(
+                                "{iname} 的 evidence「{}」不是教材的連續片段。請逐字複製一段連續文字（至少 5 個英文字），不可改寫，不可用「...」省略或拼接。",
+                                clip_chars(&evidence, 120)
+                            )
+                        },
+                        "拿掉這一題",
+                    );
+                    continue;
+                }
+                Some(piece) if *piece != evidence => t.fixed(
+                    "evidence_verbatim",
+                    format!(
+                        "{iname} 的 evidence「{}」不完全是教材的連續片段。",
+                        clip_chars(&evidence, 120)
+                    ),
+                    "只留下其中逐字的一段",
+                ),
+                Some(_) => {}
+            }
+        } else if !evidence.is_empty() && item.evidence.as_deref() != Some(evidence.as_str()) {
+            t.fixed(
+                "evidence_verbatim",
+                format!(
+                    "{iname} 的 evidence「{}」不是教材的連續片段。",
+                    clip_chars(&evidence, 120)
+                ),
+                if item.evidence.is_some() {
+                    "只留下其中逐字的一段"
+                } else {
+                    "清空這一題的依據"
+                },
+            );
+        }
+        if syllables::mentions_syllables(&item.prompt)
+            && !syllable_answer_from_dictionary(&mut item, &iname, &mut t)
+        {
+            continue;
+        }
+        let mut paragraph_nos: Vec<usize> = it
+            .paragraph_ids
+            .iter()
+            .filter_map(|code| ctx.paragraph_codes.iter().position(|c| c == code.trim()))
+            .map(|i| i + 1)
+            .collect();
+        paragraph_nos.sort_unstable();
+        paragraph_nos.dedup();
+        out.items.push(CleanBloomItem {
+            item,
+            paragraph_nos,
+            hint: clean(&it.hint).chars().take(HINT_CHARS).collect(),
+        });
+    }
+    if out.items.len() > ctx.count {
+        t.fixed(
+            "item_count_within_plan",
+            format!("交出 {} 題，這個層次要 {} 題。", out.items.len(), ctx.count),
+            "只留前面幾題",
+        );
+        out.items.truncate(ctx.count);
+    }
+    if out.items.is_empty() {
+        t.fail(
+            "has_items",
+            "沒有交出可以用的題目；至少要有 1 題。".to_string(),
+            "",
+        );
+        return t.finish(None);
+    }
+    t.finish(Some(out))
+}
+
+/// One question's level as the judge classified it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Judged {
+    /// Index into the ids the judge was given.
+    pub index: usize,
+    pub bloom: Bloom,
+    pub reason: String,
+}
+
+const BLOOM_CHECK_CHECKS: [&str; 2] = ["ids_valid", "every_item_judged"];
+
+/// Checks the judge's output: every id it was given, once, with a level from the fixed set.
+/// Unknown ids and levels are dropped, a repeated id keeps its first judgement; a question left
+/// out is a failure (one repair call), after which it simply stays unjudged.
+pub fn evaluate_bloom_check(raw: &RawBloomCheck, ids: &[String]) -> Eval<Vec<Judged>> {
+    let mut t = Tally::new(&BLOOM_CHECK_CHECKS);
+    let mut out: Vec<Judged> = Vec::new();
+    for j in &raw.items {
+        let Some(index) = ids.iter().position(|id| id == j.id.trim()) else {
+            t.fail(
+                "ids_valid",
+                format!("「{}」不是要判斷的題號。", clip_chars(&j.id, 20)),
+                "拿掉這一筆",
+            );
+            continue;
+        };
+        let Some(bloom) = Bloom::parse(&j.bloom) else {
+            t.fail(
+                "ids_valid",
+                format!(
+                    "{} 的 bloom「{}」不是六個層次之一。",
+                    ids[index],
+                    clip_chars(&j.bloom, 20)
+                ),
+                "拿掉這一筆",
+            );
+            continue;
+        };
+        if out.iter().any(|o| o.index == index) {
+            t.fixed(
+                "ids_valid",
+                format!("{} 判斷了兩次。", ids[index]),
+                "只留第一次的判斷",
+            );
+            continue;
+        }
+        out.push(Judged {
+            index,
+            bloom,
+            reason: clean(&j.reason).chars().take(REASON_CHARS).collect(),
+        });
+    }
+    let missing: Vec<&str> = ids
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !out.iter().any(|o| o.index == *i))
+        .map(|(_, id)| id.as_str())
+        .collect();
+    if !missing.is_empty() {
+        t.fail(
+            "every_item_judged",
+            format!(
+                "這些題目沒有判斷：{}。每一題都要有一筆。",
+                missing.join("、")
+            ),
+            "",
+        );
+    }
+    out.sort_by_key(|j| j.index);
+    if out.is_empty() {
+        return t.finish(None);
+    }
+    t.finish(Some(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::worksheet::schemas::{RawProcedure, RawSupport};
+    use crate::worksheet::{FMT_PARAGRAPH, FMT_SHORT};
 
     fn out_item(
         format: &str,
@@ -1579,6 +1847,7 @@ mod tests {
             options: vec![],
             answer_en: answer.into(),
             evidence: None,
+            bloom: None,
         }
     }
 
@@ -2117,5 +2386,184 @@ mod tests {
             assert!(names.contains(&expected), "{expected} in {names:?}");
         }
         assert!(e.output.is_none());
+    }
+
+    fn bloom_item(
+        format: &str,
+        prompt: &str,
+        options: &[&str],
+        answer: &str,
+        evidence: &str,
+    ) -> crate::worksheet::bloom::RawBloomItem {
+        crate::worksheet::bloom::RawBloomItem {
+            answer_format: format.into(),
+            prompt: prompt.into(),
+            options: options.iter().map(|o| o.to_string()).collect(),
+            answer: answer.into(),
+            evidence: evidence.into(),
+            paragraph_ids: vec!["P2".into(), "P9".into()],
+            hint: "Look at paragraph 2.".into(),
+        }
+    }
+
+    #[test]
+    fn remember_questions_must_quote_the_text() {
+        let passage = [P1, P2, P3].join("\n");
+        let codes = crate::worksheet::bloom::paragraph_codes(3);
+        let ctx = |bloom, count| BloomCtx {
+            bloom,
+            formats: bloom_formats(bloom),
+            passage: &passage,
+            paragraph_codes: &codes,
+            count,
+        };
+        fn bloom_formats(b: Bloom) -> &'static [&'static str] {
+            b.formats()
+        }
+        let raw = RawBloomLevel {
+            instructions: "Answer the questions.".into(),
+            items: vec![
+                // verbatim
+                bloom_item(
+                    FMT_SHORT,
+                    "Where did Mrs. Lin put the stand?",
+                    &[],
+                    "Outside her shop.",
+                    P1,
+                ),
+                // not in the text at all: fails, repair
+                bloom_item(
+                    FMT_SHORT,
+                    "What day was it?",
+                    &[],
+                    "Monday.",
+                    "It was a sunny Tuesday in the city.",
+                ),
+                // a spliced quote with a verbatim piece: cut down, no repair needed for it
+                bloom_item(
+                    FMT_SHORT,
+                    "What happened?",
+                    &[],
+                    "Umbrellas disappeared.",
+                    "In the first month, twelve umbrellas did disappear ... and so on",
+                ),
+                // a format the level may not use
+                bloom_item(FMT_PARAGRAPH, "Write about it.", &[], "Answers vary.", P1),
+                // a fill-in item without a blank
+                bloom_item(
+                    FMT_BLANK,
+                    "Mrs. Lin put an umbrella stand",
+                    &[],
+                    "outside",
+                    P1,
+                ),
+            ],
+        };
+        let e = evaluate_bloom_level(&raw, &ctx(Bloom::Remember, 8));
+        assert!(e.needs_repair());
+        let failed: Vec<&str> = e
+            .results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(
+            failed,
+            [
+                "labels_from_spec_sets",
+                "items_wellformed",
+                "evidence_verbatim"
+            ]
+        );
+        let out = e.output.unwrap();
+        assert_eq!(out.items.len(), 2);
+        assert_eq!(out.items[0].item.evidence.as_deref(), Some(P1));
+        assert_eq!(
+            out.items[1].item.evidence.as_deref(),
+            Some("In the first month, twelve umbrellas did disappear")
+        );
+        assert_eq!(out.items[0].paragraph_nos, [2], "unknown codes are dropped");
+        assert_eq!(out.items[0].hint, "Look at paragraph 2.");
+
+        // Analyze needs no evidence: one that is not verbatim is cleared without a repair.
+        let raw = RawBloomLevel {
+            instructions: String::new(),
+            items: vec![
+                bloom_item(
+                    FMT_SHORT,
+                    "Why does the writer mention the first month?",
+                    &[],
+                    "To show the change.",
+                    "made up words that are not there",
+                ),
+                bloom_item(
+                    FMT_CHOICE,
+                    "What is the purpose of paragraph 3?",
+                    &["To warn", "To surprise", "To list", "To end"],
+                    "B",
+                    "",
+                ),
+                bloom_item(FMT_SHORT, "Third question?", &[], "x", ""),
+            ],
+        };
+        let e = evaluate_bloom_level(&raw, &ctx(Bloom::Analyze, 2));
+        assert!(!e.needs_repair(), "{:?}", e.results);
+        let out = e.output.unwrap();
+        assert_eq!(out.items.len(), 2, "cut to the count");
+        assert_eq!(out.items[0].item.evidence, None);
+        assert_eq!(
+            out.items[1].item.answer, "To surprise",
+            "a letter names its option"
+        );
+        assert!(e.repairs.iter().any(|r| r.contains("只留前面幾題")));
+
+        // Nothing usable: no output.
+        let raw = RawBloomLevel {
+            instructions: String::new(),
+            items: vec![bloom_item("探究", "x", &[], "y", "")],
+        };
+        assert!(evaluate_bloom_level(&raw, &ctx(Bloom::Create, 1))
+            .output
+            .is_none());
+    }
+
+    #[test]
+    fn the_judge_must_judge_every_question_once() {
+        use crate::worksheet::bloom::RawJudgement;
+        let ids: Vec<String> = ["Q1", "Q2", "Q3"].iter().map(|s| s.to_string()).collect();
+        let j = |id: &str, bloom: &str| RawJudgement {
+            id: id.into(),
+            bloom: bloom.into(),
+            reason: "理由".into(),
+        };
+        let all = RawBloomCheck {
+            items: vec![
+                j("Q2", "analyze"),
+                j("Q1", "remember"),
+                j("Q3", "create"),
+                j("Q3", "apply"),
+            ],
+        };
+        let e = evaluate_bloom_check(&all, &ids);
+        assert!(!e.needs_repair());
+        let out = e.output.unwrap();
+        assert_eq!(
+            out.iter().map(|x| (x.index, x.bloom)).collect::<Vec<_>>(),
+            [
+                (0, Bloom::Remember),
+                (1, Bloom::Analyze),
+                (2, Bloom::Create)
+            ]
+        );
+        let partial = RawBloomCheck {
+            items: vec![j("Q1", "remember"), j("Q7", "apply"), j("Q2", "thinking")],
+        };
+        let e = evaluate_bloom_check(&partial, &ids);
+        assert!(e.needs_repair());
+        assert_eq!(e.output.unwrap().len(), 1);
+        assert!(e.problems.iter().any(|p| p.contains("Q2、Q3")));
+        assert!(evaluate_bloom_check(&RawBloomCheck { items: vec![] }, &ids)
+            .output
+            .is_none());
     }
 }
