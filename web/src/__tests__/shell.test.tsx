@@ -1,5 +1,5 @@
 // The app shell (Bloom contract, "Shell and home" and Addendum 1): a left sidebar like Eduaide's —
-// 首頁, 建立 (five tools), 工作區, 所有學習單, 教材庫, 我的版型, 最近, a folded 更多 — that folds to
+// 首頁, 建立 (照我的學習單做 first, then the five tools), 工作區, 所有學習單, 教材庫, 我的版型, 最近, a folded 更多 — that folds to
 // icons on a wide screen and is a drawer behind ☰ on a phone. Every page renders inside it, and
 // old addresses keep working.
 import { act, screen, waitFor, within } from "@testing-library/react";
@@ -44,7 +44,7 @@ const summary = (id: number, title: string): PrepSessionSummary => ({
 });
 
 describe("app shell: the sidebar", () => {
-  it("lists 首頁, 建立 with the five tools, the work places and a folded 更多; then preferences and sign-out", async () => {
+  it("lists 首頁, 建立 with 照我的學習單做 first and the five tools, the work places and a folded 更多; then preferences and sign-out", async () => {
     signIn();
     mockApi(baseRoutes());
     const user = userEvent.setup();
@@ -54,6 +54,7 @@ describe("app shell: the sidebar", () => {
     const links = nav().getAllByRole("link");
     expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
       ["首頁", "/"],
+      ["照我的學習單做", "/create/mimic"],
       ["閱讀理解題", "/create/comprehension"],
       ["分層練習", "/create/tiered"],
       ["課堂活動", "/create/activity"],

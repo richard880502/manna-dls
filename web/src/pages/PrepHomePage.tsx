@@ -13,9 +13,11 @@ import {
   type AttachWay,
 } from "../components/material/AttachDialog";
 import { materialFields, type MaterialChoice } from "../components/material/MaterialChooser";
+import { WorksheetNotice, type MimicState } from "../components/material/WorksheetNotice";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
 import {
+  KIND_TOOLS,
   MATERIAL_REQUIRED,
   REQUEST_MAX,
   TOOLS,
@@ -23,9 +25,10 @@ import {
   TOOL_CHIP,
   TOOL_NAME,
   asCreateRequest,
+  mimicPath,
   toolFromWords,
+  type KindTool,
   type StartKind,
-  type Tool,
 } from "../lib/create";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
@@ -90,7 +93,9 @@ function QuickBox() {
   const [text, setText] = useState("");
   const [choice, setChoice] = useState<MaterialChoice | null>(null);
   /** null: the teacher has not clicked a chip, so typed words choose. */
-  const [clicked, setClicked] = useState<{ tool: Tool | null } | null>(null);
+  const [clicked, setClicked] = useState<{ tool: KindTool | null } | null>(null);
+  /** Materials the teacher said to keep as the article (no worksheet notice for them). */
+  const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
   const [dialog, setDialog] = useState<AttachWay | null>(null);
   const [needMaterial, setNeedMaterial] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -106,6 +111,8 @@ function QuickBox() {
   const typed = text.trim();
   const kind: StartKind | null = tool ?? (material ? "comprehension" : typed ? "ask" : null);
   const missing = needMaterial && material === null && kind !== null && kind !== "ask";
+  const picked = choice?.picked ?? null;
+  const worksheetLike = picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
 
   async function send() {
     if (busy || kind === null) return;
@@ -201,8 +208,19 @@ function QuickBox() {
         </div>
       </section>
 
+      {worksheetLike && (
+        <WorksheetNotice
+          disabled={busy}
+          onUse={() => {
+            const state: MimicState = { sample: { id: worksheetLike.id, title: worksheetLike.title } };
+            navigate(mimicPath(worksheetLike.id), { state });
+          }}
+          onKeep={() => setKeptAsText((kept) => new Set(kept).add(worksheetLike.id))}
+        />
+      )}
+
       <div className="output-chips" role="group" aria-label="要做什麼">
-        {TOOLS.map((t) => (
+        {KIND_TOOLS.map((t) => (
           <button
             key={t}
             type="button"
@@ -239,8 +257,8 @@ function QuickBox() {
 }
 
 /**
- * 首頁: a greeting with the quick box, the five tools (each opens its generator), and the latest
- * prep sessions.
+ * 首頁: a greeting with the quick box, the tools (each opens its generator; 照我的學習單做 leads,
+ * across the whole row), and the latest prep sessions.
  */
 export function PrepHomePage() {
   return (
@@ -256,8 +274,8 @@ export function PrepHomePage() {
         <h2 id="home-tools-heading">Manna 可以幫你做</h2>
         <ul className="tool-cards">
           {TOOLS.map((t) => (
-            <li key={t}>
-              <Link className="tool-card" to={`/create/${t}`}>
+            <li key={t} className={t === "mimic" ? "is-featured" : undefined}>
+              <Link className={`tool-card${t === "mimic" ? " is-featured" : ""}`} to={`/create/${t}`}>
                 <span className={`tool-card-icon is-${t}`} aria-hidden="true">
                   <Icon name={t} />
                 </span>
