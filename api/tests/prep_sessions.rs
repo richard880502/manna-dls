@@ -348,6 +348,11 @@ async fn resources_list_curriculum_and_own_materials_without_a_model() {
             "Short poems about an umbrella in the rain.",
         ),
         ("Volcanoes", "Lava and ash."),
+        // Shares one ordinary word with the lesson: not related.
+        (
+            "Rain report",
+            "Weather stations measure rain, wind, temperature, humidity and pressure every hour across the island.",
+        ),
     ] {
         let (s, v) = app
             .post(

@@ -616,6 +616,23 @@ async fn own_materials(
             recurring: false,
         })
         .collect();
+    // Sharing a couple of common words ("students", "people") is not being related: a material
+    // is listed when its title shares a word with the lesson, or when it shares at least 2
+    // distinct words and at least a quarter of the shorter side's words.
+    let query_words: HashSet<String> = retrieval::tokenize(query).into_iter().collect();
+    let related = |item: &KbItem| {
+        let words: HashSet<String> =
+            retrieval::tokenize(&format!("{} {}", item.title, item.content))
+                .into_iter()
+                .collect();
+        let shared = words.intersection(&query_words).count();
+        let shorter = words.len().min(query_words.len());
+        let title_shared = retrieval::tokenize(&item.title)
+            .iter()
+            .any(|w| query_words.contains(w));
+        title_shared || (shared >= 2 && shared * 4 >= shorter)
+    };
+    let items: Vec<KbItem> = items.into_iter().filter(|i| related(i)).collect();
     let mut ranked = retrieval::rank(query, items, MATERIALS_TOP * 4);
     // Best score first, newest first among equals.
     ranked.sort_by(|a, b| {
