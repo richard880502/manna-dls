@@ -88,12 +88,12 @@ function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
 }
 
 /**
- * 班級 (the home page, docs/DESIGN_OVERHAUL.md): one focal block, the next lesson of the class
+ * 班級 (`/classes`; the home page until 備課 took `/`, docs/DESIGN_OVERHAUL.md): one focal block, the next lesson of the class
  * taught most recently, with 「開始上課」; then the classes as ruled rows; then the lessons that
  * were taught but not written up yet. A teacher with no class is invited to create the first one,
  * prefilled from the preference survey (P6); the invitation can be skipped.
  */
-export function HomePage() {
+export function ClassesPage() {
   const { teacher, preferences } = useApp();
   const navigate = useNavigate();
   const [classes, setClasses] = useState<SchoolClass[] | null>(null);

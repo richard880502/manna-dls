@@ -349,7 +349,7 @@ export function RunReviewPage() {
       <p className="crumbs">
         {detail.class_id ? (
           <>
-            <Link to="/">班級</Link> / <Link to={`/classes/${detail.class_id}`}>{detail.class_name}</Link>
+            <Link to="/classes">班級</Link> / <Link to={`/classes/${detail.class_id}`}>{detail.class_name}</Link>
           </>
         ) : (
           <Link to="/record">上課紀錄</Link>

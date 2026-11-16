@@ -40,7 +40,7 @@ function AssignClasses({
       <legend>「{unit.title}」給哪些班級用？</legend>
       {classes.length === 0 ? (
         <p className="field-hint">
-          還沒有班級。<Link to="/">到班級頁新增班級</Link>
+          還沒有班級。<Link to="/classes">到班級頁新增班級</Link>
         </p>
       ) : (
         <div className="assign-classes-list">
@@ -155,7 +155,7 @@ export function LibraryPage() {
   return (
     <section aria-labelledby="library-heading">
       <p className="crumbs">
-        <Link to="/">班級</Link> / 備課庫
+        <Link to="/classes">班級</Link> / 備課庫
       </p>
       <div className="head-row page-head">
         <div>

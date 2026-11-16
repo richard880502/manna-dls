@@ -300,7 +300,7 @@ export function ClassPage() {
       const updated = archived ? await api.archiveClass(classId) : await api.unarchiveClass(classId);
       if (archived) {
         setCurrentClassId(null);
-        navigate("/");
+        navigate("/classes");
         return;
       }
       patchClass(updated);
@@ -323,7 +323,7 @@ export function ClassPage() {
   return (
     <>
       <p className="crumbs">
-        <Link to="/">班級</Link> / {detail.name}
+        <Link to="/classes">班級</Link> / {detail.name}
       </p>
 
       {showNext ? (

@@ -650,7 +650,7 @@ describe("starting a run", () => {
       "GET /api/runs/9": runDetail(),
     });
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
     await user.click(await screen.findByRole("button", { name: "開始上課" }));
     expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
     expect(api.lastBody("POST", "/api/lessons/7/runs")).toEqual({ class_id: 3 });

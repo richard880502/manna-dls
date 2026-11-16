@@ -128,7 +128,7 @@ pub(super) async fn for_block(
 // ---------------------------------------------------------------- one block: one call
 
 /// `[第 n 段] text` paragraphs, the material markers the probe used.
-fn marked_passage(material: &Material) -> String {
+pub(crate) fn marked_passage(material: &Material) -> String {
     material
         .paragraphs
         .iter()

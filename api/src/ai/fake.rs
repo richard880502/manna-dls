@@ -15,7 +15,8 @@
 //! | `FAKE_NO_DIFF`    | plan suggestions: differentiation fields left null (fails the check when the teacher's P3 includes differentiation) |
 //!
 //! The lesson SOP stages (`sop_passage_analysis`, `sop_objectives`) add their own markers:
-//! see `crate::sop::fake`; the worksheet steps (`worksheet_*`) see `crate::worksheet::fake`.
+//! see `crate::sop::fake`; the worksheet steps (`worksheet_*`) see `crate::worksheet::fake`;
+//! the 備課對話 calls (`prep_*`) see `crate::prep::fake`.
 //!
 //! Task-specific behaviour read from `fake_context`:
 //! * core assist level 2 with `goal_emphasis: true` names the goal-related dimensions
@@ -111,6 +112,10 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("worksheet_template_section") => {
             crate::worksheet::fake::template_section(ctx, req.attempt, &|m| has(req, m))
         }
+        // 備課對話 (see `prep::fake`).
+        Some("prep_activity") => crate::prep::fake::activity(ctx, req.attempt, &|m| has(req, m)),
+        Some("prep_ask") => crate::prep::fake::ask(ctx, req.attempt, &|m| has(req, m)),
+        Some("prep_revise") => crate::prep::fake::revise(ctx, req.attempt, &|m| has(req, m)),
         other => {
             return Err(ProviderError::InvalidOutput(format!(
                 "fake provider: unknown task {other:?}"

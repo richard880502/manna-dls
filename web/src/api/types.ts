@@ -1446,6 +1446,8 @@ export interface WorksheetSummary {
   version_no: number;
   created_at: string;
   updated_at: string;
+  /** 從哪一次備課對話產生（docs: 備課對話）；舊的伺服器沒有這一欄 */
+  prep_session_id?: number | null;
 }
 
 export interface WorksheetState extends WorksheetSummary {
@@ -1618,4 +1620,148 @@ export interface WsTemplateRef {
   id: number;
   title: string;
   version_no: number;
+}
+
+// ---- 學習單的投影與版本（GET /api/worksheets/:id/sheet、/versions）----
+
+/** 學生版／教師版的投影（伺服器組裝；匯出用同一份）。學生版沒有 answer、evidence、teacher_notes。 */
+export interface WsSheet {
+  title: string;
+  level: WsLevel;
+  audience: WsAudience;
+  objectives: string[];
+  blocks: WsSheetBlock[];
+}
+
+export interface WsSheetBlock {
+  id: string;
+  kind: WsBlockKind;
+  /** "A"、"B"…；Exit ticket 沒有 */
+  label: string;
+  title: string;
+  instructions: string;
+  steps: string[];
+  vocabulary: Array<{ word: string; level: number | null; definition: string }>;
+  supports: Array<{ type: WsScaffoldType; kind: string; heading?: string; content: string }>;
+  items: Array<{
+    no: number;
+    answer_format: string | null;
+    prompt: string;
+    options: string[];
+    lines: number;
+    answer?: string;
+    evidence?: string;
+  }>;
+  teacher_notes?: string;
+}
+
+export interface WsVersionRow {
+  version_no: number;
+  cause: string;
+  created_at: string;
+}
+
+// ---- 備課對話（prep sessions）----
+
+export type PrepKind = "worksheet" | "assessment" | "activity" | "resources" | "ask" | "revise";
+export type PrepPhase = "引起動機" | "發展活動" | "統整與評量";
+
+export interface ActivityPlan {
+  title: string;
+  goals: Array<{ text: string; curriculum_codes: string[] }>;
+  steps: Array<{
+    phase: PrepPhase;
+    title: string;
+    minutes: number;
+    /** 教學思路 */
+    idea: string;
+    /** 只有引起動機：選項一／二／三 */
+    options: Array<{ title: string; idea: string; script: string[]; minutes: number }>;
+    /** 老師說的話（英文課室用語） */
+    script: string[];
+    /** 卡住了怎麼辦；可能是 "" */
+    stuck_tip: string;
+  }>;
+  curriculum: Array<{ code: string; text: string }>;
+}
+
+export interface PrepResources {
+  curriculum: Array<{ code: string; text: string; school_track: string | null; similarity: number | null }>;
+  materials: Array<{ id: number; title: string }>;
+  note: string;
+}
+
+export interface PrepAskResult {
+  answer: string;
+  follow_ups: string[];
+}
+
+export interface PrepReviseResult {
+  reply: string;
+  changed_block_ids: string[];
+  version_no: number | null;
+}
+
+export interface PrepSessionSummary {
+  id: number;
+  title: string;
+  material: { id: number; title: string } | null;
+  topic: string | null;
+  class: { id: number; name: string } | null;
+  template: { id: number; title: string } | null;
+  turn_count: number;
+  last_kind: PrepKind | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface PrepTurn {
+  id: number;
+  seq: number;
+  kind: PrepKind;
+  request: string;
+  status: "running" | "done" | "failed";
+  error: string | null;
+  worksheet: { id: number; title: string; version_no: number; running: boolean } | null;
+  result: ActivityPlan | PrepResources | PrepAskResult | PrepReviseResult | null;
+  /** 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs } */
+  interaction_id: number | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface PrepSession extends PrepSessionSummary {
+  /** seq 順序 */
+  turns: PrepTurn[];
+  running: boolean;
+  /** 伺服器建議的下一步 */
+  next: PrepKind[];
+}
+
+export interface PrepSessionList {
+  sessions: PrepSessionSummary[];
+}
+
+export interface CreatePrepSessionRequest {
+  /** 不能是 revise */
+  kind: Exclude<PrepKind, "revise">;
+  request?: string;
+  material_id?: number;
+  /** 貼上的文字：先存進教材庫 */
+  material?: { title?: string; text: string };
+  topic?: string;
+  class_id?: number;
+  template_id?: number;
+}
+
+export interface UpdatePrepSessionRequest {
+  title?: string;
+  class_id?: number | null;
+  template_id?: number | null;
+}
+
+export interface CreatePrepTurnRequest {
+  /** 省略（下方輸入列）：有學習單就是 revise，否則 ask */
+  kind?: PrepKind;
+  request: string;
 }

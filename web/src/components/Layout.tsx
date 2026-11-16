@@ -13,25 +13,30 @@ interface NavEntry {
 }
 
 /**
- * The whole navigation: three destinations, nothing unbuilt. The teacher's path runs through
- * 班級 (class → unit → lesson → worksheet), so units, lessons, runs and the list of all units
- * count as being inside 班級; materials have their own place under 教材.
+ * The whole navigation: four destinations, nothing unbuilt. 備課 (the home page) starts a prep
+ * conversation; 我的備課 lists them, and the worksheets they made (/worksheets) count as being
+ * there. The full SOP path (class → unit → lesson → worksheet) lives under 班級, so units, lessons,
+ * runs and the list of all units count as being inside it; materials have their own place under 教材.
  */
 export const NAV: NavEntry[] = [
+  { to: "/", label: "備課", match: (p) => p === "/" },
   {
-    to: "/",
+    to: "/prep",
+    label: "我的備課",
+    match: (p) => p === "/prep" || p.startsWith("/prep/") || p.startsWith("/worksheets"),
+  },
+  // 我的學習單版型 live on the 教材 page; a template's own page counts as being there.
+  { to: "/materials", label: "教材", match: (p) => p.startsWith("/materials") || p.startsWith("/templates") },
+  {
+    to: "/classes",
     label: "班級",
     match: (p) =>
-      p === "/" ||
       p.startsWith("/classes") ||
       p.startsWith("/units") ||
       p.startsWith("/lessons") ||
       p.startsWith("/runs") ||
       p === "/record",
   },
-  { to: "/worksheets", label: "學習單", match: (p) => p.startsWith("/worksheets") },
-  // 我的學習單版型 live on the 教材 page; a template's own page counts as being there.
-  { to: "/materials", label: "教材", match: (p) => p.startsWith("/materials") || p.startsWith("/templates") },
 ];
 
 /** Working pages with two columns get the wider frame; the in-class console a narrower one. */
@@ -39,7 +44,8 @@ function frameClass(pathname: string): string {
   if (/^\/runs\/\d+\/?$/.test(pathname)) return " is-console";
   if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin|worksheets\/\d+)/.test(pathname)) return " is-wide";
   // 知識庫管理 is a list page: the default frame.
-  if (pathname === "/worksheets" || pathname === "/preferences") return " is-narrow";
+  if (pathname === "/worksheets" || pathname === "/preferences" || pathname === "/prep") return " is-narrow";
+  if (pathname === "/" || /^\/prep\/\d+/.test(pathname)) return " is-prep";
   return "";
 }
 

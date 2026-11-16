@@ -68,6 +68,11 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
     <>
       <div className="head-row page-head">
         <div>
+          {state.prep_session_id ? (
+            <p className="crumbs prep-back">
+              <Link to={`/prep/${state.prep_session_id}`}>← 回到備課對話</Link>
+            </p>
+          ) : null}
           <p className="crumbs">
             <Link to="/worksheets">學習單</Link>
             {state.lesson && (

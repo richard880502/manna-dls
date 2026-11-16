@@ -100,6 +100,14 @@ import type {
   UpdateWsTemplateRequest,
   WsTemplateDetail,
   WsTemplateList,
+  WsSheet,
+  WsVersionRow,
+  WsAudience,
+  PrepSession,
+  PrepSessionList,
+  CreatePrepSessionRequest,
+  UpdatePrepSessionRequest,
+  CreatePrepTurnRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -405,6 +413,10 @@ export const api = {
     }),
   worksheetChecks: (id: number) => get<WsVocabCheck[]>(`/worksheets/${id}/checks`),
   /** 後端即時產生的檔案；回傳 Blob 與檔名 */
+  /** 學生版／教師版的投影（唯讀預覽用）；不給 level 時伺服器用第一個版本 */
+  worksheetSheet: (id: number, audience: WsAudience, level?: WsLevel) =>
+    get<WsSheet>(`/worksheets/${id}/sheet`, { level, audience }),
+  worksheetVersions: (id: number) => get<WsVersionRow[]>(`/worksheets/${id}/versions`),
   exportWorksheet: (id: number, query: WsExportQuery) =>
     download(`/worksheets/${id}/export`, { ...query }, `worksheet.${query.format}`),
   /** 設定或拿掉版型；伺服器依版型重設 settings（拿掉時 settings 不動） */
@@ -413,6 +425,19 @@ export const api = {
 
   // ---- 我的學習單版型（docs/WORKSHEET_TEMPLATES_CONTRACT.md）
   /** 新的在前 */
+  // 備課對話（prep sessions）
+  listPrepSessions: () => get<PrepSessionList>("/prep-sessions"),
+  /** 201：第一個 turn 已開始 */
+  createPrepSession: (body: CreatePrepSessionRequest) => post<PrepSession>("/prep-sessions", body),
+  getPrepSession: (id: number) => get<PrepSession>(`/prep-sessions/${id}`),
+  updatePrepSession: (id: number, body: UpdatePrepSessionRequest) =>
+    request<PrepSession>("PATCH", `/prep-sessions/${id}`, { json: body }),
+  /** 硬刪除對話；做出來的學習單保留 */
+  deletePrepSession: (id: number) => del<OkResponse>(`/prep-sessions/${id}`),
+  /** 202；另一個 turn 進行中 → 409 */
+  createPrepTurn: (id: number, body: CreatePrepTurnRequest) =>
+    post<PrepSession>(`/prep-sessions/${id}/turns`, body),
+
   listWorksheetTemplates: () => get<WsTemplateList>("/worksheet-templates"),
   /** 202：在背景讀這份學習單的設計（status=extracting），之後輪詢 */
   createWorksheetTemplate: (body: CreateWsTemplateRequest) => post<WsTemplateDetail>("/worksheet-templates", body),
