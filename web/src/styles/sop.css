@@ -483,9 +483,9 @@
   position: fixed;
   top: calc(var(--banner-h) + var(--top-h));
   bottom: 0;
-  left: 0;
+  left: var(--shell-left);
   z-index: var(--z-raised);
-  width: min(28rem, 100vw);
+  width: min(28rem, 100vw - var(--shell-left));
   padding: var(--space-lg) var(--space-lg) var(--space-3xl);
   overflow-y: auto;
   border-right: var(--rule-hair) solid var(--color-rule-strong);
@@ -531,7 +531,7 @@
     grid-template-columns: minmax(0, 45rem);
     margin-left: max(
       0px,
-      calc(28rem + var(--space-xl) - var(--gutter) - max(0px, (100vw - var(--container-wide)) / 2))
+      calc(28rem + var(--space-xl) - var(--gutter) - max(0px, (100vw - var(--shell-left) - var(--container-wide)) / 2))
     );
   }
 

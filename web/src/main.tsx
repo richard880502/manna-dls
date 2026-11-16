@@ -16,6 +16,7 @@ import "./styles/worksheet.css";
 import "./styles/materials.css";
 import "./styles/templates.css";
 import "./styles/prep.css";
+import "./styles/home.css";
 
 // A data router (one splat route, the app keeps its own <Routes>) so pages can hold an
 // in-app navigation while they have unsaved changes (useBlocker).

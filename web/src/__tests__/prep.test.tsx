@@ -1,7 +1,7 @@
-// 備課對話 (prep sessions, the contract's "Frontend"): the home page's input bar and its chips, the
-// 直接問 AI tab, the conversation page with a card per turn kind, the bottom bar, polling, 我的備課,
-// and the navigation (備課｜我的備課｜教材｜班級).
-import { screen, waitFor, within } from "@testing-library/react";
+// 備課對話 (prep sessions): the home page's quick box (Bloom contract, Addendum 1) with its keyword
+// chips, 附上文章 and its dialogs, the conversation page with a card per turn kind, the bottom bar,
+// polling, 工作區 (/prep), and where a session sits in the sidebar.
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
@@ -16,14 +16,13 @@ import type {
   WsAudience,
   WsJob,
   WsSheet,
-  WsTemplateSummary,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { prepConfig } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import { baseRoutes, emptyLibrary, mockApi, renderApp, schoolClass, signIn, type MockCall } from "../test/mockApi";
 
-const HOME = "老師，今天要教哪一課？";
+const HOME = "今天想準備什麼？";
 const SESSIONS = "/api/prep-sessions";
 const S7 = `${SESSIONS}/7`;
 
@@ -66,17 +65,6 @@ const material = (overrides: Partial<Material> = {}): Material => ({
 });
 
 const library = (materials: Material[] = [material()]): MaterialLibrary => ({ ...emptyLibrary(), materials });
-
-const template = (overrides: Partial<WsTemplateSummary> = {}): WsTemplateSummary => ({
-  id: 9,
-  title: "L2 學習單版型",
-  status: "ready",
-  section_count: 3,
-  source_material: { id: 4, title: "L2 學習單" },
-  version_no: 1,
-  updated_at: "2026-11-14T08:00:00Z",
-  ...overrides,
-});
 
 const summary = (overrides: Partial<PrepSessionSummary> = {}): PrepSessionSummary => ({
   id: 7,
@@ -240,105 +228,143 @@ const sheetRoute = (call: MockCall) => sheet(new URL(call.url, "http://x").searc
 
 // ---------------------------------------------------------------- home
 
-describe("備課 (home)", () => {
-  /** Picks the library material on the home page, so the action chips open up. */
-  async function pickMaterial(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(await screen.findByRole("button", { name: "從教材庫選" }));
-    await user.click(await screen.findByRole("button", { name: "選用「The Umbrella Stand」" }));
-    expect(screen.getByRole("status")).toHaveTextContent("教材：「The Umbrella Stand」");
+describe("首頁 (the quick box, the tools, the latest sessions)", () => {
+  const box = () => screen.getByRole("textbox", { name: "給 Manna 的要求" });
+  const chips = () => within(screen.getByRole("group", { name: "要做什麼" }));
+  const pressed = () =>
+    chips()
+      .getAllByRole("button")
+      .filter((b) => b.getAttribute("aria-pressed") === "true")
+      .map((b) => b.textContent);
+
+  /** 附上文章 → 從教材庫選 → 選用, so the material shows as a chip in the box. */
+  async function attachFromLibrary(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "附上文章" }));
+    await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "從教材庫選" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "從教材庫選" }));
+    await user.click(await dialog.findByRole("button", { name: "選用「The Umbrella Stand」" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移除「The Umbrella Stand」" })).toBeInTheDocument();
   }
 
-  it.each([
-    ["做學習單", "worksheet"],
-    ["規劃教學活動", "activity"],
-    ["設計評量", "assessment"],
-    ["找教學資源", "resources"],
-  ] as const)("「%s」 creates a %s session from the chosen material and opens it", async (label, kind) => {
+  it("typed text with an attached material makes 閱讀理解題 by default; Enter sends it and opens the session", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/materials": library(),
-      [`POST ${SESSIONS}`]: session([turn(kind, { request: label, status: "running" })]),
-      [`GET ${S7}`]: session([turn(kind, { request: label, status: "running" })]),
-      "GET /api/worksheets/11/jobs": { running: true, jobs: [], version_no: 1 },
-    });
-    const user = userEvent.setup();
-    const { router } = renderApp("/");
-    expect(await screen.findByRole("heading", { name: HOME, level: 1 })).toBeInTheDocument();
-
-    const chips = within(screen.getByRole("group", { name: "要 Manna 做什麼" }));
-    expect(chips.getAllByRole("button").map((b) => b.textContent)).toEqual([
-      "做學習單",
-      "規劃教學活動",
-      "設計評量",
-      "找教學資源",
-      "我想做別的…",
-    ]);
-    // Nothing to work from yet: the chips wait for a material.
-    expect(chips.getByRole("button", { name: label })).toBeDisabled();
-
-    await pickMaterial(user);
-    await user.click(chips.getByRole("button", { name: label }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind, request: label, material_id: 5 });
-  });
-
-  it("sends the chosen class and template, and 我想做別的… sends what the teacher typed as an ask", async () => {
-    signIn();
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/materials": library(),
-      "GET /api/classes": [schoolClass({ id: 3, name: "高一 3 班" })],
-      "GET /api/worksheet-templates": { templates: [template()] },
       [`POST ${SESSIONS}`]: session([turn("ask", { status: "running" })]),
       [`GET ${S7}`]: session([turn("ask", { status: "running" })]),
     });
     const user = userEvent.setup();
     const { router } = renderApp("/");
-    await pickMaterial(user);
+    expect(await screen.findByRole("heading", { name: HOME, level: 1 })).toBeInTheDocument();
+    expect(screen.getByText("附上一篇文章或教材，選要做什麼，Manna 依 Bloom 認知層次出題。")).toBeInTheDocument();
+    expect(box()).toHaveAttribute("placeholder", "例如：B1 程度、8 題閱讀理解，記憶到評鑑都要有");
+    expect(box()).toHaveAttribute("rows", "2");
 
-    const context = within(screen.getByRole("group", { name: "備課情境（可以不選）" }));
-    const classSelect = context.getByRole("combobox", { name: "班級" });
-    expect(classSelect).toHaveDisplayValue("不指定");
-    await user.selectOptions(classSelect, "高一 3 班");
-    const templateSelect = context.getByRole("combobox", { name: /照我的版型/ });
-    expect(templateSelect).toHaveDisplayValue("不使用版型");
-    await user.selectOptions(templateSelect, "9");
-
-    await user.click(screen.getByRole("button", { name: "我想做別的…" }));
-    await user.type(screen.getByRole("textbox", { name: "你想做什麼？" }), "幫我想三個暖身活動");
-    await user.click(screen.getByRole("button", { name: "送出" }));
+    await attachFromLibrary(user);
+    // Focus went back to 附上文章 when the dialog closed.
+    expect(screen.getByRole("button", { name: "附上文章" })).toHaveFocus();
+    await user.type(box(), "B1 程度，記憶到評鑑都要有{Enter}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
-    // An ask does not use a template.
     expect(api.lastBody("POST", SESSIONS)).toEqual({
-      kind: "ask",
-      request: "幫我想三個暖身活動",
+      kind: "comprehension",
+      request: "B1 程度，記憶到評鑑都要有",
       material_id: 5,
-      class_id: 3,
     });
   });
 
-  it("pasted text goes along as material; with only a topic, 找教學資源 is the one chip that works", async () => {
+  it("text without a material asks Manna; Shift+Enter is a new line and composing text never sends", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
-      [`POST ${SESSIONS}`]: session([turn("resources", { status: "running" })]),
-      [`GET ${S7}`]: session([turn("resources", { status: "running" })]),
+      [`POST ${SESSIONS}`]: session([turn("ask", { status: "running" })]),
+      [`GET ${S7}`]: session([turn("ask", { status: "running" })]),
     });
+    const user = userEvent.setup();
+    const { router } = renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    expect(screen.getByRole("button", { name: "送出" })).toBeDisabled();
+
+    await user.type(box(), "第一行{Shift>}{Enter}{/Shift}第二行");
+    expect(box()).toHaveValue("第一行\n第二行");
+    // Enter that confirms an input-method candidate is not a send.
+    fireEvent.keyDown(box(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(box(), { key: "Enter", keyCode: 229 });
+    expect(api.callsTo("POST", SESSIONS)).toHaveLength(0);
+
+    await user.clear(box());
+    await user.type(box(), "怎麼教倒裝句比較不無聊？");
+    expect(pressed()).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "送出" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
+    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "ask", request: "怎麼教倒裝句比較不無聊？" });
+  });
+
+  it("typed words pick a chip until the teacher picks one herself; the chips are single-select", async () => {
+    signIn();
+    mockApi(baseRoutes());
     const user = userEvent.setup();
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
+    expect(chips().getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "閱讀理解題",
+      "分層練習",
+      "課堂活動",
+      "教學套件",
+      "學習單",
+    ]);
+    expect(pressed()).toEqual([]);
 
-    await user.type(screen.getByRole("textbox", { name: /或只輸入主題/ }), "環境保護");
-    const chips = within(screen.getByRole("group", { name: "要 Manna 做什麼" }));
-    expect(chips.getByRole("button", { name: "做學習單" })).toBeDisabled();
-    expect(chips.getByRole("button", { name: "找教學資源" })).toBeEnabled();
-    await user.click(chips.getByRole("button", { name: "找教學資源" }));
-    await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "resources", request: "找教學資源", topic: "環境保護" });
+    for (const [words, chip] of [
+      ["做差異化的題目", "分層練習"],
+      ["一節課的教案", "課堂活動"],
+      ["給我一個套件", "教學套件"],
+      ["一份學習單", "學習單"],
+      ["幫我出題", "閱讀理解題"],
+    ] as const) {
+      await user.clear(box());
+      await user.type(box(), words);
+      expect(pressed()).toEqual([chip]);
+    }
+
+    // A click wins over typed words, and only one chip is filled.
+    await user.click(chips().getByRole("button", { name: "教學套件" }));
+    expect(pressed()).toEqual(["教學套件"]);
+    await user.type(box(), "，要分層");
+    expect(pressed()).toEqual(["教學套件"]);
+    // Clicking the filled chip clears it; typed words no longer choose.
+    await user.click(chips().getByRole("button", { name: "教學套件" }));
+    expect(pressed()).toEqual([]);
   });
 
-  it("pasted text is sent as material", async () => {
+  it("an output without a material says 先附上文章或教材 next to 附上文章 and sends nothing", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": library(),
+      [`POST ${SESSIONS}`]: session([turn("worksheet", { status: "running" })]),
+      [`GET ${S7}`]: session([turn("worksheet", { status: "running" })]),
+    });
+    const user = userEvent.setup();
+    const { router } = renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+
+    await user.click(chips().getByRole("button", { name: "學習單" }));
+    await user.click(screen.getByRole("button", { name: "送出" }));
+    const toolbar = screen.getByRole("button", { name: "附上文章" }).closest(".prompt-toolbar") as HTMLElement;
+    expect(within(toolbar).getByRole("alert")).toHaveTextContent("先附上文章或教材");
+    expect(api.callsTo("POST", SESSIONS)).toHaveLength(0);
+
+    await attachFromLibrary(user);
+    expect(screen.queryByText("先附上文章或教材")).not.toBeInTheDocument();
+    // Nothing typed: the chip's label is the request.
+    await user.click(screen.getByRole("button", { name: "送出" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
+    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "worksheet", request: "學習單", material_id: 5 });
+  });
+
+  it("貼上文字 opens a dialog with a title and the text; the pasted material shows as a chip and goes along", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
@@ -347,46 +373,74 @@ describe("備課 (home)", () => {
     });
     const user = userEvent.setup();
     renderApp("/");
-    await user.click(await screen.findByRole("button", { name: "貼上文字" }));
-    await user.type(screen.getByRole("textbox", { name: /教材標題/ }), "Umbrella");
-    await user.type(screen.getByRole("textbox", { name: "貼上教材文字" }), "Mrs. Lin put a stand outside.");
-    await user.click(screen.getByRole("button", { name: "規劃教學活動" }));
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    await user.click(screen.getByRole("button", { name: "附上文章" }));
+    await user.click(screen.getByRole("button", { name: "貼上文字" }));
+    const dialog = within(screen.getByRole("dialog", { name: "貼上文字" }));
+    expect(dialog.getByRole("textbox", { name: /教材標題/ })).toHaveFocus();
+    expect(dialog.getByRole("button", { name: "附上" })).toBeDisabled();
+    await user.type(dialog.getByRole("textbox", { name: /教材標題/ }), "Umbrella");
+    await user.type(dialog.getByRole("textbox", { name: "貼上教材文字" }), "Mrs. Lin put a stand outside.");
+    await user.click(dialog.getByRole("button", { name: "附上" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(chips().getByRole("button", { name: "課堂活動" }));
+    await user.click(screen.getByRole("button", { name: "送出" }));
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
       kind: "activity",
-      request: "規劃教學活動",
+      request: "課堂活動",
       material: { title: "Umbrella", text: "Mrs. Lin put a stand outside." },
     });
   });
 
-  it("「直接問 AI」 sends the question as an ask session, with the class but without material unless attached", async () => {
+  it("removing the material chip takes it back out", async () => {
     signIn();
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/classes": [schoolClass({ id: 3, name: "高一 3 班" })],
-      [`POST ${SESSIONS}`]: session([turn("ask", { status: "running" })]),
-      [`GET ${S7}`]: session([turn("ask", { status: "running" })]),
-    });
+    mockApi({ ...baseRoutes(), "GET /api/materials": library() });
     const user = userEvent.setup();
-    const { router } = renderApp("/");
-    await user.click(await screen.findByRole("tab", { name: "直接問 AI" }));
-    expect(screen.getByRole("tab", { name: "直接問 AI" })).toHaveAttribute("aria-selected", "true");
-
-    const box = screen.getByRole("textbox", { name: "直接問 AI" });
-    expect(box).toHaveAttribute("placeholder", "說說你想做什麼，例如：幫我想三個這一課的暖身活動");
+    renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    await attachFromLibrary(user);
+    await user.click(screen.getByRole("button", { name: "移除「The Umbrella Stand」" }));
+    expect(screen.queryByRole("button", { name: /移除/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "附上教材（可以不附）" })).toBeInTheDocument();
-    // No template chip here: only the class.
-    expect(screen.queryByRole("combobox", { name: /照我的版型/ })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByRole("combobox", { name: "班級" }), "高一 3 班");
-
-    await user.type(box, "怎麼教倒裝句比較不無聊？");
-    await user.click(screen.getByRole("button", { name: "送出" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "ask", request: "怎麼教倒裝句比較不無聊？", class_id: 3 });
   });
 
-  it("shows the privacy reminder once, the latest sessions, and the way to the full SOP flow", async () => {
+  it("the 附上文章 popover and its dialogs close on Escape and on a click outside", async () => {
+    signIn();
+    mockApi(baseRoutes());
+    const user = userEvent.setup();
+    renderApp("/");
+    const heading = await screen.findByRole("heading", { name: HOME, level: 1 });
+    const attach = screen.getByRole("button", { name: "附上文章" });
+
+    await user.click(attach);
+    expect(attach).toHaveAttribute("aria-expanded", "true");
+    const menu = within(screen.getByRole("group", { name: "附上文章" }));
+    expect(menu.getAllByRole("button").map((b) => b.textContent)).toEqual(["上傳檔案", "從教材庫選", "貼上文字"]);
+    await user.keyboard("{Escape}");
+    expect(attach).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("group", { name: "附上文章" })).not.toBeInTheDocument();
+    expect(attach).toHaveFocus();
+
+    await user.click(attach);
+    await user.click(heading);
+    expect(screen.queryByRole("group", { name: "附上文章" })).not.toBeInTheDocument();
+
+    await user.click(attach);
+    await user.click(screen.getByRole("button", { name: "上傳檔案" }));
+    expect(await screen.findByRole("dialog", { name: "上傳檔案" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(attach).toHaveFocus();
+
+    await user.click(attach);
+    await user.click(screen.getByRole("button", { name: "貼上文字" }));
+    await user.click(screen.getByRole("dialog").parentElement as HTMLElement);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("says the privacy reminder once (in the upload dialog while it is open), lists the five tools and the latest sessions", async () => {
     signIn();
     mockApi({
       ...baseRoutes(),
@@ -394,16 +448,32 @@ describe("備課 (home)", () => {
         sessions: Array.from({ length: 7 }, (_, i) => summary({ id: i + 1, title: `備課 ${i + 1}` })),
       },
     });
+    const user = userEvent.setup();
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
-    // The upload form is open too, but the reminder is said once.
-    expect(await screen.findByRole("form", { name: "上傳檔案" })).toBeInTheDocument();
     expect(screen.getAllByText(/請不要上傳學生作業/)).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "附上文章" }));
+    await user.click(screen.getByRole("button", { name: "上傳檔案" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "上傳檔案" }));
+    expect(await dialog.findByRole("form", { name: "上傳檔案" })).toBeInTheDocument();
+    expect(screen.getAllByText(/請不要上傳學生作業/)).toHaveLength(1);
+    expect(dialog.getByText(/請不要上傳學生作業/)).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "關閉" }));
+
+    const tools = within(screen.getByRole("region", { name: "Manna 可以幫你做" }));
+    expect(tools.getAllByRole("link").map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
+      ["/create/comprehension", "閱讀理解題依 Bloom 六個層次出題，附答案與文本依據"],
+      ["/create/tiered", "分層練習同一篇文章，基礎／一般／進階三個版本"],
+      ["/create/activity", "課堂活動引起動機到統整的一節課流程"],
+      ["/create/kit", "教學套件活動流程＋分層學習單＋教師版答案，一次下載"],
+      ["/create/worksheet", "完整學習單完整學習單，可以照你的版型"],
+    ]);
 
     const recent = within(await screen.findByRole("region", { name: "最近的備課" }));
     expect(recent.getAllByRole("link").filter((a) => a.textContent?.startsWith("備課"))).toHaveLength(5);
     expect(recent.getByRole("link", { name: "備課 1" })).toHaveAttribute("href", "/prep/1");
-    expect(screen.getByRole("link", { name: "完整備課流程（班級、單元、課例 SOP）" })).toHaveAttribute("href", "/classes");
+    expect(recent.getByRole("link", { name: "全部" })).toHaveAttribute("href", "/prep");
   });
 });
 
@@ -669,7 +739,7 @@ describe("備課對話 (session page)", () => {
   });
 });
 
-// ---------------------------------------------------------------- 我的備課 and the shell
+// ---------------------------------------------------------------- 我的備課 (工作區) and the shell
 
 describe("我的備課", () => {
   it("lists the sessions with material, class, last step and date, and links to all worksheets", async () => {
@@ -690,17 +760,20 @@ describe("我的備課", () => {
     expect(rows.getByText(/教材：The Umbrella Stand · 高一 3 班 · 做學習單 · 11\/15/)).toBeInTheDocument();
     expect(rows.getByRole("link", { name: "環境保護" })).toHaveAttribute("href", "/prep/8");
     expect(rows.getByText(/主題：環境保護 · 找教學資源/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "所有學習單" })).toHaveAttribute("href", "/worksheets");
+    expect(within(screen.getByRole("main")).getByRole("link", { name: "所有學習單" })).toHaveAttribute("href", "/worksheets");
+    // In the sidebar it is 工作區.
+    const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
+    expect(nav.getByRole("link", { name: "工作區" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("the top bar is 備課｜我的備課｜教材｜班級, and a session counts as 我的備課", async () => {
+  it("a session counts as being inside 工作區 in the sidebar", async () => {
     signIn();
     mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: plan })]) });
     renderApp("/prep/7");
     await screen.findByRole("heading", { name: "The Umbrella Stand", level: 1 });
     const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
-    expect(nav.getAllByRole("link").map((a) => a.textContent)).toEqual(["備課", "我的備課", "教材", "班級"]);
-    expect(nav.getByRole("link", { name: "我的備課" })).toHaveAttribute("aria-current", "page");
+    expect(nav.getByRole("link", { name: "工作區" })).toHaveAttribute("aria-current", "true");
+    expect(nav.getAllByRole("link").filter((a) => a.getAttribute("aria-current") === "page")).toHaveLength(0);
   });
 
   it("a worksheet made in a session links back to it", async () => {

@@ -7,6 +7,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { ClassPage } from "./pages/ClassPage";
 import { ClassesPage } from "./pages/ClassesPage";
 import { CorePage } from "./pages/CorePage";
+import { CreatePage } from "./pages/CreatePage";
 import { KnowledgePage } from "./pages/KnowledgePage";
 import { LessonPage } from "./pages/LessonPage";
 import { LibraryPage } from "./pages/LibraryPage";
@@ -72,8 +73,11 @@ export function AppRoutes() {
           </RequireAuth>
         }
       >
-        {/* 備課: one input bar that starts a prep conversation (the class dashboard moved to /classes). */}
+        {/* 首頁: a quick box, the five tools and the latest sessions (the class dashboard moved to /classes). */}
         <Route index element={<PrepHomePage />} />
+        {/* 建立: one generator per tool (閱讀理解題, 分層練習, 課堂活動, 教學套件, 完整學習單). */}
+        <Route path="create" element={<Navigate to="/create/comprehension" replace />} />
+        <Route path="create/:tool" element={<CreatePage />} />
         <Route path="prep" element={<PrepListPage />} />
         <Route path="prep/:sessionId" element={<PrepSessionPage />} />
         <Route path="classes" element={<ClassesPage />} />
