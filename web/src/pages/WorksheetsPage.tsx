@@ -116,7 +116,7 @@ export function WorksheetsPage() {
           )}
           {templates !== null && templates.length === 0 && (
             <p className="quiet-note">
-              想照你自己的學習單格式做？到<Link to="/materials">教材</Link>上傳一份做過的學習單，就能建立版型。
+              想照你自己的學習單格式做？到<Link to="/templates?tab=mine">學習單範本</Link>上傳一份做過的學習單，就能建立版型。
             </p>
           )}
 

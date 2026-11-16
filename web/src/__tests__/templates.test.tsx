@@ -1,5 +1,5 @@
-// 我的學習單版型 (docs/WORKSHEET_TEMPLATES_CONTRACT.md, "Frontend"): the section on 教材 (add from an
-// upload or the library, the list with its state, polling while Manna reads), the template page
+// 我的學習單版型 (docs/WORKSHEET_TEMPLATES_CONTRACT.md, "Frontend"; now 學習單範本's 我的範本 tab, library
+// contract): upload a worksheet, the cards with their state, polling while Manna reads), the template page
 // (edit, reorder, toggles, save as a new version, delete, failed and retry), 直接做一份 with a
 // template, and the 照我的版型 select on the worksheet settings view.
 import { screen, waitFor, within } from "@testing-library/react";
@@ -22,7 +22,16 @@ import { UPLOAD_WARNING } from "../lib/materials";
 import { templateConfig } from "../lib/templates";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
-import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
+import {
+  baseRoutes,
+  mockApi,
+  renderApp,
+  respond,
+  signIn,
+  templateBrowse,
+  templateCard,
+  type MockCall,
+} from "../test/mockApi";
 
 const TEMPLATES = "/api/worksheet-templates";
 const T9 = `${TEMPLATES}/9`;
@@ -144,87 +153,102 @@ afterEach(() => {
   worksheetConfig.pollMs = 2000;
 });
 
-const templatesRegion = async () => within(await screen.findByRole("region", { name: "我的學習單版型" }));
+const BROWSE = "/api/browse/templates";
+const MINE = "/templates?tab=mine";
+const tcard = (title: string) => within(screen.getByRole("article", { name: title }));
 
-// ---------------------------------------------------------------- 教材: the list
+// ---------------------------------------------------------------- 學習單範本 → 我的範本
 
-describe("教材: 我的學習單版型", () => {
-  it("lists the templates with their state and polls every few seconds while one is being read", async () => {
+describe("學習單範本: 我的範本", () => {
+  it("shows my templates as cards with their state and asks again every few seconds while one is being read", async () => {
     let polls = 0;
     const api = mockApi({
       ...baseRoutes(),
-      "GET /api/materials": library(),
-      [`GET ${TEMPLATES}`]: () => {
+      [`GET ${BROWSE}`]: () => {
         polls += 1;
-        return {
-          templates: [
-            polls < 3 ? summary({ id: 10, title: "新的版型", status: "extracting", section_count: 0, version_no: null }) : summary({ id: 10, title: "新的版型", version_no: 1 }),
-            summary({ id: 8, title: "舊的版型", status: "failed", section_count: 0, version_no: null }),
-            summary(),
-          ],
-        };
+        return templateBrowse([
+          polls < 3
+            ? templateCard({ id: 10, title: "新的版型", status: "extracting", section_count: 0, section_titles: [] })
+            : templateCard({ id: 10, title: "新的版型" }),
+          templateCard({ id: 8, title: "舊的版型", status: "failed", section_count: 0, section_titles: [] }),
+          templateCard(),
+        ]);
       },
     });
-    renderApp("/materials");
-    const region = await templatesRegion();
-    expect(region.getByText("上傳一份你做過的學習單，Manna 學它的設計，之後新課可以照這個版型產生。")).toBeInTheDocument();
-    expect(await region.findByText(EXTRACTING)).toBeInTheDocument();
-    expect(region.getByRole("link", { name: "新的版型" })).toHaveAttribute("href", "/templates/10");
-    expect(region.getByText("沒有讀成功")).toBeInTheDocument();
-    expect(region.getByText("3 區 · 第 1 版 · 來自「L2 學習單」")).toBeInTheDocument();
+    renderApp(MINE);
+    expect(await screen.findByRole("tab", { name: "我的範本" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("上傳一份你做過的學習單，Manna 學它的設計，之後新課可以照這個版型產生。")).toBeInTheDocument();
+    await screen.findByRole("article", { name: "新的版型" });
+    expect(tcard("新的版型").getByText("讀取中", { selector: ".lib-badge" })).toBeInTheDocument();
+    expect(tcard("新的版型").getByRole("link", { name: "看版型「新的版型」" })).toHaveAttribute("href", "/templates/10");
+    expect(tcard("新的版型").getByRole("button", { name: "照這個範本做「新的版型」" })).toBeDisabled();
+    expect(tcard("舊的版型").getByText("沒有讀成功")).toBeInTheDocument();
+    expect(tcard("舊的版型").getByText("失敗")).toBeInTheDocument();
+    expect(tcard("L2 學習單版型").getByText("3 區 · 英文指示 · 閱讀理解")).toBeInTheDocument();
+    expect(tcard("L2 學習單版型").getByRole("link", { name: "照這個範本做「L2 學習單版型」" })).toHaveAttribute(
+      "href",
+      "/create/mimic?template=9",
+    );
 
-    // Polled until nothing is being read any more, then left alone.
-    await waitFor(() => expect(region.queryByText(EXTRACTING)).not.toBeInTheDocument());
-    expect(region.getAllByText("3 區 · 第 1 版 · 來自「L2 學習單」")).toHaveLength(2);
-    const settled = api.callsTo("GET", TEMPLATES).length;
+    // Asked again until nothing is being read any more, then left alone.
+    await waitFor(() => expect(tcard("新的版型").queryByText("讀取中")).not.toBeInTheDocument());
+    expect(tcard("新的版型").getByRole("link", { name: "照這個範本做「新的版型」" })).toBeInTheDocument();
+    const settled = api.callsTo("GET", BROWSE).length;
     expect(settled).toBe(3);
+    expect(api.calls.filter((c) => c.path === BROWSE).every((c) => c.url.includes("area=mine"))).toBe(true);
     await new Promise((r) => setTimeout(r, 80));
-    expect(api.callsTo("GET", TEMPLATES).length).toBe(settled);
+    expect(api.callsTo("GET", BROWSE).length).toBe(settled);
   });
 
-  it("re-reads a failed one from its row", async () => {
+  it("re-reads a failed one from its card", async () => {
     const api = mockApi({
       ...baseRoutes(),
-      "GET /api/materials": library(),
-      [`GET ${TEMPLATES}`]: { templates: [summary({ status: "failed", section_count: 0, version_no: null })] },
+      [`GET ${BROWSE}`]: templateBrowse([templateCard({ status: "failed", section_count: 0, section_titles: [] })]),
       [`POST ${T9}/retry`]: extracting(),
     });
     const user = userEvent.setup();
-    renderApp("/materials");
-    const region = await templatesRegion();
-    await user.click(await region.findByRole("button", { name: "再讀一次「L2 學習單版型」" }));
-    expect(await region.findByText(EXTRACTING)).toBeInTheDocument();
+    renderApp(MINE);
+    await user.click(await screen.findByRole("button", { name: "再讀一次「L2 學習單版型」" }));
+    expect(await tcard("L2 學習單版型").findByText("讀取中", { selector: ".lib-badge" })).toBeInTheDocument();
     expect(api.callsTo("POST", `${T9}/retry`)).toHaveLength(1);
   });
 
-  it("uploads an old worksheet, starts reading it, and says the privacy reminder only once on the page", async () => {
+  it("上傳我的學習單 sends the file as a worksheet sample, starts reading it, and says the privacy reminder once", async () => {
     const uploaded = materialDetail({ id: 6, title: "期中學習單" });
+    let started = false;
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/materials": library(),
-      [`GET ${TEMPLATES}`]: { templates: [] },
+      [`GET ${BROWSE}`]: () =>
+        templateBrowse(
+          started
+            ? [templateCard({ id: 11, title: "期中學習單版型", status: "extracting", section_count: 0, section_titles: [] })]
+            : [],
+        ),
       "POST /api/materials/upload": uploaded,
-      [`POST ${TEMPLATES}`]: respond(202, extracting({ id: 11, title: "期中學習單版型", source_material: { id: 6, title: "期中學習單" } })),
+      [`POST ${TEMPLATES}`]: () => {
+        started = true;
+        return respond(202, extracting({ id: 11, title: "期中學習單版型", source_material: { id: 6, title: "期中學習單" } }));
+      },
     });
     const user = userEvent.setup({ applyAccept: false });
-    renderApp("/materials");
-    const region = await templatesRegion();
-    expect(await region.findByText("還沒有版型。")).toBeInTheDocument();
+    renderApp(MINE);
+    expect(await screen.findByText(/^還沒有我的範本。/)).toBeInTheDocument();
 
-    // Both add forms open: the reminder appears once.
-    const materials = within(screen.getByRole("region", { name: "教材" }));
-    await user.click(materials.getByRole("button", { name: "上傳檔案" }));
-    await user.click(region.getByRole("button", { name: "上傳一份學習單" }));
-    const form = within(await region.findByRole("form", { name: "上傳檔案" }));
+    await user.click(screen.getByRole("button", { name: "上傳我的學習單" }));
+    const form = within(await screen.findByRole("form", { name: "上傳檔案" }));
     expect(screen.getAllByText(UPLOAD_WARNING)).toHaveLength(1);
-
     await user.upload(form.getByLabelText("選擇檔案"), new File(["PK"], "midterm.docx"));
     await user.click(form.getByRole("button", { name: "上傳，讓 Manna 讀設計" }));
-    expect(await region.findByText(EXTRACTING)).toBeInTheDocument();
-    expect(region.getByRole("link", { name: "期中學習單版型" })).toBeInTheDocument();
+
+    expect(await screen.findByText("Manna 正在讀「期中學習單版型」的設計，讀好了就能用。")).toBeInTheDocument();
+    await screen.findByRole("article", { name: "期中學習單版型" });
+    expect(tcard("期中學習單版型").getByText("讀取中", { selector: ".lib-badge" })).toBeInTheDocument();
+    // The file went in as a worksheet sample (it stays out of 我的教材), then the template from it.
+    const call = api.fetchMock.mock.calls.find(([url]) => String(url) === "/api/materials/upload");
+    const sent = call?.[1]?.body as FormData;
+    expect(sent.get("purpose")).toBe("worksheet_sample");
     expect(api.lastBody("POST", TEMPLATES)).toEqual({ material_id: 6 });
-    // The uploaded file also shows up in the library above.
-    await waitFor(() => expect(api.callsTo("GET", "/api/materials").length).toBeGreaterThanOrEqual(3));
   });
 
   it("refuses a scan without text before asking the server", async () => {
@@ -234,31 +258,13 @@ describe("教材: 我的學習單版型", () => {
       "POST /api/materials/upload": materialDetail({ id: 6, text_status: "no_text", paragraphs: [] }),
     });
     const user = userEvent.setup({ applyAccept: false });
-    renderApp("/materials");
-    const region = await templatesRegion();
-    await user.click(region.getByRole("button", { name: "上傳一份學習單" }));
-    const form = within(await region.findByRole("form", { name: "上傳檔案" }));
+    renderApp(MINE);
+    await user.click(await screen.findByRole("button", { name: "上傳我的學習單" }));
+    const form = within(await screen.findByRole("form", { name: "上傳檔案" }));
     await user.upload(form.getByLabelText("選擇檔案"), new File(["%PDF"], "scan.pdf"));
     await user.click(form.getByRole("button", { name: "上傳，讓 Manna 讀設計" }));
-    expect(await region.findByText(/這份檔案讀不到文字（可能是掃描檔）/)).toBeInTheDocument();
+    expect(await screen.findByText(/這份檔案讀不到文字（可能是掃描檔）/)).toBeInTheDocument();
     expect(api.callsTo("POST", TEMPLATES)).toHaveLength(0);
-  });
-
-  it("chooses a material from the library (only those with text are offered)", async () => {
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/materials": library([material(), material({ id: 7, title: "掃描檔", text_status: "no_text" })]),
-      [`POST ${TEMPLATES}`]: respond(202, extracting()),
-    });
-    const user = userEvent.setup();
-    renderApp("/materials");
-    const region = await templatesRegion();
-    await user.click(region.getByRole("button", { name: "從教材庫選" }));
-    expect(await region.findByRole("button", { name: "選用「L2 學習單」" })).toBeInTheDocument();
-    expect(region.queryByRole("button", { name: "選用「掃描檔」" })).not.toBeInTheDocument();
-    await user.click(region.getByRole("button", { name: "選用「L2 學習單」" }));
-    expect(await region.findByText(EXTRACTING)).toBeInTheDocument();
-    expect(api.lastBody("POST", TEMPLATES)).toEqual({ material_id: 5 });
   });
 });
 
@@ -432,7 +438,7 @@ describe("/templates/:id", () => {
     expect(await screen.findByText("這份檔案讀不到文字（可能是掃描檔）")).toBeInTheDocument();
   });
 
-  it("deletes the template only after confirming, then goes back to 教材", async () => {
+  it("deletes the template only after confirming, then goes back to 我的範本", async () => {
     const api = mockApi({
       ...baseRoutes(),
       [`GET ${T9}`]: detail(),
@@ -447,7 +453,8 @@ describe("/templates/:id", () => {
     expect(api.callsTo("DELETE", T9)).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "刪除這個版型" }));
     await user.click(within(screen.getByRole("alertdialog", { name: "確認刪除版型" })).getByRole("button", { name: "永久刪除" }));
-    expect(await screen.findByRole("heading", { name: "教材", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "學習單範本", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "我的範本" })).toHaveAttribute("aria-selected", "true");
     expect(api.callsTo("DELETE", T9)).toHaveLength(1);
   });
 });
@@ -570,13 +577,13 @@ describe("學習單: 直接做一份", () => {
     expect(api.lastBody("POST", "/api/worksheets")).toEqual({ material: { title: "", text: P1 }, template_id: 9 });
   });
 
-  it("without templates there is no select, only a pointer to 教材", async () => {
+  it("without templates there is no select, only a pointer to 學習單範本's 我的範本", async () => {
     mockApi({ ...baseRoutes(), "GET /api/worksheets": [], "GET /api/materials": library() });
     renderApp("/worksheets");
     const pointer = await screen.findByText(
-      (_, el) => el?.tagName === "P" && (el.textContent ?? "").includes("到教材上傳一份做過的學習單，就能建立版型"),
+      (_, el) => el?.tagName === "P" && (el.textContent ?? "").includes("到學習單範本上傳一份做過的學習單，就能建立版型"),
     );
-    expect(within(pointer).getByRole("link", { name: "教材" })).toHaveAttribute("href", "/materials");
+    expect(within(pointer).getByRole("link", { name: "學習單範本" })).toHaveAttribute("href", "/templates?tab=mine");
     expect(screen.queryByRole("combobox", { name: /照我的版型/ })).not.toBeInTheDocument();
   });
 });

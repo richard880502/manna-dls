@@ -20,7 +20,17 @@ import type {
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { prepConfig } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
-import { baseRoutes, emptyLibrary, mockApi, renderApp, schoolClass, signIn, type MockCall } from "../test/mockApi";
+import {
+  baseRoutes,
+  cardOf,
+  emptyLibrary,
+  materialBrowse,
+  mockApi,
+  renderApp,
+  schoolClass,
+  signIn,
+  type MockCall,
+} from "../test/mockApi";
 
 const HOME = "今天想準備什麼？";
 const SESSIONS = "/api/prep-sessions";
@@ -65,6 +75,8 @@ const material = (overrides: Partial<Material> = {}): Material => ({
 });
 
 const library = (materials: Material[] = [material()]): MaterialLibrary => ({ ...emptyLibrary(), materials });
+/** The library's materials, as 從教材挑選 lists them. */
+const browse = (materials: Material[] = [material()]) => materialBrowse(materials.map((m) => cardOf(m)));
 
 const summary = (overrides: Partial<PrepSessionSummary> = {}): PrepSessionSummary => ({
   id: 7,
@@ -237,11 +249,11 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
       .filter((b) => b.getAttribute("aria-pressed") === "true")
       .map((b) => b.textContent);
 
-  /** 附上文章 → 從教材庫選 → 選用, so the material shows as a chip in the box. */
+  /** 附上文章 → 從教材挑選 → 選用, so the material shows as a chip in the box. */
   async function attachFromLibrary(user: ReturnType<typeof userEvent.setup>) {
     await user.click(screen.getByRole("button", { name: "附上文章" }));
-    await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "從教材庫選" }));
-    const dialog = within(await screen.findByRole("dialog", { name: "從教材庫選" }));
+    await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "從教材挑選" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "從教材挑選" }));
     await user.click(await dialog.findByRole("button", { name: "選用「The Umbrella Stand」" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "移除「The Umbrella Stand」" })).toBeInTheDocument();
@@ -252,6 +264,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/materials": library(),
+      "GET /api/browse/materials": browse(),
       [`POST ${SESSIONS}`]: session([turn("ask", { status: "running" })]),
       [`GET ${S7}`]: session([turn("ask", { status: "running" })]),
     });
@@ -356,6 +369,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/materials": library(),
+      "GET /api/browse/materials": browse(),
       [`POST ${SESSIONS}`]: session([turn("worksheet", { status: "running" })]),
       [`GET ${S7}`]: session([turn("worksheet", { status: "running" })]),
     });
@@ -409,7 +423,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
 
   it("removing the material chip takes it back out", async () => {
     signIn();
-    mockApi({ ...baseRoutes(), "GET /api/materials": library() });
+    mockApi({ ...baseRoutes(), "GET /api/materials": library(), "GET /api/browse/materials": browse() });
     const user = userEvent.setup();
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
@@ -430,7 +444,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await user.click(attach);
     expect(attach).toHaveAttribute("aria-expanded", "true");
     const menu = within(screen.getByRole("group", { name: "附上文章" }));
-    expect(menu.getAllByRole("button").map((b) => b.textContent)).toEqual(["上傳檔案", "從教材庫選", "貼上文字"]);
+    expect(menu.getAllByRole("button").map((b) => b.textContent)).toEqual(["上傳檔案", "從教材挑選", "貼上文字"]);
     await user.keyboard("{Escape}");
     expect(attach).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("group", { name: "附上文章" })).not.toBeInTheDocument();

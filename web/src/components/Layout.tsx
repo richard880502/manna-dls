@@ -15,6 +15,8 @@ function frameClass(pathname: string): string {
   if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin|worksheets\/\d+)/.test(pathname)) return " is-wide";
   // 知識庫管理 is a list page: the default frame.
   if (pathname === "/worksheets" || pathname === "/preferences" || pathname === "/prep") return " is-narrow";
+  // 資源 (教材參考, 我的教材, 學習單範本): a grid of cards, three across on a wide screen.
+  if (pathname === "/reference" || pathname === "/materials" || pathname === "/templates") return " is-wide";
   if (pathname === "/") return " is-home";
   if (pathname.startsWith("/create/")) return " is-create";
   if (/^\/prep\/\d+/.test(pathname)) return " is-prep";
@@ -38,7 +40,7 @@ export function TopBarSlot({ children }: { children: ReactNode }) {
 }
 
 /**
- * A new page starts at the top; an address with #anchor (我的版型 → /materials#templates) scrolls
+ * A new page starts at the top; an address with #anchor scrolls
  * to that section, and keeps it in view while the page above it is still loading, until the
  * teacher scrolls herself.
  */

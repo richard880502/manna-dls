@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import type { Material, MaterialDetail } from "../../api/types";
+import type { Material, MaterialDetail, MaterialPurpose } from "../../api/types";
 import { withTextOnly } from "../../lib/templates";
 import { ErrorText, Loading } from "../common";
 import { MaterialAddForm, MaterialPicker, useMaterialLibrary } from "./MaterialLibrary";
@@ -46,7 +46,16 @@ export function missingMaterialLine(choice: MaterialChoice): string {
 }
 
 /** 上傳檔案 and 從教材庫選: both end with one library material that has text (also the home page's attach dialogs). */
-export function LibraryStep({ way, onPicked }: { way: "upload" | "library"; onPicked: (m: PickedMaterial) => void }) {
+export function LibraryStep({
+  way,
+  purpose,
+  onPicked,
+}: {
+  way: "upload" | "library";
+  /** An upload for a worksheet sample (`worksheet_sample`) stays out of 我的教材. */
+  purpose?: MaterialPurpose;
+  onPicked: (m: PickedMaterial) => void;
+}) {
   const { library, error, reload } = useMaterialLibrary();
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -73,7 +82,7 @@ export function LibraryStep({ way, onPicked }: { way: "upload" | "library"; onPi
   return (
     <>
       {way === "upload" ? (
-        <MaterialAddForm way="upload" library={library} onAdded={(m: MaterialDetail) => take(m)} />
+        <MaterialAddForm way="upload" library={library} purpose={purpose} onAdded={(m: MaterialDetail) => take(m)} />
       ) : (
         <MaterialPicker library={withTextOnly(library)} currentId={null} busy={false} onPick={take} />
       )}

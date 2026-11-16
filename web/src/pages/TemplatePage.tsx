@@ -5,13 +5,18 @@ import type { WsTemplate, WsTemplateDetail, WsTemplateSection } from "../api/typ
 import { ErrorText, Loading } from "../components/common";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { MaterialViewer } from "../components/material/MaterialViewer";
-import { ExtractingLine } from "../components/template/TemplatesSection";
+import { ExtractingLine } from "../components/template/ExtractingLine";
+import { COPY_TEMPLATE, USE_TEMPLATE, VIEW_SOURCE } from "../components/library/labels";
+import { useApp } from "../context/AppContext";
+import { can } from "../lib/permissions";
+import { mimicTemplatePath } from "../lib/create";
 import {
   MAX_ITEMS,
   MIN_ITEMS,
   moveItem,
   notesFromText,
   notesProblem,
+  sectionLine,
   templateConfig,
   templateTitle,
 } from "../lib/templates";
@@ -19,7 +24,14 @@ import { ANSWER_FORMATS, BLOCK_KIND_LABEL, toggleIn } from "../lib/worksheet";
 
 const ITEM_COUNTS = Array.from({ length: MAX_ITEMS - MIN_ITEMS + 1 }, (_, i) => MIN_ITEMS + i);
 
-/** /templates/:id — check and edit one template; saving makes a new version. */
+/** Where 我的範本 is listed (the template page's way back, and where a deleted one leads). */
+const MY_TEMPLATES = "/templates?tab=mine";
+
+/**
+ * /templates/:id — check and edit one of my templates (saving makes a new version). A 平台範本 is
+ * read only for teachers: 照這個範本做, 另存成我的範本 (a personal copy to edit) and 看原檔. Only
+ * the knowledge-base managers (pi, kb_manager) edit a platform template here.
+ */
 export function TemplatePage() {
   const { templateId } = useParams();
   const id = Number(templateId);
@@ -42,6 +54,8 @@ const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringif
 function TemplateWorkspace({ id }: { id: number }) {
   const ids = useId();
   const navigate = useNavigate();
+  const { teacher } = useApp();
+  const manager = can(teacher, "manage_knowledge");
   const [detail, setDetail] = useState<WsTemplateDetail | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -161,7 +175,7 @@ function TemplateWorkspace({ id }: { id: number }) {
     try {
       await api.deleteWorksheetTemplate(id);
       guard.release();
-      navigate("/materials");
+      navigate(detail?.scope === "platform" ? "/templates" : MY_TEMPLATES);
     } catch (err) {
       setDeleteError(errorMessage(err));
       setDeleting(false);
@@ -183,12 +197,14 @@ function TemplateWorkspace({ id }: { id: number }) {
           >
             再試一次
           </button>
-          　<Link to="/materials">回教材</Link>
+          　<Link to="/templates">回學習單範本</Link>
         </p>
       </>
     );
   }
   if (!detail) return <Loading />;
+  const platform = detail.scope === "platform";
+  if (platform && !manager) return <PlatformTemplate detail={detail} />;
 
   const source = detail.source_material;
 
@@ -197,9 +213,11 @@ function TemplateWorkspace({ id }: { id: number }) {
       <div className="head-row page-head">
         <div>
           <p className="crumbs">
-            <Link to="/materials">教材</Link> / 我的學習單版型
+            <Link to="/templates">學習單範本</Link> /{" "}
+            {platform ? <Link to="/templates">平台範本</Link> : <Link to={MY_TEMPLATES}>我的範本</Link>}
           </p>
           <h1>{templateTitle(detail)}</h1>
+          {platform && <p className="quiet-note">這是平台範本：你在這裡的修改，所有老師都會看到。</p>}
         </div>
         {detail.status === "ready" && detail.version_no !== null && (
           <p className="saved" role="status">
@@ -223,14 +241,14 @@ function TemplateWorkspace({ id }: { id: number }) {
             </button>
           </>
         ) : (
-          "原本的檔案已經從教材庫刪除；版型本身還在，可以照常使用。"
+          "原本的檔案已經刪除；範本本身還在，可以照常使用。"
         )}
       </p>
 
       {detail.status === "extracting" && (
         <div className="manna-well manna-progress">
           <ExtractingLine />
-          <p className="why">你可以先離開這一頁，讀好了會留在「教材」的「我的學習單版型」裡。</p>
+          <p className="why">你可以先離開這一頁，讀好了會留在「學習單範本」的「我的範本」裡。</p>
         </div>
       )}
 
@@ -329,7 +347,7 @@ function TemplateWorkspace({ id }: { id: number }) {
             <p>
               <strong>刪除「{templateTitle(detail)}」？</strong>
             </p>
-            <p>刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案仍在教材庫。</p>
+            <p>刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案會留著。</p>
             <div className="button-row">
               <button type="button" className="danger-button" disabled={deleting} onClick={() => void remove()}>
                 {deleting ? "刪除中…" : "永久刪除"}
@@ -356,6 +374,114 @@ function TemplateWorkspace({ id }: { id: number }) {
         <MaterialViewer mode="panel" materialId={source.id} open={viewing} onClose={() => setViewing(false)} />
       )}
       <LeaveConfirm guard={guard} message="離開這頁，還沒儲存的版型修改就會遺失。" onSave={save} />
+    </>
+  );
+}
+
+/** A 平台範本: what it asks for, section by section, read only; a personal copy can be edited. */
+function PlatformTemplate({ detail }: { detail: WsTemplateDetail }) {
+  const navigate = useNavigate();
+  const [viewing, setViewing] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const closeViewer = useCallback(() => setViewing(false), []);
+  const source = detail.source_material;
+  const content = detail.content;
+  const ready = detail.status === "ready";
+
+  async function copy() {
+    setCopying(true);
+    setCopyError(null);
+    try {
+      const mine = await api.copyWorksheetTemplate(detail.id);
+      navigate(`/templates/${mine.id}`);
+    } catch (err) {
+      setCopyError(errorMessage(err));
+      setCopying(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="page-head">
+        <p className="crumbs">
+          <Link to="/templates">學習單範本</Link> / 平台範本
+        </p>
+        <h1>{templateTitle(detail)}</h1>
+        <p className="quiet-note">這是平台範本，只能看、不能改。想照自己的習慣調整，先另存成我的範本。</p>
+      </div>
+
+      <div className="button-row template-platform-actions">
+        {ready ? (
+          <Link className="primary-button" to={mimicTemplatePath(detail.id)}>
+            {USE_TEMPLATE}
+          </Link>
+        ) : (
+          <button type="button" className="primary-button" disabled>
+            {USE_TEMPLATE}
+          </button>
+        )}
+        <button type="button" className="secondary-button" disabled={copying || !ready} onClick={() => void copy()}>
+          {copying ? "另存中…" : COPY_TEMPLATE}
+        </button>
+        {source && (
+          <button
+            type="button"
+            className="text-link is-plain"
+            aria-expanded={viewing}
+            aria-controls="material-viewer"
+            onClick={() => setViewing((v) => !v)}
+          >
+            {VIEW_SOURCE}
+          </button>
+        )}
+      </div>
+      <ErrorText message={copyError} />
+
+      {detail.status === "extracting" && (
+        <div className="manna-well manna-progress">
+          <ExtractingLine />
+        </div>
+      )}
+      {detail.status === "failed" && <p className="quiet-note">這個範本還沒有讀成功，暫時不能使用。</p>}
+
+      {ready && content && (
+        <section className="template-readonly" aria-label="範本內容">
+          <TemplateFacts content={content} />
+          <h2 className="template-sections-head">學習單的區塊</h2>
+          <p className="quiet-note">由上到下就是新學習單的順序。標題裡的 [n]、[主題] 會換成新課的內容。</p>
+          <ol className="template-sections is-readonly">
+            {content.sections.map((s, i) => (
+              <li key={s.id} className="template-section" aria-label={`第 ${i + 1} 區`}>
+                <h3>
+                  <span className="num">{i + 1}.</span>
+                  <span className="soft-tag">{BLOCK_KIND_LABEL[s.block_kind] ?? s.block_kind}</span>
+                </h3>
+                <p className="template-section-line" lang="en">
+                  {sectionLine(s)}
+                </p>
+                {s.purpose.trim() && <p className="quiet-note">用途：{s.purpose}</p>}
+                {s.answer_formats.length > 0 && <p className="meta">作答方式：{s.answer_formats.join("、")}</p>}
+              </li>
+            ))}
+          </ol>
+          {content.style_notes.length > 0 && (
+            <>
+              <h2 className="template-sections-head">風格備註</h2>
+              <ul className="template-notes">
+                {content.style_notes.map((n, i) => (
+                  // oxlint-disable-next-line react/no-array-index-key -- read-only strings
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
+
+      {source && (
+        <MaterialViewer mode="panel" materialId={source.id} open={viewing} onClose={closeViewer} />
+      )}
     </>
   );
 }

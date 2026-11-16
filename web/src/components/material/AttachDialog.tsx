@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type { MaterialPurpose } from "../../api/types";
 import { UPLOAD_WARNING } from "../../lib/materials";
 import { Icon, type IconName } from "../Icon";
 import { useFirstOnPage } from "../OncePerPage";
@@ -6,9 +7,10 @@ import { LibraryStep, type MaterialChoice, type PickedMaterial } from "./Materia
 
 export type AttachWay = "upload" | "library" | "paste";
 
+/** 「從教材挑選」 opens the library picker (教材參考 | 我的教材) instead of a dialog of its own. */
 export const ATTACH_LABEL: Record<AttachWay, string> = {
   upload: "上傳檔案",
-  library: "從教材庫選",
+  library: "從教材挑選",
   paste: "貼上文字",
 };
 
@@ -75,24 +77,41 @@ export function Dialog({
   title,
   returnFocus,
   onClose,
+  onEscape,
+  size = "normal",
+  initialFocus,
+  role = "dialog",
   children,
 }: {
   title: string;
   /** Where focus goes when the dialog closes (by default, wherever it was before). Keep it stable. */
   returnFocus?: () => HTMLElement | null;
   onClose: () => void;
+  /** Escape, when it should do something else first (e.g. leave a preview inside the dialog). */
+  onEscape?: () => void;
+  /** `large`: the library picker (up to 1100 px wide; the whole screen on a phone). */
+  size?: "normal" | "large";
+  /** What takes focus when the dialog opens (a selector); by default the first field or button. */
+  initialFocus?: string;
+  /** `alertdialog` for a confirmation that cannot be undone. */
+  role?: "dialog" | "alertdialog";
   children: ReactNode;
 }) {
   const ids = useId();
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
+  const escapeRef = useRef(onEscape);
   useEffect(() => {
     closeRef.current = onClose;
-  }, [onClose]);
+    escapeRef.current = onEscape;
+  }, [onClose, onEscape]);
+  const focusFirst = useRef(initialFocus);
 
   useEffect(() => {
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const first = ref.current?.querySelector<HTMLElement>("input, textarea, select, button:not(.dialog-close)");
+    const first =
+      (focusFirst.current ? ref.current?.querySelector<HTMLElement>(focusFirst.current) : null) ??
+      ref.current?.querySelector<HTMLElement>("input, textarea, select, button:not(.dialog-close)");
     (first ?? ref.current)?.focus();
     return () => {
       const back = returnFocus?.() ?? before;
@@ -108,7 +127,7 @@ export function Dialog({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
-        closeRef.current();
+        (escapeRef.current ?? closeRef.current)();
         return;
       }
       if (event.key !== "Tab" || !ref.current) return;
@@ -137,9 +156,17 @@ export function Dialog({
     };
   }, []);
 
+  const large = size === "large";
   return (
-    <div className="scrim">
-      <div className="dialog attach-dialog" role="dialog" aria-modal="true" aria-labelledby={`${ids}-title`} ref={ref} tabIndex={-1}>
+    <div className={`scrim${large ? " has-large-dialog" : ""}`}>
+      <div
+        className={`dialog attach-dialog${large ? " is-large" : ""}`}
+        role={role}
+        aria-modal="true"
+        aria-labelledby={`${ids}-title`}
+        ref={ref}
+        tabIndex={-1}
+      >
         <div className="attach-dialog-head">
           <h2 id={`${ids}-title`}>{title}</h2>
           <button type="button" className="dialog-close" aria-label="關閉" onClick={onClose}>
@@ -207,17 +234,20 @@ function PasteForm({
 }
 
 /**
- * 上傳檔案, 從教材庫選 or 貼上文字, in a dialog: MaterialChooser's steps without its big
- * always-open form. Ends with a material choice, or nothing when closed.
+ * 上傳檔案 or 貼上文字, in a dialog: MaterialChooser's steps without its big always-open form.
+ * Ends with a material choice, or nothing when closed. (從教材挑選 is the LibraryPicker.)
  */
 export function AttachDialog({
   way,
+  purpose,
   pasted = { title: "", text: "" },
   returnFocus,
   onChoice,
   onClose,
 }: {
-  way: AttachWay;
+  way: "upload" | "paste";
+  /** An upload for a worksheet sample says so (`worksheet_sample`): it stays out of 我的教材. */
+  purpose?: MaterialPurpose;
   /** What was pasted before, to edit it. */
   pasted?: { title: string; text: string };
   returnFocus?: () => HTMLElement | null;
@@ -235,7 +265,7 @@ export function AttachDialog({
         />
       ) : (
         <div className="attach-step">
-          <LibraryStep way={way} onPicked={take} />
+          <LibraryStep way="upload" purpose={purpose} onPicked={take} />
         </div>
       )}
     </Dialog>

@@ -11,12 +11,17 @@ import type {
   CoreVersion,
   LessonDetail,
   LessonStep,
+  Material,
+  MaterialBrowse,
+  MaterialCard,
   MaterialLibrary,
   PreferenceAnswers,
   Preferences,
   QuestionId,
   SchoolClass,
   Teacher,
+  TemplateBrowse,
+  TemplateCard,
   Unit,
   UnitClassRef,
 } from "../api/types";
@@ -313,7 +318,109 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     // 備課 (the home page) lists recent prep sessions and offers the material library.
     "GET /api/prep-sessions": { sessions: [] },
     "GET /api/materials": emptyLibrary(),
+    // 教材參考／我的教材／學習單範本 and the pickers.
+    "GET /api/browse/materials": materialBrowse([]),
+    "GET /api/browse/templates": templateBrowse([]),
   };
+}
+
+// ---------- 教材參考、我的教材、學習單範本 (library contract) ----------
+
+/** One material card as GET /api/browse/materials lists it (all made up). */
+export const materialCard = (overrides: Partial<MaterialCard> = {}): MaterialCard => ({
+  id: 5,
+  title: "The Umbrella Stand",
+  scope: "personal",
+  category: "",
+  tags: [],
+  kind: "document",
+  file_type: "docx",
+  page_count: null,
+  paragraph_count: 4,
+  word_count: 300,
+  excerpt: "Mrs. Lin put an umbrella stand outside her shop.",
+  text_status: "ready",
+  looks_like_worksheet: false,
+  created_at: "2026-11-14T08:00:00Z",
+  owner_label: "我",
+  ...overrides,
+});
+
+/** A library material (GET /api/materials) as its card. */
+export const cardOf = (m: Material, overrides: Partial<MaterialCard> = {}): MaterialCard =>
+  materialCard({
+    id: m.id,
+    title: m.title,
+    kind: m.kind,
+    file_type: m.kind === "text" ? "text" : (m.filename?.split(".").pop() ?? m.kind),
+    page_count: m.page_count,
+    paragraph_count: m.paragraph_count,
+    word_count: m.word_count,
+    text_status: m.text_status,
+    looks_like_worksheet: m.looks_like_worksheet ?? false,
+    created_at: m.created_at,
+    ...overrides,
+  });
+
+/** Counts per key, as the server's facets. */
+function countBy(keys: string[]): Array<{ key: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const k of keys) counts.set(k, (counts.get(k) ?? 0) + 1);
+  return [...counts].map(([key, count]) => ({ key, count }));
+}
+
+/** A browse answer with these cards; facets are counted from them. */
+export const materialBrowse = (items: MaterialCard[], extra: Partial<MaterialBrowse> = {}): MaterialBrowse => ({
+  items,
+  next_cursor: null,
+  facets: {
+    categories: countBy(items.map((c) => c.category)),
+    tags: countBy(items.flatMap((c) => c.tags)),
+    file_types: countBy(items.map((c) => c.file_type)),
+  },
+  total: items.length,
+  ...extra,
+});
+
+/** One template card as GET /api/browse/templates lists it (all made up). */
+export const templateCard = (overrides: Partial<TemplateCard> = {}): TemplateCard => ({
+  id: 9,
+  title: "L2 學習單版型",
+  scope: "personal",
+  status: "ready",
+  category: "閱讀理解",
+  tags: [],
+  worksheet_kind: "課文深度閱讀",
+  instruction_language: "英文",
+  section_count: 3,
+  section_titles: ["Warm-up: [主題]", "Paragraph [n]: Find", "Video talk"],
+  source_material: { id: 4, title: "L2 學習單", file_type: "docx", page_count: 2 },
+  updated_at: "2026-11-14T08:00:00Z",
+  owner_label: "我",
+  ...overrides,
+});
+
+export const templateBrowse = (items: TemplateCard[], extra: Partial<TemplateBrowse> = {}): TemplateBrowse => ({
+  items,
+  next_cursor: null,
+  facets: {
+    categories: countBy(items.map((c) => c.category)),
+    tags: countBy(items.flatMap((c) => c.tags)),
+    langs: countBy(items.map((c) => c.instruction_language)),
+  },
+  total: items.length,
+  ...extra,
+});
+
+/** The query a browse call was made with (repeated keys as lists). */
+export function queryOf(call: MockCall): Record<string, string | string[]> {
+  const params = new URL(call.url, "http://x").searchParams;
+  const out: Record<string, string | string[]> = {};
+  for (const key of new Set(params.keys())) {
+    const all = params.getAll(key);
+    out[key] = all.length > 1 ? all : (all[0] ?? "");
+  }
+  return out;
 }
 
 /** A material library with nothing in it (uploads allowed). */

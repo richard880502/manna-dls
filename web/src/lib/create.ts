@@ -112,6 +112,12 @@ export const TAKE_AS_SAMPLE = "把它當範本";
 /** Where 照這份的樣式做 goes: the mimic page with this material as the sample. */
 export const mimicPath = (materialId: number) => `/create/mimic?sample=${materialId}`;
 
+/** Where 照這個範本做 goes: the mimic page with this template (平台範本 or 我的範本) as the sample. */
+export const mimicTemplatePath = (templateId: number) => `/create/mimic?template=${templateId}`;
+
+/** Where 用這篇出題 goes: a tool with this material (教材參考 or 我的教材) in the article slot. */
+export const toolMaterialPath = (tool: Tool, materialId: number) => `/create/${tool}?material=${materialId}`;
+
 /**
  * Typed words that pick a chip, in the contract's order (the first row that matches wins).
  * 照我的學習單做 comes first, so 「照我的學習單」 is not just 學習單.
