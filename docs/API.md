@@ -2068,3 +2068,5 @@ interface PrepTurn {
 - `prep_turns` 的「學習單產生完就是 `done`」改成「學習單的產生**開始過**而且結束」：學習單剛建立、產生還沒開始的那一瞬間，不會被輪詢誤判成 `done`（開始失敗時由開始的程式把這一輪設成 `failed`）。
 - 資料：`materials.looks_like_worksheet`（BOOLEAN，0016 之前的列第一次讀取時補上）、`prep_turns.template_id`、`prompt_versions` 新增 `worksheet_template_section` 第 2 版。
 - 程式進入點：偵測 `materials::detect::looks_like_worksheet`；對話等版型 `prep::run::start`（`spawn_after_template`）；schema `worksheet::template::section_out_schema`。
+
+**抽取提示詞 `worksheet_template_details` v2**：逐段（`per_paragraph = true`）的區塊，`item_count` 是「每一段」的題數，不是全部題數。真模型實測時，一份「每段各問一題、共 4 題」的範本被讀成每段 4 題，套到 5 段的新課文就出了 20 題。

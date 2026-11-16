@@ -6,7 +6,9 @@
 -- from that material or extracts a new one, and the first turn waits for it before generating.
 -- Materials say whether their text looks like a worksheet (a deterministic rule in
 -- `materials::detect`), and template-based worksheets get a Bloom level per item
--- (`worksheet_template_section` version 2; version 1 stays as it was).
+-- (`worksheet_template_section` version 2; version 1 stays as it was). `worksheet_template_details`
+-- version 2: for a per-paragraph section, item_count is the count per paragraph (a real-model run
+-- read 「one question per paragraph, 4 paragraphs」 as 4 per paragraph and made 20 questions).
 
 -- ---------------------------------------------------------------- materials
 -- `looks_like_worksheet`: computed by the server from the extracted (or pasted) text whenever
@@ -34,6 +36,28 @@ UPDATE prep_turns t
 -- a JSON string where it wants a line break). The JSON schema (built by the server) caps every
 -- string and array and keeps the properties in the written order.
 INSERT INTO prompt_versions (prompt_key, version_no, system_text, user_template) VALUES
+('worksheet_template_details', 2,
+$p$你是協助高中英文教師的備課助手。教師上傳一份自己做過的學習單（文字是從 DOCX/PDF 抽出來的，表格已被攤平，可能有斷行或順序錯亂）。
+請抽出這份學習單的「設計版型」，讓系統之後能用同樣的設計，為「另一課的新教材」產生一份相似的學習單。
+
+規則：
+1. 描述的是設計，不是這一課的內容。title_pattern、item_patterns 要寫成可套用到其他課的通用樣式，把課文專屬的字詞換成 [段落編號]、[關鍵字]、[人物] 這類佔位符。例如「Paragraph 3: Coherence」→「Paragraph [n]: [寫作概念]」；「What do they put on the altars?」→「What do [人物] do/put [地點]?（依段落細節提問）」。
+2. sections 必須與給定的大綱一一對應：數量相同、順序相同，每個大綱項目一個 section。
+3. student_tasks、answer_formats、scaffolds、generation_options 只能從給定的選項中選；不確定就少選，不要猜。
+4. item_count 是該區塊大約有幾題或幾格要學生作答。per_paragraph 為 true 的區塊，item_count 是「每一段」的題數，不是全部的題數：原學習單每段只問一題（例如第 1 題問第 1 段、第 2 題問第 2 段……）時，item_count 是 1。
+5. text_scope 說明這個區塊針對課文哪裡（例如「逐段」「全文」「第 1 段」「課文外」）。
+6. instruction_style 描述指示語的寫法（語言、語氣、長短，例如「英文祈使句，一句話」）。
+7. 不要寫出任何人名、學校、班級、出版社、教師或學生資料。
+8. style_notes 寫 3–6 條這位老師的設計習慣（例如「每段先問細節再問寫作手法」「句型練習都附中文提示」），也要是可套用到其他課的寫法。
+9. needs_external_material：這個區塊需要學習單本身課文以外的素材（影片、錄音、圖片，或另一篇文章）才能作答時為 true；只用課文就能完成時為 false。
+所有說明文字用繁體中文。$p$,
+$p$大綱（共 {{outline_count}} 項，sections 要逐項對應）：
+{{outline_lines}}
+
+以下是學習單文字：
+
+{{worksheet_text}}$p$),
+
 ('worksheet_template_section', 2,
 $p$你是協助高中英文教師的備課助手。教師提供了自己學習單的「設計版型」和一篇新教材。
 請完全依照版型，為新教材產生一份學習單：
