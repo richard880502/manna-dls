@@ -1438,11 +1438,9 @@ async fn admins_upload_edit_and_delete_platform_materials_and_templates() {
         ),
         (Some("字彙單 A"), Some("字彙"), json!(["龍騰", "高一"]))
     );
+    // Clearing the category suggests again, from the title 「字彙單 A」 first.
     let (s, v) = tpatch(json!({ "category": "" })).await;
-    assert_eq!(
-        (s, v["category"].as_str()),
-        (StatusCode::OK, Some("閱讀理解"))
-    );
+    assert_eq!((s, v["category"].as_str()), (StatusCode::OK, Some("字彙")));
     let (s, v) = tpatch(json!({ "category": "學測英文" })).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     let (s, _) = app
