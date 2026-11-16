@@ -48,6 +48,21 @@ pub struct Material {
     pub source: MaterialSource,
 }
 
+/// A worksheet's paragraphs without a leading title line ("The Umbrella Stand" pasted above the
+/// story): it is not a paragraph of the text, and counting it made 「第 1 段」 the title and
+/// shifted every paragraph number by one (seen in a real run of 照我的學習單做). Only the first
+/// paragraph, and only when at least two paragraphs remain; the library keeps the text as it is.
+fn without_leading_heading<T>(mut paragraphs: Vec<T>, text: impl Fn(&T) -> &str) -> Vec<T> {
+    if paragraphs.len() >= 3
+        && paragraphs
+            .first()
+            .is_some_and(|p| crate::sop::is_heading_like(text(p)))
+    {
+        paragraphs.remove(0);
+    }
+    paragraphs
+}
+
 impl Material {
     /// Pasted text, split into paragraphs in code. A paragraph whose text equals one of
     /// `previous` keeps that id; returns the material and the highest paragraph number used.
@@ -73,6 +88,7 @@ impl Material {
             })
             .unwrap_or_default();
         let (paragraphs, seq) = assign_paragraph_ids(&prev, previous_seq, split_paragraphs(text));
+        let paragraphs = without_leading_heading(paragraphs, |p| p.text.as_str());
         (
             Self {
                 title: title.trim().to_string(),
@@ -117,14 +133,16 @@ impl Material {
         (
             Self {
                 title: m.title.clone(),
-                paragraphs: m
-                    .paragraphs
-                    .iter()
-                    .map(|p| MaterialParagraph {
-                        id: p.id.clone(),
-                        text: p.text.clone(),
-                    })
-                    .collect(),
+                paragraphs: without_leading_heading(
+                    m.paragraphs
+                        .iter()
+                        .map(|p| MaterialParagraph {
+                            id: p.id.clone(),
+                            text: p.text.clone(),
+                        })
+                        .collect(),
+                    |p| p.text.as_str(),
+                ),
                 source: MaterialSource {
                     kind: kind.to_string(),
                     lesson_id,
@@ -203,6 +221,37 @@ impl Material {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_leading_title_line_is_not_paragraph_one() {
+        let (m, _) = Material::pasted(
+            None,
+            0,
+            "",
+            "The Umbrella Stand\n\nOn a rainy Monday, Mrs. Lin put out a bucket.\n\nHer neighbors laughed.",
+            "",
+        );
+        let texts: Vec<&str> = m.paragraphs.iter().map(|p| p.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "On a rainy Monday, Mrs. Lin put out a bucket.",
+                "Her neighbors laughed."
+            ]
+        );
+        assert!(m.numbered().starts_with("[P1] On a rainy Monday"));
+        // Two paragraphs only, or a first line that is prose: nothing is dropped.
+        let (m, _) = Material::pasted(None, 0, "", "Short Title\n\nOne sentence here.", "");
+        assert_eq!(m.paragraphs.len(), 2);
+        let (m, _) = Material::pasted(
+            None,
+            0,
+            "",
+            "It rained.\n\nThen it stopped.\n\nThe end.",
+            "",
+        );
+        assert_eq!(m.paragraphs.len(), 3);
+    }
+
     use super::*;
 
     #[test]
