@@ -58,6 +58,8 @@ function PrepSessionView({ id }: { id: number }) {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // With a worksheet in the session the bar edits it by default; 問 Manna asks a question instead.
+  const [barMode, setBarMode] = useState<"revise" | "ask">("revise");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [headError, setHeadError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -65,11 +67,15 @@ function PrepSessionView({ id }: { id: number }) {
   const [labels, setLabels] = useState<Record<number, Record<string, string>>>({});
   const [flash, setFlash] = useState<{ worksheetId: number; ids: ReadonlySet<string> } | null>(null);
   const previous = useRef<PrepSession | null>(null);
+  // A turn that appeared after the page loaded is scrolled into view, so the teacher sees it start.
+  const [arrived, setArrived] = useState<number | null>(null);
 
   const apply = useCallback((next: PrepSession) => {
     // A revision that just finished: its blocks light up for a moment in the worksheet above.
     const before = previous.current;
     if (before) {
+      const fresh = next.turns.find((t) => !before.turns.some((p) => p.id === t.id));
+      if (fresh) setArrived(fresh.id);
       const targets = reviseTargets(next.turns);
       for (const t of next.turns) {
         const was = before.turns.find((p) => p.id === t.id);
@@ -110,6 +116,11 @@ function PrepSessionView({ id }: { id: number }) {
       clearTimeout(timer);
     };
   }, [id, session, apply]);
+
+  useEffect(() => {
+    if (arrived === null) return;
+    document.getElementById(`prep-turn-${arrived}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [arrived]);
 
   useEffect(() => {
     if (!flash) return undefined;
@@ -157,7 +168,9 @@ function PrepSessionView({ id }: { id: number }) {
     const text = draft.trim();
     if (!text || locked) return;
     // No kind: the server revises the worksheet if there is one, otherwise answers.
-    if (await send({ request: text })) setDraft("");
+    const body: CreatePrepTurnRequest =
+      session && hasWorksheet(session) && barMode === "ask" ? { kind: "ask", request: text } : { request: text };
+    if (await send(body)) setDraft("");
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -357,7 +370,7 @@ function PrepSessionView({ id }: { id: number }) {
 
       <ol className="prep-turns" aria-label="備課對話">
         {session.turns.map((turn) => (
-          <li key={turn.id} className="prep-turn">
+          <li key={turn.id} id={`prep-turn-${turn.id}`} className="prep-turn">
             <p className="prep-request">
               <span className="sr-only">你：</span>
               <span className="prep-bubble">{turn.request}</span>
@@ -390,6 +403,26 @@ function PrepSessionView({ id }: { id: number }) {
 
       <form className="prep-bottom" onSubmit={(e) => void sendDraft(e)}>
         <ErrorText message={sendError} />
+        {hasWorksheet(session) && (
+          <div className="ws-seg prep-bar-mode" role="radiogroup" aria-label="要改學習單還是問問題">
+            {(
+              [
+                ["revise", "改學習單"],
+                ["ask", "問 Manna"],
+              ] as const
+            ).map(([mode, label]) => (
+              <label key={mode}>
+                <input
+                  type="radio"
+                  name={`${ids}-mode`}
+                  checked={barMode === mode}
+                  onChange={() => setBarMode(mode)}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        )}
         <div className="prep-bottom-row">
           <label className="sr-only" htmlFor={`${ids}-draft`}>
             給 Manna 的話
@@ -400,7 +433,13 @@ function PrepSessionView({ id }: { id: number }) {
             maxLength={2000}
             value={draft}
             disabled={locked}
-            placeholder={running ? WORKING_LINE : hasWorksheet(session) ? REVISE_PLACEHOLDER : FOLLOW_PLACEHOLDER}
+            placeholder={
+              running
+                ? WORKING_LINE
+                : hasWorksheet(session) && barMode === "revise"
+                  ? REVISE_PLACEHOLDER
+                  : FOLLOW_PLACEHOLDER
+            }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
           />

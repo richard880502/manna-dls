@@ -569,3 +569,12 @@
     max-width: 11rem;
   }
 }
+
+/* A new turn scrolls into view below the sticky top bar. */
+.prep-turn {
+  scroll-margin-top: 72px;
+}
+
+.prep-bar-mode {
+  margin-bottom: 0.5rem;
+}
