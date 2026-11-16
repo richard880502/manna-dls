@@ -18,11 +18,11 @@ use serde_json::{json, Value};
 use super::store::{self, SessionRow, TurnRow};
 use super::{
     activity_schema, ask_schema, chip_label, clean_answer, clean_plan, clean_text, revise_schema,
-    warmup_ideas, ActivityPlan, Answer, CurriculumRef, MaterialRef, RawPlan, RawRevision,
-    ResourceItem, Resources, Revision, ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP, ASK_SCHEMA_NAME,
-    CHANGES_MAX, CHANGE_ITEMS_MAX, CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK, KEY_REVISE,
-    KIND_ACTIVITY, KIND_ASK, KIND_ASSESSMENT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
-    MATERIALS_TOP, REPLY_CHARS, REVISE_SCHEMA_NAME,
+    warmup_ideas, ActivityPlan, Answer, CurriculumRef, MaterialRef, RawAnswer, RawPlan,
+    RawRevision, ResourceItem, Resources, Revision, ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP,
+    ASK_SCHEMA_NAME, CHANGES_MAX, CHANGE_ITEMS_MAX, CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK,
+    KEY_REVISE, KIND_ACTIVITY, KIND_ASK, KIND_ASSESSMENT, KIND_RESOURCES, KIND_REVISE,
+    KIND_WORKSHEET, MATERIALS_TOP, REPLY_CHARS, REVISE_SCHEMA_NAME,
 };
 use crate::ai::pipeline::InteractionMeta;
 use crate::ai::LlmRequest;
@@ -806,7 +806,7 @@ async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         state,
         session.teacher_id,
         c,
-        |raw: &Answer| match clean_answer(raw) {
+        |raw: &RawAnswer| match clean_answer(raw) {
             Ok(a) => Checked {
                 output: Some(a),
                 problems: Vec::new(),

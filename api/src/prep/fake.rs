@@ -90,7 +90,7 @@ pub fn activity(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value 
 
 pub fn ask(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     if unusable(attempt, has) {
-        return json!({ "answer": "", "follow_ups": [] });
+        return json!({ "paragraphs": [""], "follow_ups": [] });
     }
     let question: String = ctx["question"]
         .as_str()
@@ -105,9 +105,12 @@ pub fn ask(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
         ""
     };
     json!({
-        "answer": format!(
-            "## 測試回答\n**你問的是**：{question}\n1. 這是測試用的回答{material}（參考了 {recent} 則先前的對話）。\n2. 第二個重點。"
-        ),
+        "paragraphs": [
+            "## 測試回答".to_string(),
+            format!("**你問的是**：{question}"),
+            format!("1. 這是測試用的回答{material}（參考了 {recent} 則先前的對話）。"),
+            "2. 第二個重點。".to_string(),
+        ],
         "follow_ups": ["幫我做一張學習單", "再給我三個暖身活動", "  "],
     })
 }

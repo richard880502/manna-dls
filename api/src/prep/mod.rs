@@ -101,7 +101,9 @@ pub const STUCK_TIP_CHARS: usize = 200;
 pub const MINUTES_MIN: i64 = 1;
 pub const MINUTES_MAX: i64 = 50;
 
-pub const ANSWER_CHARS: usize = 1500;
+pub const ANSWER_CHARS: usize = 2500;
+pub const ANSWER_PARAGRAPHS: usize = 10;
+pub const ANSWER_PARAGRAPH_CHARS: usize = 400;
 pub const FOLLOW_UPS_MAX: usize = 3;
 pub const FOLLOW_UP_CHARS: usize = 40;
 
@@ -186,6 +188,15 @@ pub struct Resources {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Answer {
     pub answer: String,
+    pub follow_ups: Vec<String>,
+}
+
+/// What the model writes for `prep_ask`: the answer as separate paragraphs or points. gemma
+/// under a JSON schema tends to end a string where it wants a line break ("以下三個活動：" and
+/// nothing after it), so every line is its own array item and the server joins them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RawAnswer {
+    pub paragraphs: Vec<String>,
     pub follow_ups: Vec<String>,
 }
 
@@ -307,7 +318,15 @@ pub fn activity_schema(candidates: &[String]) -> Value {
 /// `prep_ask`.
 pub fn ask_schema() -> Value {
     obj(vec![
-        ("answer", s_max(ANSWER_CHARS)),
+        (
+            "paragraphs",
+            json!({
+                "type": "array",
+                "items": s_max(ANSWER_PARAGRAPH_CHARS),
+                "minItems": 1,
+                "maxItems": ANSWER_PARAGRAPHS,
+            }),
+        ),
         ("follow_ups", strings_max(FOLLOW_UPS_MAX, FOLLOW_UP_CHARS)),
     ])
 }
@@ -469,9 +488,17 @@ pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<Activit
     })
 }
 
-/// The checked answer: plain text, capped; follow-ups cleaned, empty ones dropped.
-pub fn clean_answer(raw: &Answer) -> Result<Answer, String> {
-    let answer = clean_text(&strip_markdown(&raw.answer), ANSWER_CHARS);
+/// The checked answer: the paragraphs joined one per line, plain text, capped; follow-ups
+/// cleaned, empty ones dropped.
+pub fn clean_answer(raw: &RawAnswer) -> Result<Answer, String> {
+    let joined = raw
+        .paragraphs
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let answer = clean_text(&strip_markdown(&joined), ANSWER_CHARS);
     if answer.is_empty() {
         return Err("answer 是空的。".to_string());
     }
@@ -611,15 +638,20 @@ mod tests {
 
     #[test]
     fn answers_are_plain_text() {
-        let a = clean_answer(&Answer {
-            answer: "## 標題\n* **重點**一\n正文".into(),
+        let a = clean_answer(&RawAnswer {
+            paragraphs: vec![
+                "## 標題".into(),
+                "* **重點**一".into(),
+                " ".into(),
+                "正文".into(),
+            ],
             follow_ups: vec!["  ".into(), "下一步？".into()],
         })
         .unwrap();
         assert_eq!(a.answer, "標題\n・重點一\n正文");
         assert_eq!(a.follow_ups, ["下一步？"]);
-        assert!(clean_answer(&Answer {
-            answer: " ".into(),
+        assert!(clean_answer(&RawAnswer {
+            paragraphs: vec![" ".into()],
             follow_ups: vec![]
         })
         .is_err());
