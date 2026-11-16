@@ -98,7 +98,7 @@ export function UnitPage() {
   return (
     <>
       <p className="crumbs">
-        <Link to="/">班級</Link> /{" "}
+        <Link to="/classes">班級</Link> /{" "}
         {activeClass ? (
           <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
         ) : (

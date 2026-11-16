@@ -373,11 +373,11 @@ export function CorePage() {
       <p className="crumbs">
         {activeClass ? (
           <>
-            <Link to="/">班級</Link> / <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
+            <Link to="/classes">班級</Link> / <Link to={`/classes/${activeClass.id}`}>{activeClass.name}</Link>
           </>
         ) : (
           <>
-            <Link to="/">班級</Link> / <Link to="/units">備課庫</Link>
+            <Link to="/classes">班級</Link> / <Link to="/units">備課庫</Link>
           </>
         )}{" "}
         / <Link to={`/units/${unitId}`}>{unit?.title ?? "單元"}</Link> / 單元想法

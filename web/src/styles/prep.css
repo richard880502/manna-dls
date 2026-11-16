@@ -1,0 +1,571 @@
+/* 備課對話 (prep sessions): the home page's input bar, the conversation page and its result cards.
+ * Built only from the tokens: the teacher's words in ink blue, what Manna made in gold, the
+ * worksheet as print. Action chips ask Manna, so they carry the gold outline. */
+
+.workspace.is-prep {
+  max-width: 54rem;
+}
+
+/* ================= the material slot (shared with 學習單) ================= */
+.material-chooser,
+.material-paste {
+  display: grid;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.material-chooser .material-ways {
+  margin-top: 0;
+}
+
+/* ================= home: one input bar ================= */
+.prep-home-head h1 {
+  font-size: var(--text-3xl);
+}
+
+.prep-bar-card {
+  margin-top: var(--space-lg);
+  padding: 0 var(--card-pad) var(--card-pad);
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-card);
+  background: var(--color-field);
+}
+
+.prep-tabs {
+  margin-bottom: var(--space-md);
+}
+
+.prep-panel,
+.prep-ask,
+.prep-other,
+.prep-topic,
+.prep-ask-material {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.prep-privacy {
+  margin: 0;
+}
+
+.prep-ask textarea {
+  min-height: 6rem;
+}
+
+/* Optional context: 班級, 照我的版型 (a pill that holds a select). */
+.prep-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+}
+
+.prep-chip-select {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: var(--control-h-sm);
+  padding-left: var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.prep-chip-select select {
+  width: auto;
+  min-width: 0;
+  max-width: 14rem;
+  min-height: var(--control-h-sm);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background-color: transparent;
+  color: var(--color-ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  text-overflow: ellipsis;
+}
+
+.prep-context-item {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  min-width: 0;
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+/* Action and next-step chips: they ask Manna, so they are gold; they wrap on a phone. */
+.prep-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.prep-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--space-md);
+  border: var(--rule-hair) solid var(--color-manna-rule);
+  border-radius: var(--radius-pill);
+  background: var(--color-manna-wash);
+  color: var(--color-manna-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+  line-height: 1.3;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.prep-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.prep-chip[aria-expanded="true"] {
+  border-color: var(--color-manna-ink);
+}
+
+.prep-chips.is-quiet .prep-chip {
+  border-color: var(--color-rule-strong);
+  background: var(--color-field);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+}
+
+@media (hover: hover) {
+  .prep-chip:not(:disabled):hover {
+    background: var(--color-manna-wash-2);
+  }
+
+  .prep-chips.is-quiet .prep-chip:not(:disabled):hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-wash);
+    color: var(--color-accent-text);
+  }
+}
+
+.prep-recent {
+  margin-top: var(--space-2xl);
+}
+
+/* ================= the conversation ================= */
+.prep-head {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.prep-title-row,
+.prep-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-md);
+  min-width: 0;
+}
+
+.prep-title-row h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.prep-rename input {
+  flex: 1 1 14rem;
+  width: auto;
+  min-width: 0;
+}
+
+.prep-delete {
+  margin-left: auto;
+  font-size: var(--text-sm);
+}
+
+.prep-delete [role="group"] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
+.prep-turns {
+  margin-top: var(--space-xl);
+  list-style: none;
+}
+
+.prep-turn + .prep-turn {
+  margin-top: var(--space-2xl);
+  padding-top: var(--space-xl);
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+/* The teacher's words: a bubble on the right, in her ink. */
+.prep-request {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.prep-bubble {
+  max-width: min(36rem, 85%);
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius-card);
+  background: var(--color-accent-wash);
+  color: var(--color-ink);
+  line-height: var(--leading-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prep-result {
+  margin-top: var(--space-md);
+  min-width: 0;
+}
+
+.prep-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prep-answer > .prep-pre {
+  max-width: var(--measure);
+  line-height: var(--leading-body);
+}
+
+.prep-working {
+  margin-top: var(--space-xs);
+}
+
+.prep-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+  font-family: var(--font-body);
+}
+
+.prep-tools .error-text {
+  flex-basis: 100%;
+}
+
+.prep-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--color-error-wash);
+  color: var(--color-error);
+}
+
+.prep-failed p {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.prep-changed {
+  margin-top: var(--space-xs);
+  color: var(--color-manna-ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+}
+
+/* ---------- worksheet / assessment ---------- */
+.prep-ws-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-lg);
+  margin-bottom: var(--space-sm);
+}
+
+.prep-export {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.prep-version {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.prep-sheet {
+  max-width: none;
+  overflow-wrap: anywhere;
+}
+
+.prep-sheet-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.prep-sheet-steps {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+  font-size: 0.9375rem;
+}
+
+.prep-sheet-options {
+  margin-top: var(--space-2xs);
+  padding-left: 1.2em;
+  list-style: none;
+}
+
+.prep-sheet-block {
+  margin-inline: calc(-1 * var(--space-xs));
+  padding-inline: var(--space-xs);
+  border-radius: var(--radius-sm);
+}
+
+.prep-sheet-block.is-changed {
+  background: var(--color-manna-wash);
+  box-shadow: inset 3px 0 0 var(--color-manna-rule);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .prep-sheet-block {
+    transition: background-color var(--dur-short) var(--ease-out);
+  }
+}
+
+/* ---------- 規劃教學活動 ---------- */
+.prep-result-title {
+  margin-bottom: var(--space-xs);
+  font-size: var(--text-lg);
+}
+
+.prep-section + .prep-section,
+.prep-activity > .prep-section + .prep-steps {
+  margin-top: var(--space-lg);
+}
+
+.prep-goals {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.prep-goals th,
+.prep-goals td {
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  text-align: left;
+  vertical-align: top;
+  line-height: var(--leading-ui);
+}
+
+.prep-goals th {
+  color: var(--color-muted);
+  font-weight: var(--weight-strong);
+}
+
+.prep-goals td:last-child {
+  width: 30%;
+}
+
+.prep-codes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+.prep-code {
+  display: inline-block;
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  color: var(--color-ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.prep-steps {
+  display: grid;
+  gap: var(--space-md);
+  list-style: none;
+}
+
+.prep-step {
+  padding: var(--card-pad);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-field);
+  min-width: 0;
+}
+
+.prep-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-xs);
+}
+
+.prep-phase {
+  background: var(--color-manna-wash);
+  color: var(--color-manna-ink);
+}
+
+.prep-minutes {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.prep-idea {
+  margin-top: var(--space-sm);
+  line-height: var(--leading-body);
+}
+
+.prep-idea-label,
+.prep-next-label {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+}
+
+.prep-options {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  list-style: none;
+}
+
+.prep-option {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  line-height: var(--leading-body);
+}
+
+.prep-more {
+  margin-top: var(--space-sm);
+}
+
+.prep-more summary {
+  color: var(--color-accent-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  cursor: pointer;
+}
+
+.prep-more > :not(summary) {
+  margin-top: var(--space-xs);
+}
+
+.prep-script {
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--color-rule);
+  font-family: var(--font-print);
+  line-height: 1.65;
+  list-style: none;
+}
+
+/* ---------- 找教學資源 ---------- */
+.prep-curriculum,
+.prep-material-links {
+  list-style: none;
+}
+
+.prep-curriculum li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+  padding: var(--space-xs) 0;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  line-height: var(--leading-ui);
+}
+
+.prep-curriculum li > span {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+.prep-material-links li + li {
+  margin-top: var(--space-2xs);
+}
+
+/* ================= next steps and the bottom bar ================= */
+.prep-next {
+  display: grid;
+  gap: var(--space-xs);
+  margin-top: var(--space-2xl);
+}
+
+.prep-bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  margin-top: var(--space-xl);
+  margin-inline: calc(-1 * var(--space-xs));
+  padding: var(--space-sm) var(--space-xs) var(--space-xs);
+  border-top: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper);
+}
+
+.prep-bottom-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+}
+
+.prep-bottom-row textarea {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-height: 10rem;
+}
+
+.prep-bottom-row .primary-button {
+  flex: none;
+}
+
+.prep-bottom-status {
+  margin-top: var(--space-2xs);
+}
+
+.prep-disclaimer {
+  margin-top: var(--space-2xs);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+/* ================= phone ================= */
+@media (max-width: 47.5rem) {
+  .prep-home-head h1 {
+    font-size: var(--text-2xl);
+  }
+
+  /* The bar sits above the bottom navigation. */
+  .prep-bottom {
+    bottom: var(--bottom-nav-h);
+  }
+
+  .prep-bubble {
+    max-width: 92%;
+  }
+
+  .prep-delete {
+    margin-left: 0;
+  }
+
+  .prep-goals td:last-child {
+    width: auto;
+  }
+
+  .prep-chip-select select {
+    max-width: 11rem;
+  }
+}

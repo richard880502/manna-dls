@@ -1,4 +1,5 @@
-// The app shell (docs/DESIGN_OVERHAUL.md step 1): three destinations (班級｜學習單｜教材), nothing unbuilt, all in Chinese.
+// The app shell (docs/DESIGN_OVERHAUL.md step 1, then 備課對話): four destinations (備課｜我的備課｜教材｜班級),
+// nothing unbuilt, all in Chinese.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -15,17 +16,17 @@ import {
 } from "../test/mockApi";
 
 describe("app shell", () => {
-  it("has exactly three destinations, plus preferences and sign-out", async () => {
+  it("has exactly four destinations, plus preferences and sign-out", async () => {
     signIn();
     mockApi(baseRoutes());
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "班級", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "老師，今天要教哪一課？", level: 1 })).toBeInTheDocument();
 
     const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
     const links = nav.getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["班級", "學習單", "教材"]);
-    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/", "/worksheets", "/materials"]);
-    expect(nav.getByRole("link", { name: "班級" })).toHaveAttribute("aria-current", "page");
+    expect(links.map((a) => a.textContent)).toEqual(["備課", "我的備課", "教材", "班級"]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/", "/prep", "/materials", "/classes"]);
+    expect(nav.getByRole("link", { name: "備課" })).toHaveAttribute("aria-current", "page");
 
     expect(screen.getByRole("link", { name: /T-2026-001.*備課偏好/ })).toHaveAttribute("href", "/preferences");
     expect(screen.getByRole("button", { name: "登出" })).toBeInTheDocument();
@@ -52,16 +53,17 @@ describe("app shell", () => {
       mockApi(baseRoutes());
       const { router } = renderApp(path);
       await waitFor(() => expect(router.state.location.pathname).toBe("/"));
-      expect(await screen.findByRole("heading", { name: "班級", level: 1 })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "老師，今天要教哪一課？", level: 1 })).toBeInTheDocument();
     },
   );
 
-  it("學習單 opens the generator: upload, pick or paste material to make one, and an honest empty list", async () => {
+  it("學習單 (reached from 我的備課) opens the generator: upload, pick or paste material to make one, and an honest empty list", async () => {
     signIn();
     mockApi({ ...baseRoutes(), "GET /api/worksheets": [] });
     const user = userEvent.setup();
     renderApp("/");
-    await user.click(await screen.findByRole("link", { name: "學習單" }));
+    await user.click(await screen.findByRole("link", { name: "我的備課" }));
+    await user.click(await screen.findByRole("link", { name: "所有學習單" }));
 
     expect(await screen.findByRole("heading", { name: "學習單", level: 1 })).toBeInTheDocument();
     const ways = within(screen.getByRole("group", { name: "教材從哪裡來" }));
@@ -70,7 +72,7 @@ describe("app shell", () => {
     await user.click(ways.getByRole("button", { name: "貼上文字" }));
     expect(screen.getByRole("textbox", { name: "貼上教材文字" })).toBeInTheDocument();
     expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
-    expect(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "學習單" })).toHaveAttribute(
+    expect(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "我的備課" })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -139,11 +141,27 @@ describe("app shell", () => {
     expect(currentNav()).toEqual(["班級"]);
   });
 
+  it("班級 keeps the class home, now at /classes; the old class, unit and lesson links still work", async () => {
+    signIn();
+    mockApi(baseRoutes());
+    const user = userEvent.setup();
+    renderApp("/");
+    await user.click(await screen.findByRole("link", { name: "班級" }));
+    expect(await screen.findByRole("heading", { name: "班級", level: 1 })).toBeInTheDocument();
+    expect(currentNav()).toEqual(["班級"]);
+    // The home page points to the full SOP path too.
+    await user.click(screen.getByRole("link", { name: "備課" }));
+    expect(await screen.findByRole("link", { name: "完整備課流程（班級、單元、課例 SOP）" })).toHaveAttribute(
+      "href",
+      "/classes",
+    );
+  });
+
   it("does not stop a teacher without preferences with a survey", async () => {
     signIn();
     mockApi(baseRoutes({}, null));
     renderApp("/");
-    expect(await screen.findByRole("heading", { name: "班級", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "老師，今天要教哪一課？", level: 1 })).toBeInTheDocument();
     expect(screen.queryByText(/初次使用設定/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /備課偏好/ })).toHaveAttribute("href", "/preferences");
   });

@@ -95,7 +95,7 @@ describe("班級 (home)", () => {
         run({ id: 23, class_id: 3, class_name: "高一 3 班", review_completed_at: "2026-11-12T03:00:00Z", ...ended }),
       ],
     });
-    renderApp("/");
+    renderApp("/classes");
 
     // The one focal block: the class that is in a lesson right now, and its one filled action.
     const next = within(await screen.findByRole("region", { name: /L3 倒裝句\s+第 1 節/ }));
@@ -145,7 +145,7 @@ describe("班級 (home)", () => {
       ],
       "GET /api/runs": [run({ id: 21, class_id: 7, class_name: "高一 7 班", ...ended })],
     });
-    renderApp("/");
+    renderApp("/classes");
     const block = within(await screen.findByRole("region", { name: /第 3 節/ }));
     expect(block.getByText("接下來 · 高一 7 班")).toBeInTheDocument();
     expect(block.getByText("上一節 11/12 上完。")).toBeInTheDocument();
@@ -165,7 +165,7 @@ describe("班級 (home)", () => {
       ],
     });
     const user = userEvent.setup();
-    const { router } = renderApp("/");
+    const { router } = renderApp("/classes");
     await user.click(await screen.findByRole("button", { name: "開始上課" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/lessons/7/runs")).toEqual({ class_id: 7 }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/runs/9"));
@@ -185,7 +185,7 @@ describe("班級 (home)", () => {
       ],
     });
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
     await user.click(await screen.findByRole("link", { name: "繼續備課" }));
     expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
     // The class appears once, in the breadcrumb.
@@ -215,7 +215,7 @@ describe("班級 (home)", () => {
       ]),
     });
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
 
     const row = within((await screen.findByRole("heading", { name: "我的班級", level: 3 })).closest("li") as HTMLElement);
     expect(row.getByText(/2 個單元/)).toBeInTheDocument();
@@ -251,7 +251,7 @@ describe("creating a class", () => {
     signIn();
     const api = mockApi(routes());
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
 
     const invite = within(await screen.findByRole("region", { name: "先建立你的第一個班級" }));
     expect(invite.getByRole("button", { name: "先略過" })).toBeInTheDocument();
@@ -288,7 +288,7 @@ describe("creating a class", () => {
     signIn();
     const api = mockApi(routes());
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
     const invite = within(await screen.findByRole("region", { name: "先建立你的第一個班級" }));
     await user.type(invite.getByRole("textbox", { name: "班級名稱" }), "閱讀選修 A");
     const profile = invite.getByRole("textbox", { name: "班級特性（選填）" });
@@ -317,7 +317,7 @@ describe("creating a class", () => {
     signIn();
     const api = mockApi(routes());
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
     await user.click(await screen.findByRole("button", { name: "先略過" }));
     expect(screen.queryByRole("region", { name: "先建立你的第一個班級" })).not.toBeInTheDocument();
     const empty = within(screen.getByText(/還沒有班級。/));
@@ -332,7 +332,7 @@ describe("creating a class", () => {
     signIn();
     const api = mockApi({ ...routes(), "GET /api/classes": [class3] });
     const user = userEvent.setup();
-    renderApp("/");
+    renderApp("/classes");
     await user.click(await screen.findByRole("button", { name: "新增班級" }));
     const form = within(screen.getByRole("region", { name: "新增班級" }));
     expect(form.getByRole("textbox", { name: "班級特性（選填）" })).toHaveValue("");
@@ -521,7 +521,7 @@ describe("class page", () => {
     expect(confirm.getByText(/這班的上課紀錄與補寫都保留，之後可以取消封存。/)).toBeInTheDocument();
     await user.click(confirm.getByRole("button", { name: "確定封存" }));
     await waitFor(() => expect(api.callsTo("POST", "/api/classes/3/archive")).toHaveLength(1));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(window.sessionStorage.getItem(CURRENT_CLASS_STORAGE_KEY)).toBeNull();
   });
 });

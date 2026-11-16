@@ -100,7 +100,7 @@ export function RecordIndexPage() {
   return (
     <>
       <p className="crumbs">
-        <Link to="/">班級</Link> / 上課紀錄
+        <Link to="/classes">班級</Link> / 上課紀錄
       </p>
       <div className="page-head">
         <h1 id="record-heading">上課紀錄</h1>

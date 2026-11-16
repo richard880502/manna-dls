@@ -28,6 +28,7 @@ import {
   toggleIn,
   type SheetBlock,
 } from "../../lib/worksheet";
+import { saveBlob } from "../../lib/download";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { LessonLinkControls } from "./LessonLink";
@@ -533,14 +534,7 @@ function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) 
       const failed = await ws.flush();
       if (failed) throw new Error(failed);
       const { blob, filename } = await api.exportWorksheet(state!.id, { format, level, audience });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveBlob(blob, filename);
     } catch (err) {
       setError(err instanceof Error && !("status" in err) ? `沒有匯出：${err.message}` : errorMessage(err));
     } finally {

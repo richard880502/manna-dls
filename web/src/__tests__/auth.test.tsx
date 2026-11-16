@@ -17,7 +17,7 @@ describe("login", () => {
     await user.type(screen.getByLabelText("邀請碼"), "  INVITE-42 ");
     await user.click(screen.getByRole("button", { name: "登入" }));
 
-    expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "老師，今天要教哪一課？" })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/auth/login")[0]?.body).toEqual({ code: "INVITE-42" });
     expect(window.localStorage.getItem(TOKEN_STORAGE_KEY)).toBe("tok-123");
 
@@ -68,7 +68,7 @@ describe("demo banner", () => {
   it("stays on every page after login", async () => {
     signIn();
     mockApi(baseRoutes({ demo_mode: true }));
-    renderApp("/");
+    renderApp("/classes");
     expect(await screen.findByRole("heading", { name: "班級" })).toBeInTheDocument();
     expect(await screen.findByText("示範環境：請勿輸入真實教師或學生資料")).toBeInTheDocument();
   });
