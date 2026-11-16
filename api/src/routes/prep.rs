@@ -13,7 +13,8 @@ use serde_json::json;
 
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
-use crate::materials::store as material_store;
+use crate::materials::ocr;
+use crate::materials::store::{self as material_store, MaterialRow};
 use crate::prep::kit::{self, KitWorksheet};
 use crate::prep::run::{self, TurnInput};
 use crate::prep::store::{self, Session, SessionRow, Summary};
@@ -137,10 +138,29 @@ async fn usable_material(db: &sqlx::PgPool, teacher_id: i64, id: i64) -> AppResu
     let row = material_store::readable(db, id, teacher_id)
         .await
         .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    ocr::check_idle(&row)?;
     if row.text_status != "ready" || row.paragraphs.0.is_empty() {
         return Err(AppError::bad_request(MSG_NO_TEXT));
     }
     Ok((row.id, row.title))
+}
+
+/// A worksheet sample (照我的學習單做) and whether its OCR is still running: such a sample is
+/// waited for (docs/API.md「Phase 2.10」); any other follows the rules of
+/// `POST /api/worksheet-templates` (400 otherwise).
+async fn sample_source(
+    db: &sqlx::PgPool,
+    teacher_id: i64,
+    id: i64,
+) -> AppResult<(MaterialRow, bool)> {
+    // The teacher's own sample or a platform one (學習單範本).
+    let row = material_store::readable(db, id, teacher_id)
+        .await
+        .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    if ocr::is_open(&row.ocr_status) {
+        return Ok((row, true));
+    }
+    Ok((tpl_extract::source(db, teacher_id, id).await?, false))
 }
 
 async fn spawn_turn(
@@ -235,9 +255,8 @@ pub async fn create(
     if let Some(template_id) = req.template_id {
         tpl_store::ready_for_use(db, teacher.id(), template_id).await?;
     }
-    // The sample follows the rules of `POST /api/worksheet-templates` (400 otherwise).
     let sample = match sample_id {
-        Some(id) => Some(tpl_extract::source(db, teacher.id(), id).await?),
+        Some(id) => Some(sample_source(db, teacher.id(), id).await?),
         None => None,
     };
     // A library material wins over pasted text (which is then not stored), as for worksheets.
@@ -261,15 +280,24 @@ pub async fn create(
     };
     // The sample's template: the newest ready one made from it (or one still extracting),
     // otherwise a new one, inserted and extracted exactly as `POST /api/worksheet-templates`.
+    // A sample still being read by OCR gets a new template (or one already waiting for it)
+    // that is extracted once the OCR is done; the turn waits for it as for any extraction.
     let (template_id, extraction) = match sample {
-        Some(m) => {
+        Some((m, after_ocr)) => {
             tpl_store::expire_stale(db, teacher.id(), tpl_extract::stale_after(&state)).await?;
-            match tpl_store::reusable_for_material(db, teacher.id(), m.id).await? {
+            let reusable = if after_ocr {
+                tpl_store::extracting_for_material(db, teacher.id(), m.id).await?
+            } else {
+                tpl_store::reusable_for_material(db, teacher.id(), m.id).await?
+            };
+            match reusable {
                 Some(t) => (Some(t.id), None),
                 None => {
                     let title = tpl_extract::default_title(&m.title);
                     let t = tpl_store::insert(db, teacher.id(), &title, m.id).await?;
-                    (Some(t.id), Some((t, m.text)))
+                    // `None`: the text comes from the OCR.
+                    let text = (!after_ocr).then_some(m.text);
+                    (Some(t.id), Some((t, text)))
                 }
             }
         }
@@ -317,8 +345,10 @@ pub async fn create(
     }
     .await;
     // The template exists either way: its extraction always runs.
-    if let Some((t, text)) = extraction {
-        tpl_extract::spawn(&state, &t, text);
+    match extraction {
+        Some((t, Some(text))) => tpl_extract::spawn(&state, &t, text),
+        Some((t, None)) => tpl_extract::spawn_after_ocr(&state, &t),
+        None => {}
     }
     Ok((StatusCode::CREATED, Json(made?)))
 }

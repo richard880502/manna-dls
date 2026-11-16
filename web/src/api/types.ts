@@ -1161,6 +1161,24 @@ export type MaterialOrigin = "paste" | "upload" | "url";
 /** ready：有文字可讀、可注記；no_text：文件沒有文字層（掃描檔）；failed：讀不出來；not_applicable：圖片、影音、網址 */
 export type MaterialTextStatus = "ready" | "no_text" | "failed" | "not_applicable";
 
+// ---- Phase 2.10：掃描檔與 OCR ----
+
+/** none：沒有辨識；queued／running：辨識中（教材暫時不能拿來做學習單、備課或版型）；done；failed */
+export type OcrStatus = "none" | "queued" | "running" | "done" | "failed";
+
+export interface MaterialOcr {
+  status: OcrStatus;
+  /** 已處理的頁（成功或失敗） */
+  done_pages: number;
+  /** 要辨識的頁數（PDF 頁數不明時先是 0） */
+  total_pages: number;
+  /** failed：原因；done：附註（失敗或略過的頁）或 null */
+  error: string | null;
+}
+
+/** file：從檔案擷取或貼上的文字；ocr：由 OCR 辨識 */
+export type TextSource = "file" | "ocr";
+
 export interface MaterialLessonUse {
   lesson_id: number;
   lesson_title: string;
@@ -1197,6 +1215,9 @@ export interface Material {
   purpose?: MaterialPurpose;
   category?: string;
   tags?: string[];
+  /** Phase 2.10：掃描檔的文字辨識。舊的伺服器沒有這兩欄（當作沒有辨識） */
+  ocr?: MaterialOcr;
+  text_source?: TextSource;
 }
 
 export interface MaterialDetail extends Material {
@@ -1689,6 +1710,9 @@ export interface MaterialCard {
   looks_like_worksheet: boolean;
   created_at: string;
   owner_label: "Manna 知識庫" | "我";
+  /** Phase 2.10；舊的伺服器沒有這兩欄 */
+  ocr?: MaterialOcr;
+  text_source?: TextSource;
 }
 
 /** 分面只依 area 與 q 計算（每個 chip 顯示選了會有幾份） */
@@ -1885,6 +1909,10 @@ export interface PrepTurn {
   interaction_id: number | null;
   created_at: string;
   finished_at: string | null;
+  /** 這一輪在等學習單範本的 OCR；其他時候沒有這一欄（Phase 2.10） */
+  phase?: "ocr";
+  /** 與 phase 一起出現 */
+  ocr?: { done_pages: number; total_pages: number };
 }
 
 /** 對話的出題選項：之後在對話裡做的每一份學習單都帶入（settings 的同名欄位）。 */
@@ -1977,6 +2005,9 @@ export interface AdminLibraryMaterial {
   looks_like_worksheet: boolean;
   created_at: string;
   owner_label: string;
+  /** Text recognition of a scanned file (Phase 2.10); absent from older servers. */
+  ocr?: MaterialOcr;
+  text_source?: TextSource;
 }
 
 /** A platform template as the admin APIs return it (POST /api/admin/library/templates, PATCH, retry). */

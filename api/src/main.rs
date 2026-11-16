@@ -4,7 +4,7 @@ use anyhow::Context;
 use manna_api::config::{AiProviderKind, Config};
 use manna_api::storage::s3::S3Storage;
 use manna_api::storage::{StorageBackend, StorageConfig};
-use manna_api::{auth, build_app, db, kb_embeddings, AppState};
+use manna_api::{auth, build_app, db, kb_embeddings, materials, AppState};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -33,6 +33,9 @@ async fn run() -> anyhow::Result<()> {
     if let Some(warning) = &config.embedding.warning {
         tracing::warn!("{warning}; retrieval is keyword-only");
     }
+    if let Some(warning) = &config.ocr.warning {
+        tracing::warn!("{warning}; scanned files keep the text they were uploaded with");
+    }
     if config.ai_provider == AiProviderKind::Fake {
         tracing::warn!("AI_PROVIDER=fake: AI outputs are deterministic test fixtures");
     }
@@ -53,6 +56,24 @@ async fn run() -> anyhow::Result<()> {
     // Index whatever is not embedded yet (first deploy, model change, interrupted run). In the
     // background: a slow or failing embedding provider must not delay startup.
     kb_embeddings::spawn_sync(&state, "startup", None, false);
+    // OCR runs the last process left open are taken over before requests are served (a read
+    // could otherwise report an old one as stale first); their jobs run in the background.
+    match materials::ocr::recover(&state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            resumed = n,
+            "resumed OCR runs left open by the last process"
+        ),
+        Err(e) => tracing::error!(error = %e, "could not resume open OCR runs"),
+    }
+    match materials::ocr::backfill_platform(&state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            started = n,
+            "OCR started for knowledge-base files without text"
+        ),
+        Err(e) => tracing::error!(error = %e, "could not start OCR for knowledge-base files"),
+    }
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr)
         .await

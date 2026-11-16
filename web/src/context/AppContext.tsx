@@ -222,3 +222,11 @@ export function useApp(): AppContextValue {
   if (!ctx) throw new Error("useApp must be used inside <AppProvider>");
   return ctx;
 }
+
+/**
+ * The signed-in account when there is an app around, or null: for components that also render
+ * on their own (the material viewer in a test, a preview) and only adjust what they offer.
+ */
+export function useSignedInTeacher(): Teacher | null {
+  return useContext(AppContext)?.teacher ?? null;
+}

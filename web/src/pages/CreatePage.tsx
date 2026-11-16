@@ -35,6 +35,7 @@ import {
 } from "../components/template/SampleChooser";
 import { TemplateSelect, useReadyTemplates } from "../components/template/TemplateSelect";
 import { useApp } from "../context/AppContext";
+import { ocrBusyError, ocrBusyLine, ocrOpen } from "../lib/ocr";
 import {
   EXEMPLAR_TEXT,
   FORMAT_CHOICES,
@@ -112,6 +113,11 @@ function Generator({ tool }: { tool: Tool }) {
   const [needMaterial, setNeedMaterial] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 產生 was refused because a material is still being read (OCR, 409): said beside the button
+   * for as long as the same material (and sample) are chosen.
+   */
+  const [ocrRefusal, setOcrRefusal] = useState<{ key: string; message: string } | null>(null);
 
   const fields = TOOL_FIELDS[tool];
   const defaultClass = classes?.some((c) => c.id === currentClassId) ? currentClassId : null;
@@ -131,6 +137,8 @@ function Generator({ tool }: { tool: Tool }) {
   const pickedMaterial = picked?.picked ?? null;
   const worksheetLike =
     pickedMaterial?.looks_like_worksheet === true && !keptAsText.has(pickedMaterial.id) ? pickedMaterial : null;
+  const chosenKey = JSON.stringify([material, mimic && sample ? sampleFields(sample) : null]);
+  const ocrBusy = ocrRefusal?.key === chosenKey ? ocrRefusal.message : null;
 
   /** Takes a handled parameter out of the address (the rest stays). */
   const setParamsRef = useRef(setParams);
@@ -173,7 +181,8 @@ function Generator({ tool }: { tool: Tool }) {
       .getLibraryMaterial(sampleParam)
       .then((m) => {
         if (!alive) return;
-        if (m.text_status === "ready") take(m);
+        // A sample still being read is fine: the server waits for its OCR.
+        if (m.text_status === "ready" || ocrOpen(m.ocr)) take(m);
         else setSampleError(NO_TEXT_LINE);
         drop("sample");
       })
@@ -223,7 +232,9 @@ function Generator({ tool }: { tool: Tool }) {
       .getLibraryMaterial(materialParam)
       .then((m) => {
         if (!alive) return;
-        if (m.text_status === "ready") {
+        if (m.ocr && ocrOpen(m.ocr)) {
+          setMaterialError(ocrBusyLine(m.ocr));
+        } else if (m.text_status === "ready") {
           setPicked({ way: "library", picked: pickedOf(m), title: "", text: "" });
           setNeedMaterial(false);
           setMaterialError(null);
@@ -272,6 +283,7 @@ function Generator({ tool }: { tool: Tool }) {
 
     setBusy(true);
     setError(null);
+    setOcrRefusal(null);
     try {
       const session = await api.createPrepSession(
         asCreateRequest({
@@ -286,7 +298,9 @@ function Generator({ tool }: { tool: Tool }) {
       );
       navigate(`/prep/${session.id}`);
     } catch (err) {
-      setError(errorMessage(err));
+      const reading = ocrBusyError(err);
+      if (reading) setOcrRefusal({ key: chosenKey, message: reading });
+      else setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -575,11 +589,16 @@ function Generator({ tool }: { tool: Tool }) {
         <p className="create-summary" id={`${ids}-summary`} aria-live="polite">
           {summary}
         </p>
+        {ocrBusy && (
+          <p className="error-text create-bar-alert" id={`${ids}-ocr`} role="alert">
+            {ocrBusy}
+          </p>
+        )}
         <button
           type="button"
           className="primary-button"
           disabled={busy || totalOff || needed !== null}
-          aria-describedby={needed ? `${ids}-summary` : undefined}
+          aria-describedby={needed ? `${ids}-summary` : ocrBusy ? `${ids}-ocr` : undefined}
           onClick={() => void generate()}
         >
           {busy ? "產生中…" : "產生"}

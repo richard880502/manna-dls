@@ -16,6 +16,7 @@ pub mod browse;
 pub mod catalog;
 pub mod detect;
 pub mod extract;
+pub mod ocr;
 pub mod store;
 
 /// Pasted text (same bound as before for the lesson SOP).

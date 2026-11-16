@@ -16,8 +16,10 @@ import {
 import { Tabs } from "../components/library/Tabs";
 import { MaterialAddForm, useMaterialLibrary } from "../components/material/MaterialLibrary";
 import { MaterialViewer } from "../components/material/MaterialViewer";
+import { OcrFollow } from "../components/material/Ocr";
 import { OncePerPage } from "../components/OncePerPage";
 import { mimicTemplatePath } from "../lib/create";
+import { ocrFailed, ocrFailedLine, ocrOpen } from "../lib/ocr";
 import { NO_TEXT_MESSAGE, TEMPLATES_INTRO } from "../lib/templates";
 
 const TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
@@ -27,17 +29,22 @@ const TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
 
 /**
  * 上傳我的學習單: the file goes in as a worksheet sample (never into 我的教材), then Manna starts
- * reading its design into a template.
+ * reading its design into a template (a scanned worksheet's text is read by OCR first).
  */
 function UploadSample({ onStarted, onCancel }: { onStarted: (title: string) => void; onCancel: () => void }) {
   const { library, error, reload } = useMaterialLibrary();
   const [busy, setBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [reading, setReading] = useState<MaterialDetail | null>(null);
 
   async function start(m: MaterialDetail) {
     setStartError(null);
+    if (ocrOpen(m.ocr)) {
+      setReading(m);
+      return;
+    }
     if (m.text_status !== "ready") {
-      setStartError(NO_TEXT_MESSAGE);
+      setStartError(ocrFailed(m.ocr) && m.ocr ? ocrFailedLine(m.ocr) : NO_TEXT_MESSAGE);
       return;
     }
     setBusy(true);
@@ -61,6 +68,23 @@ function UploadSample({ onStarted, onCancel }: { onStarted: (title: string) => v
     );
   }
   if (!library) return <Loading />;
+  if (reading) {
+    return (
+      <div className="template-add">
+        <OcrFollow
+          material={reading}
+          onDone={(m) => {
+            setReading(null);
+            void start(m);
+          }}
+        />
+        <ErrorText message={startError} />
+        <button type="button" className="text-link is-plain" onClick={onCancel}>
+          取消
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="template-add">
       <MaterialAddForm

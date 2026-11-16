@@ -419,6 +419,13 @@
   left: var(--space-sm);
 }
 
+/* 「辨識中 2／8」, 「辨識失敗」: the bottom corner, under 學習單？. */
+.lib-badge.is-ocr {
+  top: auto;
+  bottom: var(--space-sm);
+  left: var(--space-sm);
+}
+
 /* Manna's guess: gold. */
 .lib-badge.is-sheet,
 .lib-badge.is-extracting {

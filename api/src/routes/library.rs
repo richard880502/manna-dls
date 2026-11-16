@@ -22,6 +22,7 @@ use crate::auth::{AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::annotations::{self, AiNote, Annotation, Patch as AnnotationPatch};
 use crate::materials::catalog::{self, Placement, PURPOSE_MATERIAL};
+use crate::materials::ocr;
 use crate::materials::store::{self, Deleted, Material, MaterialDetail, Upload, Usage};
 use crate::materials::{self, file_type_for_name, Kind, FILE_TYPES};
 use crate::routes::owned_lesson;
@@ -89,6 +90,7 @@ pub async fn list(
     if let Some(lesson_id) = q.lesson_id {
         owned_lesson(&state.db, lesson_id, teacher.id()).await?;
     }
+    ocr::expire_stale(&state, teacher.id()).await?;
     let purpose = match (q.purpose.as_deref(), q.lesson_id) {
         (Some(p), _) => Some(catalog::parse_purpose(Some(p))?),
         (None, Some(_)) => None,
@@ -113,6 +115,7 @@ pub async fn get_one(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<MaterialDetail>> {
     teacher.require(Capability::UseMaterials)?;
+    ocr::expire_stale(&state, teacher.id()).await?;
     let row = store::readable(&state.db, id, teacher.id()).await?;
     Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
 }
@@ -268,7 +271,10 @@ pub async fn upload(
     )
     .await?;
     link_new(&state, teacher.id(), row.id, lesson_id).await?;
-    Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
+    // Read the answer before OCR starts: a fast job could otherwise finish first.
+    let detail = store::detail(&state.db, row.clone(), teacher.id()).await?;
+    ocr::spawn_for(&state, &row);
+    Ok(Json(detail))
 }
 
 /// Reads the `file` field of an upload form: its name and bytes. The size is checked against
@@ -301,6 +307,24 @@ pub async fn read_file_field(
         data.extend_from_slice(&chunk);
     }
     Ok((filename, data.freeze()))
+}
+
+/// `POST /api/materials/:id/ocr` (「用 OCR 重新讀取」): reads an uploaded PDF or image again
+/// with OCR. 202 with the material (`ocr.status = "queued"`); 409 while a run is open; 400 for
+/// anything else; 503 when OCR is off.
+pub async fn run_ocr(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<(StatusCode, Json<MaterialDetail>)> {
+    teacher.require(Capability::UseMaterials)?;
+    ocr::expire_stale(&state, teacher.id()).await?;
+    // The owner, or ManageKnowledge for a platform material.
+    let row = store::writable(&state.db, id, &teacher).await?;
+    let row = ocr::start_manual(&state, &row).await?;
+    let detail = store::detail(&state.db, row.clone(), teacher.id()).await?;
+    ocr::spawn_for(&state, &row);
+    Ok((StatusCode::ACCEPTED, Json(detail)))
 }
 
 // ---------------------------------------------------------------- change, delete

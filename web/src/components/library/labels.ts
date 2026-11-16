@@ -9,6 +9,7 @@ import type {
   TemplateCard,
   WsInstructionLanguage,
 } from "../../api/types";
+import { OCR_NOT_YET, ocrOpen } from "../../lib/ocr";
 import type { IconName } from "../Icon";
 
 /** 教材參考's categories (platform materials), in this order. */
@@ -106,7 +107,8 @@ export function materialCardMeta(c: MaterialCard): string {
   if (c.page_count) parts.push(`${c.page_count} 頁`);
   else if (hasText && c.paragraph_count > 0) parts.push(`${c.paragraph_count} 段`);
   if (hasText && c.word_count > 0) parts.push(aboutWords(c.word_count));
-  if (c.text_status === "no_text") parts.push("沒有可選取的文字");
+  // While Manna reads a scan, the badge says so; 「沒有可選取的文字」 would soon be wrong.
+  if (c.text_status === "no_text" && !ocrOpen(c.ocr)) parts.push("沒有可選取的文字");
   if (c.text_status === "failed") parts.push("文字讀不出來");
   return parts.join(" · ");
 }
@@ -121,8 +123,13 @@ export function templateCardMeta(c: TemplateCard): string {
   return [`${c.section_count} 區`, langLabel(c.instruction_language), c.category].filter(Boolean).join(" · ");
 }
 
-/** A material can go into an article slot only with text. */
-export const usableMaterial = (c: Pick<MaterialCard, "text_status">) => c.text_status === "ready";
+/** A material can go into an article slot only with text, and not while OCR is reading it. */
+export const usableMaterial = (c: Pick<MaterialCard, "text_status" | "ocr">) =>
+  c.text_status === "ready" && !ocrOpen(c.ocr);
+
+/** Why 選用 (or 用這篇出題) is off for this card, as its tooltip; undefined when it is on. */
+export const unusableReason = (c: Pick<MaterialCard, "text_status" | "ocr">): string | undefined =>
+  ocrOpen(c.ocr) ? OCR_NOT_YET : c.text_status === "ready" ? undefined : "讀不到文字，不能出題";
 
 /** The categories to show as chips: the fixed list's order first, then any other key the server counted. */
 export function categoryChips(

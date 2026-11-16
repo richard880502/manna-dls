@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { MaterialBrowser } from "../components/library/BrowsePanel";
 import { UseMaterialMenu } from "../components/library/Cards";
-import { PREVIEW, cardTitle, usableMaterial } from "../components/library/labels";
+import { PREVIEW, cardTitle, unusableReason, usableMaterial } from "../components/library/labels";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 
 /**
@@ -35,7 +35,7 @@ export function ReferencePage() {
               >
                 {PREVIEW}
               </button>
-              <UseMaterialMenu card={card} disabled={!usableMaterial(card)} />
+              <UseMaterialMenu card={card} disabled={!usableMaterial(card)} title={unusableReason(card)} />
             </>
           );
         }}

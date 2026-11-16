@@ -17,6 +17,7 @@ import {
   VIEW_TEMPLATE,
   cardTitle,
   templateCardTitle,
+  unusableReason,
   usableMaterial,
   type MaterialArea,
   type TemplateArea,
@@ -141,7 +142,7 @@ export function LibraryPicker(props: PickerProps) {
                     type="button"
                     className="primary-button small-button"
                     aria-label={`${CHOOSE}「${title}」`}
-                    title={usable ? undefined : "讀不到文字，不能出題"}
+                    title={unusableReason(card)}
                     disabled={!usable}
                     onClick={() => pick(card)}
                   >

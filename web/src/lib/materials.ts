@@ -10,6 +10,7 @@ import type {
   SopMaterial,
   SopParagraph,
 } from "../api/types";
+import { ocrBadge, ocrOpen } from "./ocr";
 
 export const KIND_LABEL: Record<MaterialKind, string> = {
   text: "貼上的文字",
@@ -38,11 +39,13 @@ export function formatBytes(bytes: number): string {
   return `${text} ${units[unit]}`;
 }
 
-/** 「文件 · 3 段 · 1.2 MB」: what a row in the library says under the title. */
+/** 「文件 · 3 段 · 1.2 MB」: what a row in the library says under the title (「辨識中 2／8」 while OCR reads it). */
 export function materialMeta(m: Material): string {
   const parts: string[] = [KIND_LABEL[m.kind]];
+  const reading = ocrOpen(m.ocr);
+  if (reading) parts.push(ocrBadge(m.ocr) ?? "辨識中");
   if (m.text_status === "ready") parts.push(`${m.paragraph_count} 段`);
-  if (m.text_status === "no_text") parts.push("沒有可選取的文字");
+  if (m.text_status === "no_text" && !reading) parts.push("沒有可選取的文字");
   if (m.text_status === "failed") parts.push("文字讀不出來");
   if (m.page_count) parts.push(`${m.page_count} 頁`);
   if (m.has_file) parts.push(formatBytes(m.size_bytes));

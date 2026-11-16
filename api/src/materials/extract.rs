@@ -1,6 +1,7 @@
 //! Text extraction for uploaded documents: TXT, DOCX and text-based PDF, all in pure Rust.
-//! There is no OCR: a scanned PDF has no text layer and ends as `no_text`. Images, audio and
-//! video are stored and previewed, never analysed.
+//! A scanned PDF has no text layer and ends as `no_text`; it, a PDF whose text layer looks
+//! broken (`poor_text`) and every image are then read by OCR in the background
+//! (`super::ocr`). Audio and video are stored and previewed, never analysed.
 //!
 //! Positions: every block knows the page it starts on (PDF) and its order; paragraphs are then
 //! numbered by `sop::assign_paragraph_ids`, so a position is 「第 n 段（第 p 頁）」.
@@ -50,6 +51,8 @@ pub struct Extracted {
     pub page_count: Option<i32>,
     /// The document had more text than [`MAX_EXTRACTED_CHARS`]; the rest was left out.
     pub truncated: bool,
+    /// A PDF whose text layer looks broken ([`super::ocr::poor_text`]): read again by OCR.
+    pub poor_text: bool,
 }
 
 impl Extracted {
@@ -59,10 +62,11 @@ impl Extracted {
             blocks: Vec::new(),
             page_count: None,
             truncated: false,
+            poor_text: false,
         }
     }
 
-    fn from_blocks(blocks: Vec<Block>, page_count: Option<i32>) -> Self {
+    pub fn from_blocks(blocks: Vec<Block>, page_count: Option<i32>) -> Self {
         let mut kept = Vec::new();
         let mut chars = 0usize;
         let mut truncated = false;
@@ -84,6 +88,7 @@ impl Extracted {
             blocks: kept,
             page_count,
             truncated,
+            poor_text: false,
         }
     }
 
@@ -270,7 +275,10 @@ fn extract_pdf(data: &[u8]) -> Extracted {
             page: Some(page_no),
         }));
     }
-    Extracted::from_blocks(blocks, page_count)
+    let mut extracted = Extracted::from_blocks(blocks, page_count);
+    extracted.poor_text = extracted.status == TextStatus::Ready
+        && super::ocr::poor_text(&pages.join("\n"), pages.len());
+    extracted
 }
 
 /// Paragraphs of one PDF page. A PDF only has lines: blank lines part paragraphs when the

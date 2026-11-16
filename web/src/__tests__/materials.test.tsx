@@ -436,7 +436,9 @@ describe("material viewer and annotations", () => {
     expect(screen.getByRole("link", { name: "下載原檔" })).toHaveAttribute("href", "/api/materials/9/file?t=123.1.abc&download=1");
     first.unmount();
     render(<MaterialViewer mode="pane" materialId={10} />);
-    expect(await screen.findByText(/沒有可以選取的文字（可能是掃描檔）。Manna 目前不做文字辨識（OCR）/)).toBeInTheDocument();
+    // A server without OCR (no `ocr` on the material): nothing to start, so no 用 OCR 重新讀取.
+    expect(await screen.findByText(/沒有可以選取的文字（可能是掃描檔），所以還不能在上面加注記.*你可以下載原檔對照/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "用 OCR 重新讀取" })).not.toBeInTheDocument();
     expect(screen.queryByText(/選取文字就能加注記/)).not.toBeInTheDocument();
   });
 });
