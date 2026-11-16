@@ -1,8 +1,8 @@
 //! 閱讀理解題 (`output = "comprehension"`) and 分層練習 (`output = "tiered"`): questions written
 //! per Bloom level and checked by a separate judge. Contract: docs/API.md「Phase 2.7」.
 //!
-//! A run has two jobs. `bloom`: one model call per selected level (`worksheet_bloom_level`), at
-//! most [`MAX_PARALLEL`] at a time, each with its own checks and one repair call; a level starts
+//! A run has two jobs. `bloom`: one model call per selected level (`worksheet_bloom_level`), one
+//! after another in Bloom order, each with its own checks and one repair call; a level starts
 //! with the questions the lower levels have already written, so it does not repeat them.
 //! `bloom_check`: one judge call (`worksheet_bloom_check`) classifies every question on its own;
 //! the questions it rates too far from their target are written again once (one call per
@@ -18,7 +18,6 @@ use std::sync::Mutex;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde_json::json;
 
-use super::template::MAX_PARALLEL;
 use super::{
     close, empty_message, expire_stale, mark_done, mark_held, open_run, replace_block, run_step,
     skip, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult, STEP_BLOOM, STEP_BLOOM_CHECK,
@@ -731,13 +730,14 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let level_job = jobs[STEP_BLOOM];
     let check_job = jobs[STEP_BLOOM_CHECK];
 
-    // ---- one call per level, at most three at a time
+    // ---- one call per level, one after another in Bloom order: every level sees all the
+    // questions the lower levels wrote (run concurrently, 理解 re-asked what 記憶 had just asked).
     let done: Mutex<Vec<(Bloom, Vec<String>)>> = Mutex::new(Vec::new());
     let done = &done;
     let formats = &settings.answer_formats;
     let mut drafts: Vec<LevelDraft> = stream::iter(plan.iter().copied())
         .map(move |(b, n)| make_level(run, level_job, formats, b, n, done))
-        .buffered(MAX_PARALLEL)
+        .buffered(1)
         .try_collect()
         .await?;
     let failed = drafts.iter().filter(|d| d.failure.is_some()).count();

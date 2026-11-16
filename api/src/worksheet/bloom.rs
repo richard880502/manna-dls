@@ -385,13 +385,12 @@ pub fn tier_levels(b: Bloom) -> Vec<Level> {
     }
 }
 
-/// Whether the judge's level is too far from the target: for analyze, evaluate and create any
-/// lower level is; otherwise a difference of two levels or more.
+/// Whether the judge's level is too far from the target: any lower level, or two levels or more
+/// higher.
 pub fn is_mismatch(target: Bloom, judged: Bloom) -> bool {
-    if target >= Bloom::Analyze && judged < target {
-        return true;
-    }
-    target.rank().abs_diff(judged.rank()) >= 2
+    // Any question judged lower than asked is a mismatch: in the real-model run 9 of 90 questions
+    // were one level lower (a 理解 question that only looked up a fact). One level higher is fine.
+    judged < target || judged.rank() >= target.rank() + 2
 }
 
 /// The notice for a question that is relabelled.
@@ -598,10 +597,10 @@ mod tests {
         assert!(!is_mismatch(Analyze, Analyze));
         assert!(!is_mismatch(Analyze, Evaluate));
         assert!(is_mismatch(Analyze, Create), "two levels higher");
-        // Lower targets: two levels apart or more.
+        // Lower targets: any lower judgement, or two levels higher.
         assert!(!is_mismatch(Remember, Understand));
-        assert!(!is_mismatch(Understand, Remember));
-        assert!(!is_mismatch(Apply, Understand));
+        assert!(is_mismatch(Understand, Remember));
+        assert!(is_mismatch(Apply, Understand));
         assert!(is_mismatch(Remember, Apply));
         assert!(is_mismatch(Apply, Remember));
         assert!(is_mismatch(Understand, Evaluate));
