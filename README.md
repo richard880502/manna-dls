@@ -110,3 +110,15 @@ Actions 設定（Settings → Secrets and variables → Actions）：
 - 主機 nginx 把 `manna.biobank.tw` 代理到 `127.0.0.1:8080`（設定檔 `/etc/nginx/sites-available/manna-dls`）。
 
 金鑰（`ANTHROPIC_API_KEY` 等）只設在 Coolify 的環境變數，不進版本庫。
+
+### `/api/health` 的 commit
+
+`GET /api/health` 回 `{"ok", "db", "commit"}`，`commit` 是正在跑的映像是從哪個 commit 建的，用來確認部署真的上線了。來源依序是：
+
+1. **建置時寫進映像的 `BUILD_COMMIT`**：`docker-compose.yml` 把 `SOURCE_COMMIT` 當 build argument 傳給 Dockerfile，Dockerfile 最後一層存成 `BUILD_COMMIT`（放最後一層，換 commit 不會讓其他層的快取失效）。
+2. **執行時的 `SOURCE_COMMIT` 環境變數**（備援）。
+3. 兩者都沒有（或不是 commit hash，例如空字串、`unknown`、`HEAD`）時才回 `"unknown"`。
+
+Coolify 預設**不會**在建置時提供 `SOURCE_COMMIT`（它會讓 Docker 快取失效）。執行時也靠不住：compose 檔引用了 `${SOURCE_COMMIT}`，Coolify 就會在這個應用程式的環境變數清單自動建一個同名變數，而清單裡有 `SOURCE_COMMIT` 時 Coolify 不再填入自己的值。所以正式環境要在 Coolify 這個應用程式的設定（Advanced 頁）打開 **Include Source Commit in Build**；之後從 `deploy` 分支部署的映像就帶著 commit。清單裡自動出現的 `SOURCE_COMMIT` 保持空白，不要手填（填了會蓋過真正的值）。部署後可用 `curl -s https://manna.biobank.tw/api/health` 對照 `deploy` 分支最新的 commit。
+
+本機 `docker build .` 不用帶參數（`commit` 會是 `unknown`）；要帶就用 `docker build --build-arg SOURCE_COMMIT=$(git rev-parse HEAD) .`。

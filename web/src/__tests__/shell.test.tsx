@@ -258,7 +258,8 @@ describe("app shell: the sidebar", () => {
     const { router } = renderApp(path);
     await waitFor(() => expect(router.state.location.pathname).toBe("/units"));
     expect(await screen.findByRole("heading", { name: "備課庫", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "倒裝句單元" })).toHaveAttribute("href", "/units/1");
+    // The heading is there before the list has loaded.
+    expect(await screen.findByRole("link", { name: "倒裝句單元" })).toHaveAttribute("href", "/units/1");
     expect(currentNav()).toEqual(["班級與課例"]);
   });
 

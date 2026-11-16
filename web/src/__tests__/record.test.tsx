@@ -76,8 +76,9 @@ function scaffolds(api: ReturnType<typeof mockApi>) {
 }
 
 async function openConsole() {
-  renderApp("/runs/9");
+  const rendered = renderApp("/runs/9");
   expect(await screen.findByRole("button", { name: "順利" })).toBeInTheDocument();
+  return rendered;
 }
 
 afterEach(() => {
@@ -283,13 +284,16 @@ describe("Teach & Record console", () => {
       "POST /api/runs/9/end": run({ ended_at: "2026-11-12T01:50:00Z" }),
     });
     const user = userEvent.setup();
-    await openConsole();
+    const { router } = await openConsole();
     await user.click(screen.getByRole("button", { name: "結束本節課" }));
     expect(api.callsTo("POST", "/api/runs/9/end")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "確定結束並回顧" }));
-    expect(await screen.findByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
+    // The console has a heading with the same title, so wait for the review page itself:
+    // finding that heading could pass before the class was ended.
+    await waitFor(() => expect(router.state.location.pathname).toBe("/runs/9/review"));
     expect(api.callsTo("POST", "/api/runs/9/end")).toHaveLength(1);
     expect(await screen.findByRole("heading", { name: "教案步驟" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "第 1 課：Not only… but also", level: 1 })).toBeInTheDocument();
   });
 
   it("QR pairing shows a single-use code as a QR image and can be revoked", async () => {

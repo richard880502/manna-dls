@@ -276,14 +276,25 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-/// Git commit of the running build. Coolify provides `SOURCE_COMMIT` at runtime;
-/// CI polls this to confirm a deployment actually went live.
+/// Git commit of the running build, so a deployment can be checked against what was pushed.
+/// First `BUILD_COMMIT`, baked into the image from the `SOURCE_COMMIT` build argument (see the
+/// Dockerfile and README「部署」), then `SOURCE_COMMIT` from the runtime environment.
 fn running_commit() -> String {
-    std::env::var("SOURCE_COMMIT")
-        .ok()
-        .map(|c| c.trim().to_string())
-        .filter(|c| !c.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
+    commit_from(&[
+        std::env::var("BUILD_COMMIT").ok(),
+        std::env::var("SOURCE_COMMIT").ok(),
+    ])
+}
+
+/// The first value that is a commit hash, or "unknown". Placeholders a deployment may pass
+/// instead (empty, "unknown", "HEAD") do not hide a later real value.
+fn commit_from(candidates: &[Option<String>]) -> String {
+    candidates
+        .iter()
+        .flatten()
+        .map(|c| c.trim())
+        .find(|c| (7..=64).contains(&c.len()) && c.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map_or_else(|| "unknown".to_string(), str::to_string)
 }
 
 async fn public_config(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
@@ -612,6 +623,25 @@ mod tests {
         // P6 is no longer a fallback.
         let r = resolve_class_profile("", Some(&empty), "", " 問卷 ");
         assert_eq!(r.source, ProfileSource::None);
+    }
+
+    #[test]
+    fn the_baked_commit_comes_first_then_the_runtime_one() {
+        let sha = "0123abcd0123abcd0123abcd0123abcd0123abcd";
+        let some = |s: &str| Some(s.to_string());
+        // Baked into the image at build time: wins over the runtime value.
+        assert_eq!(commit_from(&[some(sha), some("89abcdef")]), sha);
+        // No build argument (a local `docker build`): the runtime value.
+        for baked in [None, some(""), some("  "), some("unknown"), some("HEAD")] {
+            assert_eq!(commit_from(&[baked, some(&format!(" {sha}\n"))]), sha);
+        }
+        // Neither: "unknown".
+        assert_eq!(commit_from(&[None, None]), "unknown");
+        assert_eq!(commit_from(&[some(""), some("unknown")]), "unknown");
+        assert_eq!(commit_from(&[some("HEAD"), some("main")]), "unknown");
+        // Short hashes count; anything that is not hex does not.
+        assert_eq!(commit_from(&[some("abc1234"), None]), "abc1234");
+        assert_eq!(commit_from(&[some("abc123"), some("deadbeefz")]), "unknown");
     }
 
     #[test]

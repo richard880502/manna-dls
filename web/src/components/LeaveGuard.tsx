@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useBlocker, type Blocker, type BlockerFunction } from "react-router";
 import { ErrorText } from "./common";
 
@@ -15,8 +15,11 @@ export interface LeaveGuard {
  */
 export function useLeaveGuard(dirty: boolean): LeaveGuard {
   // Read at navigation time: a save that just finished must not have to wait for a re-render.
+  // Updated as the change is committed (a layout effect), not some time after the page already
+  // shows it: otherwise, for a moment, 「已自動儲存」 is on screen while closing the tab still
+  // warns, or an edit is on screen while leaving is not held yet.
   const dirtyRef = useRef(dirty);
-  useEffect(() => {
+  useLayoutEffect(() => {
     dirtyRef.current = dirty;
   }, [dirty]);
 
