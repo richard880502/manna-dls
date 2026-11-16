@@ -243,11 +243,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
     assert_eq!(ws["prep_session_id"], id);
     assert_eq!(
         titles(&ws),
-        [
-            "Part A · Find the Facts",
-            "Part B · Look Closer",
-            "Part C · What Do You Think?"
-        ]
+        ["Find the Facts", "Look Closer", "What Do You Think?"]
     );
     let counts: Vec<usize> = blocks(&ws)
         .iter()
@@ -475,7 +471,7 @@ async fn options_are_validated_echoed_and_patched() {
     let done = wait(&app, &t, id).await;
     let ws = worksheet(&app, &t, &last(&done)).await;
     assert_eq!(ws["settings"]["bloom_counts"], json!({ "apply": 3 }));
-    assert_eq!(titles(&ws), ["Part A · Use It"]);
+    assert_eq!(titles(&ws), ["Use It"]);
     let items = blocks(&ws)[0]["items"].as_array().unwrap().clone();
     assert_eq!(items.len(), 3);
     assert!(items.iter().all(|i| i["answer_format"] == "填空題"));
@@ -581,10 +577,10 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
     assert_eq!(
         titles(&ws),
         [
-            "Part A · Find the Facts",
-            "Part B · Understand the Text",
-            "Part C · Look Closer",
-            "Part D · Make Something New"
+            "Find the Facts",
+            "Understand the Text",
+            "Look Closer",
+            "Make Something New"
         ]
     );
     // The kit's plan is not the 課堂活動 step.

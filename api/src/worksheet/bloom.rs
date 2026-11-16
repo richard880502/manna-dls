@@ -189,9 +189,11 @@ impl<'de> Deserialize<'de> for Bloom {
     }
 }
 
-/// A block title: 「Part A · Find the Facts」.
-pub fn block_title(b: Bloom, letter: &str) -> String {
-    format!("Part {letter} · {}", b.title_name())
+/// A block title: 「Find the Facts」. The sheet, the editor and the exports print the block's
+/// letter in front of it (「A. Find the Facts」), so the title does not carry one: it would be
+/// printed twice and go stale when the teacher reorders blocks.
+pub fn block_title(b: Bloom) -> String {
+    b.title_name().to_string()
 }
 
 /// A title of the form 「Part A · Find the Facts」 as (letter, name). The sheet renumbers the
@@ -202,9 +204,11 @@ pub fn split_part_title(title: &str) -> Option<(&str, &str)> {
     (!letter.is_empty() && letter.chars().all(|c| c.is_ascii_uppercase())).then_some((letter, name))
 }
 
-/// The level of a block from its fixed title, when the title is one of them.
+/// The level of a block from its fixed title, when the title is one of them (also the older
+/// 「Part A · Find the Facts」 form).
 pub fn level_of_title(title: &str) -> Option<Bloom> {
-    let (_, name) = split_part_title(title.trim())?;
+    let title = title.trim();
+    let name = split_part_title(title).map_or(title, |(_, name)| name);
     Bloom::ALL.into_iter().find(|b| b.title_name() == name)
 }
 
@@ -629,9 +633,10 @@ mod tests {
         assert_eq!(Bloom::parse("analyze"), Some(Bloom::Analyze));
         assert_eq!(Bloom::parse("Analyze"), None);
         assert_eq!(Bloom::Analyze.tag(), "〔Bloom：分析 Analyze〕");
-        assert_eq!(block_title(Bloom::Remember, "A"), "Part A · Find the Facts");
+        assert_eq!(block_title(Bloom::Remember), "Find the Facts");
         assert_eq!(level_of_title("Part C · Look Closer"), Some(Bloom::Analyze));
-        assert_eq!(level_of_title("Look Closer"), None);
+        assert_eq!(level_of_title("Look Closer"), Some(Bloom::Analyze));
+        assert_eq!(level_of_title("My own title"), None);
         assert_eq!(split_part_title("Part AB · x"), Some(("AB", "x")));
         assert_eq!(split_part_title("Part a · x"), None);
         assert_eq!(

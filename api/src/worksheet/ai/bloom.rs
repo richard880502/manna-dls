@@ -515,7 +515,6 @@ fn item_levels(output: Output, label: Bloom, levels: &[Level]) -> Vec<Level> {
 
 fn level_block(
     id: &str,
-    letter: &str,
     draft: &LevelDraft,
     material: &Material,
     output: Output,
@@ -550,7 +549,7 @@ fn level_block(
     Block {
         id: id.to_string(),
         kind: BlockKind::Activity,
-        title: bl::block_title(b, letter),
+        title: bl::block_title(b),
         instructions: match (&draft.failure, draft.instructions.trim()) {
             (Some(_), _) => String::new(),
             (None, "") => DEFAULT_INSTRUCTIONS.to_string(),
@@ -785,7 +784,6 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         .map(|(i, d)| {
             level_block(
                 &format!("r{}b{}", run.run_no, i + 1),
-                &letter(i),
                 d,
                 material,
                 output,
@@ -969,18 +967,7 @@ async fn regenerate(
         &context,
     )
     .await?;
-    // The block keeps its letter.
-    let letter_of = bl::split_part_title(&old.title)
-        .map(|(l, _)| l.to_string())
-        .unwrap_or_else(|| letter(position));
-    let block = level_block(
-        &old.id,
-        &letter_of,
-        &drafts[0],
-        &ws.material,
-        output,
-        &levels,
-    );
+    let block = level_block(&old.id, &drafts[0], &ws.material, output, &levels);
     replace_block(run, &old, block, interaction_id, checked.notices).await
 }
 

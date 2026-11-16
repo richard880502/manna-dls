@@ -345,6 +345,11 @@ pub async fn insert_text(
 ) -> sqlx::Result<MaterialRow> {
     let (prev, seq) = previous.unwrap_or((&[], 0));
     let (paragraphs, seq) = assign_paragraph_ids(prev, seq, split_paragraphs(text));
+    let title = if title.trim().is_empty() {
+        title_from_text(text)
+    } else {
+        title.to_string()
+    };
     sqlx::query_as(&format!(
         "INSERT INTO materials (teacher_id, kind, origin, title, source_note, size_bytes, sha256,
                                 text_status, text, paragraphs, paragraph_seq)
@@ -352,7 +357,7 @@ pub async fn insert_text(
          RETURNING {COLS}"
     ))
     .bind(teacher_id)
-    .bind(title)
+    .bind(&title)
     .bind(source_note)
     .bind(text.len() as i64)
     .bind(sha256_hex(text))
@@ -366,6 +371,26 @@ pub async fn insert_text(
     .bind(seq)
     .fetch_one(&mut **tx)
     .await
+}
+
+/// A title for pasted text that came without one: its first line, cut at a word boundary to
+/// 60 characters (「未命名教材」 told the teacher nothing about which text it was).
+pub fn title_from_text(text: &str) -> String {
+    const MAX: usize = 60;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default();
+    if line.chars().count() <= MAX {
+        return line.to_string();
+    }
+    let cut: String = line.chars().take(MAX).collect();
+    let at = cut
+        .rfind(' ')
+        .filter(|&i| i >= MAX / 2)
+        .unwrap_or(cut.len());
+    format!("{}…", cut[..at].trim_end())
 }
 
 pub async fn create_text(
@@ -1035,6 +1060,23 @@ pub async fn delete(state: &AppState, teacher_id: i64, id: i64) -> AppResult<Del
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn pasted_text_without_a_title_is_named_after_its_first_line() {
+        assert_eq!(
+            title_from_text("\n  Why Bees Matter \n\nBees are small."),
+            "Why Bees Matter"
+        );
+        let long = "Most people think of bees as small insects that make honey and sometimes sting, but bees do much more.";
+        let t = title_from_text(long);
+        assert!(t.ends_with('…') && t.chars().count() <= 61, "{t}");
+        assert!(
+            t.starts_with("Most people think of bees as small insects"),
+            "{t}"
+        );
+        assert_eq!(title_from_text("   "), "");
+    }
+
     use super::*;
 
     #[test]

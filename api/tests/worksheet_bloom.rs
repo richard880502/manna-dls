@@ -19,12 +19,12 @@ const P3: &str = "In the first month, twelve of the thirty umbrellas did disappe
 const P4: &str = "Today the stand holds more umbrellas than it did at the start. Mrs. Lin says trust is like an umbrella.";
 
 const TITLES: [&str; 6] = [
-    "Part A · Find the Facts",
-    "Part B · Understand the Text",
-    "Part C · Use It",
-    "Part D · Look Closer",
-    "Part E · What Do You Think?",
-    "Part F · Make Something New",
+    "Find the Facts",
+    "Understand the Text",
+    "Use It",
+    "Look Closer",
+    "What Do You Think?",
+    "Make Something New",
 ];
 const LEVELS: [&str; 6] = [
     "remember",
@@ -270,7 +270,7 @@ async fn comprehension_end_to_end() {
     // Teacher sheet: a Bloom tag on every question and a summary per block; student: neither.
     let teacher = sheet(&app, &t, id, "standard", "teacher").await;
     let first = &teacher["blocks"][0];
-    assert_eq!(first["title"], "Part A · Find the Facts");
+    assert_eq!(first["title"], "Find the Facts");
     assert_eq!(first["bloom_summary"], "Bloom：記憶 2");
     assert_eq!(first["items"][0]["bloom"], "remember");
     assert_eq!(teacher["blocks"][4]["items"][0]["bloom"], "evaluate");
@@ -340,11 +340,7 @@ async fn tiered_practice_end_to_end() {
     let basic = sheet(&app, &t, id, "basic", "student").await;
     assert_eq!(
         titles(&basic),
-        [
-            "Part A · Find the Facts",
-            "Part B · Understand the Text",
-            "Part C · Use It"
-        ]
+        ["Find the Facts", "Understand the Text", "Use It"]
     );
     for b in basic["blocks"].as_array().unwrap() {
         for it in b["items"].as_array().unwrap() {
@@ -355,11 +351,7 @@ async fn tiered_practice_end_to_end() {
     let standard = sheet(&app, &t, id, "standard", "student").await;
     assert_eq!(
         titles(&standard),
-        [
-            "Part A · Understand the Text",
-            "Part B · Use It",
-            "Part C · Look Closer"
-        ],
+        ["Understand the Text", "Use It", "Look Closer"],
         "the letters follow what is printed"
     );
     assert!(!standard.to_string().contains("\"hint\""));
@@ -446,7 +438,7 @@ async fn remember_evidence_that_is_not_verbatim_is_repaired() {
         bs.iter()
             .map(|b| b["title"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["Part A · Find the Facts", "Part B · Use It"]
+        ["Find the Facts", "Use It"]
     );
     let remember = items(&bs[0]);
     assert_eq!(remember.len(), 2);
@@ -712,7 +704,7 @@ async fn one_levels_block_is_regenerated_and_undone() {
     assert!(jobs.iter().all(|j| j["outcome"] == "shown"), "{jobs:?}");
     let regenerated = blocks(&after)[3].clone();
     assert_eq!(regenerated["id"], target["id"]);
-    assert_eq!(regenerated["title"], "Part D · Look Closer");
+    assert_eq!(regenerated["title"], "Look Closer");
     assert_eq!(regenerated["bloom"], "analyze");
     let new_items = items(&regenerated);
     assert_eq!(new_items.len(), 1);
@@ -826,10 +818,7 @@ async fn explicit_counts_override_levels_and_total() {
         bs.iter()
             .map(|b| (b["title"].as_str().unwrap(), items(b).len()))
             .collect::<Vec<_>>(),
-        [
-            ("Part A · Understand the Text", 3),
-            ("Part B · Make Something New", 2)
-        ]
+        [("Understand the Text", 3), ("Make Something New", 2)]
     );
     assert_eq!(
         state["content"]["chosen"]["reasons"][0],

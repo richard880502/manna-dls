@@ -1916,7 +1916,7 @@ interface WsSheetBlock { /* …既有欄位… */
 
 **組裝**（程式）：
 
-- 每個層次一個區塊，依 Bloom 順序；`kind = "activity"`；`bloom` = 該層次；標題固定為「Part A · Find the Facts」這種形式，字母依序配（只選了理解與分析時是「Part A · Understand the Text」「Part B · Look Closer」）；`instructions` 是模型寫的一句英文（沒有時用預設句）；`student_tasks` 見上表；沒有鷹架、沒有暖身、沒有 Exit ticket。
+- 每個層次一個區塊，依 Bloom 順序；`kind = "activity"`；`bloom` = 該層次；標題固定為該層次的名稱（記憶「Find the Facts」、理解「Understand the Text」、應用「Use It」、分析「Look Closer」、評鑑「What Do You Think?」、創造「Make Something New」）；字母不寫在標題裡，由學習單、編輯器與匯出依區塊順序印在前面（「A. Find the Facts」），教師調整順序後也不會對不上；`instructions` 是模型寫的一句英文（沒有時用預設句）；`student_tasks` 見上表；沒有鷹架、沒有暖身、沒有 Exit ticket。
 - 題目：`origin = "ai"`，`bloom` = 層次（被改標的是判斷的層次），`hint` 照模型輸出，`levels` = 學習單的版本（`settings.levels`，沒有時是一般版）。
 - 一個新的學習單版本（`cause = "generate"`）。
 - `content.chosen`：`settings` 是實際用的（`levels`、`bloom` = 實際產生的層次、`question_count` = 總題數），`item_budget` = 總題數，`reasons` 第一條是「Bloom：記憶 2、理解 2、應用 1、分析 1、評鑑 1、創造 1」，再說明題數與版本怎麼決定。
@@ -1937,7 +1937,7 @@ interface WsSheetBlock { /* …既有欄位… */
 
 - 每一題都請模型給 `hint`，只印在基礎版。
 - `content.chosen.reasons` 另加「基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造」。
-- 投影時，依 Bloom 層次產生的區塊在某個版本裡沒有任何題目，就不出現在那個版本（區塊字母依序遞補，標題的「Part X」跟著印出的字母）。
+- 投影時，依 Bloom 層次產生的區塊在某個版本裡沒有任何題目，就不出現在那個版本（區塊字母依序遞補）。
 
 ## 原本的完整學習單（`output = "worksheet"`）
 
