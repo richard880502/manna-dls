@@ -57,6 +57,9 @@ pub enum ConfigError {
     AnthropicRequiresDemoMode,
 }
 
+/// `PLATFORM_LIBRARY_BYTES` when unset: 5 GB.
+pub const DEFAULT_PLATFORM_LIBRARY_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+
 pub const VALID_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 #[derive(Clone)]
@@ -78,6 +81,9 @@ pub struct Config {
     pub storage: StorageConfig,
     /// Embeddings for hybrid retrieval. Never fails: a bad setting disables embeddings.
     pub embedding: EmbeddingConfig,
+    /// All files of the platform library (教材參考 and 學習單範本) together
+    /// (`PLATFORM_LIBRARY_BYTES`, default 5 GB). Per-teacher quotas do not apply to it.
+    pub platform_library_bytes: u64,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -95,6 +101,7 @@ impl std::fmt::Debug for Config {
             .field("rag_top_k", &self.rag_top_k)
             .field("storage", &self.storage)
             .field("embedding", &self.embedding)
+            .field("platform_library_bytes", &self.platform_library_bytes)
             .finish_non_exhaustive()
     }
 }
@@ -187,6 +194,12 @@ impl Config {
             });
         }
 
+        let platform_library_bytes = parse_num(
+            "PLATFORM_LIBRARY_BYTES",
+            get("PLATFORM_LIBRARY_BYTES"),
+            DEFAULT_PLATFORM_LIBRARY_BYTES,
+        )?;
+
         let anthropic_api_key = get("ANTHROPIC_API_KEY");
         let openai_compat_base_url = get("OPENAI_COMPAT_BASE_URL");
         let openai_compat_api_key = get("OPENAI_COMPAT_API_KEY");
@@ -226,6 +239,7 @@ impl Config {
             // Never an error: a broken storage configuration only turns uploads off.
             storage: StorageConfig::from_lookup(get),
             embedding: EmbeddingConfig::from_lookup(get),
+            platform_library_bytes,
         })
     }
 
@@ -247,6 +261,7 @@ impl Config {
             rag_top_k: 8,
             storage: StorageConfig::none(),
             embedding: EmbeddingConfig::disabled(),
+            platform_library_bytes: DEFAULT_PLATFORM_LIBRARY_BYTES,
         }
     }
 

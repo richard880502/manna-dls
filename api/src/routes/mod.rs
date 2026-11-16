@@ -1,6 +1,7 @@
 //! HTTP routes (contract: docs/API.md).
 
 pub mod admin;
+pub mod browse;
 pub mod classes;
 pub mod core;
 pub mod embeddings;
@@ -8,6 +9,7 @@ pub mod feedback;
 pub mod knowledge;
 pub mod lessons;
 pub mod library;
+pub mod library_admin;
 pub mod materials;
 pub mod preferences;
 pub mod prep;
@@ -22,7 +24,7 @@ pub mod worksheets;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -143,9 +145,14 @@ pub fn api_router() -> Router<AppState> {
             "/worksheet-templates/{id}",
             get(templates::get)
                 .put(templates::save)
+                .patch(templates::save)
                 .delete(templates::delete),
         )
         .route("/worksheet-templates/{id}/retry", post(templates::retry))
+        .route("/worksheet-templates/{id}/copy", post(templates::copy))
+        // 教材參考、我的教材、學習單範本 (Phase 2.9)
+        .route("/browse/materials", get(browse::materials))
+        .route("/browse/templates", get(browse::templates))
         // 備課對話 (Phase 2.6)
         .route("/prep-sessions", get(prep::list).post(prep::create))
         .route(
@@ -241,6 +248,33 @@ pub fn api_router() -> Router<AppState> {
             post(admin::retire_demo_knowledge),
         )
         .route("/admin/knowledge/items", get(knowledge::browse_items))
+        // 教材與範本管理 (Phase 2.9; PI or 知識庫管理員)
+        .route(
+            "/admin/library",
+            get(library_admin::list)
+                .post(library_admin::upload)
+                .layer(DefaultBodyLimit::max(
+                    crate::materials::MAX_UPLOAD_REQUEST_BYTES,
+                )),
+        )
+        .route(
+            "/admin/library/templates",
+            post(library_admin::upload_template).layer(DefaultBodyLimit::max(
+                crate::materials::MAX_UPLOAD_REQUEST_BYTES,
+            )),
+        )
+        .route(
+            "/admin/library/templates/{id}",
+            patch(library_admin::patch_template).delete(library_admin::delete_template),
+        )
+        .route(
+            "/admin/library/templates/{id}/retry",
+            post(library_admin::retry_template),
+        )
+        .route(
+            "/admin/library/{id}",
+            patch(library_admin::patch_material).delete(library_admin::delete_material),
+        )
         .route("/admin/vocabulary/items", get(knowledge::browse_vocabulary))
         // PI
         .route("/admin/invites", post(admin::create_invite))

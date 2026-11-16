@@ -272,17 +272,21 @@ impl Row {
     }
 }
 
-/// Every annotation of the material (hidden ones included; the viewer decides what to show),
-/// in reading order, lost ones last.
+/// Every annotation `teacher_id` made on the material (hidden ones included; the viewer decides
+/// what to show), in reading order, lost ones last. Annotations are personal: on a platform
+/// material each teacher sees only her own.
 pub async fn list(
     db: &PgPool,
     material_id: i64,
+    teacher_id: i64,
     paragraphs: &[Paragraph],
 ) -> sqlx::Result<Vec<Annotation>> {
     let rows: Vec<Row> = sqlx::query_as(&format!(
-        "SELECT {COLS} FROM material_annotations WHERE material_id = $1 ORDER BY id"
+        "SELECT {COLS} FROM material_annotations WHERE material_id = $1 AND teacher_id = $2
+          ORDER BY id"
     ))
     .bind(material_id)
+    .bind(teacher_id)
     .fetch_all(db)
     .await?;
     let mut list: Vec<Annotation> = rows
@@ -313,11 +317,14 @@ pub async fn create(
     new: NewAnnotation<'_>,
     paragraphs: &[Paragraph],
 ) -> AppResult<Annotation> {
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM material_annotations WHERE material_id = $1")
-            .bind(new.material_id)
-            .fetch_one(db)
-            .await?;
+    // Per teacher: on a platform material every teacher has her own notes.
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM material_annotations WHERE material_id = $1 AND teacher_id = $2",
+    )
+    .bind(new.material_id)
+    .bind(new.teacher_id)
+    .fetch_one(db)
+    .await?;
     if count >= MAX_ANNOTATIONS_PER_MATERIAL {
         return Err(AppError::bad_request(format!(
             "一份教材最多 {MAX_ANNOTATIONS_PER_MATERIAL} 則注記。"
@@ -346,11 +353,13 @@ pub async fn create(
     Ok(row.into_annotation(paragraphs))
 }
 
-/// The annotation and the material it belongs to, when it is the teacher's; otherwise 404.
+/// The material of the annotation, when the annotation is the teacher's (and she can still read
+/// the material); otherwise 404.
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<i64> {
     sqlx::query_scalar(
         "SELECT a.material_id FROM material_annotations a JOIN materials m ON m.id = a.material_id
-          WHERE a.id = $1 AND m.teacher_id = $2",
+          WHERE a.id = $1 AND a.teacher_id = $2
+            AND (m.scope = 'platform' OR m.teacher_id = $2)",
     )
     .bind(id)
     .bind(teacher_id)
@@ -445,28 +454,32 @@ pub struct AiNote {
     pub note: String,
 }
 
-/// The only way annotations reach an AI pipeline: the notes of this material that the teacher
-/// switched to 「提供給 AI」, are not hidden and can still be located. Everything else (the
-/// default) stays out. `teacher_id` must own the material, otherwise the list is empty.
+/// The only way annotations reach an AI pipeline: the notes `teacher_id` made on this material
+/// that she switched to 「提供給 AI」, are not hidden and can still be located. Everything else
+/// (the default, and every other teacher's notes on a platform material) stays out. The teacher
+/// must be able to read the material (her own, or a platform one), otherwise the list is empty.
 pub async fn shared_with_ai(
     db: &PgPool,
     teacher_id: i64,
     material_id: i64,
 ) -> sqlx::Result<Vec<AiNote>> {
-    let paragraphs: Option<sqlx::types::Json<Vec<Paragraph>>> =
-        sqlx::query_scalar("SELECT paragraphs FROM materials WHERE id = $1 AND teacher_id = $2")
-            .bind(material_id)
-            .bind(teacher_id)
-            .fetch_optional(db)
-            .await?;
+    let paragraphs: Option<sqlx::types::Json<Vec<Paragraph>>> = sqlx::query_scalar(&format!(
+        "SELECT paragraphs FROM materials WHERE id = $1 AND {}",
+        super::store::READABLE_SQL
+    ))
+    .bind(material_id)
+    .bind(teacher_id)
+    .fetch_optional(db)
+    .await?;
     let Some(paragraphs) = paragraphs else {
         return Ok(Vec::new());
     };
     let rows: Vec<Row> = sqlx::query_as(&format!(
         "SELECT {COLS} FROM material_annotations
-          WHERE material_id = $1 AND share_with_ai AND NOT hidden ORDER BY id"
+          WHERE material_id = $1 AND teacher_id = $2 AND share_with_ai AND NOT hidden ORDER BY id"
     ))
     .bind(material_id)
+    .bind(teacher_id)
     .fetch_all(db)
     .await?;
     let mut notes: Vec<(usize, AiNote)> = rows

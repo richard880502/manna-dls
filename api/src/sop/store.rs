@@ -202,7 +202,8 @@ async fn material_in_tx(
     teacher_id: i64,
 ) -> sqlx::Result<Option<MaterialRow>> {
     sqlx::query_as(&format!(
-        "SELECT {} FROM materials WHERE id = $1 AND teacher_id = $2 FOR UPDATE",
+        "SELECT {} FROM materials WHERE id = $1 AND teacher_id = $2 AND scope = 'personal'
+            FOR UPDATE",
         library::COLS
     ))
     .bind(id)

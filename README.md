@@ -69,6 +69,7 @@ cd web && pnpm install && pnpm dev
 | `S3_BUCKET` | 例如 `manna-materials`。私有、**不要開版本保留（versioning）**，刪除才是真的刪除 |
 | `S3_REGION` | 預設 `us-east-1`（MinIO 不在意，但簽章需要） |
 | `S3_ACCESS_KEY`、`S3_SECRET_KEY` | compose 裡接 Coolify 自動產生的 `SERVICE_USER_MINIO`／`SERVICE_PASSWORD_MINIO`（MinIO 的帳密），不進版本庫、不用手打 |
+| `PLATFORM_LIBRARY_BYTES` | 平台教材庫（教材參考與學習單範本，Phase 2.9）所有原檔合計的上限，單位 byte；預設 5 GB（`5368709120`）。教師個人的 1 GB 額度不包含平台教材 |
 
 主機 nginx（`/etc/nginx/sites-available/manna-dls`）要允許大檔：`client_max_body_size 105m;`（nginx 預設 1 MB，超過時上傳會在 nginx 被擋成 413）。
 
