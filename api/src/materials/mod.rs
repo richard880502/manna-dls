@@ -8,6 +8,7 @@
 
 pub mod access;
 pub mod annotations;
+pub mod detect;
 pub mod extract;
 pub mod store;
 

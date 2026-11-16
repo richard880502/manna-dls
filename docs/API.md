@@ -1994,3 +1994,77 @@ prompt key：`worksheet_bloom_level`、`worksheet_bloom_check`、`worksheet_task
 - 教學套件下載：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`，一份 DOCX：教學流程、每個版本的學生版、教師版（答案與 Bloom 標記）。
 - `revise` 適用最新一份任何種類的學習單；改過的題目保留原本的版本（分層練習不會變成三個版本都有）。
 - 資料：`prep_sessions.options`（JSONB，預設 `{}`）；`prep_turns.kind` 多三個值；`prompt_versions` 新增 `prep_activity` 第 2 版（第 1 版保留）。
+
+---
+
+# Phase 2.8：照我的學習單做
+
+以下為**新增**；既有端點只多了選填欄位與回應欄位。Migration `0016_mimic.sql`。
+
+老師上傳一份自己以前的學習單（範本），Manna 讀出它的設計（就是「我的版型」，Phase 2.5），再照同樣的樣式為這節課的課文出題。以前要先到 教材庫 → 我的版型 做好版型才能用；現在建立備課對話時直接給範本，一步完成。範本誤放在課文的位置時，Manna 也認得出來。照版型做的學習單，每一題也標上 Bloom 層次。
+
+## 教材看起來是不是學習單（`looks_like_worksheet`）
+
+`Material`（教材庫清單、上傳與貼上的回應、`GET /api/materials/:id`）多一個欄位：
+
+```ts
+interface Material { /* …既有欄位… */ looks_like_worksheet: boolean; }
+```
+
+- 由程式依文字計分，不呼叫模型（`materials::detect`）。**分數 ≥ 3 就是學習單**：
+
+  | 分數 | 條件 |
+  |---|---|
+  | +2 | 至少 3 個作答空格：連續 3 個以上底線（`___`、全形 `＿＿＿`）或空的作答括號（`（　）`、`( )`、`()`） |
+  | +1 | 表頭欄位：`Name`、`Class`、`No.`、`Date`（首字大寫或全大寫）或 `姓名`、`班級`、`座號`，後面接冒號（`:`／`：`）、底線或行尾 |
+  | +1 | 至少 4 行以題號開頭：`1.` `2)` `(3)` `（4）` `A.`…`H)`（前面可以有作答括號，例如 `(  ) 1.`；`3.5 million` 這種小數不算） |
+  | +1 | 任務或段落詞：`Task`、`Part`、`Activity` 後面接數字、A–H、羅馬數字、冒號或行尾；`Worksheet`、`Exit ticket`、`Warm-up`（不分大小寫）；`學習單`、`練習` |
+  | +1 | 至少 25% 的非空白行有問號（`?`／`？`） |
+
+- 什麼時候算：貼上、修改貼上的文字、上傳（用擷取出來的文字）時計算並存在 `materials.looks_like_worksheet`；網址教材是 `false`。這個欄位在 0016 之前的教材是空的，**第一次讀取時**（清單或單一教材）用同一套規則算好並存起來（`updated_at` 不變）；migration 不另外寫一份 SQL 版本的規則。
+- 前端用它提示「這份看起來是一份學習單。要照它的樣式為新課文出題嗎？」；**不會**擋住把它當課文產生。
+
+## 從範本建立備課對話
+
+`POST /api/prep-sessions` 新增 `template_material_id?: number`：老師的學習單範本，教材庫裡自己的、有文字的教材。
+
+- 只能和 `kind: "worksheet"` 一起用，否則 400「範本只適用於完整學習單」。同時給了 `template_id` 時以 `template_id` 為準，`template_material_id` 完全不看（也不檢查）。
+- 範本的檢查和 `POST /api/worksheet-templates` 相同（400）：不是自己的或不存在 →「找不到這份教材。」；圖片、影音、網址 →「這份教材沒有文字可以讀…」；讀不到文字 →「這份檔案讀不到文字（可能是掃描檔）…」；超過 30000 字 → 400。任何一項不合格，整個請求 400，什麼都不建立。
+- **版型**：沿用老師由這份教材做出的最新一個 `ready` 版型；沒有的話，沿用一個還在讀取（`extracting`）的（同一份範本不會同時讀兩次）；都沒有就建立一個新的版型，和 `POST /api/worksheet-templates` 同樣的新增與抽取（標題是教材標題＋「版型」，記 `worksheet_template_created`，多了 `prep_session_id`）。讀取失敗的版型不沿用。這個版型就是對話的 `template`（`PrepSession.template` 照舊回傳）。
+- **第一輪**：版型還在讀取時，這一輪是 `running`、沒有學習單（`worksheet: null`），等版型讀好才建立學習單並照版型產生（和用 `template_id` 時一樣）；之後照舊，學習單產生完就是 `done`。版型已經 `ready` 時，學習單立刻建立。
+- **讀取失敗**：這一輪 `failed`，`error` 就是版型的 `error`（中文）；版型維持 `failed`，可以在版型頁按「重試」。在對話裡按「再試一次」（同樣 `kind: "worksheet"` 的新一輪）也會重新讀取這個版型（等同 `POST …/retry`，記 `worksheet_template_retried`，多了 `prep_session_id`），新的一輪同樣等它讀好；原本的教材已刪除時，這個請求 400「原本的學習單檔案已經刪除，無法重試；請重新上傳。」。
+- 等待中的版型被刪除時，這一輪 `failed`（「這次要照著做的版型已經刪除了…」）。伺服器重啟會中斷讀取：版型照 Phase 2.5 的規則改成 `failed`，這一輪跟著 `failed`。
+- 201 的回應在讀取開始之前讀出，所以新版型的第一輪一定是 `running`、`template.status = "extracting"`。
+
+```ts
+interface PrepTurn {
+  /* …既有欄位… */
+  template: { id: number; title: string; status: "extracting" | "ready" | "failed" } | null;
+}
+```
+
+- `template`：`worksheet` 輪次照著做的版型（這一輪開始時對話的版型）與它**現在**的狀態；其他輪次、沒有用版型、或版型已刪除時是 `null`。`status = "extracting"` 時 `worksheet` 一定是 `null`。資料存在 `prep_turns.template_id`（刪除版型時變成 null；0016 之前做的輪次依學習單的 `template_id` 補上）。
+- `prep_session_created` 多 `template_material_id`。按鈕或工具名稱「照我的學習單做」也不算「教師的要求」。
+
+## 照版型產生：每一題的 Bloom 層次
+
+`worksheet_template_section` **第 2 版**（第 1 版保留）：
+
+- 每一題多一個 `bloom`（schema 是六個 id 的 enum，放在 `answer` 之後），規則文字和 `worksheet_tasks` 第 2 版的第 13 條相同。題目保留它（`WsItem.bloom`）；表外的值丟掉（`null`）。教師版與匯出照 Phase 2.7 印出 Bloom 標記與區塊的 `bloom_summary`，學生版沒有。
+- `scaffold` 改成**字串陣列**（每行一項，≤6 行、每行 ≤200 字）：gemma 想換行時會直接結束 JSON 字串。伺服器把各行用換行接起來，照舊變成一個鷹架（程序鷹架依行拆成 `steps`）；讀到舊的字串格式也接受。
+- prompt 另外寫清楚各作答方式的格式（配對題的左欄寫在同一行、右欄放 `options`；是非題的 `options` 是 True／False），並要求其他文字欄位不換行。schema 的每個字串與陣列都有上限，欄位照撰寫順序。
+- 假模型：每一題都有層次（段落寫作是 `create`，其他依序 `remember`、`understand`、`analyze`），`scaffold` 是陣列。新標記 `FAKE_TPL_BAD_BLOOM`（寫在教材）：每個區塊第一題的層次不在六個之內 → 伺服器丟掉。
+
+## 課文位置放了學習單時的訊息
+
+產生學習單因為教材超過 40 段而拒絕時（`POST /api/worksheets/:id/generate`、單一區塊重新產生、備課對話做學習單的輪次），如果這份教材 `looks_like_worksheet`（來自教材庫時用教材的欄位，否則用同一套規則算學習單的教材快照），訊息後面加上：
+
+「這份看起來是學習單範本：要照它的樣式做新學習單，請用「照我的學習單做」，再另外放這節課的課文。」
+
+不像學習單的長文章維持原本的訊息。
+
+## 其他
+
+- `prep_turns` 的「學習單產生完就是 `done`」改成「學習單的產生**開始過**而且結束」：學習單剛建立、產生還沒開始的那一瞬間，不會被輪詢誤判成 `done`（開始失敗時由開始的程式把這一輪設成 `failed`）。
+- 資料：`materials.looks_like_worksheet`（BOOLEAN，0016 之前的列第一次讀取時補上）、`prep_turns.template_id`、`prompt_versions` 新增 `worksheet_template_section` 第 2 版。
+- 程式進入點：偵測 `materials::detect::looks_like_worksheet`；對話等版型 `prep::run::start`（`spawn_after_template`）；schema `worksheet::template::section_out_schema`。

@@ -19,8 +19,8 @@ use crate::prep::run::{self, TurnInput};
 use crate::prep::store::{self, Session, SessionRow, Summary};
 use crate::prep::{
     chip_label, is_worksheet_kind, ActivityPlan, SessionOptions, AUTO_TITLE_CHARS, KINDS,
-    KIND_ACTIVITY, KIND_ASK, KIND_KIT, KIND_RESOURCES, KIND_REVISE, MAX_REQUEST_CHARS,
-    MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_RUNNING,
+    KIND_ACTIVITY, KIND_ASK, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
+    MAX_REQUEST_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_RUNNING,
 };
 use crate::routes::{clip_chars, double_option, log_usage, owned_class};
 use crate::worksheet::ai as ws_ai;
@@ -28,7 +28,9 @@ use crate::worksheet::bloom::Output;
 use crate::worksheet::export;
 use crate::worksheet::safe_filename;
 use crate::worksheet::store as ws_store;
-use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
+use crate::worksheet::template::extract::{
+    self as tpl_extract, MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT,
+};
 use crate::worksheet::template::store as tpl_store;
 use crate::AppState;
 
@@ -44,6 +46,8 @@ const MSG_NEEDS_REQUEST: &str = "請寫下你想問或想改的內容。";
 const MSG_MATERIAL_DELETED: &str = "這個備課對話的教材已經刪除了，請開一個新的備課對話。";
 const MSG_NO_WORKSHEET: &str = "這個備課對話還沒有學習單可以修改。";
 const MSG_WORKSHEET_RUNNING: &str = "Manna 正在產生這份學習單，好了之後再改。";
+const MSG_SAMPLE_KIND: &str = "範本只適用於完整學習單";
+const MSG_SAMPLE_DELETED: &str = "原本的學習單檔案已經刪除，無法重試；請重新上傳。";
 
 #[derive(Debug, Serialize)]
 pub struct SessionList {
@@ -109,6 +113,11 @@ pub struct CreateSession {
     pub class_id: Option<i64>,
     #[serde(default)]
     pub template_id: Option<i64>,
+    /// A worksheet sample (one of the teacher's materials with text): its template is reused or
+    /// extracted and becomes the session's template. `worksheet` only; ignored with
+    /// `template_id`.
+    #[serde(default)]
+    pub template_material_id: Option<i64>,
     /// 出題選項, passed into every worksheet the session makes.
     #[serde(default)]
     pub options: Option<SessionOptions>,
@@ -141,7 +150,13 @@ async fn spawn_turn(
     request: &str,
     worksheet_id: Option<i64>,
 ) -> AppResult<()> {
-    let turn = store::start_turn(&state.db, session.id, kind, request).await?;
+    // A worksheet turn follows the session's template; it waits while that is extracting.
+    let template_id = if kind == KIND_WORKSHEET {
+        session.template_id
+    } else {
+        None
+    };
+    let turn = store::start_turn(&state.db, session.id, kind, request, template_id).await?;
     log_usage(
         &state.db,
         teacher.id(),
@@ -173,6 +188,13 @@ pub async fn create(
         return Err(AppError::bad_request(
             "新的備課對話不能從「修改」開始；請先做學習單或設計評量。",
         ));
+    }
+    // The worksheet sample (照我的學習單做); a template given as well wins.
+    let sample_id = req
+        .template_material_id
+        .filter(|_| req.template_id.is_none());
+    if sample_id.is_some() && kind != KIND_WORKSHEET {
+        return Err(AppError::bad_request(MSG_SAMPLE_KIND));
     }
     let request = check_request(req.request.as_deref().unwrap_or_default())?;
     let options = checked_options(req.options.clone())?;
@@ -212,6 +234,11 @@ pub async fn create(
     if let Some(template_id) = req.template_id {
         tpl_store::ready_for_use(db, teacher.id(), template_id).await?;
     }
+    // The sample follows the rules of `POST /api/worksheet-templates` (400 otherwise).
+    let sample = match sample_id {
+        Some(id) => Some(tpl_extract::source(db, teacher.id(), id).await?),
+        None => None,
+    };
     // A library material wins over pasted text (which is then not stored), as for worksheets.
     let material: Option<(i64, String)> = match (req.material_id, pasted) {
         (Some(id), _) => Some(usable_material(db, teacher.id(), id).await?),
@@ -231,32 +258,95 @@ pub async fn create(
         (_, Some(t)) => clip_chars(t, MAX_TITLE_CHARS - 1),
         _ => clip_chars(&request, AUTO_TITLE_CHARS),
     };
-    let session = store::insert(
-        db,
-        store::NewSession {
-            teacher_id: teacher.id(),
-            title: &title,
-            material_id: material.as_ref().map(|(id, _)| *id),
-            topic: topic.as_deref(),
-            class_id: req.class_id,
-            template_id: req.template_id,
-            options: &options,
-        },
-    )
-    .await?;
-    log_usage(
-        db,
-        teacher.id(),
-        "prep_session_created",
-        json!({
-            "session_id": session.id, "kind": kind, "material_id": session.material_id,
-            "class_id": session.class_id, "template_id": session.template_id,
-        }),
-    )
-    .await?;
-    let id = session.id;
-    spawn_turn(&state, &teacher, session, kind, &request, None).await?;
-    Ok((StatusCode::CREATED, Json(store::session(&state, id).await?)))
+    // The sample's template: the newest ready one made from it (or one still extracting),
+    // otherwise a new one, inserted and extracted exactly as `POST /api/worksheet-templates`.
+    let (template_id, extraction) = match sample {
+        Some(m) => {
+            tpl_store::expire_stale(db, teacher.id(), tpl_extract::stale_after(&state)).await?;
+            match tpl_store::reusable_for_material(db, teacher.id(), m.id).await? {
+                Some(t) => (Some(t.id), None),
+                None => {
+                    let title = tpl_extract::default_title(&m.title);
+                    let t = tpl_store::insert(db, teacher.id(), &title, m.id).await?;
+                    (Some(t.id), Some((t, m.text)))
+                }
+            }
+        }
+        None => (req.template_id, None),
+    };
+    let made = async {
+        let session = store::insert(
+            db,
+            store::NewSession {
+                teacher_id: teacher.id(),
+                title: &title,
+                material_id: material.as_ref().map(|(id, _)| *id),
+                topic: topic.as_deref(),
+                class_id: req.class_id,
+                template_id,
+                options: &options,
+            },
+        )
+        .await?;
+        log_usage(
+            db,
+            teacher.id(),
+            "prep_session_created",
+            json!({
+                "session_id": session.id, "kind": kind, "material_id": session.material_id,
+                "class_id": session.class_id, "template_id": session.template_id,
+                "template_material_id": sample_id,
+            }),
+        )
+        .await?;
+        if let Some((t, _)) = &extraction {
+            log_usage(
+                db,
+                teacher.id(),
+                "worksheet_template_created",
+                json!({ "template_id": t.id, "material_id": t.source_material_id,
+                        "prep_session_id": session.id }),
+            )
+            .await?;
+        }
+        let id = session.id;
+        spawn_turn(&state, &teacher, session, kind, &request, None).await?;
+        // Read the answer before the extraction starts (a fast one could otherwise finish first).
+        store::session(&state, id).await
+    }
+    .await;
+    // The template exists either way: its extraction always runs.
+    if let Some((t, text)) = extraction {
+        tpl_extract::spawn(&state, &t, text);
+    }
+    Ok((StatusCode::CREATED, Json(made?)))
+}
+
+/// Before a new `worksheet` turn: a session template whose extraction failed is extracted
+/// again (like `POST /api/worksheet-templates/:id/retry`), so that 「再試一次」 retries it. The
+/// template's material, to start the job with once the turn is open; `None` when nothing is
+/// to be retried.
+async fn template_to_retry(
+    state: &AppState,
+    teacher_id: i64,
+    session: &SessionRow,
+) -> AppResult<Option<(i64, String)>> {
+    let db = &state.db;
+    let Some(template_id) = session.template_id else {
+        return Ok(None);
+    };
+    tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
+    let Some(t) = tpl_store::find(db, template_id, teacher_id).await? else {
+        return Ok(None);
+    };
+    if t.status != tpl_store::STATUS_FAILED {
+        return Ok(None);
+    }
+    let Some(material_id) = t.source_material_id else {
+        return Err(AppError::bad_request(MSG_SAMPLE_DELETED));
+    };
+    let material = tpl_extract::source(db, teacher_id, material_id).await?;
+    Ok(Some((template_id, material.text)))
 }
 
 pub async fn get(
@@ -399,12 +489,37 @@ pub async fn create_turn(
     {
         return Err(AppError::Conflict(store::MSG_BUSY.to_string()));
     }
+    let retry = if kind == KIND_WORKSHEET {
+        template_to_retry(&state, teacher.id(), &session).await?
+    } else {
+        None
+    };
+    // `None` when another request restarted it meanwhile: the turn waits for that one.
+    let restarted = match &retry {
+        Some((template_id, _)) => tpl_store::restart(db, *template_id).await?,
+        None => None,
+    };
     let request = request_or_label(kind, request);
-    spawn_turn(&state, &teacher, session, kind, &request, worksheet_id).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(store::session(&state, id).await?),
-    ))
+    let made = async {
+        if let Some(t) = &restarted {
+            log_usage(
+                db,
+                teacher.id(),
+                "worksheet_template_retried",
+                json!({ "template_id": t.id, "run": t.extract_run, "prep_session_id": id }),
+            )
+            .await?;
+        }
+        spawn_turn(&state, &teacher, session, kind, &request, worksheet_id).await?;
+        // Read the answer before the extraction starts (a fast one could otherwise finish first).
+        store::session(&state, id).await
+    }
+    .await;
+    // The template was restarted either way: its extraction always runs.
+    if let (Some(t), Some((_, text))) = (restarted, retry) {
+        tpl_extract::spawn(&state, &t, text);
+    }
+    Ok((StatusCode::ACCEPTED, Json(made?)))
 }
 
 // ---------------------------------------------------------------- 教學套件 download

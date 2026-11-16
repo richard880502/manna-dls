@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use sqlx::types::Json;
 use sqlx::{PgPool, Postgres, Transaction};
 
+use super::detect;
 use super::extract::{self, Extracted, TextStatus};
 use super::{
     allowed_extensions_label, clean_filename, content_matches, file_type_for_name, Kind,
@@ -49,11 +50,14 @@ pub struct MaterialRow {
     pub revision: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Computed from `text` whenever it is written ([`detect::looks_like_worksheet`]); `None`
+    /// only for rows written before migration 0016 (computed and stored on their first read).
+    pub looks_like_worksheet: Option<bool>,
 }
 
 pub const COLS: &str = "id, teacher_id, kind, origin, title, source_note, url, filename, ext,
     content_type, size_bytes, sha256, storage_key, text_status, text, text_truncated, paragraphs,
-    paragraph_seq, page_count, revision, created_at, updated_at";
+    paragraph_seq, page_count, revision, created_at, updated_at, looks_like_worksheet";
 
 /// A lesson that uses a material.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -90,6 +94,9 @@ pub struct Material {
     pub lessons: Vec<LessonUse>,
     pub worksheet_count: i64,
     pub annotation_count: i64,
+    /// The text looks like a worksheet rather than a lesson text (the page then offers
+    /// 「照我的學習單做」). Deterministic: [`detect::looks_like_worksheet`].
+    pub looks_like_worksheet: bool,
 }
 
 /// A material with its text and paragraphs (the viewer).
@@ -102,6 +109,13 @@ pub struct MaterialDetail {
 }
 
 impl MaterialRow {
+    /// Whether the text looks like a worksheet: the stored value, or computed now for a row
+    /// written before it was stored.
+    pub fn looks_like_worksheet(&self) -> bool {
+        self.looks_like_worksheet
+            .unwrap_or_else(|| detect::looks_like_worksheet(&self.text))
+    }
+
     pub fn summary(
         &self,
         lessons: Vec<LessonUse>,
@@ -131,6 +145,7 @@ impl MaterialRow {
             lessons,
             worksheet_count,
             annotation_count,
+            looks_like_worksheet: self.looks_like_worksheet(),
         }
     }
 }
@@ -187,7 +202,31 @@ async fn counts(db: &PgPool, sql: &str, material_ids: &[i64]) -> sqlx::Result<Ve
     sqlx::query_as(sql).bind(material_ids).fetch_all(db).await
 }
 
+/// Stores `looks_like_worksheet` for rows written before it existed (computed from their text
+/// on this first read). `updated_at` stays: the material did not change.
+async fn fill_worksheet_flags(db: &PgPool, rows: &[MaterialRow]) -> sqlx::Result<()> {
+    let (ids, flags): (Vec<i64>, Vec<bool>) = rows
+        .iter()
+        .filter(|r| r.looks_like_worksheet.is_none())
+        .map(|r| (r.id, r.looks_like_worksheet()))
+        .unzip();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE materials m SET looks_like_worksheet = x.flag
+           FROM UNNEST($1::BIGINT[], $2::BOOLEAN[]) AS x(id, flag)
+          WHERE m.id = x.id AND m.looks_like_worksheet IS NULL",
+    )
+    .bind(&ids)
+    .bind(&flags)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 async fn summaries(db: &PgPool, rows: &[MaterialRow]) -> sqlx::Result<Vec<Material>> {
+    fill_worksheet_flags(db, rows).await?;
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let uses = lesson_uses(db, &ids).await?;
     let worksheets = counts(
@@ -352,8 +391,8 @@ pub async fn insert_text(
     };
     sqlx::query_as(&format!(
         "INSERT INTO materials (teacher_id, kind, origin, title, source_note, size_bytes, sha256,
-                                text_status, text, paragraphs, paragraph_seq)
-         VALUES ($1, 'text', 'paste', $2, $3, $4, $5, $6, $7, $8, $9)
+                                text_status, text, paragraphs, paragraph_seq, looks_like_worksheet)
+         VALUES ($1, 'text', 'paste', $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING {COLS}"
     ))
     .bind(teacher_id)
@@ -369,6 +408,7 @@ pub async fn insert_text(
     .bind(text)
     .bind(Json(&paragraphs))
     .bind(seq)
+    .bind(detect::looks_like_worksheet(text))
     .fetch_one(&mut **tx)
     .await
 }
@@ -437,8 +477,9 @@ pub async fn create_link(
     check_count(db, teacher_id).await?;
     let mut tx = db.begin().await?;
     let row: MaterialRow = sqlx::query_as(&format!(
-        "INSERT INTO materials (teacher_id, kind, origin, title, source_note, url, text_status)
-         VALUES ($1, 'link', 'url', $2, $3, $4, 'not_applicable')
+        "INSERT INTO materials (teacher_id, kind, origin, title, source_note, url, text_status,
+                                looks_like_worksheet)
+         VALUES ($1, 'link', 'url', $2, $3, $4, 'not_applicable', FALSE)
          RETURNING {COLS}"
     ))
     .bind(teacher_id)
@@ -563,6 +604,7 @@ pub async fn create_upload(
     }
 
     let text = extracted.text();
+    let looks_like_worksheet = detect::looks_like_worksheet(&text);
     let (mut paragraphs, seq) = assign_paragraph_ids(
         &[],
         0,
@@ -598,8 +640,9 @@ pub async fn create_upload(
             "INSERT INTO materials
                (teacher_id, kind, origin, title, source_note, filename, ext, content_type,
                 size_bytes, sha256, storage_key, text_status, text, text_truncated, paragraphs,
-                paragraph_seq, page_count)
-             VALUES ($1, $2, 'upload', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                paragraph_seq, page_count, looks_like_worksheet)
+             VALUES ($1, $2, 'upload', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                     $17)
              RETURNING {COLS}"
         ))
         .bind(teacher_id)
@@ -618,6 +661,7 @@ pub async fn create_upload(
         .bind(Json(&paragraphs))
         .bind(seq)
         .bind(extracted.page_count)
+        .bind(looks_like_worksheet)
         .fetch_one(&mut *tx)
         .await?;
         log_usage(
@@ -658,7 +702,8 @@ pub async fn replace_text(
     sqlx::query_as(&format!(
         "UPDATE materials
             SET text = $2, paragraphs = $3, paragraph_seq = $4, revision = revision + 1,
-                size_bytes = $5, sha256 = $6, text_status = $7, updated_at = now()
+                size_bytes = $5, sha256 = $6, text_status = $7, looks_like_worksheet = $8,
+                updated_at = now()
           WHERE id = $1
           RETURNING {COLS}"
     ))
@@ -673,6 +718,7 @@ pub async fn replace_text(
     } else {
         TextStatus::Ready.as_str()
     })
+    .bind(detect::looks_like_worksheet(text))
     .fetch_one(&mut **tx)
     .await
 }

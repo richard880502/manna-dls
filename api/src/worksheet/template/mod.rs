@@ -19,6 +19,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use super::bloom::Bloom;
 use super::{
     student_tasks, BlockKind, ScaffoldType, Settings, ANSWER_FORMATS, GENERATION_OPTIONS,
     GEN_OBJECTIVES, INSTRUCTIONAL_KINDS, MAX_ID_CHARS, PROCEDURAL_KINDS, VERBAL_KINDS,
@@ -318,6 +319,10 @@ pub struct RawOutItem {
     pub prompt: String,
     pub options: Vec<String>,
     pub answer: String,
+    /// The item's Bloom level (`worksheet_template_section` version 2); a value outside the
+    /// fixed six is dropped by the checks. Absent in a revision (`prep_revise`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bloom: Option<String>,
 }
 
 /// One generated block.
@@ -325,8 +330,30 @@ pub struct RawOutItem {
 pub struct RawSectionOut {
     pub title: String,
     pub instructions: String,
+    /// One line per step, frame or question. The schema asks for an array of lines (version 2:
+    /// gemma ends a JSON string where it wants a line break); a single string is read as well.
+    #[serde(deserialize_with = "lines_or_string")]
     pub scaffold: String,
     pub items: Vec<RawOutItem>,
+}
+
+/// An array of lines joined with line breaks, or a string as it is.
+fn lines_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Lines {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Lines::deserialize(d)? {
+        Lines::One(s) => s,
+        Lines::Many(lines) => lines
+            .iter()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    })
 }
 
 // ---------------------------------------------------------------- schemas (properties in written order)
@@ -431,18 +458,26 @@ pub fn details_schema(n: usize) -> Value {
 /// runaway is cut off early instead of eating the whole token budget.
 pub const SECTION_TITLE_CHARS: usize = 150;
 pub const SECTION_INSTRUCTIONS_CHARS: usize = 500;
-pub const SECTION_SCAFFOLD_CHARS: usize = 600;
+/// The scaffold: at most this many lines of this many characters.
+pub const SECTION_SCAFFOLD_LINES: usize = 6;
+pub const SECTION_SCAFFOLD_LINE_CHARS: usize = 200;
 pub const ITEM_PROMPT_CHARS: usize = 600;
 pub const ITEM_OPTIONS: usize = 6;
 pub const ITEM_OPTION_CHARS: usize = 150;
 pub const ITEM_ANSWER_CHARS: usize = 400;
 
-/// SECTION_OUT of the probe (gen2), with length caps; at most `item_count` items.
+/// SECTION_OUT of the probe (gen2), with length caps; at most `item_count` items. Version 2 of
+/// the prompt: the scaffold is an array of lines and every item ends with its Bloom level (an
+/// enum of the six ids), written after the item so the label describes what was written.
 pub fn section_out_schema(item_count: usize) -> Value {
+    let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
     obj(vec![
         ("title", s_max(SECTION_TITLE_CHARS)),
         ("instructions", s_max(SECTION_INSTRUCTIONS_CHARS)),
-        ("scaffold", s_max(SECTION_SCAFFOLD_CHARS)),
+        (
+            "scaffold",
+            strings_max(SECTION_SCAFFOLD_LINES, SECTION_SCAFFOLD_LINE_CHARS),
+        ),
         (
             "items",
             json!({
@@ -452,6 +487,7 @@ pub fn section_out_schema(item_count: usize) -> Value {
                     ("prompt", s_max(ITEM_PROMPT_CHARS)),
                     ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
                     ("answer", s_max(ITEM_ANSWER_CHARS)),
+                    ("bloom", enum_of(&blooms)),
                 ]),
                 "maxItems": item_count.clamp(1, MAX_ITEM_COUNT as usize)
             }),
@@ -1002,6 +1038,31 @@ mod tests {
     }
 
     #[test]
+    fn a_block_reads_scaffold_lines_and_bloom_levels() {
+        let v2: RawSectionOut = serde_json::from_value(json!({
+            "title": "Details", "instructions": "Answer.",
+            "scaffold": ["Step 1: find the key words.", " ", "Step 2: answer in a sentence."],
+            "items": [{ "answer_format": "簡答題", "prompt": "Why?", "options": [],
+                        "answer": "Because.", "bloom": "analyze" }],
+        }))
+        .unwrap();
+        assert_eq!(
+            v2.scaffold,
+            "Step 1: find the key words.\nStep 2: answer in a sentence."
+        );
+        assert_eq!(v2.items[0].bloom.as_deref(), Some("analyze"));
+        // Version 1 (a scaffold string, no Bloom level) and a revision still read.
+        let v1: RawSectionOut = serde_json::from_value(json!({
+            "title": "Details", "instructions": "Answer.", "scaffold": "Look first.",
+            "items": [{ "answer_format": "簡答題", "prompt": "Why?", "options": [],
+                        "answer": "Because." }],
+        }))
+        .unwrap();
+        assert_eq!(v1.scaffold, "Look first.");
+        assert_eq!(v1.items[0].bloom, None);
+    }
+
+    #[test]
     fn schemas_keep_the_written_order() {
         let s = details_schema(3);
         let keys: Vec<&str> = s["properties"]["sections"]["items"]["properties"]
@@ -1023,6 +1084,40 @@ mod tests {
         assert_eq!(
             out["properties"]["items"]["items"]["properties"]["answer"]["maxLength"],
             ITEM_ANSWER_CHARS
+        );
+        // Version 2: a Bloom level per item, last; the scaffold is an array of capped lines.
+        let item_keys: Vec<&String> = out["properties"]["items"]["items"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        assert_eq!(
+            item_keys,
+            ["answer_format", "prompt", "options", "answer", "bloom"]
+        );
+        assert_eq!(
+            out["properties"]["items"]["items"]["properties"]["bloom"]["enum"],
+            json!([
+                "remember",
+                "understand",
+                "apply",
+                "analyze",
+                "evaluate",
+                "create"
+            ])
+        );
+        assert_eq!(out["properties"]["scaffold"]["type"], "array");
+        assert_eq!(
+            out["properties"]["scaffold"]["maxItems"],
+            SECTION_SCAFFOLD_LINES
+        );
+        assert_eq!(
+            out["properties"]["scaffold"]["items"]["maxLength"],
+            SECTION_SCAFFOLD_LINE_CHARS
+        );
+        assert_eq!(
+            out["required"],
+            json!(["title", "instructions", "scaffold", "items"])
         );
         for schema in [o, s, out] {
             let text = schema.to_string();

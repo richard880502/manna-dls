@@ -310,6 +310,7 @@ fn section_block(
             purpose: None,
             levels: levels.to_vec(),
             origin: Origin::Ai,
+            bloom: it.bloom,
             ..Item::default()
         })
         .collect();

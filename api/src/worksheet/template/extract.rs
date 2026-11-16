@@ -76,6 +76,19 @@ pub async fn source(
     Ok(row)
 }
 
+/// A new template's title when the teacher gave none: the material's title and 「版型」.
+pub fn default_title(material_title: &str) -> String {
+    let base = material_title.trim();
+    let base = if base.is_empty() {
+        "我的學習單"
+    } else {
+        base
+    };
+    // Room for 「版型」 within the limit.
+    let base: String = base.chars().take(super::MAX_TITLE_CHARS - 2).collect();
+    format!("{}版型", base.trim_end())
+}
+
 /// Seconds after which an open extraction is reported as failed.
 pub fn stale_after(state: &AppState) -> f64 {
     (state.config.ai_timeout_secs * 6 + 60) as f64

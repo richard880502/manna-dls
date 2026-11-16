@@ -39,6 +39,7 @@ use crate::ai::pipeline::{self, AiContextItem, ContextList, InteractionMeta};
 use crate::ai::LlmRequest;
 use crate::checks::{self as base_checks, CheckResult};
 use crate::error::{AppError, AppResult};
+use crate::materials::detect;
 use crate::prompts;
 use crate::routes::{clip_chars, log_usage, or_blank, scaffold_id, track_label};
 use crate::sop::ai::{
@@ -1461,23 +1462,58 @@ fn empty_message(what: &str, reason: &str) -> String {
     format!("{what}沒有產生成功（{reason}）。你可以自己寫，或按「重新產生」。")
 }
 
-fn check_material(worksheet: &Worksheet) -> AppResult<()> {
-    let n = worksheet.material.paragraphs.len();
-    if n == 0 {
-        return Err(AppError::bad_request(MSG_NEED_MATERIAL));
+/// Added to a refusal when the material looks like a worksheet: the teacher probably put her
+/// worksheet sample where the lesson text goes.
+pub const MSG_LOOKS_LIKE_WORKSHEET: &str = "這份看起來是學習單範本：要照它的樣式做新學習單，請用「照我的學習單做」，再另外放這節課的課文。";
+
+/// Whether the worksheet's material looks like a worksheet: the library material's flag when
+/// the snapshot came from the library (and the material still exists), otherwise the same rule
+/// on the snapshot's paragraphs.
+async fn material_looks_like_worksheet(db: &PgPool, worksheet: &Worksheet) -> sqlx::Result<bool> {
+    if let Some(id) = worksheet.material.source.material_id {
+        let row: Option<(Option<bool>, String)> = sqlx::query_as(
+            "SELECT looks_like_worksheet, text FROM materials WHERE id = $1 AND teacher_id = $2",
+        )
+        .bind(id)
+        .bind(worksheet.teacher_id)
+        .fetch_optional(db)
+        .await?;
+        if let Some((flag, text)) = row {
+            return Ok(flag.unwrap_or_else(|| detect::looks_like_worksheet(&text)));
+        }
     }
-    if n > super::MAX_AI_PARAGRAPHS {
-        return Err(AppError::bad_request(format!(
+    let text: Vec<&str> = worksheet
+        .material
+        .paragraphs
+        .iter()
+        .map(|p| p.text.as_str())
+        .collect();
+    Ok(detect::looks_like_worksheet(&text.join("\n")))
+}
+
+/// The material must have paragraphs, and at most [`super::MAX_AI_PARAGRAPHS`]. A refused
+/// material that looks like a worksheet gets [`MSG_LOOKS_LIKE_WORKSHEET`] appended.
+async fn check_material(db: &PgPool, worksheet: &Worksheet) -> AppResult<()> {
+    let n = worksheet.material.paragraphs.len();
+    let mut message = if n == 0 {
+        MSG_NEED_MATERIAL.to_string()
+    } else if n > super::MAX_AI_PARAGRAPHS {
+        format!(
             "這份教材有 {n} 段，超過 Manna 一次能設計的 {} 段。請先貼上這節課要用的部分。",
             super::MAX_AI_PARAGRAPHS
-        )));
+        )
+    } else {
+        return Ok(());
+    };
+    if material_looks_like_worksheet(db, worksheet).await? {
+        message.push_str(MSG_LOOKS_LIKE_WORKSHEET);
     }
-    Ok(())
+    Err(AppError::bad_request(message))
 }
 
 /// Creates the four jobs of a generation (or joins the run in progress) and starts the work.
 pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()> {
-    check_material(&input.worksheet)?;
+    check_material(&state.db, &input.worksheet).await?;
     // Reading comprehension and tiered practice are made per Bloom level.
     if input.worksheet.settings.output.by_bloom() {
         return bloom::start_generation(state, input).await;
@@ -1748,7 +1784,7 @@ fn sop_block_for(
 /// Creates the jobs for regenerating one block (or joins the run in progress) and starts the
 /// work. The block must exist in the latest version.
 pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> AppResult<()> {
-    check_material(&input.worksheet)?;
+    check_material(&state.db, &input.worksheet).await?;
     let block = input
         .content
         .block(block_id)

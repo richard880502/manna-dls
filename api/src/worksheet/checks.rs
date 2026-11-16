@@ -1148,6 +1148,9 @@ pub struct CleanSectionItem {
     pub answer: String,
     /// The answer's verbatim support in the material, when there is one (teacher version).
     pub evidence: Option<String>,
+    /// The Bloom level the model gave the item (template blocks, prompt version 2); `None`
+    /// when it gave none or a value outside the six.
+    pub bloom: Option<Bloom>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1370,6 +1373,8 @@ pub fn evaluate_section(
             options: clean_all(&it.options),
             answer: clean(&it.answer),
             evidence: None,
+            // A label outside the fixed set (a provider that ignores the schema) is dropped.
+            bloom: it.bloom.as_deref().and_then(Bloom::parse),
         };
         if !item_checks(&mut item, &iname, &mut t) {
             continue;
@@ -1489,6 +1494,8 @@ pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<Cle
             options: clean_all(&it.options),
             answer: clean(&it.answer),
             evidence: None,
+            // The level is the call's, not the item's (see `CleanBloomItem`).
+            bloom: None,
         };
         if item.answer_format == FMT_TRUE_FALSE && item.options.is_empty() {
             item.options = vec!["True".to_string(), "False".to_string()];
@@ -1683,6 +1690,7 @@ mod tests {
             prompt: prompt.into(),
             options: options.iter().map(|o| o.to_string()).collect(),
             answer: answer.into(),
+            bloom: None,
         }
     }
 
