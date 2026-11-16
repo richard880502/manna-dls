@@ -42,18 +42,30 @@ export function useTemplateList() {
   const extracting = templates?.some((t) => t.status === "extracting") ?? false;
   useEffect(() => {
     if (!extracting) return undefined;
+    // One request at a time: the next is asked for only after the answer, and only while that
+    // answer still has a template being read. (Overlapping polls could answer out of order and
+    // kept asking once more after the reading had ended.)
     let stopped = false;
-    const timer = setInterval(() => {
-      api
-        .listWorksheetTemplates()
-        .then((res) => !stopped && setTemplates(res.templates))
-        .catch(() => {
-          // A missed poll is not a failure; the next one tries again.
-        });
-    }, templateConfig.pollMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const next = () => {
+      timer = setTimeout(() => {
+        api
+          .listWorksheetTemplates()
+          .then((res) => {
+            if (stopped) return;
+            setTemplates(res.templates);
+            if (res.templates.some((t) => t.status === "extracting")) next();
+          })
+          .catch(() => {
+            // A missed poll is not a failure; the next one tries again.
+            if (!stopped) next();
+          });
+      }, templateConfig.pollMs);
+    };
+    next();
     return () => {
       stopped = true;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [extracting]);
 
