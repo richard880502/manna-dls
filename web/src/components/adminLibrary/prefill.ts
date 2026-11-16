@@ -183,11 +183,14 @@ export function materialMeta(m: {
   paragraph_count: number;
   word_count: number;
   text_status: string;
+  ocr?: { status: string };
 }): string {
   const parts = [fileTypeLabel(m.file_type)];
   if (m.page_count) parts.push(`${m.page_count} 頁`);
   if (m.text_status === "ready") parts.push(m.word_count > 0 ? aboutWords(m.word_count) : `${m.paragraph_count} 段`);
-  if (m.text_status === "no_text") parts.push("讀不到文字（可能是掃描檔）");
+  // While OCR reads a scan, its row says 「辨識中」 instead.
+  const reading = m.ocr?.status === "queued" || m.ocr?.status === "running";
+  if (m.text_status === "no_text" && !reading) parts.push("讀不到文字（可能是掃描檔）");
   if (m.text_status === "failed") parts.push("文字讀不出來");
   return parts.join(" · ");
 }

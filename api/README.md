@@ -63,6 +63,12 @@ when `CI` is set, where they fail. Tests always use the fake AI provider; no net
 | `EMBEDDING_DIMS` | `768` (`64` for fake) | must match the model's output |
 | `EMBEDDING_QUERY_TIMEOUT_MS` | `2500` | per-request budget for the query vector; past it retrieval is keyword-only |
 | `EMBEDDING_TIMEOUT_SECS` | `60` | per batch of the background indexing job |
+| `OCR_PROVIDER` | `none` (`fake` when `AI_PROVIDER=fake`) | `openai_compatible` \| `fake` \| `none`: OCR of scanned PDFs, photos and broken text layers (docs/API.md Phase 2.10). Invalid settings disable it with a warning |
+| `OCR_BASE_URL`, `OCR_API_KEY` | `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` | we POST `{base}/chat/completions` with one page image; the key is never logged |
+| `OCR_MODEL` | `chandra-ocr-2` | |
+| `OCR_TIMEOUT_SECS` | `120` | per page request (retried once on a timeout or 5xx) |
+| `OCR_MAX_PAGES` | `40` | pages read per file; the rest is skipped with a note |
+| `OCR_CONCURRENCY` | `2` | pages read at once across the server (also files worked on at once) |
 | `RUST_LOG` | `info,tower_http=info` | tracing filter |
 
 **Hard rule:** `AI_PROVIDER=anthropic` without `DEMO_MODE=true` refuses to start. The spec

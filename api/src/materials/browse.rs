@@ -171,6 +171,10 @@ pub struct MaterialCard {
     pub created_at: DateTime<Utc>,
     /// 「Manna 知識庫」 or 「我」.
     pub owner_label: &'static str,
+    /// Text recognition of a scanned file (docs/API.md「Phase 2.10」).
+    pub ocr: crate::materials::ocr::MaterialOcr,
+    /// `file` | `ocr`
+    pub text_source: String,
     /// Admin lists only: the research id of the admin who uploaded it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uploaded_by: Option<String>,
@@ -196,6 +200,11 @@ struct MaterialCardRow {
     created_at: DateTime<Utc>,
     size_bytes: i64,
     uploaded_by: String,
+    text_source: String,
+    ocr_status: String,
+    ocr_done_pages: i32,
+    ocr_total_pages: i32,
+    ocr_error: Option<String>,
 }
 
 impl MaterialCardRow {
@@ -213,6 +222,13 @@ impl MaterialCardRow {
                 .looks_like_worksheet
                 .unwrap_or_else(|| super::detect::looks_like_worksheet(&self.text)),
             uploaded_by: admin.then_some(self.uploaded_by),
+            ocr: crate::materials::ocr::MaterialOcr {
+                status: self.ocr_status,
+                done_pages: self.ocr_done_pages,
+                total_pages: self.ocr_total_pages,
+                error: self.ocr_error,
+            },
+            text_source: self.text_source,
             size_bytes: admin.then_some(self.size_bytes),
             id: self.id,
             title: self.title,
@@ -237,7 +253,8 @@ impl MaterialCardRow {
 
 const MATERIAL_SELECT: &str = "SELECT m.id, m.title, m.scope, m.category, m.tags, m.kind, m.ext,
        m.page_count, jsonb_array_length(m.paragraphs) AS paragraph_count, m.text, m.text_status,
-       m.looks_like_worksheet, m.created_at, m.size_bytes, u.research_id AS uploaded_by
+       m.looks_like_worksheet, m.created_at, m.size_bytes, u.research_id AS uploaded_by,
+       m.text_source, m.ocr_status, m.ocr_done_pages, m.ocr_total_pages, m.ocr_error
   FROM materials m JOIN teachers u ON u.id = m.teacher_id";
 
 /// The original file of a template (its sample material), on a template card.

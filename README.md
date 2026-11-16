@@ -57,6 +57,21 @@ cd web && pnpm install && pnpm dev
 
 設好重新部署後，啟動時會在背景建立索引；到「知識庫管理」的「語意索引」確認「1,352 條中 1,352 條已建立語意索引」，沒完成可按「建立語意索引」續做。
 
+### 掃描檔文字辨識（OCR）
+
+掃描的 PDF、手機拍的課本頁面與文字層壞掉的 PDF，上傳後會在背景用國網中心的 `chandra-ocr-2` 逐頁辨識文字（細節見 `docs/API.md`「Phase 2.10」）。預設關閉；關閉時這些檔案照舊保存，文字狀態維持「讀不到文字」。PDF 轉圖用 `pdftoppm`（Docker 映像已安裝 `poppler-utils`；本機開發要自己裝，例如 `brew install poppler`）。
+
+| 變數 | 說明 |
+|---|---|
+| `OCR_PROVIDER` | `openai_compatible`（正式環境）、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設）或 `none`（預設） |
+| `OCR_BASE_URL`、`OCR_API_KEY` | 沒設時沿用 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`（同一個國網中心閘道；金鑰只設在 Coolify） |
+| `OCR_MODEL` | 預設 `chandra-ocr-2` |
+| `OCR_TIMEOUT_SECS` | 每一頁請求的時限，預設 `120` |
+| `OCR_MAX_PAGES` | 每個檔案最多辨識幾頁，預設 `40`（其餘頁略過並在教材上註明） |
+| `OCR_CONCURRENCY` | 全站同時辨識的頁數，預設 `2` |
+
+設定有誤（例如 `OCR_PROVIDER=openai_compatible` 卻沒有任何閘道網址）只會關掉 OCR 並在日誌警告，不會讓後端起不來。
+
 ## 教材檔案儲存（Phase 2.2）
 
 教材原檔（PDF、DOCX、圖片、影音）存在 S3 相容的物件儲存（正式環境用 MinIO）；本機開發與測試存在本機資料夾。瀏覽器從不直接連到儲存空間，下載與預覽一律經過後端並檢查擁有者。

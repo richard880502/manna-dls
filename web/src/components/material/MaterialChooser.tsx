@@ -1,8 +1,10 @@
 import { useId, useState } from "react";
 import type { Material, MaterialDetail, MaterialPurpose } from "../../api/types";
+import { ocrBusyLine, ocrFailed, ocrFailedLine, ocrOpen } from "../../lib/ocr";
 import { withTextOnly } from "../../lib/templates";
 import { ErrorText, Loading } from "../common";
 import { MaterialAddForm, MaterialPicker, useMaterialLibrary } from "./MaterialLibrary";
+import { OcrFollow } from "./Ocr";
 
 export type MaterialWay = "upload" | "library" | "paste";
 
@@ -45,7 +47,11 @@ export function missingMaterialLine(choice: MaterialChoice): string {
   return "請貼上教材文字。";
 }
 
-/** 上傳檔案 and 從教材庫選: both end with one library material that has text (also the home page's attach dialogs). */
+/**
+ * 上傳檔案 and 從教材庫選: both end with one library material that has text (also the home page's
+ * attach dialogs). A scanned upload is read first (Manna's progress shows here) and taken once
+ * its text is there; a worksheet sample is taken at once, since the server waits for it.
+ */
 export function LibraryStep({
   way,
   purpose,
@@ -58,14 +64,31 @@ export function LibraryStep({
 }) {
   const { library, error, reload } = useMaterialLibrary();
   const [problem, setProblem] = useState<string | null>(null);
+  /** An upload whose text Manna is still reading (OCR). */
+  const [reading, setReading] = useState<MaterialDetail | null>(null);
 
-  function take(m: Pick<Material, "id" | "title" | "text_status" | "looks_like_worksheet">) {
-    if (m.text_status !== "ready") {
-      setProblem(NO_TEXT_LINE);
+  function take(m: Pick<Material, "id" | "title" | "text_status" | "looks_like_worksheet" | "ocr">) {
+    // 照我的學習單做 waits for its sample's OCR on the server side.
+    const waitsOnServer = purpose === "worksheet_sample" && ocrOpen(m.ocr);
+    if (m.ocr && ocrOpen(m.ocr) && !waitsOnServer) {
+      setProblem(ocrBusyLine(m.ocr));
+      return;
+    }
+    if (m.text_status !== "ready" && !waitsOnServer) {
+      setProblem(ocrFailed(m.ocr) && m.ocr ? ocrFailedLine(m.ocr) : NO_TEXT_LINE);
       return;
     }
     setProblem(null);
     onPicked({ id: m.id, title: m.title, ...(m.looks_like_worksheet ? { looks_like_worksheet: true } : {}) });
+  }
+
+  function added(m: MaterialDetail) {
+    if ((ocrOpen(m.ocr) || ocrFailed(m.ocr)) && purpose !== "worksheet_sample") {
+      setProblem(null);
+      setReading(m);
+      return;
+    }
+    take(m);
   }
 
   if (error) {
@@ -79,10 +102,27 @@ export function LibraryStep({
     );
   }
   if (!library) return <Loading />;
+  if (reading) {
+    return (
+      <div className="ocr-upload">
+        <p className="quiet-note">已上傳「{reading.title.trim() || "未命名教材"}」。文字辨識好就會放進來。</p>
+        <OcrFollow
+          material={reading}
+          onDone={(m) => {
+            setReading(null);
+            take(m);
+          }}
+        />
+        <button type="button" className="text-link is-plain" onClick={() => setReading(null)}>
+          換一份
+        </button>
+      </div>
+    );
+  }
   return (
     <>
       {way === "upload" ? (
-        <MaterialAddForm way="upload" library={library} purpose={purpose} onAdded={(m: MaterialDetail) => take(m)} />
+        <MaterialAddForm way="upload" library={library} purpose={purpose} onAdded={added} />
       ) : (
         <MaterialPicker library={withTextOnly(library)} currentId={null} busy={false} onPick={take} />
       )}

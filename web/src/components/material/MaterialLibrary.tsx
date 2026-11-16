@@ -9,6 +9,7 @@ import {
   materialMeta,
   ruleForFile,
 } from "../../lib/materials";
+import { OCR_NOT_YET, ocrOpen } from "../../lib/ocr";
 import { ErrorText } from "../common";
 import { useFirstOnPage } from "../OncePerPage";
 
@@ -177,7 +178,7 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
             }}
           />
           <p className="field-hint" id={`${ids}-limits`}>
-            {describeLimits(rules)}。文件會擷取文字供對照與注記（掃描的 PDF 沒有文字層，不做文字辨識）；圖片與影音只保存和預覽。
+            {describeLimits(rules)}。文件會擷取文字供對照與注記；掃描的 PDF 與課本照片會在上傳後試著辨識文字（OCR）；影音只保存和預覽。
             已使用 {formatBytes(library.usage.used_bytes)}／{formatBytes(library.usage.quota_bytes)}。
           </p>
           <ErrorText message={fileProblem} />
@@ -290,7 +291,8 @@ export function MaterialPicker({
               <button
                 type="button"
                 className="secondary-button small-button"
-                disabled={busy}
+                disabled={busy || ocrOpen(m.ocr)}
+                title={ocrOpen(m.ocr) ? OCR_NOT_YET : undefined}
                 aria-label={`選用「${titleOf(m)}」`}
                 onClick={() => onPick(m)}
               >

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::embedding::EmbeddingConfig;
+use crate::materials::ocr::OcrConfig;
 use crate::storage::StorageConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +85,9 @@ pub struct Config {
     /// All files of the platform library (教材參考 and 學習單範本) together
     /// (`PLATFORM_LIBRARY_BYTES`, default 5 GB). Per-teacher quotas do not apply to it.
     pub platform_library_bytes: u64,
+    /// OCR of scanned files (`OCR_*`, docs/API.md「Phase 2.10」). Never fails: a bad setting
+    /// disables OCR.
+    pub ocr: OcrConfig,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -102,6 +106,7 @@ impl std::fmt::Debug for Config {
             .field("storage", &self.storage)
             .field("embedding", &self.embedding)
             .field("platform_library_bytes", &self.platform_library_bytes)
+            .field("ocr", &self.ocr)
             .finish_non_exhaustive()
     }
 }
@@ -240,10 +245,13 @@ impl Config {
             storage: StorageConfig::from_lookup(get),
             embedding: EmbeddingConfig::from_lookup(get),
             platform_library_bytes,
+            ocr: OcrConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
         })
     }
 
-    /// Config for tests: fake AI provider, no static dir, given database URL.
+    /// Config for tests: fake AI provider, no static dir, given database URL. OCR is off (as
+    /// `OCR_PROVIDER=none`) so uploads in other tests keep their text as extracted; the OCR
+    /// tests turn the fake on.
     pub fn for_tests(database_url: impl Into<String>) -> Self {
         Self {
             database_url: database_url.into(),
@@ -262,6 +270,7 @@ impl Config {
             storage: StorageConfig::none(),
             embedding: EmbeddingConfig::disabled(),
             platform_library_bytes: DEFAULT_PLATFORM_LIBRARY_BYTES,
+            ocr: OcrConfig::disabled(),
         }
     }
 

@@ -165,7 +165,11 @@ pub async fn upload(
         &material_store::accept_any,
     )
     .await?;
-    Ok(Json(browse::material_card(&state.db, row.id, true).await?))
+    // A scanned PDF or a photo is read by OCR in the background (docs/API.md「Phase 2.10」).
+    // Read the answer first: a fast job could otherwise finish before it.
+    let card = browse::material_card(&state.db, row.id, true).await?;
+    crate::materials::ocr::spawn_for(&state, &row);
+    Ok(Json(card))
 }
 
 /// A sample must read as one worksheet (the rules of `POST /api/worksheet-templates`).

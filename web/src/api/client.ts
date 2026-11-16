@@ -508,6 +508,11 @@ export const api = {
     put<MaterialDetail>(`/materials/${id}`, body),
   /** 永久刪除：原檔、擷取文字、段落與注記一併刪除 */
   deleteLibraryMaterial: (id: number) => del<MaterialDeleted>(`/materials/${id}`),
+  /**
+   * 用 OCR 重新讀取（Phase 2.10）：202 回來時 ocr.status = "queued"。辨識中 → 409；不是上傳的 PDF
+   * 或圖片 → 400；這個環境沒有開啟 OCR → 503。自己的教材，或管理員的平台教材
+   */
+  runMaterialOcr: (id: number) => post<MaterialDetail>(`/materials/${id}/ocr`),
   /** 給 img／audio／video 用的短時效連結（指向本站 API，不是儲存空間） */
   materialFileLink: (id: number) => post<MaterialFileLink>(`/materials/${id}/file-link`),
   listAnnotations: (materialId: number) => get<MaterialAnnotation[]>(`/materials/${materialId}/annotations`),

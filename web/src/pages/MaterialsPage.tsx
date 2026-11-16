@@ -5,7 +5,7 @@ import type { MaterialCard as MaterialCardData, MaterialDetail } from "../api/ty
 import { ErrorText, Loading } from "../components/common";
 import { MaterialBrowser } from "../components/library/BrowsePanel";
 import { MoreMenu, UseMaterialMenu } from "../components/library/Cards";
-import { PREVIEW, cardTitle, usableMaterial } from "../components/library/labels";
+import { PREVIEW, cardTitle, unusableReason, usableMaterial } from "../components/library/labels";
 import { Dialog } from "../components/material/AttachDialog";
 import {
   ADD_WAY_LABEL,
@@ -16,9 +16,11 @@ import {
   type AddWay,
 } from "../components/material/MaterialLibrary";
 import { MaterialViewer } from "../components/material/MaterialViewer";
+import { OcrFollow } from "../components/material/Ocr";
 import { OncePerPage } from "../components/OncePerPage";
 import { useApp } from "../context/AppContext";
 import { formatBytes } from "../lib/materials";
+import { ocrOpen } from "../lib/ocr";
 import { can } from "../lib/permissions";
 
 /** 改名: the title in a small dialog. */
@@ -157,6 +159,8 @@ function MyMaterials() {
   const [viewing, setViewing] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<MaterialCardData | null>(null);
   const [deleting, setDeleting] = useState<MaterialCardData | null>(null);
+  /** A scanned upload Manna is still reading (OCR): its progress shows under the notice. */
+  const [reading, setReading] = useState<MaterialDetail | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
   /** The ⋯ button a dialog was opened from: focus goes back there. */
   const opener = useRef<HTMLElement | null>(null);
@@ -209,6 +213,7 @@ function MyMaterials() {
           onCancel={() => setAdding(null)}
           onAdded={(m) => {
             setAdding(null);
+            setReading(ocrOpen(m.ocr) ? m : null);
             listChanged(`已加入「${titleOf(m)}」。`);
           }}
         />
@@ -217,6 +222,16 @@ function MyMaterials() {
         <p className="quiet-note" role="status">
           {notice}
         </p>
+      )}
+      {reading && (
+        <OcrFollow
+          key={reading.id}
+          material={reading}
+          onDone={(m) => {
+            setReading(null);
+            listChanged(`「${titleOf(m)}」的文字辨識好了。${m.ocr?.error ? m.ocr.error : ""}`);
+          }}
+        />
       )}
 
       <MaterialBrowser
@@ -237,7 +252,7 @@ function MyMaterials() {
               >
                 {PREVIEW}
               </button>
-              <UseMaterialMenu card={card} disabled={!usableMaterial(card)} />
+              <UseMaterialMenu card={card} disabled={!usableMaterial(card)} title={unusableReason(card)} />
               <MoreMenu
                 label={`更多動作「${title}」`}
                 items={[

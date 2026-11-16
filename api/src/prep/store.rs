@@ -389,10 +389,15 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
     if let Some(teacher_id) = teacher_id {
         tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
     }
+    // A turn that waited for its template's sample to be read by OCR counts from when the
+    // extraction proper started (the waiting template keeps `extract_started_at` current).
     sqlx::query(&format!(
-        "UPDATE prep_turns SET status = '{STATUS_FAILED}', error = $2, finished_at = now()
-          WHERE session_id = $1 AND status = '{STATUS_RUNNING}'
-            AND created_at < now() - make_interval(secs => $3)"
+        "UPDATE prep_turns p SET status = '{STATUS_FAILED}', error = $2, finished_at = now()
+          WHERE p.session_id = $1 AND p.status = '{STATUS_RUNNING}'
+            AND GREATEST(p.created_at,
+                         COALESCE((SELECT t.extract_started_at FROM worksheet_templates t
+                                    WHERE t.id = p.template_id), p.created_at))
+                < now() - make_interval(secs => $3)"
     ))
     .bind(session_id)
     .bind(MSG_STALE)
@@ -564,6 +569,13 @@ pub struct TurnTemplate {
     pub status: String,
 }
 
+/// OCR progress of the sample a waiting turn's template is made from.
+#[derive(Debug, Clone, Copy, Serialize, sqlx::FromRow)]
+pub struct TurnOcr {
+    pub done_pages: i32,
+    pub total_pages: i32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Turn {
     pub id: i64,
@@ -579,6 +591,12 @@ pub struct Turn {
     pub interaction_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// `"ocr"` while the turn waits for its worksheet sample to be read by OCR
+    /// (「Manna 正在辨識掃描檔（3／8 頁）」); absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ocr: Option<TurnOcr>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -614,6 +632,19 @@ async fn turn_worksheet(state: &AppState, worksheet_id: i64) -> AppResult<Option
     }))
 }
 
+/// The OCR progress of the sample of an extracting template, while that OCR runs.
+async fn turn_ocr(db: &PgPool, template_id: i64) -> sqlx::Result<Option<TurnOcr>> {
+    sqlx::query_as(&format!(
+        "SELECT m.ocr_done_pages AS done_pages, m.ocr_total_pages AS total_pages
+           FROM worksheet_templates t JOIN materials m ON m.id = t.source_material_id
+          WHERE t.id = $1 AND t.status = '{}' AND m.ocr_status IN ('queued', 'running')",
+        tpl_store::STATUS_EXTRACTING
+    ))
+    .bind(template_id)
+    .fetch_optional(db)
+    .await
+}
+
 async fn turn_template(db: &PgPool, template_id: i64) -> sqlx::Result<Option<TurnTemplate>> {
     sqlx::query_as("SELECT id, title, status FROM worksheet_templates WHERE id = $1")
         .bind(template_id)
@@ -636,6 +667,10 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             Some(t) => turn_template(&state.db, t).await?,
             None => None,
         };
+        let ocr = match (r.template_id, r.status == STATUS_RUNNING, r.worksheet_id) {
+            (Some(t), true, None) => turn_ocr(&state.db, t).await?,
+            _ => None,
+        };
         out.push(Turn {
             id: r.id,
             seq: r.seq,
@@ -654,6 +689,8 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             interaction_id: r.interaction_id,
             created_at: r.created_at,
             finished_at: r.finished_at,
+            phase: ocr.map(|_| "ocr"),
+            ocr,
         });
     }
     let running = out.iter().any(|t| t.status == STATUS_RUNNING);

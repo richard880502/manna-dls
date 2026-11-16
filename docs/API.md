@@ -1337,7 +1337,7 @@ fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字
 | 類型 `kind` | 副檔名 | 單檔上限 | 處理 |
 |---|---|---|---|
 | `document` | `.txt` `.docx` `.pdf` | 20 MB | 擷取文字（見下），可注記、可給 Manna 分析 |
-| `image` | `.png` `.jpg`（`.jpeg`）`.webp` `.gif` | 10 MB | 保存、在檢視區顯示；不分析 |
+| `image` | `.png` `.jpg`（`.jpeg`）`.webp` `.gif` | 10 MB | 保存、在檢視區顯示；開啟 OCR 時辨識文字（Phase 2.10） |
 | `audio` | `.mp3` `.m4a` `.wav` | 30 MB | 保存、瀏覽器內建播放器（可拖曳）；不分析 |
 | `video` | `.mp4` `.webm` | 100 MB | 同上 |
 | `text` | （貼上） | 50,000 字 | 程式分段 |
@@ -1353,7 +1353,7 @@ fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字
 - **TXT**：UTF-8（含 BOM）、UTF-16（有 BOM）、Big5；分段規則與貼上的文字相同。
 - **DOCX**：讀 `word/document.xml` 的每個段落（含表格內的段落與文字方塊），依文件順序；追蹤修訂中刪除的文字不算；tab 與換行視為空白。
 - **PDF**：純 Rust（`pdf-extract`）逐頁擷取。有空行時以空行分段，沒有時以「句末標點＋明顯短於最長行」判斷段尾；行尾連字號斷字會接回。每段記下起始頁碼（`page`）。
-- **掃描的 PDF**（沒有文字層）：`text_status = "no_text"`，原檔照常保存與下載，**不做 OCR**。讀不出來（加密、損壞）：`failed`。超過 300,000 字的文件只保留前面（`text_truncated = true`），原檔完整保存。
+- **掃描的 PDF**（沒有文字層）：`text_status = "no_text"`，原檔照常保存與下載；開啟 OCR 時在背景辨識文字（見「Phase 2.10：掃描檔與 OCR」）。讀不出來（加密、損壞、解析器不支援的字型）：`failed`，開啟 OCR 時同樣改用 OCR 辨識。超過 300,000 字的文件只保留前面（`text_truncated = true`），原檔完整保存。
 - 段落 `id`（`p1`…）在同一份教材內穩定且不重複使用：貼上的文字修改後，文字沒變的段落沿用原 id，教材的 `revision` 加 1；**舊文字不保留**。上傳的檔案不能改文字（要換請刪除後重傳，或另外貼上）。
 
 ## 型別
@@ -2199,3 +2199,108 @@ type TemplateBrowse = BrowsePage<TemplateCard, { categories: Facet[]; tags: Face
 ## 程式進入點
 
 範圍與分類規則 `materials::catalog`；瀏覽與管理清單的查詢、卡片 `materials::browse`；存取 `materials::store::{readable, owned, writable}` 與 `worksheet::template::store::{readable, writable}`；端點 `routes::browse`、`routes::library_admin`、`routes::templates::copy`。
+# Phase 2.10：掃描檔與 OCR
+
+以下為**新增**；既有端點只多了回應欄位與 409。Migration `0018_ocr.sql`。
+
+老師和管理員會上傳掃描的 PDF、手機拍的課本頁面、掃描的舊學習單。以前這些只會得到「讀不到文字（可能是掃描檔）」；有些 PDF 有文字層但內容是亂的（滿是零寬字元、表格被拆散）。現在用國網中心的 `chandra-ocr-2` 逐頁辨識：它回傳**有版面標籤的 HTML**（`<div data-bbox="x0 y0 x1 y1" data-label="Section-Header|Text|List-Group|Table|Picture|Page-Header|Page-Footer|…">`）。
+
+## 設定（環境變數，README「掃描檔文字辨識」）
+
+| 變數 | 說明 |
+|---|---|
+| `OCR_PROVIDER` | `none`（預設：什麼都不變）、`openai_compatible`、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
+| `OCR_BASE_URL`、`OCR_API_KEY` | 沒設時沿用 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY` |
+| `OCR_MODEL` | 預設 `chandra-ocr-2` |
+| `OCR_TIMEOUT_SECS` | 每一頁請求的時限，預設 120 |
+| `OCR_MAX_PAGES` | 每個檔案最多辨識幾頁，預設 40；其餘略過並註明 |
+| `OCR_CONCURRENCY` | 全站同時辨識的頁數（全域 semaphore），預設 2；同時處理的檔案數也以此為上限 |
+
+設定有誤只會關掉 OCR 並在啟動日誌警告。Docker 映像安裝 `poppler-utils`（`pdftoppm`、`pdfinfo`）。
+
+## 什麼時候辨識
+
+上傳後在背景自動辨識（上傳的回應先回來，`ocr.status = "queued"`）：
+
+1. **圖片**（`kind = "image"`：png、jpg、webp、gif 第一格）：一律。
+2. **沒有文字層的 PDF**（`text_status = "no_text"`），以及**文字層讀不出來的 PDF**（`failed`：例如 Word 轉出、用 CID 字型的考卷，解析器放棄但頁面照樣能轉成圖；真正加密或損壞的檔案在轉圖時失敗，記為 OCR 失敗）：一律。
+3. **文字層看起來壞掉的 PDF**：程式依擷取出的原始逐頁文字判斷（`materials::ocr::poor_text`，不呼叫模型），**任一條件成立**就辨識：
+   - 零寬或格式字元（U+200B–U+200F、U+FEFF、U+2060）**超過**全部字元的 2%；
+   - 平均每頁可見字元（不含空白、控制與格式字元）**少於** 80；
+   - 非空白行中，長度 1–2 字（去掉頭尾空白與格式字元）的行**超過** 40%；
+   - 取代字元 U+FFFD **超過** 5 個。
+4. **手動**：`POST /api/materials/:id/ocr`（「用 OCR 重新讀取」，文字看起來不對時）。
+5. **啟動時補跑（知識庫）**：每次啟動（接手未完成的工作之後），`scope = "platform"`、從沒跑過 OCR（`ocr.status = "none"`）、而且今天上傳會自動辨識的檔案——`no_text`／`failed` 的 PDF 與圖片——各開一次辨識（`materials::ocr::backfill_platform`），例如 OCR 上線前已上傳的知識庫考卷。老師自己的檔案不補跑，用「用 OCR 重新讀取」。辨識過（`done`／`failed`）的不會再跑。
+
+DOCX 與 TXT 從不辨識。`OCR_PROVIDER=none` 時以上都不發生（手動 → 503）。
+
+## 流程
+
+- **PDF → 圖**：`pdftoppm -png -f n -l n -scale-to-x 1400 -scale-to-y -1 -singlefile`，一次一頁，寬 1400 px（A4 約 170 dpi，就是實測讀得乾淨、一頁約 10 秒的大小），放在暫存資料夾，工作結束即刪除。頁數用擷取時數到的，數不到時用 `pdfinfo`。
+- **圖片**：解碼（GIF 取第一格）、依 EXIF 方向轉正、長邊縮到 1600 px 以內；不需要轉正也不需要縮小的 PNG／JPEG（≤ 4 MB）原樣送出。PNG／GIF 重新編碼成 PNG，JPG／WebP 成 JPEG（品質 90）。解不開的圖 ≤ 4 MB 時原樣送，否則失敗。
+- **請求**：`POST {base}/chat/completions`，`{"model":"chandra-ocr-2","max_tokens":4000,"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,…"}},{"type":"text","text":"OCR this page to markdown."}]}]}`，一頁一個請求，取 `choices[0].message.content`（輸出被 `max_tokens` 截斷時也照用）。逾時、5xx 或連線中斷重試一次；仍失敗的頁記下來，其他頁繼續。
+- **HTML → 段落**（`materials::ocr::html`，純函式）：依 chandra 回傳的順序（不依 bbox 重排）；去標籤、解 HTML entity、去零寬字元、合併空白（兩個中日韓字元之間不補空格）。
+
+  | 標籤 | 變成 |
+  |---|---|
+  | `Section-Header` | 自己一段（區塊保留標籤，所以仍知道它是標題） |
+  | `Text`、`Caption`、`Footnote`，以及其他未列出的標籤 | 一段 |
+  | `List-Group` | 每個 `<li>` 一段（巢狀項目各自一段，依閱讀順序；`<li>` 外的文字自成一段） |
+  | `Table` | 每個 `<tr>` 一段，儲存格以 ` \| ` 相接（空儲存格保留位置，全空的列略過） |
+  | `Page-Header`、`Page-Footer`、`Picture`（以及 `Image`、`Figure`） | 不進文字；圖片計數 |
+
+  `List-Group`／`Table` 裡找不到 `<li>`／`<tr>` 時當一般文字。整頁沒有任何有標籤的元素（純 HTML 或 markdown）時，每一行一段（`#` 開頭的行視為標題）。
+- **結果**：教材的 `text`、`paragraphs`（每段有 `page`，圖片是第 1 頁）換成辨識結果，`text_status = "ready"`、`text_source = "ocr"`；文字和原本相同的段落沿用原 id，文字有變時 `revision` 加 1。字數上限與上傳相同（300,000 字，超過截斷並 `text_truncated = true`；因頁數上限略過頁時也是 `true`）。`looks_like_worksheet` 依辨識後的文字重算。舊的注記照常重新定位（多半變成「需要重新確認位置」）。
+- 原始逐頁區塊存在 `materials.ocr_pages`（不在 API 回應裡，給之後依 `Section-Header` 切分考卷用）：`[{ page, blocks: [{ label, text, bbox: [x0,y0,x1,y1] | null }], pictures, error? }]`。表格與清單的區塊文字一列／一項一行。`pictures` 是該頁圖片數（「此頁有 n 張圖」只放在這裡，不寫進文字）。
+- **沒有一頁成功**：`ocr.status = "failed"`，`ocr.error` 說明，教材文字不變。**部分頁失敗或略過**：`done`，`ocr.error` 是附註，例如「第 2 頁沒有辨識成功。」「這份檔案有 52 頁，只辨識了前 40 頁。」。**都讀了但沒有字**：`done`，附註「辨識完成，但沒有找到文字。」，教材文字不變。
+- **紀錄**：每一頁的每一次呼叫一筆 `ai_interactions`（`module = "material_ocr"`，重試是 `attempt = 2`、`retry_of`）；`input_snapshot` 只有教材 id、頁碼、圖的位元組數、SHA-256 與 content type、prompt 與 `max_tokens`；`output` 只有 `{ chars }`（輸出長度）。**從不記圖或文字。** `usage_logs`：`material_ocr_requested`（手動）、`material_ocr_finished`（狀態、頁數、失敗頁、略過頁、字數）。
+
+## 型別變更
+
+```ts
+interface Material {            // 清單、單一教材、上傳回應（以及之後 browse 的 MaterialCard）
+  /* …既有欄位… */
+  ocr: {
+    status: "none" | "queued" | "running" | "done" | "failed";
+    done_pages: number;         // 已處理的頁（成功或失敗）
+    total_pages: number;        // 要辨識的頁數（PDF 頁數不明時先是 0）
+    error: string | null;       // failed：原因；done：附註（失敗或略過的頁）或 null
+  };
+  text_source: "file" | "ocr";
+}
+
+interface PrepTurn {
+  /* …既有欄位… */
+  phase?: "ocr";                // 這一輪在等範本的 OCR（「Manna 正在辨識掃描檔（3／8 頁）」）；其他時候沒有這個欄位
+  ocr?: { done_pages: number; total_pages: number };   // 與 phase 一起出現
+}
+```
+
+- **OCR 進行中**（`queued`／`running`），`text_status` 維持原狀（例如 `no_text`、`not_applicable`，文字層壞掉的 PDF 是 `ready` 但文字是舊的）。
+
+## 端點
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| POST | `/api/materials/:id/ocr` | – | 202 `MaterialDetail`（`ocr.status = "queued"`，`done_pages = 0`）。只限自己上傳的 PDF 與圖片，其他 400「只有上傳的 PDF 與圖片可以用 OCR 重新讀取。」；已在辨識 → 409；OCR 未開啟 → 503；別人的 → 404 |
+
+**OCR 進行中的教材**：建立學習單（`POST /api/worksheets` 的 `material_id`，備課對話做學習單的輪次也是）、建立備課對話（`material_id`）、建立版型（`POST /api/worksheet-templates`，以及對話裡重試版型）→ 409「這份檔案正在辨識文字（第 n／m 頁），完成後再試一次。」（`n` 是正在辨識的頁 = 已完成頁數＋1，不超過 `m`；頁數還不知道時是「這份檔案正在辨識文字，完成後再試一次。」）。
+
+**唯一的例外：`POST /api/prep-sessions` 的 `template_material_id`（照我的學習單做）。** 範本還在辨識時不擋：建立一個新版型（已有一個由這份範本、還在 `extracting` 的版型時沿用它），第一輪照 Phase 2.8 等版型（`running`、`worksheet: null`），回應的這一輪多 `phase: "ocr"`、`ocr: { done_pages, total_pages }`。OCR 完成後版型才開始讀取（範本的其他檢查此時才做，不合格時版型 `failed`、訊息照 Phase 2.8），讀好後照舊建立學習單。OCR 失敗時版型 `failed`（「這份學習單的文字辨識（OCR）沒有成功，所以沒有讀出版型…」），這一輪跟著 `failed`。201 的回應在任何背景工作開始前讀出。
+
+等 OCR 期間，版型每 5 秒更新 `extract_started_at`，所以版型與這一輪都不會被當成中斷；這一輪的中斷計時改為從「建立時間」與「版型開始讀取時間」較晚的一個起算。
+
+## 重啟
+
+- 啟動時（應用程式只跑一個實例），上一個程序留下的 `queued`／`running` 一律**接手續做**：換一個新的 `ocr_started_at`（每一次寫入都以它為條件，所以舊容器若還在跑，下一次寫入就停），已在 `ocr_pages` 的頁不再辨識。OCR 或檔案儲存現在沒有開啟、或沒有原檔時改成 `failed`（「系統更新後無法繼續這次文字辨識…」）。
+- 讀取教材清單、單一教材與手動辨識時，這個程序沒有在做、而且開始超過 `OCR_TIMEOUT_SECS × 頁數 + 120` 秒的辨識改成 `failed`（「文字辨識中斷了…」），可以再按「用 OCR 重新讀取」。
+- 等 OCR 的版型工作不跨重啟：重啟後版型照 Phase 2.5 的規則逾時變成 `failed`，這一輪跟著 `failed`；按「再試一次」會用辨識好的文字重新讀取。
+
+## 測試用假 OCR（`OCR_PROVIDER=fake`）
+
+每頁回傳固定的 HTML：`Section-Header`「Page n」、兩個 `Text`（第一個是「Scanned text on page n」加上檔名裡的大寫標記，例如 `scan LESSON9.pdf` → `LESSON9`；第二個含 HTML entity）、一個 `Picture`、一個 `Page-Footer`。檔名標記：`FAKE_OCR_FAIL` 第 2 頁失敗（兩次都失敗）、`FAKE_OCR_DOWN` 每頁都失敗、`FAKE_OCR_SLOW` 每頁 2 秒。
+
+## 其他
+
+- 資料（`0018_ocr.sql`）：`materials.text_source`、`ocr_status`、`ocr_done_pages`、`ocr_total_pages`、`ocr_error`、`ocr_pages`、`ocr_started_at`，以及開放中工作的部分索引。
+- 程式進入點：`materials::ocr`（`poor_text`、`wants_auto`、`check_idle`、`start_manual`、`recover`、`backfill_platform`）、`materials::ocr::job`（背景工作）、`materials::ocr::html`（HTML → 區塊／段落）、`materials::ocr::render`（`pdftoppm`、圖片）；範本等 OCR：`worksheet::template::extract::spawn_after_ocr`。

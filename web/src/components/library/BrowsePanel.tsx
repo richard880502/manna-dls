@@ -9,6 +9,7 @@ import type {
   TemplateCard as TemplateCardData,
   WsInstructionLanguage,
 } from "../../api/types";
+import { ocrConfig, ocrOpen } from "../../lib/ocr";
 import { templateConfig } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { Icon, type IconName } from "../Icon";
@@ -332,10 +333,18 @@ export function MaterialBrowser({
     [query],
   );
   const result = useBrowse<MaterialCardData, MaterialFacets>(load, JSON.stringify(query));
-  const { retry } = result;
+  const { retry, refresh, items } = result;
   useEffect(() => {
     if (refreshSignal > 0) retry();
   }, [refreshSignal, retry]);
+
+  // While Manna reads a scanned file on one of the cards, ask again every few seconds.
+  const reading = items?.some((c) => ocrOpen(c.ocr)) ?? false;
+  useEffect(() => {
+    if (!reading) return undefined;
+    const timer = setInterval(refresh, ocrConfig.pollMs);
+    return () => clearInterval(timer);
+  }, [reading, refresh]);
 
   const narrowed = search.q !== "" || category !== "" || tags.length > 0 || fileType !== null || fitsLesson;
   const reset = () => {

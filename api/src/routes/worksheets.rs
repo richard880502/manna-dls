@@ -230,6 +230,7 @@ async fn chosen_material(
     let row = material_store::readable(db, material_id, teacher_id)
         .await
         .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    crate::materials::ocr::check_idle(&row)?;
     if row.text_status != "ready" || row.paragraphs.0.is_empty() {
         return Err(AppError::bad_request(MSG_NO_TEXT));
     }

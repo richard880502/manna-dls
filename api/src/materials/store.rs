@@ -13,6 +13,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use super::catalog::{Placement, PURPOSE_MATERIAL, SCOPE_PERSONAL, SCOPE_PLATFORM};
 use super::detect;
 use super::extract::{self, Extracted, TextStatus};
+use super::ocr::{self, MaterialOcr};
 use super::{
     allowed_extensions_label, clean_filename, content_matches, file_type_for_name, Kind,
     MAX_PASTED_CHARS, TEACHER_MAX_MATERIALS, TEACHER_QUOTA_BYTES,
@@ -60,12 +61,22 @@ pub struct MaterialRow {
     pub purpose: String,
     pub category: String,
     pub tags: Vec<String>,
+    /// OCR (migration 0018, docs/API.md「Phase 2.10」): `file` | `ocr`.
+    pub text_source: String,
+    /// `none` | `queued` | `running` | `done` | `failed`
+    pub ocr_status: String,
+    pub ocr_done_pages: i32,
+    pub ocr_total_pages: i32,
+    pub ocr_error: Option<String>,
+    /// When the current OCR run started (it also identifies the run).
+    pub ocr_started_at: Option<DateTime<Utc>>,
 }
 
 pub const COLS: &str = "id, teacher_id, kind, origin, title, source_note, url, filename, ext,
     content_type, size_bytes, sha256, storage_key, text_status, text, text_truncated, paragraphs,
     paragraph_seq, page_count, revision, created_at, updated_at, looks_like_worksheet, scope,
-    purpose, category, tags";
+    purpose, category, tags, text_source, ocr_status, ocr_done_pages, ocr_total_pages, ocr_error,
+    ocr_started_at";
 
 /// A lesson that uses a material.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -111,6 +122,10 @@ pub struct Material {
     pub purpose: String,
     pub category: String,
     pub tags: Vec<String>,
+    /// Text recognition of a scanned file (docs/API.md「Phase 2.10」).
+    pub ocr: MaterialOcr,
+    /// `file` (extracted from the file or pasted) | `ocr` (recognised by OCR).
+    pub text_source: String,
 }
 
 /// A material with its text and paragraphs (the viewer).
@@ -164,6 +179,8 @@ impl MaterialRow {
             purpose: self.purpose.clone(),
             category: self.category.clone(),
             tags: self.tags.clone(),
+            ocr: MaterialOcr::of(self),
+            text_source: self.text_source.clone(),
         }
     }
 
@@ -775,6 +792,7 @@ pub async fn create_upload(
                     blocks: Vec::new(),
                     page_count: None,
                     truncated: false,
+                    poor_text: false,
                 }
             };
             (sha256, extracted)
@@ -890,6 +908,18 @@ pub async fn create_upload(
                     "scope": row.scope, "purpose": row.purpose }),
         )
         .await?;
+        // A scan, a photo or a broken text layer: OCR is queued now and started by the route
+        // once it has read its response (docs/API.md「Phase 2.10」).
+        let row = if state.ocr.enabled() && ocr::wants_auto(file_type, &extracted) {
+            let pages = ocr::known_pages(
+                file_type.kind.as_str(),
+                extracted.page_count,
+                state.ocr.config().max_pages,
+            );
+            ocr::open_run(&mut *tx, row.id, pages).await?.unwrap_or(row)
+        } else {
+            row
+        };
         tx.commit().await?;
         Ok(row)
     }

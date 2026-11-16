@@ -61,6 +61,8 @@ pub struct AppState {
     pub links: Arc<LinkSigner>,
     /// Bounds how many uploads are held in memory at once.
     pub upload_slots: Arc<tokio::sync::Semaphore>,
+    /// OCR of scanned files: the provider and the server-wide page and file slots.
+    pub ocr: Arc<materials::ocr::Ocr>,
 }
 
 impl AppState {
@@ -68,6 +70,7 @@ impl AppState {
         let ai = Arc::new(AiClient::from_config(&config));
         let embedder = Arc::new(Embedder::new(config.embedding.clone()));
         let storage = config.storage.build();
+        let ocr = Arc::new(materials::ocr::Ocr::new(config.ocr.clone()));
         Self {
             db,
             config: Arc::new(config),
@@ -79,6 +82,7 @@ impl AppState {
             upload_slots: Arc::new(tokio::sync::Semaphore::new(
                 materials::MAX_CONCURRENT_UPLOADS,
             )),
+            ocr,
         }
     }
 }

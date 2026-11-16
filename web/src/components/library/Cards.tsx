@@ -2,6 +2,7 @@ import { useId, type ReactNode } from "react";
 import { Link } from "react-router";
 import type { MaterialCard as MaterialCardData, TemplateCard as TemplateCardData } from "../../api/types";
 import { TOOLS, TOOL_NAME, toolMaterialPath } from "../../lib/create";
+import { ocrBadge, ocrOpen } from "../../lib/ocr";
 import { Icon, type IconName } from "../Icon";
 import { usePopover } from "../Popover";
 import {
@@ -54,7 +55,7 @@ function MaterialPaper({ card }: { card: MaterialCardData }) {
       ) : (
         <span className="lib-paper-empty">
           <Icon name={KIND_ICON[card.kind] ?? "file"} />
-          {card.text_status === "ready" ? "" : "沒有可預覽的文字"}
+          {ocrOpen(card.ocr) ? "正在辨識文字" : card.text_status === "ready" ? "" : "沒有可預覽的文字"}
         </span>
       )}
     </div>
@@ -86,6 +87,7 @@ function TemplatePaper({ card }: { card: TemplateCardData }) {
  */
 export function MaterialCard({ card, actions }: { card: MaterialCardData; actions: ReactNode }) {
   const ids = useId();
+  const ocr = ocrBadge(card.ocr);
   return (
     <li className="lib-card">
       <article className="lib-card-inner" aria-labelledby={`${ids}-title`}>
@@ -93,6 +95,7 @@ export function MaterialCard({ card, actions }: { card: MaterialCardData; action
           <MaterialPaper card={card} />
           {card.looks_like_worksheet && <span className="lib-badge is-sheet">學習單？</span>}
           <span className="lib-badge is-type">{fileTypeLabel(card.file_type)}</span>
+          {ocr && <span className={`lib-badge is-ocr ${ocrOpen(card.ocr) ? "is-extracting" : "is-failed"}`}>{ocr}</span>}
         </div>
         <div className="lib-card-body">
           <h3 className="lib-card-title" id={`${ids}-title`}>
@@ -165,10 +168,19 @@ export function SkeletonCards({ count = 6 }: { count?: number }) {
 }
 
 /** 「用這篇出題 ▾」: the tools, each opening its generator with this material in the article slot. */
-export function UseMaterialMenu({ card, disabled }: { card: Pick<MaterialCardData, "id" | "title">; disabled?: boolean }) {
+export function UseMaterialMenu({
+  card,
+  disabled,
+  title,
+}: {
+  card: Pick<MaterialCardData, "id" | "title">;
+  disabled?: boolean;
+  /** Why it is off (a tooltip). */
+  title?: string;
+}) {
   const ids = useId();
   const { open, toggle, close, rootRef, triggerRef, onBlur } = usePopover();
-  const title = cardTitle(card);
+  const name = cardTitle(card);
   return (
     <div className="popover-root lib-use" ref={rootRef} onBlur={onBlur}>
       <button
@@ -177,7 +189,8 @@ export function UseMaterialMenu({ card, disabled }: { card: Pick<MaterialCardDat
         className="primary-button small-button"
         aria-expanded={open}
         aria-controls={`${ids}-tools`}
-        aria-label={`${USE_MATERIAL}「${title}」`}
+        aria-label={`${USE_MATERIAL}「${name}」`}
+        title={disabled ? title : undefined}
         disabled={disabled}
         onClick={toggle}
       >

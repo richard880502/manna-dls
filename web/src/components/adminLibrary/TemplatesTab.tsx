@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { adminLibraryApi, errorMessage } from "../../api/client";
 import type { AdminLibraryTemplate, AdminLibraryTemplateRow } from "../../api/types";
@@ -8,7 +8,6 @@ import { LibraryList, useAdminList, type ListFilters } from "./LibraryList";
 import {
   SAMPLE_CATEGORIES,
   TEMPLATE_EXTENSIONS,
-  adminLibraryConfig,
   guessTags,
   parseTags,
   tagsProblem,
@@ -17,6 +16,7 @@ import {
   titleFromPath,
   titleProblem,
 } from "./prefill";
+import { useListPoll } from "./useListPoll";
 import { useUploadQueue, type QueueRow } from "./useUploadQueue";
 
 // 自動判斷 by default: the server suggests a category from what it read.
@@ -34,42 +34,6 @@ const upload = (row: QueueRow<AdminLibraryTemplate>) =>
 
 const isNewer = (next: AdminLibraryTemplate, cur: AdminLibraryTemplate) =>
   next.status !== cur.status || next.updated_at !== cur.updated_at || next.category !== cur.category;
-
-/**
- * While any template is being read, the admin list is asked for again every few seconds (one
- * request at a time; the next only after the answer) and its news handed to `apply`.
- */
-function useExtractionPoll(active: boolean, apply: (items: AdminLibraryTemplate[]) => void) {
-  const applyRef = useRef(apply);
-  useEffect(() => {
-    applyRef.current = apply;
-  });
-  useEffect(() => {
-    if (!active) return undefined;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const next = () => {
-      timer = setTimeout(() => {
-        adminLibraryApi
-          .listTemplates()
-          .then((res) => {
-            if (stopped) return;
-            applyRef.current(res.items);
-            next();
-          })
-          .catch(() => {
-            // A missed poll is not a failure; the next one tries again.
-            if (!stopped) next();
-          });
-      }, adminLibraryConfig.pollMs);
-    };
-    next();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [active]);
-}
 
 function ExtractionState({
   template,
@@ -148,7 +112,8 @@ export function TemplatesTab({ onBusy }: { onBusy?: (busy: boolean) => void }) {
   const extracting =
     (list.items ?? []).some((t) => t.status === "extracting") ||
     queue.rows.some((r) => r.result?.status === "extracting");
-  useExtractionPoll(extracting, apply);
+  // While any template is being read, the list is asked for again every few seconds.
+  useListPoll(extracting, adminLibraryApi.listTemplates, apply);
 
   async function retry(t: AdminLibraryTemplate) {
     setRetrying(t.id);

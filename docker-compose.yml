@@ -40,6 +40,16 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma-2}
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-768}
       EMBEDDING_QUERY_TIMEOUT_MS: ${EMBEDDING_QUERY_TIMEOUT_MS:-2500}
+      # OCR of scanned files (docs/API.md「Phase 2.10」). Off by default; set
+      # OCR_PROVIDER=openai_compatible in Coolify. The gateway URL and key default to the
+      # EMBEDDING_* ones (same NCHC gateway).
+      OCR_PROVIDER: ${OCR_PROVIDER:-none}
+      OCR_BASE_URL: ${OCR_BASE_URL:-}
+      OCR_API_KEY: ${OCR_API_KEY:-}
+      OCR_MODEL: ${OCR_MODEL:-chandra-ocr-2}
+      OCR_TIMEOUT_SECS: ${OCR_TIMEOUT_SECS:-120}
+      OCR_MAX_PAGES: ${OCR_MAX_PAGES:-40}
+      OCR_CONCURRENCY: ${OCR_CONCURRENCY:-2}
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}

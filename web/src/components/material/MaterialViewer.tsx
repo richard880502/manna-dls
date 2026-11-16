@@ -11,7 +11,11 @@ import {
   type TextSelection,
   type ViewMaterial,
 } from "../../lib/materials";
+import { useSignedInTeacher } from "../../context/AppContext";
+import { OCR_LABEL, OCR_RERUN, OCR_RERUN_AGAIN, canRunOcr, ocrFailed, ocrOpen } from "../../lib/ocr";
+import { can } from "../../lib/permissions";
 import { ErrorText, Loading } from "../common";
+import { OcrFailed, OcrProgress, useOcrPoll, useOcrRerun } from "./Ocr";
 
 const NOTE_MAX = 2000;
 
@@ -257,10 +261,38 @@ export function MaterialContent({ materialId, material: given, annotate = true }
     if (drafting) draftRef.current?.focus();
   }, [drafting]);
 
-  const source = given ?? (loaded && loaded.id === materialId ? loaded : null);
+  const base = given ?? (loaded && loaded.id === materialId ? loaded : null);
+  // A scanned file being read: the material as the last poll (or 用 OCR 重新讀取) reported it,
+  // for as long as the page still shows the material it was read over.
+  const [fresh, setFresh] = useState<{ over: typeof base; material: MaterialDetail } | null>(null);
+  const source = fresh && fresh.over === base && fresh.material.id === materialId ? fresh.material : base;
   const material = useMemo(() => (source ? toViewMaterial(source) : null), [source]);
   const revision = material?.revision ?? 0;
   const canAnnotate = annotate && material?.text_status === "ready";
+
+  const baseRef = useRef(base);
+  useEffect(() => {
+    baseRef.current = base;
+  });
+  const takeFresh = useCallback((m: MaterialDetail) => setFresh({ over: baseRef.current, material: m }), []);
+  // A lesson SOP's copy of a material says nothing of OCR; a library material does.
+  const ocr = source && "ocr" in source ? source.ocr : undefined;
+  const textSource = source && "text_source" in source ? source.text_source : undefined;
+  const rerun = useOcrRerun(materialId, takeFresh);
+  const { clear: clearRerun } = rerun;
+  const onPoll = useCallback(
+    (m: MaterialDetail) => {
+      takeFresh(m);
+      // A 409 said a run was going; once it has ended the words are out of date.
+      if (!ocrOpen(m.ocr)) clearRerun();
+    },
+    [takeFresh, clearRerun],
+  );
+  useOcrPoll(source, onPoll);
+  const teacher = useSignedInTeacher();
+  // Her own material, or a platform one for pi and kb_manager.
+  const writable = source && "scope" in source && source.scope === "platform" ? can(teacher, "manage_knowledge") : true;
+  const offerOcr = ocr !== undefined && source !== null && "revision" in source && canRunOcr(source) && writable;
 
   useEffect(() => {
     if (given) return;
@@ -388,6 +420,10 @@ export function MaterialContent({ materialId, material: given, annotate = true }
   };
 
   const picked = selection && selection !== "multi" ? selection : null;
+  const reading = ocrOpen(ocr);
+  /** 用 OCR 重新讀取 (重新辨識 once the text came from OCR); a failed run offers 再試一次 instead. */
+  const showRerun = offerOcr && !reading && !ocrFailed(ocr);
+  const showLabel = textSource === "ocr" && material.paragraphs.length > 0;
   /** Paragraphs that start a new page of the source PDF get a 「第 n 頁」 line above them. */
   const pageStarts = new Set(
     material.paragraphs
@@ -428,10 +464,16 @@ export function MaterialContent({ materialId, material: given, annotate = true }
       )}
       <MediaPreview material={material} />
 
-      {material.text_status === "no_text" && material.kind === "document" && (
+      {reading && ocr && <OcrProgress ocr={ocr} />}
+      {ocr && ocrFailed(ocr) && <OcrFailed ocr={ocr} retry={offerOcr ? rerun : undefined} />}
+      {ocr?.status === "done" && ocr.error && <p className="quiet-note ocr-note">{ocr.error}</p>}
+
+      {material.text_status === "no_text" && material.kind === "document" && !reading && (
         <p className="material-state">
-          這份文件沒有可以選取的文字（可能是掃描檔）。Manna 目前不做文字辨識（OCR），所以不能在上面加注記，也不能請
-          Manna 分析；你可以下載原檔對照，或另外貼上文字。
+          這份文件沒有可以選取的文字（可能是掃描檔），所以還不能在上面加注記，也不能請 Manna 分析。
+          {showRerun
+            ? `可以按「${OCR_RERUN}」讓 Manna 辨識文字，或下載原檔對照、另外貼上文字。`
+            : "你可以下載原檔對照，或另外貼上文字。"}
         </p>
       )}
       {material.text_status === "failed" && (
@@ -440,6 +482,18 @@ export function MaterialContent({ materialId, material: given, annotate = true }
       {material.text_truncated && (
         <p className="material-state">這份文件很長，只擷取了前面的文字；原檔完整保存。</p>
       )}
+
+      {(showLabel || showRerun) && (
+        <div className="ocr-tools">
+          {showLabel && <span className="ocr-label">{OCR_LABEL}</span>}
+          {showRerun && (
+            <button type="button" className="text-link is-plain" disabled={rerun.busy} onClick={() => void rerun.run()}>
+              {rerun.busy ? "送出中…" : textSource === "ocr" ? OCR_RERUN_AGAIN : OCR_RERUN}
+            </button>
+          )}
+        </div>
+      )}
+      {!(ocr && ocrFailed(ocr)) && <ErrorText message={rerun.error} />}
 
       {material.paragraphs.length > 0 && (
         <div className="material-sheet-wrap">

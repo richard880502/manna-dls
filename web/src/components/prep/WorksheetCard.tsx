@@ -13,10 +13,12 @@ import type {
 } from "../../api/types";
 import { tally } from "../../lib/bloom";
 import { saveBlob } from "../../lib/download";
+import { ocrPrepLine } from "../../lib/ocr";
 import { READING_SAMPLE_LINE, prepConfig } from "../../lib/prep";
 import { templateTitle } from "../../lib/templates";
 import { LEVEL_LABEL, projectSheet } from "../../lib/worksheet";
 import { ErrorText, Loading } from "../common";
+import { OcrProgress } from "../material/Ocr";
 import { BloomDistribution } from "../worksheet/Bloom";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { SheetPreview } from "./SheetPreview";
@@ -44,7 +46,8 @@ function interactionFor(jobs: WsJob[], block: WsSheetBlock, fallback: number | n
  * three), and the Bloom distribution of the version shown (read-only).
  *
  * A worksheet made after the teacher's own worksheet (a template) first says that Manna is reading
- * that worksheet, and once done says whose style it follows, with a link to the template.
+ * that worksheet (a scanned one is recognised by OCR before that, page by page), and once done
+ * says whose style it follows, with a link to the template.
  */
 export function WorksheetCard({
   turn,
@@ -120,6 +123,13 @@ export function WorksheetCard({
   }, [running, wsId, refreshKey, level, audience, onLabels]);
 
   if (wsId === null) {
+    if (turn.status === "running" && turn.phase === "ocr" && turn.ocr) {
+      return (
+        <div className="prep-working">
+          <OcrProgress ocr={turn.ocr} line={ocrPrepLine(turn.ocr)} />
+        </div>
+      );
+    }
     return turn.status === "running" ? (
       <p className="manna-label prep-working" role="status">
         <span className="star is-working" aria-hidden="true" />

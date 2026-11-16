@@ -46,6 +46,7 @@ import {
   type StartKind,
   type Tool,
 } from "../lib/create";
+import { ocrBusyError } from "../lib/ocr";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
 import { formatDateTime } from "../lib/worksheet";
@@ -189,6 +190,11 @@ function QuickBox() {
   const [needSlots, setNeedSlots] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 送出 was refused because a material is still being read (OCR, 409): said beside the arrow
+   * for as long as the same material (and sample) are attached.
+   */
+  const [ocrRefusal, setOcrRefusal] = useState<{ key: string; message: string } | null>(null);
   const articleMenu = usePopover();
   const sampleMenu = usePopover();
   const { triggerRef: articleTrigger } = articleMenu;
@@ -206,7 +212,9 @@ function QuickBox() {
   const missing = needMaterial && material === null && kind !== null && kind !== "ask";
   /** 照我的學習單做 waits for a sample, then for the lesson text. */
   const slotsNeeded = !mimic ? null : sample === null ? QUICK_NEED_SAMPLE : material === null ? QUICK_NEED_LESSON_TEXT : null;
-  const need = mimic ? (needSlots ? slotsNeeded : null) : missing ? MATERIAL_REQUIRED : null;
+  const attachedKey = JSON.stringify([material, mimic && sample ? sampleFields(sample) : null]);
+  const ocrBusy = ocrRefusal?.key === attachedKey ? ocrRefusal.message : null;
+  const need = (mimic ? (needSlots ? slotsNeeded : null) : missing ? MATERIAL_REQUIRED : null) ?? ocrBusy;
   const picked = choice?.picked ?? null;
   const worksheetLike =
     !mimic && picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
@@ -223,6 +231,7 @@ function QuickBox() {
     }
     setBusy(true);
     setError(null);
+    setOcrRefusal(null);
     try {
       const request = typed || (kind === "ask" ? "" : TOOL_CHIP[kind]);
       const session = await api.createPrepSession(
@@ -230,7 +239,9 @@ function QuickBox() {
       );
       navigate(`/prep/${session.id}`);
     } catch (err) {
-      setError(errorMessage(err));
+      const reading = ocrBusyError(err);
+      if (reading) setOcrRefusal({ key: attachedKey, message: reading });
+      else setError(errorMessage(err));
       setBusy(false);
     }
   }
@@ -323,7 +334,7 @@ function QuickBox() {
             onPick={(way) => setDialog({ slot: "article", way })}
           />
           {need && (
-            <p className={`prompt-need${mimic ? " is-by-send" : ""}`} id={`${ids}-need`} role="alert">
+            <p className={`prompt-need${mimic || need === ocrBusy ? " is-by-send" : ""}`} id={`${ids}-need`} role="alert">
               {need}
             </p>
           )}

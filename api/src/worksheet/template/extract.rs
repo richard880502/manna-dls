@@ -64,6 +64,7 @@ pub async fn source(
     let row = material_store::readable(db, material_id, teacher_id)
         .await
         .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    crate::materials::ocr::check_idle(&row)?;
     check_source_text(&row.text_status, &row.text)?;
     Ok(row)
 }
@@ -127,6 +128,108 @@ pub fn spawn(state: &AppState, row: &TemplateRow, text: String) {
             tracing::error!(template_id = id, error = %e, "could not close the template extraction");
         }
     });
+}
+
+pub const MSG_OCR_FAILED: &str = "這份學習單的文字辨識（OCR）沒有成功，所以沒有讀出版型。請到教材庫按「用 OCR 重新讀取」，或上傳 DOCX、文字型 PDF。";
+/// How often a template waiting for OCR looks at the material, and how often it says it is
+/// still alive (`extract_started_at`, so neither it nor its prep turn is taken for stale).
+const OCR_POLL: std::time::Duration = std::time::Duration::from_millis(300);
+const OCR_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Starts the job for `row` (already `extracting`) whose sample is still being read by OCR
+/// (照我的學習單做 with a scanned worksheet, docs/API.md「Phase 2.10」): it waits for the OCR,
+/// then extracts from the recognised text as [`spawn`] does. A failed OCR fails the template.
+pub fn spawn_after_ocr(state: &AppState, row: &TemplateRow) {
+    let state = state.clone();
+    let (id, teacher_id, run) = (row.id, row.teacher_id, row.extract_run);
+    let material_id = row.source_material_id;
+    tokio::spawn(async move {
+        let work = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                let Some(material_id) = material_id else {
+                    return Ok(Some(Err(MSG_MATERIAL_NOT_FOUND.to_string())));
+                };
+                after_ocr(&state, id, teacher_id, run, material_id).await
+            })
+        };
+        let outcome = match work.await {
+            Ok(Ok(None)) => return,
+            Ok(Ok(Some(result))) => result,
+            Ok(Err(e)) => {
+                tracing::error!(template_id = id, error = %e, "template extraction failed");
+                Err(MSG_INTERNAL.to_string())
+            }
+            Err(e) => {
+                tracing::error!(template_id = id, error = %e, "template extraction panicked");
+                Err(MSG_INTERNAL.to_string())
+            }
+        };
+        if let Err(e) = finish(&state, id, teacher_id, run, outcome).await {
+            tracing::error!(template_id = id, error = %e, "could not close the template extraction");
+        }
+    });
+}
+
+/// `None`: the template is no longer extracting this run (deleted, or given up as stale).
+async fn after_ocr(
+    state: &AppState,
+    id: i64,
+    teacher_id: i64,
+    run: i32,
+    material_id: i64,
+) -> AppResult<Option<Result<WsTemplate, String>>> {
+    let db = &state.db;
+    let alive = || async {
+        let touched = sqlx::query(&format!(
+            "UPDATE worksheet_templates SET extract_started_at = now()
+              WHERE id = $1 AND status = '{STATUS_EXTRACTING}' AND extract_run = $2"
+        ))
+        .bind(id)
+        .bind(run)
+        .execute(db)
+        .await?;
+        Ok::<_, sqlx::Error>(touched.rows_affected() > 0)
+    };
+    let mut last_beat = std::time::Instant::now();
+    loop {
+        match crate::materials::ocr::status_of(db, material_id).await? {
+            None => return Ok(Some(Err(MSG_MATERIAL_NOT_FOUND.to_string()))),
+            Some((status, _)) if crate::materials::ocr::is_open(&status) => {}
+            Some((status, _)) if status == crate::materials::ocr::STATUS_FAILED => {
+                return Ok(Some(Err(MSG_OCR_FAILED.to_string())))
+            }
+            Some(_) => break,
+        }
+        if last_beat.elapsed() >= OCR_HEARTBEAT {
+            if !alive().await? {
+                return Ok(None);
+            }
+            // An OCR run that died without closing is reported as failed, so this ends.
+            crate::materials::ocr::expire_stale(state, teacher_id).await?;
+            last_beat = std::time::Instant::now();
+        }
+        tokio::time::sleep(OCR_POLL).await;
+    }
+    // The extraction proper starts now: its clock too.
+    if !alive().await? {
+        return Ok(None);
+    }
+    let material = match source(db, teacher_id, material_id).await {
+        Ok(m) => m,
+        Err(
+            AppError::BadRequest(m)
+            | AppError::Conflict(m)
+            | AppError::NotFound(m)
+            | AppError::Unavailable(m)
+            | AppError::Forbidden(m)
+            | AppError::Unauthorized(m),
+        ) => return Ok(Some(Err(m))),
+        Err(e) => return Err(e),
+    };
+    extract(state, id, teacher_id, run, &material.text)
+        .await
+        .map(Some)
 }
 
 /// Stores the result, unless the template was deleted or another run took over meanwhile.

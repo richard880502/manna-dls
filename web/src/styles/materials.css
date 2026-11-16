@@ -53,6 +53,100 @@
   margin-top: 0;
 }
 
+/* ---------- 掃描檔與 OCR: Manna reading a scan, page by page ---------- */
+.ocr-progress {
+  display: grid;
+  gap: var(--space-xs);
+  max-width: var(--measure);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--color-manna-wash);
+  overflow-wrap: anywhere;
+}
+
+.ocr-bar {
+  width: 100%;
+  max-width: 16rem;
+  height: 0.5rem;
+  accent-color: var(--color-manna-ink);
+}
+
+.ocr-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+  max-width: var(--measure);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--color-error-wash);
+}
+
+.ocr-failed-line {
+  flex: 1 1 14rem;
+  min-width: 0;
+  color: var(--color-error);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.ocr-failed .error-text {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+.ocr-note {
+  margin-top: 0;
+}
+
+/* 「由 OCR 辨識」 and 用 OCR 重新讀取, just above the text. */
+.ocr-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-sm);
+  font-size: var(--text-sm);
+}
+
+.ocr-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  padding: 0 var(--space-xs);
+  border: var(--rule-hair) solid var(--color-manna-rule);
+  border-radius: var(--radius-pill);
+  background: var(--color-manna-wash);
+  color: var(--color-manna-ink);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+  white-space: nowrap;
+}
+
+/* An upload waiting for its text (the attach dialogs, 我的教材, 上傳我的學習單). */
+.ocr-upload {
+  display: grid;
+  gap: var(--space-xs);
+  justify-items: start;
+}
+
+.ocr-upload > .ocr-progress,
+.ocr-upload > .ocr-failed {
+  justify-self: stretch;
+}
+
+.ocr-upload .quiet-note {
+  margin-top: 0;
+}
+
+.library-page > .ocr-progress,
+.library-page > .ocr-failed,
+.template-add > .ocr-progress,
+.template-add > .ocr-failed {
+  margin-top: var(--space-sm);
+}
+
 .material-media {
   display: grid;
   gap: var(--space-xs);
