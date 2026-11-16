@@ -208,7 +208,13 @@ export function useSop(lessonId: number, classId: number | null): SopController 
             if (job.status === "done" && job.result?.status === "shown") {
               logScaffold(SCAFFOLD[job.kind], "show", { trigger: "suggestions" });
             }
-            setJobs((prev) => ({ ...prev, [job.kind]: job }));
+            // Polls overlap when the server is slow, and their answers can come back out of
+            // order: a late 「running」 must not bring a finished (or replaced) job's progress back.
+            setJobs((prev) => {
+              const current = prev[job.kind];
+              if (current?.id !== job.id || current.status === "done") return prev;
+              return { ...prev, [job.kind]: job };
+            });
           })
           // A missed poll is retried by the next tick.
           .catch(() => undefined);

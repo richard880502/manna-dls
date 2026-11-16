@@ -842,7 +842,7 @@ interface SopState {
 interface SopJob {
   id: number; lesson_id: number; kind: "analysis" | "objectives";
   status: "running" | "done";
-  phase: string;                       // 給教師看的進度，例如「正在讀教材」「補上缺少的段落」
+  phase: string;                       // 給教師看的進度，例如「正在讀教材」「補上缺少的段落」；完成（done）後為空字串
   started_at: string; finished_at: string | null;
   sop_version_no: number | null;       // 這次工作讀的是哪一版 SOP
   result: AiResult<SopAnalysisSuggestion | SopObjectivesSuggestion> | null;   // done 時才有

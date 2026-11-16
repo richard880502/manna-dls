@@ -1,7 +1,7 @@
 // The seven-step lesson workspace (docs/DESIGN_OVERHAUL.md step 2, docs/API.md Phase 2.1):
 // step navigation, quiet saving, Manna's suggestions (adopt / edit / dismiss), nothing required,
 // starting the lesson from any step, and the material viewer.
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type {
@@ -127,7 +127,8 @@ function job<T>(kind: "analysis" | "objectives", result: AiResult<T> | null, ove
     lesson_id: 7,
     kind,
     status: result ? "done" : "running",
-    phase: kind === "analysis" ? "正在讀教材，逐段分析寫作特色" : "正在依教材與班級特性想目標，並對照課綱",
+    // The server clears the phase of a finished job.
+    phase: result ? "" : kind === "analysis" ? "正在讀教材，逐段分析寫作特色" : "正在依教材與班級特性想目標，並對照課綱",
     started_at: new Date().toISOString(),
     finished_at: result ? new Date().toISOString() : null,
     sop_version_no: 1,
@@ -593,6 +594,36 @@ describe("lesson workspace: Manna's suggestions", () => {
     expect(byId.get("p1")?.features.map((f) => f.evidence)).toEqual(["A sign said, Take one if you need it."]);
     expect(byId.get("p2")).toMatchObject({ function: "鄰居不看好，埋下對比", origin: "ai_edited" });
     expect(byId.has("p3")).toBe(false);
+  });
+
+  it("a finished job shows its result even when an earlier, slower poll answers after it", async () => {
+    signIn();
+    // Two polls are in flight when the job ends; the server answers the later one first.
+    const answers: Array<(job: SopJob<SopAnalysisSuggestion>) => void> = [];
+    mockApi(
+      routes(sopState(), {
+        [`POST ${SOP}/analysis`]: job<SopAnalysisSuggestion>("analysis", null),
+        "GET /api/sop-jobs/5": () =>
+          new Promise<SopJob<SopAnalysisSuggestion>>((resolve) => {
+            answers.push(resolve);
+          }),
+      }),
+    );
+    const user = userEvent.setup();
+    await openLesson();
+    await goToStep(user, /分析寫作特色/);
+    await user.click(screen.getByRole("button", { name: "請 Manna 逐段分析" }));
+    expect(await screen.findByText("正在讀教材，逐段分析寫作特色…")).toBeInTheDocument();
+    await waitFor(() => expect(answers.length).toBeGreaterThanOrEqual(2));
+
+    await act(async () => {
+      answers[1]?.(job("analysis", shown(analysisOutput)));
+      answers[0]?.(job<SopAnalysisSuggestion>("analysis", null, { phase: "有幾段沒有分析好，正在補上" }));
+    });
+    expect(await screen.findByRole("group", { name: "Manna 建議 · 第 1 段" })).toBeInTheDocument();
+    expect(screen.queryByText("Manna 正在處理")).not.toBeInTheDocument();
+    expect(screen.queryByText(/正在補上/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "請 Manna 再分析一次" })).toBeEnabled();
   });
 
   it("an adopted suggestion on an empty paragraph is marked as Manna's; decided ones do not come back after a reload", async () => {

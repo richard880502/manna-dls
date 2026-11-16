@@ -1112,7 +1112,7 @@ export interface SopJob<T = unknown> {
   lesson_id: number;
   kind: SopJobKind;
   status: "running" | "done";
-  /** 給教師看的進度 */
+  /** 給教師看的進度（完成後為空字串） */
   phase: string;
   started_at: string;
   finished_at: string | null;

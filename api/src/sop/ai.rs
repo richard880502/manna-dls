@@ -99,6 +99,7 @@ pub struct Job {
     pub lesson_id: i64,
     pub kind: String,
     pub status: String,
+    /// What a running job is doing, for the teacher; empty once it is done.
     pub phase: String,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -143,8 +144,14 @@ async fn into_job(db: &PgPool, row: JobRow) -> sqlx::Result<Job> {
         id: row.id,
         lesson_id: row.lesson_id,
         kind: row.kind,
+        // What a job was doing is over once it is done (rows finished before the phase was
+        // cleared still carry their last one).
+        phase: if row.status == "done" {
+            String::new()
+        } else {
+            row.phase
+        },
         status: row.status,
-        phase: row.phase,
         started_at: row.created_at,
         finished_at: row.finished_at,
         sop_version_no: row.sop_version_no,
@@ -171,7 +178,7 @@ fn stale_after(state: &AppState) -> f64 {
 
 async fn expire_stale(state: &AppState, lesson_id: i64) -> sqlx::Result<()> {
     sqlx::query(
-        "UPDATE lesson_sop_jobs SET status = 'done', finished_at = now(), result = $2
+        "UPDATE lesson_sop_jobs SET status = 'done', phase = '', finished_at = now(), result = $2
           WHERE lesson_id = $1 AND status = 'running'
             AND created_at < now() - make_interval(secs => $3)",
     )
@@ -316,7 +323,8 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
         };
         let saved = sqlx::query(
             "UPDATE lesson_sop_jobs
-                SET status = 'done', finished_at = now(), result = $2, interaction_id = $3
+                SET status = 'done', phase = '', finished_at = now(), result = $2,
+                    interaction_id = $3
               WHERE id = $1 AND status = 'running'",
         )
         .bind(job_id)
@@ -332,7 +340,7 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
 }
 
 async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE lesson_sop_jobs SET phase = $2 WHERE id = $1")
+    sqlx::query("UPDATE lesson_sop_jobs SET phase = $2 WHERE id = $1 AND status = 'running'")
         .bind(job_id)
         .bind(phase)
         .execute(db)
