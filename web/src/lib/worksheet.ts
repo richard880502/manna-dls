@@ -75,6 +75,8 @@ export const STEP_LABEL: Record<WsJobStep, string> = {
   scaffolds: "鷹架",
   exit_ticket: "Exit ticket",
   template: "照版型產生各區塊",
+  bloom: "依 Bloom 層次出題",
+  bloom_check: "檢查題目的 Bloom 層次",
 };
 
 export const SCAFFOLD_TYPE_LABEL: Record<WsScaffoldType, string> = {
@@ -110,6 +112,11 @@ export const emptySettings = (): WorksheetSettings => ({
   generation: [],
   levels: [],
   minutes: null,
+  output: "worksheet",
+  bloom: [],
+  question_count: null,
+  bloom_counts: null,
+  objective: null,
 });
 
 export const emptyBrief = (): WorksheetBrief => ({ tasks: [], warmup: [], vocabulary: [], exit_ticket: [] });
@@ -163,6 +170,8 @@ export function newItem(levels: WsLevel[]): WsItem {
     purpose: null,
     levels: [...levels],
     origin: "teacher",
+    bloom: null,
+    hint: "",
   };
 }
 

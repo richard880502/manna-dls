@@ -4,18 +4,27 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
+use sqlx::types::Json;
 use sqlx::PgPool;
 
 use super::{
-    is_worksheet_kind, KIND_REVISE, NEXT_KINDS, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING,
+    is_worksheet_kind, kit_error, SessionOptions, KIND_REVISE, NEXT_KINDS, STATUS_DONE,
+    STATUS_FAILED, STATUS_RUNNING,
 };
 use crate::error::{AppError, AppResult};
 use crate::worksheet::ai as ws_ai;
+use crate::worksheet::store as ws_store;
 use crate::AppState;
 
 pub const MSG_NOT_FOUND: &str = "找不到這個備課對話。";
 pub const MSG_BUSY: &str = "Manna 還在處理上一個請求，好了之後再送出。";
 pub const MSG_STALE: &str = "這次處理中斷了（可能是系統剛更新）。請按「再試一次」。";
+const MSG_KIT_NO_WORKSHEET: &str = "分層學習單沒有建立起來。請按「再試一次」。";
+const MSG_KIT_NO_ITEMS: &str =
+    "分層學習單沒有產生任何題目。可以打開學習單按「產生」再試一次，或按「再試一次」。";
+
+/// Kinds whose turn is `running` exactly while its worksheet generates.
+const WORKSHEET_ONLY_KINDS: &str = "('worksheet', 'assessment', 'comprehension', 'tiered')";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SessionRow {
@@ -26,12 +35,13 @@ pub struct SessionRow {
     pub topic: Option<String>,
     pub class_id: Option<i64>,
     pub template_id: Option<i64>,
+    pub options: Json<SessionOptions>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-const SESSION_COLS: &str =
-    "id, teacher_id, title, material_id, topic, class_id, template_id, created_at, updated_at";
+const SESSION_COLS: &str = "id, teacher_id, title, material_id, topic, class_id, template_id, \
+     options, created_at, updated_at";
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TurnRow {
@@ -71,12 +81,14 @@ pub struct NewSession<'a> {
     pub topic: Option<&'a str>,
     pub class_id: Option<i64>,
     pub template_id: Option<i64>,
+    pub options: &'a SessionOptions,
 }
 
 pub async fn insert(db: &PgPool, new: NewSession<'_>) -> sqlx::Result<SessionRow> {
     sqlx::query_as(&format!(
-        "INSERT INTO prep_sessions (teacher_id, title, material_id, topic, class_id, template_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING {SESSION_COLS}"
+        "INSERT INTO prep_sessions
+             (teacher_id, title, material_id, topic, class_id, template_id, options)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING {SESSION_COLS}"
     ))
     .bind(new.teacher_id)
     .bind(new.title)
@@ -84,23 +96,26 @@ pub async fn insert(db: &PgPool, new: NewSession<'_>) -> sqlx::Result<SessionRow
     .bind(new.topic)
     .bind(new.class_id)
     .bind(new.template_id)
+    .bind(Json(new.options))
     .fetch_one(db)
     .await
 }
 
-/// Sets the fields of a PATCH (each `None` is left as it is).
+/// Sets the fields of a PATCH (each `None` is left as it is; `options` replaces them all).
 pub async fn update(
     db: &PgPool,
     id: i64,
     title: Option<&str>,
     class_id: Option<Option<i64>>,
     template_id: Option<Option<i64>>,
+    options: Option<&SessionOptions>,
 ) -> sqlx::Result<()> {
     sqlx::query(
         "UPDATE prep_sessions
             SET title = COALESCE($2, title),
                 class_id = CASE WHEN $3 THEN $4 ELSE class_id END,
                 template_id = CASE WHEN $5 THEN $6 ELSE template_id END,
+                options = COALESCE($7, options),
                 updated_at = now()
           WHERE id = $1",
     )
@@ -110,6 +125,7 @@ pub async fn update(
     .bind(class_id.flatten())
     .bind(template_id.is_some())
     .bind(template_id.flatten())
+    .bind(options.map(Json))
     .execute(db)
     .await?;
     Ok(())
@@ -200,12 +216,139 @@ pub async fn finish(
     .bind(interaction_id)
     .fetch_optional(db)
     .await?;
+    touch(db, session).await
+}
+
+async fn touch(db: &PgPool, session: Option<i64>) -> sqlx::Result<()> {
     if let Some(session_id) = session {
         sqlx::query("UPDATE prep_sessions SET updated_at = now() WHERE id = $1")
             .bind(session_id)
             .execute(db)
             .await?;
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- 教學套件
+//
+// A kit turn has two parts: the activity plan (one model call, in a spawned task) and the tiered
+// worksheet (its generation, like a worksheet turn). The plan's outcome is recorded on the
+// running turn as soon as it is known (`result` and `interaction_id`, or its failure in
+// `error`, which the API only shows once the turn is closed); the turn is closed by whichever
+// of the two finishes last: the plan's task, or [`refresh`] once the generation is over.
+
+/// Records the activity plan's outcome on a running kit turn: `Ok((result, interaction_id))`,
+/// or `Err(message)`.
+pub async fn record_plan(
+    db: &PgPool,
+    turn_id: i64,
+    outcome: &Result<(Option<Value>, Option<i64>), String>,
+) -> sqlx::Result<()> {
+    let (result, interaction_id, error) = match outcome {
+        Ok((result, interaction_id)) => (result.clone(), *interaction_id, None),
+        Err(message) => (None, None, Some(message.clone())),
+    };
+    sqlx::query(
+        "UPDATE prep_turns SET result = $2, interaction_id = $3, error = $4
+          WHERE id = $1 AND status = 'running'",
+    )
+    .bind(turn_id)
+    .bind(result)
+    .bind(interaction_id)
+    .bind(error)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Closes a running kit turn with the plan's outcome when its worksheet could not be made or
+/// started (`worksheet_error`): `failed`, the plan (when there is one) kept.
+pub async fn close_kit_without_worksheet(
+    db: &PgPool,
+    turn_id: i64,
+    outcome: &Result<(Option<Value>, Option<i64>), String>,
+    worksheet_error: &str,
+) -> sqlx::Result<()> {
+    let (result, interaction_id, plan_error) = match outcome {
+        Ok((result, interaction_id)) => (result.clone(), *interaction_id, None),
+        Err(message) => (None, None, Some(message.as_str())),
+    };
+    close_kit_turn(
+        db,
+        turn_id,
+        Some((result, interaction_id)),
+        kit_error(plan_error, Some(worksheet_error)),
+    )
+    .await
+}
+
+/// Closes the turn: `done` without an error, `failed` with one. `plan` replaces the recorded
+/// plan; `None` keeps it.
+async fn close_kit_turn(
+    db: &PgPool,
+    turn_id: i64,
+    plan: Option<(Option<Value>, Option<i64>)>,
+    error: Option<String>,
+) -> sqlx::Result<()> {
+    let replace = plan.is_some();
+    let (result, interaction_id) = plan.unwrap_or_default();
+    let session: Option<i64> = sqlx::query_scalar(&format!(
+        "UPDATE prep_turns
+            SET status = CASE WHEN $2::TEXT IS NULL THEN '{STATUS_DONE}' ELSE '{STATUS_FAILED}' END,
+                error = $2,
+                result = CASE WHEN $3 THEN $4 ELSE result END,
+                interaction_id = CASE WHEN $3 THEN $5 ELSE interaction_id END,
+                finished_at = now()
+          WHERE id = $1 AND status = '{STATUS_RUNNING}'
+        RETURNING session_id"
+    ))
+    .bind(turn_id)
+    .bind(error)
+    .bind(replace)
+    .bind(result)
+    .bind(interaction_id)
+    .fetch_optional(db)
+    .await?;
+    touch(db, session).await
+}
+
+/// Closes a running kit turn once both parts are over: the plan's outcome is recorded and the
+/// worksheet's generation has ended. `done` when the plan was made and the worksheet has
+/// questions; otherwise `failed` with what went wrong, whatever succeeded staying visible.
+/// Nothing happens while a part is still running (or when the turn is already closed).
+pub async fn close_kit(state: &AppState, turn_id: i64) -> AppResult<()> {
+    let db = &state.db;
+    let row: Option<(Option<Value>, Option<String>, Option<i64>)> = sqlx::query_as(&format!(
+        "SELECT result, error, worksheet_id FROM prep_turns
+          WHERE id = $1 AND kind = 'kit' AND status = '{STATUS_RUNNING}'"
+    ))
+    .bind(turn_id)
+    .fetch_optional(db)
+    .await?;
+    let Some((result, plan_error, worksheet_id)) = row else {
+        return Ok(());
+    };
+    if result.is_none() && plan_error.is_none() {
+        return Ok(());
+    }
+    let worksheet_error = match worksheet_id {
+        None => Some(MSG_KIT_NO_WORKSHEET),
+        Some(ws) => {
+            if ws_ai::jobs(state, ws).await?.1 {
+                return Ok(());
+            }
+            let content = ws_store::latest(db, ws).await?.content;
+            let items: usize = content.blocks.iter().map(|b| b.items.len()).sum();
+            (items == 0).then_some(MSG_KIT_NO_ITEMS)
+        }
+    };
+    close_kit_turn(
+        db,
+        turn_id,
+        None,
+        kit_error(plan_error.as_deref(), worksheet_error),
+    )
+    .await?;
     Ok(())
 }
 
@@ -223,9 +366,10 @@ pub fn stale_after(state: &AppState) -> f64 {
     (state.config.ai_timeout_secs * 8 + 60) as f64
 }
 
-/// Brings the turns of a session up to date: a turn that outlived a restart fails, and a
-/// worksheet / assessment turn whose worksheet finished generating is done (even when a block
-/// failed: the block's `message` says so).
+/// Brings the turns of a session up to date: a turn that outlived a restart fails, a turn that
+/// only makes a worksheet is done once its worksheet finished generating (even when a block
+/// failed: the block's `message` says so), and a kit is closed once both its parts are over
+/// ([`close_kit`]).
 pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
     let db = &state.db;
     sqlx::query(&format!(
@@ -241,7 +385,7 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
     let open: Vec<(i64, i64)> = sqlx::query_as(&format!(
         "SELECT id, worksheet_id FROM prep_turns
           WHERE session_id = $1 AND status = '{STATUS_RUNNING}'
-            AND kind IN ('worksheet', 'assessment') AND worksheet_id IS NOT NULL"
+            AND kind IN {WORKSHEET_ONLY_KINDS} AND worksheet_id IS NOT NULL"
     ))
     .bind(session_id)
     .fetch_all(db)
@@ -252,16 +396,28 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
             finish(db, turn_id, Ok((None, None))).await?;
         }
     }
+    let kits: Vec<i64> = sqlx::query_scalar(&format!(
+        "SELECT id FROM prep_turns
+          WHERE session_id = $1 AND status = '{STATUS_RUNNING}' AND kind = 'kit'
+            AND worksheet_id IS NOT NULL"
+    ))
+    .bind(session_id)
+    .fetch_all(db)
+    .await?;
+    for turn_id in kits {
+        close_kit(state, turn_id).await?;
+    }
     Ok(())
 }
 
-/// The worksheet a `revise` turn works on: the one of the latest worksheet / assessment turn,
-/// if it still exists.
+/// The worksheet a `revise` turn works on: the one of the latest turn that made a worksheet
+/// (any kind: worksheet, assessment, comprehension, tiered or kit), if it still exists.
 pub async fn revise_target(db: &PgPool, session_id: i64) -> sqlx::Result<Option<i64>> {
     sqlx::query_scalar(
         "SELECT t.worksheet_id FROM prep_turns t
            JOIN worksheets w ON w.id = t.worksheet_id AND w.deleted_at IS NULL
-          WHERE t.session_id = $1 AND t.kind IN ('worksheet', 'assessment')
+          WHERE t.session_id = $1
+            AND t.kind IN ('worksheet', 'assessment', 'comprehension', 'tiered', 'kit')
           ORDER BY t.seq DESC LIMIT 1",
     )
     .bind(session_id)
@@ -401,6 +557,8 @@ pub struct Session {
     pub turns: Vec<Turn>,
     pub running: bool,
     pub next: Vec<&'static str>,
+    /// 出題選項, without the keys that are not set (`{}` when none is).
+    pub options: SessionOptions,
 }
 
 async fn turn_worksheet(state: &AppState, worksheet_id: i64) -> AppResult<Option<TurnWorksheet>> {
@@ -441,8 +599,13 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             seq: r.seq,
             kind: r.kind,
             request: r.request,
+            // A kit's failed plan is only reported once the turn is closed.
+            error: if r.status == STATUS_RUNNING {
+                None
+            } else {
+                r.error
+            },
             status: r.status,
-            error: r.error,
             worksheet,
             result: r.result,
             interaction_id: r.interaction_id,
@@ -451,31 +614,30 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
         });
     }
     let running = out.iter().any(|t| t.status == STATUS_RUNNING);
-    let has_material = summary.material.is_some();
-    let has_topic = summary
-        .topic
-        .as_deref()
-        .is_some_and(|t| !t.trim().is_empty());
-    let next = NEXT_KINDS
-        .into_iter()
-        .filter(|k| {
-            if *k == super::KIND_RESOURCES {
-                has_material || has_topic
-            } else {
-                has_material
-            }
-        })
-        .filter(|k| !out.iter().any(|t| t.kind == *k && t.status == STATUS_DONE))
-        .collect();
+    // Every suggested kind needs the material.
+    let next = if summary.material.is_some() {
+        NEXT_KINDS
+            .into_iter()
+            .filter(|k| !out.iter().any(|t| t.kind == *k && t.status == STATUS_DONE))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let options: Option<Json<SessionOptions>> =
+        sqlx::query_scalar("SELECT options FROM prep_sessions WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?;
     Ok(Session {
         summary,
         turns: out,
         running,
         next,
+        options: options.map(|o| o.0).unwrap_or_default(),
     })
 }
 
-/// Whether the session has a worksheet / assessment turn (the bottom bar then revises).
+/// Whether the session has a turn that made a worksheet (the bottom bar then revises).
 pub fn has_worksheet_turn(turns: &[TurnRow]) -> bool {
     turns
         .iter()

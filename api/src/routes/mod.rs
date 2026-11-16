@@ -153,6 +153,7 @@ pub fn api_router() -> Router<AppState> {
             get(prep::get).patch(prep::patch).delete(prep::delete),
         )
         .route("/prep-sessions/{id}/turns", post(prep::create_turn))
+        .route("/prep-sessions/{id}/turns/{turn_id}/kit", get(prep::kit))
         // material library, original files and annotations (Phase 2.2)
         .route("/materials", get(library::list).post(library::create))
         .route(

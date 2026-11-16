@@ -913,3 +913,424 @@
     display: none;
   }
 }
+
+/* ================= Bloom 認知層次 (Phase 2.7) =================
+ * One colour per level, every one an existing token: light and cool for remembering, warm and
+ * dark for evaluating and creating. 未標 is the neutral well with a dashed edge. The pairs below
+ * keep 4.5:1 or better for the text on them. */
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-remember {
+  --bloom-bg: var(--color-accent-wash-2);
+  --bloom-ink: var(--color-accent-press);
+}
+
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-understand {
+  --bloom-bg: var(--color-accent-rule);
+  --bloom-ink: var(--color-ink);
+}
+
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-apply {
+  --bloom-bg: var(--color-success-rule);
+  --bloom-ink: var(--color-ink);
+}
+
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-analyze {
+  --bloom-bg: var(--color-manna-rule);
+  --bloom-ink: var(--color-ink);
+}
+
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-evaluate {
+  --bloom-bg: var(--color-warn-ink);
+  --bloom-ink: var(--color-accent-ink);
+}
+
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-create {
+  --bloom-bg: var(--color-error);
+  --bloom-ink: var(--color-accent-ink);
+}
+
+:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-none {
+  --bloom-bg: var(--color-paper-2);
+  --bloom-ink: var(--color-muted);
+  --bloom-edge: var(--color-field-edge);
+}
+
+.bloom-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.375rem;
+  padding: 0 var(--space-xs);
+  border: var(--rule-hair) dashed var(--bloom-edge, transparent);
+  border-radius: var(--radius-pill);
+  background-color: var(--bloom-bg);
+  color: var(--bloom-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+  line-height: 1.3;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.bloom-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+/* The editor's chip is a select: the same pill, with the caret in the chip's own ink. */
+.bloom-chip.bloom-select {
+  display: inline-block;
+  width: auto;
+  min-height: var(--control-h-sm);
+  padding: 0 1.75rem 0 var(--space-sm);
+  border-color: var(--bloom-edge, transparent);
+  border-radius: var(--radius-pill);
+  background-color: var(--bloom-bg);
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 0.9375rem) 52%,
+    calc(100% - 0.625rem) 52%;
+  color: var(--bloom-ink);
+  font-size: var(--text-sm);
+}
+
+/* ---------- distribution bar ---------- */
+.bloom-dist {
+  display: grid;
+  gap: var(--space-2xs);
+  margin-top: var(--space-xs);
+  font-family: var(--font-body);
+}
+
+.bloom-dist-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.bloom-bar {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.bloom-seg {
+  display: inline-flex;
+  flex-shrink: 1;
+  flex-basis: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 1.75rem;
+  padding: 0;
+  border: 0;
+  background-color: var(--bloom-bg);
+  color: var(--bloom-ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+button.bloom-seg {
+  min-height: var(--control-h-sm);
+}
+
+button.bloom-seg:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+/* A level picked: the others step back. */
+.bloom-bar:has(.is-active) .bloom-seg:not(.is-active) {
+  opacity: 0.4;
+}
+
+.bloom-all {
+  flex: none;
+  font-size: var(--text-sm);
+}
+
+.bloom-all[aria-pressed="true"] {
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+.bloom-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-sm);
+  list-style: none;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+}
+
+.bloom-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.bloom-legend li.is-zero {
+  color: var(--color-muted);
+}
+
+.bloom-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border: var(--rule-hair) dashed var(--bloom-edge, transparent);
+  border-radius: 2px;
+  background-color: var(--bloom-bg);
+}
+
+.ws-bloom {
+  margin: var(--space-md) 0;
+}
+
+.ws-bloom .ws-sub {
+  margin-top: 0;
+}
+
+.ws-bloom-line {
+  margin-top: var(--space-3xs);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+/* ---------- hint (printed in 基礎版 only) ---------- */
+.ws-hint {
+  display: grid;
+  grid-template-columns: 8.5em minmax(0, 1fr);
+  gap: var(--space-xs);
+  align-items: baseline;
+  margin-top: var(--space-2xs);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+.ws-hint .ws-text {
+  color: var(--color-ink-2);
+  font-family: var(--font-print);
+  font-size: 0.9375rem;
+}
+
+.ws-hint-print {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+  font-size: 0.9375rem;
+  font-style: italic;
+}
+
+/* ---------- settings: 要做什麼, presets, steppers ---------- */
+.ws-output {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.ws-opt-note {
+  margin-top: 0;
+}
+
+.ws-count {
+  text-align: right;
+}
+
+.ws-summary {
+  margin: 0;
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+.bloom-settings {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.bloom-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--space-xs);
+}
+
+.bloom-preset {
+  position: relative;
+  display: grid;
+  gap: var(--space-2xs);
+  align-content: start;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-field-edge);
+  border-radius: var(--radius-control);
+  background: var(--color-field);
+  cursor: pointer;
+}
+
+.bloom-preset input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.bloom-preset.is-current {
+  border-color: var(--color-accent);
+  background: var(--color-accent-wash);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.bloom-preset:has(input:focus-visible) {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.bloom-preset:has(input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.bloom-preset-name {
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+.bloom-preset-bar {
+  display: flex;
+  gap: 1px;
+  height: 0.5rem;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.bloom-preset-bar.is-custom {
+  border: var(--rule-hair) dashed var(--color-field-edge);
+}
+
+.bloom-preset-bar .bloom-swatch {
+  flex-basis: 0;
+  width: auto;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.bloom-preset-share {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-ui);
+}
+
+.bloom-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: var(--rule-hair) solid var(--color-field-edge);
+  border-radius: var(--radius-control);
+  background: var(--color-field);
+  overflow: hidden;
+}
+
+.bloom-stepper button {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border: 0;
+  background: none;
+  color: var(--color-accent-text);
+  font: inherit;
+  font-weight: var(--weight-strong);
+}
+
+.bloom-stepper button:disabled {
+  color: var(--color-muted);
+  opacity: 0.5;
+}
+
+.bloom-stepper button:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}
+
+.bloom-stepper output {
+  min-width: 2.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-strong);
+  text-align: center;
+}
+
+.bloom-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+}
+
+.bloom-levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: var(--space-xs) var(--space-md);
+  list-style: none;
+}
+
+.bloom-levels li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+@media (max-width: 47.5rem) {
+  button.bloom-seg,
+  .bloom-stepper button {
+    min-height: var(--hit);
+  }
+
+  .bloom-stepper button {
+    width: var(--hit);
+    height: var(--hit);
+  }
+
+  .bloom-chip.bloom-select {
+    min-height: var(--hit);
+  }
+
+  .ws-hint {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------- 教學套件 (session page; kept here with the rest of Phase 2.7) ---------- */
+.prep-kit {
+  display: grid;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.prep-kit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--rule-hair) solid var(--color-accent-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-accent-wash);
+}
+
+.prep-kit-head > p {
+  flex: 1 1 14rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.prep-kit-head > .quiet-note {
+  flex-basis: 100%;
+}

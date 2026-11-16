@@ -1,5 +1,7 @@
 import type { WsSheet, WsSheetBlock } from "../../api/types";
+import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL } from "../../lib/worksheet";
+import { BloomChip } from "../worksheet/Bloom";
 import { SectionTools } from "./SectionTools";
 
 /** A block's name in the teacher's words: 「A 暖身」, 「Exit ticket」. */
@@ -14,8 +16,10 @@ export function sheetBlockText(b: WsSheetBlock): string {
   b.vocabulary.forEach((v) => lines.push(`${v.word}: ${v.definition}`));
   b.supports.forEach((s) => lines.push(`${s.heading ?? s.kind}: ${s.content}`));
   b.items.forEach((it) => {
-    lines.push(`${it.no}. ${it.prompt}`);
+    const tag = isBloom(it.bloom) ? ` 〔Bloom：${BLOOM_LABEL[it.bloom]} ${BLOOM_EN[it.bloom]}〕` : "";
+    lines.push(`${it.no}. ${it.prompt}${tag}`);
     it.options.forEach((o) => lines.push(`   ${o}`));
+    if (it.hint?.trim()) lines.push(`   Hint: ${it.hint}`);
     if (it.answer) lines.push(`   參考答案：${it.answer}`);
   });
   if (b.teacher_notes?.trim()) lines.push(`教師備註：${b.teacher_notes}`);
@@ -56,6 +60,7 @@ export function SheetPreview({
       )}
       {sheet.blocks.map((b) => {
         const name = sheetBlockName(b);
+        const bloomLine = teacher ? blockBloomLine(b.items) : "";
         return (
           <section
             key={b.id}
@@ -66,6 +71,11 @@ export function SheetPreview({
               {b.label && <span className="ws-letter">{b.label}.</span>}
               <span>{b.title}</span>
             </h3>
+            {bloomLine && (
+              <p className="ws-bloom-line" lang="zh-Hant">
+                {bloomLine}
+              </p>
+            )}
             {b.instructions.trim() && <p className="prep-sheet-steps">{b.instructions}</p>}
             {b.steps.length > 0 && (
               <div className="ws-procedure">
@@ -106,7 +116,16 @@ export function SheetPreview({
               <ol className="ws-items">
                 {b.items.map((it) => (
                   <li key={it.no} value={it.no}>
-                    <p className="prep-pre">{it.prompt}</p>
+                    <p className="prep-pre">
+                      {it.prompt}
+                      {/* Bloom tags: the teacher version only (the student sheet never has them). */}
+                      {teacher && isBloom(it.bloom) && (
+                        <>
+                          {" "}
+                          <BloomChip level={it.bloom} />
+                        </>
+                      )}
+                    </p>
                     {it.options.length > 0 && (
                       <ul className="prep-sheet-options">
                         {it.options.map((o) => (
@@ -114,6 +133,7 @@ export function SheetPreview({
                         ))}
                       </ul>
                     )}
+                    {it.hint?.trim() && <p className="ws-hint-print">Hint: {it.hint}</p>}
                     {!teacher &&
                       Array.from({ length: it.lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
                     {teacher && (it.answer || it.evidence) && (

@@ -1,5 +1,6 @@
 import type { ActivityPlan, PrepAskResult, PrepResources, PrepReviseResult } from "../../api/types";
 import { OPTION_NAMES, changedBlocksLine, goalsText, stepText } from "../../lib/prep";
+import { BloomChips } from "../worksheet/Bloom";
 import { SectionTools } from "./SectionTools";
 
 /** 規劃教學活動: the goals as a table, then each step as a card, as on 築學網. */
@@ -47,6 +48,7 @@ export function ActivityCard({ plan, interactionId }: { plan: ActivityPlan; inte
                 <span className="soft-tag prep-phase">{step.phase}</span>
                 <strong>{step.title}</strong>
                 <span className="prep-minutes">{step.minutes} 分鐘</span>
+                <BloomChips levels={step.bloom} label={`「${step.title}」的 Bloom 層次`} />
               </p>
               {step.idea.trim() && (
                 <div className="prep-idea">

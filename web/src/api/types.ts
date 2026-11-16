@@ -1290,6 +1290,13 @@ export type WsBlockKind = "warmup" | "activity" | "exit_ticket";
 /** 語言／教學／程序鷹架 */
 export type WsScaffoldType = "verbal" | "instructional" | "procedural";
 
+/** Bloom 認知層次（固定集合，順序一律由記憶到創造；伺服器只接受這些 id）。中文標籤在 lib/bloom.ts。 */
+export type Bloom = "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
+/** 要做什麼：學習單（原本的流程）｜閱讀理解題｜分層練習 */
+export type WsOutput = "worksheet" | "comprehension" | "tiered";
+/** 每個層次的題數（0–12，合計 3–30）；有值時取代 `bloom` 與 `question_count` */
+export type BloomCounts = Partial<Record<Bloom, number>>;
+
 /** 四個區塊的選取（規格 §5 的標籤，逐字）；都可以是空陣列。 */
 export interface WorksheetSettings {
   material_types: string[];
@@ -1298,6 +1305,17 @@ export interface WorksheetSettings {
   generation: string[];
   levels: WsLevel[];
   minutes: number | null;
+  // Phase 2.7 (Bloom). Servers since 0014 always send these; older stored data may not have them.
+  /** 預設 "worksheet"（原本的流程） */
+  output?: WsOutput;
+  /** 目標層次，依 Bloom 順序、不重複；空陣列＝六個都要 */
+  bloom?: Bloom[];
+  /** 3–30；null＝閱讀理解題 8 題、分層練習 12 題 */
+  question_count?: number | null;
+  /** 每個層次的題數；有值時取代 bloom 與 question_count（大於 0 的層次就是要出的層次） */
+  bloom_counts?: BloomCounts | null;
+  /** 教師寫的學習目標（≤300），送給每一步的模型 */
+  objective?: string | null;
 }
 
 /** 教材接縫：產生器只認這個形狀。 */
@@ -1362,6 +1380,10 @@ export interface WsItem {
   purpose: ExitKind | null;
   levels: WsLevel[];
   origin: WsOrigin;
+  /** Bloom 認知層次；舊題目與未標的是 null。教師改的值由伺服器重新驗證。 */
+  bloom?: Bloom | null;
+  /** 提示或句型開頭：只印在基礎版 */
+  hint?: string;
 }
 
 export interface WsScaffold {
@@ -1416,7 +1438,7 @@ export interface WorksheetContent {
 }
 
 /** `template`: one job for a whole template generation (or one template block regenerate). */
-export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "template";
+export type WsJobStep = "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "template" | "bloom" | "bloom_check";
 export type WsJobOutcome = "shown" | "blocked" | "timeout" | "error" | "disabled" | "skipped";
 
 export interface WsJob {
@@ -1466,6 +1488,8 @@ export interface WorksheetState extends WorksheetSummary {
   sop_sync: { linked: boolean; changes: number };
   /** 照哪個版型產生（docs/WORKSHEET_TEMPLATES_CONTRACT.md）；舊的伺服器沒有這一欄 */
   template?: WsTemplateRef | null;
+  /** 給 Manna 的要求（≤2000），送給每一步的模型；舊的伺服器沒有這一欄 */
+  request?: string;
 }
 
 export interface WsJobsState {
@@ -1482,6 +1506,10 @@ export interface CreateWorksheetRequest {
   material_id?: number;
   /** 自己的、已讀好（ready）的版型 */
   template_id?: number;
+  /** 一部分設定；沒給的照原本的預設。版型＋output ≠ worksheet → 400 */
+  settings?: Partial<WorksheetSettings>;
+  /** 給 Manna 的要求（≤2000） */
+  request?: string;
 }
 
 export interface SaveWorksheetRequest {
@@ -1492,6 +1520,8 @@ export interface SaveWorksheetRequest {
   content?: WorksheetContent;
   /** 設定版型：記下目前版本並依版型重設 settings；null 拿掉版型（settings 不動）。產生中送出會 409。 */
   template_id?: number | null;
+  /** 給 Manna 的要求（≤2000） */
+  request?: string;
 }
 
 export interface SaveWorksheetMaterialRequest {
@@ -1651,6 +1681,10 @@ export interface WsSheetBlock {
     lines: number;
     answer?: string;
     evidence?: string;
+    /** 只有教師版 */
+    bloom?: Bloom | null;
+    /** 只有基礎版（印成 "Hint: …"） */
+    hint?: string;
   }>;
   teacher_notes?: string;
 }
@@ -1663,7 +1697,20 @@ export interface WsVersionRow {
 
 // ---- 備課對話（prep sessions）----
 
-export type PrepKind = "worksheet" | "assessment" | "activity" | "resources" | "ask" | "revise";
+/**
+ * comprehension／tiered：output 為閱讀理解題／分層練習的學習單（像 worksheet）。
+ * kit：教學套件＝活動流程（result）＋分層學習單（worksheet），兩者都好才 done。
+ */
+export type PrepKind =
+  | "worksheet"
+  | "assessment"
+  | "activity"
+  | "resources"
+  | "ask"
+  | "revise"
+  | "comprehension"
+  | "tiered"
+  | "kit";
 export type PrepPhase = "引起動機" | "發展活動" | "統整與評量";
 
 export interface ActivityPlan {
@@ -1681,6 +1728,8 @@ export interface ActivityPlan {
     script: string[];
     /** 卡住了怎麼辦；可能是 "" */
     stuck_tip: string;
+    /** 這一步練到的 Bloom 層次（≤3）；prep_activity 第 1 版的規劃沒有 */
+    bloom?: Bloom[];
   }>;
   curriculum: Array<{ code: string; text: string }>;
 }
@@ -1730,12 +1779,23 @@ export interface PrepTurn {
   finished_at: string | null;
 }
 
+/** 對話的出題選項：之後在對話裡做的每一份學習單都帶入（settings 的同名欄位）。 */
+export interface PrepSessionOptions {
+  bloom?: Bloom[];
+  question_count?: number;
+  bloom_counts?: BloomCounts;
+  answer_formats?: string[];
+  objective?: string;
+}
+
 export interface PrepSession extends PrepSessionSummary {
   /** seq 順序 */
   turns: PrepTurn[];
   running: boolean;
   /** 伺服器建議的下一步 */
   next: PrepKind[];
+  /** 建立或 PATCH 時給的選項；舊的伺服器沒有這一欄 */
+  options?: PrepSessionOptions | null;
 }
 
 export interface PrepSessionList {
@@ -1752,12 +1812,24 @@ export interface CreatePrepSessionRequest {
   topic?: string;
   class_id?: number;
   template_id?: number;
+  /** 帶進這次備課做的每一份學習單（省略＝全部層次、自動題數） */
+  options?: {
+    bloom?: Array<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create">;
+    question_count?: number;
+    /** 每個層次的題數（0–12，合計 3–30）；有它就不看 bloom 與 question_count */
+    bloom_counts?: Partial<Record<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create", number>>;
+    /** 固定標籤（選擇題、是非題…）；省略＝自動 */
+    answer_formats?: string[];
+    /** 學習目標（≤300） */
+    objective?: string;
+  };
 }
 
 export interface UpdatePrepSessionRequest {
   title?: string;
   class_id?: number | null;
   template_id?: number | null;
+  options?: PrepSessionOptions;
 }
 
 export interface CreatePrepTurnRequest {

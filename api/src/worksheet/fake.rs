@@ -28,6 +28,14 @@
 //! | `FAKE_TPL_BAD_LABEL`     | extraction: details use labels outside the fixed sets and `item_count` 40 (the server drops / clamps them) |
 //! | `FAKE_BLOCK`             | extraction: unreadable output in both calls (the template fails); in a section's title: that block fails |
 //! | `FAKE_RUNAWAY`           | every call: the first attempt runs to `max_tokens` (the retry succeeds) |
+//!
+//! 閱讀理解題／分層練習 (per Bloom level), see [`bloom_level`] and [`bloom_check`]:
+//!
+//! | marker                   | effect                                                              |
+//! |--------------------------|---------------------------------------------------------------------|
+//! | `FAKE_BLOOM_MISMATCH`    | judge: the first evaluate / create question is rated `understand`, in both rounds (it is relabelled with a notice) |
+//! | `FAKE_BLOOM_NO_EVIDENCE` | level call: the first remember question's evidence is not in the text, on the first attempt only (it is repaired) |
+//! | `FAKE_BLOCK`             | level call: only labels outside the level's formats (the level fails) |
 
 use serde_json::{json, Value};
 
@@ -219,6 +227,21 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             challenge["answer_en"] = json!("Answers will vary. Both reasons should be explained.");
             challenge["evidence"] = Value::Null;
             items.push(challenge);
+            // Bloom labels (prompt version 2): core from the function, support remember,
+            // challenge evaluate.
+            let core_bloom = match function.1 {
+                "發現資訊" => "remember",
+                "整理資訊" => "understand",
+                "創造資訊" => "create",
+                _ => "analyze",
+            };
+            for it in &mut items {
+                it["bloom"] = json!(match it["tier"].as_str() {
+                    Some("support") => "remember",
+                    Some("challenge") => "evaluate",
+                    _ => core_bloom,
+                });
+            }
             if run_no > 1 {
                 for it in &mut items {
                     let p = it["prompt_en"].as_str().unwrap_or_default().to_string();
@@ -599,3 +622,91 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
 }
 
 const TIER_CORE_LABEL: &str = "core";
+
+// ---------------------------------------------------------------- per Bloom level
+
+/// `count` questions of one level, cycling through its formats and the paragraphs, each about
+/// the paragraph's first sentence. Remember / understand questions quote it as evidence; every
+/// question has a hint. A redo (questions the judge rated as another level) is marked "redo".
+pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    let bloom = ctx["bloom"].as_str().unwrap_or("remember");
+    let count = ctx["count"].as_u64().unwrap_or(1).max(1) as usize;
+    let formats = strings(&ctx["formats"]);
+    let run_no = ctx["run_no"].as_i64().unwrap_or(1);
+    let redo = ctx["redo"] == true;
+    let paragraphs: Vec<(String, String)> = ctx["paragraphs"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|p| {
+                    (
+                        p["code"].as_str().unwrap_or("P1").to_string(),
+                        p["text"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if has("FAKE_BLOCK") || formats.is_empty() || paragraphs.is_empty() {
+        return json!({ "instructions": "", "items": [{
+            "answer_format": "探究", "prompt": "請討論。", "options": [], "answer": "",
+            "evidence": "", "paragraph_ids": [], "hint": "",
+        }] });
+    }
+    let quotes = matches!(bloom, "remember" | "understand");
+    let no_evidence = has("FAKE_BLOOM_NO_EVIDENCE") && attempt == 1 && bloom == "remember" && !redo;
+    let tag = if redo {
+        format!("[{bloom} v{run_no} redo]")
+    } else {
+        format!("[{bloom} v{run_no}]")
+    };
+    let items: Vec<Value> = (0..count)
+        .map(|k| {
+            let (code, text) = &paragraphs[k % paragraphs.len()];
+            let sentence = first_sentence(text);
+            let label = format!("paragraph {}", k % paragraphs.len() + 1);
+            let format = formats[k % formats.len()].as_str();
+            let raw = item(format, &label, &sentence, k + 1, "core");
+            let evidence = if no_evidence && k == 0 {
+                "This line was never written in the story at all.".to_string()
+            } else if quotes {
+                sentence.clone()
+            } else {
+                String::new()
+            };
+            json!({
+                "answer_format": format,
+                "prompt": format!("{} {tag}", raw["prompt_en"].as_str().unwrap_or_default()),
+                "options": raw["options"],
+                "answer": raw["answer_en"],
+                "evidence": evidence,
+                "paragraph_ids": [code],
+                "hint": format!("Look at {label} again."),
+            })
+        })
+        .collect();
+    json!({ "instructions": "Read the text again and answer the questions.", "items": items })
+}
+
+/// The judge rates every question at its target level (`fake_context` carries the targets;
+/// the real model never sees them).
+pub fn bloom_check(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    let mismatch = has("FAKE_BLOOM_MISMATCH");
+    let mut flagged = false;
+    let items: Vec<Value> = ctx["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|it| {
+            let target = it["target"].as_str().unwrap_or("remember");
+            let mut bloom = target;
+            if mismatch && !flagged && matches!(target, "evaluate" | "create") {
+                bloom = "understand";
+                flagged = true;
+            }
+            json!({ "id": it["id"], "bloom": bloom, "reason": "（測試）依題目要學生做的事判斷。" })
+        })
+        .collect();
+    json!({ "items": items })
+}

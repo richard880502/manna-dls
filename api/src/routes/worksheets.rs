@@ -32,7 +32,8 @@ use crate::worksheet::template::store as tpl_store;
 use crate::worksheet::vocab::{self, VocabCheck};
 use crate::worksheet::{
     auto_filename, auto_title, safe_filename, suggest_direct, suggest_from_sop, Audience, Brief,
-    Content, Level, Material, Objective, Origin, SeedExit, SeedTask, Settings, MAX_TITLE_CHARS,
+    Content, Level, Material, Objective, Origin, Output, SeedExit, SeedTask, Settings,
+    SettingsPatch, MAX_TITLE_CHARS,
 };
 use crate::AppState;
 
@@ -68,6 +69,31 @@ pub struct WorksheetState {
     pub undoable: Vec<String>,
     pub sop_sync: SopSyncState,
     pub template: Option<TemplateRef>,
+    /// 「教師的要求」 ("" when none).
+    pub request: String,
+}
+
+/// Most characters of 「教師的要求」.
+pub const MAX_REQUEST_CHARS: usize = 2000;
+pub const MSG_TEMPLATE_ONLY_WORKSHEET: &str = "版型只適用於完整學習單。";
+
+/// The teacher's request, trimmed; too long is a 400.
+pub fn checked_request(request: &str) -> AppResult<String> {
+    let request = request.trim();
+    if request.chars().count() > MAX_REQUEST_CHARS {
+        return Err(AppError::bad_request(format!(
+            "給 Manna 的要求最多 {MAX_REQUEST_CHARS} 字。"
+        )));
+    }
+    Ok(request.to_string())
+}
+
+/// A template only makes the full worksheet.
+fn check_template_output(has_template: bool, settings: &Settings) -> AppResult<()> {
+    if has_template && settings.output != Output::Worksheet {
+        return Err(AppError::bad_request(MSG_TEMPLATE_ONLY_WORKSHEET));
+    }
+    Ok(())
 }
 
 async fn lesson_sop_diff(
@@ -140,6 +166,7 @@ async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetState> {
         settings: ws.settings,
         suggested: ws.suggested,
         brief: ws.brief,
+        request: ws.request,
     })
 }
 
@@ -184,6 +211,13 @@ pub struct CreateWorksheet {
     /// One of the teacher's `ready` templates.
     #[serde(default)]
     pub template_id: Option<i64>,
+    /// A partial `WorksheetSettings` applied over the suggested (and template) settings: e.g.
+    /// `{ output: "comprehension", bloom: [...], question_count: 8 }`.
+    #[serde(default)]
+    pub settings: Option<SettingsPatch>,
+    /// 「教師的要求」 (≤2000), sent to every model call of the worksheet.
+    #[serde(default)]
+    pub request: Option<String>,
 }
 
 /// A library material the teacher chose, as the worksheet's material snapshot.
@@ -345,6 +379,7 @@ pub async fn create_worksheet(
         Some(template_id) => Some(tpl_store::ready_for_use(db, teacher_id, template_id).await?),
         None => None,
     };
+    let request = checked_request(req.request.as_deref().unwrap_or_default())?;
     let pasted = req.material.unwrap_or_default();
     check_pasted(&pasted)?;
     // A library material wins over pasted text (which is then not stored).
@@ -404,6 +439,14 @@ pub async fn create_worksheet(
         Some(s) => s.normalised().map_err(AppError::bad_request)?,
         None => settings,
     };
+    let settings = match &req.settings {
+        Some(patch) => patch
+            .apply(&settings)
+            .normalised()
+            .map_err(AppError::bad_request)?,
+        None => settings,
+    };
+    check_template_output(template.is_some(), &settings)?;
     let mut brief = brief;
     brief.warmup.extend(overrides.warmup);
     brief.validate().map_err(AppError::bad_request)?;
@@ -438,6 +481,7 @@ pub async fn create_worksheet(
             content: &content,
             template: template.as_ref().map(|(row, no, _)| (row.id, *no)),
             prep_session_id: overrides.prep_session_id,
+            request: &request,
         },
     )
     .await?;
@@ -455,6 +499,7 @@ pub async fn create_worksheet(
             "worksheet_id": id, "lesson_id": req.lesson_id, "class_id": req.class_id,
             "material_source": material.source.kind, "paragraphs": material.paragraphs.len(),
             "template_id": req.template_id, "prep_session_id": overrides.prep_session_id,
+            "output": settings.output.as_str(),
         }),
     )
     .await?;
@@ -488,12 +533,16 @@ pub struct SaveWorksheet {
     pub title: Option<String>,
     #[serde(default)]
     pub filename: Option<String>,
+    /// The fields given replace the current ones (a full `WorksheetSettings` replaces them all).
     #[serde(default)]
-    pub settings: Option<Settings>,
+    pub settings: Option<SettingsPatch>,
     #[serde(default)]
     pub brief: Option<Brief>,
     #[serde(default)]
     pub content: Option<Content>,
+    /// 「教師的要求」; `null` or "" clears it.
+    #[serde(default, deserialize_with = "double_option")]
+    pub request: Option<Option<String>>,
     /// A template to follow (its current version; the settings are re-derived from it), or
     /// `null` to stop using one (the settings stay).
     #[serde(default, deserialize_with = "double_option")]
@@ -525,8 +574,11 @@ pub async fn save(
         Some(f) => safe_filename(&f),
         None => ws.filename.clone(),
     };
-    let mut settings = match req.settings {
-        Some(s) => s.normalised().map_err(AppError::bad_request)?,
+    let mut settings = match &req.settings {
+        Some(patch) => patch
+            .apply(&ws.settings)
+            .normalised()
+            .map_err(AppError::bad_request)?,
         None => ws.settings.clone(),
     };
     let template = match req.template_id {
@@ -537,6 +589,15 @@ pub async fn save(
             Some(Some((row.id, version_no)))
         }
         Some(None) => Some(None),
+        None => None,
+    };
+    let has_template = match template {
+        Some(t) => t.is_some(),
+        None => ws.template_id.is_some(),
+    };
+    check_template_output(has_template, &settings)?;
+    let request = match &req.request {
+        Some(r) => Some(checked_request(r.as_deref().unwrap_or_default())?),
         None => None,
     };
     if template.is_some() && ws_ai::jobs(&state, id).await?.1 {
@@ -559,6 +620,9 @@ pub async fn save(
         vocab::relookup_levels(c, lexicon.as_ref());
     }
     store::update_fields(db, id, &title, &filename, &settings, &brief).await?;
+    if let Some(r) = &request {
+        store::set_request(db, id, r).await?;
+    }
     if let Some(t) = template {
         store::set_template(db, id, t).await?;
     }
@@ -588,7 +652,9 @@ pub async fn put_material(
     if let Some(material_id) = material.source.material_id {
         material_store::link(db, material_id, LinkTarget::Worksheet(id)).await?;
     }
-    let suggested = suggest_direct(&material);
+    // What to make (output, Bloom levels, counts, objective) is the teacher's, not a suggestion
+    // from the material: it carries over.
+    let suggested = suggest_direct(&material).with_focus_of(&ws.settings);
     // Selections the teacher never touched follow the new suggestion; her own stay.
     let settings = if ws.settings == ws.suggested {
         suggested.clone()

@@ -493,7 +493,7 @@ describe("lesson workspace: quiet saving", () => {
     expect(await screen.findByText(/^沒有存到：伺服器暫時發生問題/)).toBeInTheDocument();
 
     // Leaving now would lose it: the page asks.
-    await user.click(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "班級" }));
+    await user.click(within(screen.getByRole("navigation", { name: "主要導覽" })).getByRole("link", { name: "班級與課例" }));
     const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
     serverUp = true;
     await user.click(dialog.getByRole("button", { name: "儲存後離開" }));

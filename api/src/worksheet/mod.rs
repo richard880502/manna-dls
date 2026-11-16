@@ -9,6 +9,7 @@
 
 pub mod ai;
 pub mod assemble;
+pub mod bloom;
 pub mod checks;
 pub mod export;
 pub mod fake;
@@ -19,11 +20,12 @@ pub mod sync;
 pub mod template;
 pub mod vocab;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::sop::{ExitKind, InfoFunction};
+pub use bloom::{Bloom, Output};
 pub use material::Material;
 
 // ---------------------------------------------------------------- fixed labels (spec §5)
@@ -298,7 +300,8 @@ impl ScaffoldType {
 // ---------------------------------------------------------------- settings
 
 /// The teacher's selections in the four option blocks (all multi-select, all optional), the
-/// selected versions and the optional 預計完成時間.
+/// selected versions and the optional 預計完成時間; what to make (`output`) and, for the outputs
+/// made per Bloom level, the target levels and how many questions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct Settings {
@@ -308,6 +311,77 @@ pub struct Settings {
     pub generation: Vec<String>,
     pub levels: Vec<Level>,
     pub minutes: Option<i32>,
+    /// `worksheet` (the four-step pipeline), `comprehension` or `tiered`.
+    pub output: Output,
+    /// Target levels, in Bloom order; empty means all six.
+    pub bloom: Vec<Bloom>,
+    /// 3–30; `None` uses the output's default (8, tiered 12).
+    pub question_count: Option<i32>,
+    /// Explicit questions per level (each 0–12, 3–30 in all); overrides `bloom` and
+    /// `question_count` when set.
+    pub bloom_counts: Option<BTreeMap<Bloom, i32>>,
+    /// The teacher's learning objective (≤300), sent to every prompt.
+    pub objective: Option<String>,
+}
+
+/// A partial `Settings` (`POST /api/worksheets { settings }`, `PUT …/:id { settings }`): the
+/// fields given replace the current ones, the others stay. `null` clears the optional ones.
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct SettingsPatch {
+    pub material_types: Option<Vec<String>>,
+    pub student_tasks: Option<Vec<String>>,
+    pub answer_formats: Option<Vec<String>>,
+    pub generation: Option<Vec<String>>,
+    pub levels: Option<Vec<Level>>,
+    #[serde(deserialize_with = "crate::routes::double_option")]
+    pub minutes: Option<Option<i32>>,
+    pub output: Option<Output>,
+    pub bloom: Option<Vec<Bloom>>,
+    #[serde(deserialize_with = "crate::routes::double_option")]
+    pub question_count: Option<Option<i32>>,
+    #[serde(deserialize_with = "crate::routes::double_option")]
+    pub bloom_counts: Option<Option<BTreeMap<Bloom, i32>>>,
+    #[serde(deserialize_with = "crate::routes::double_option")]
+    pub objective: Option<Option<String>>,
+}
+
+impl SettingsPatch {
+    /// `base` with the given fields replaced (not yet validated: call `normalised`).
+    pub fn apply(&self, base: &Settings) -> Settings {
+        let mut s = base.clone();
+        let take = |v: &Option<Vec<String>>, old: &mut Vec<String>| {
+            if let Some(v) = v {
+                *old = v.clone();
+            }
+        };
+        take(&self.material_types, &mut s.material_types);
+        take(&self.student_tasks, &mut s.student_tasks);
+        take(&self.answer_formats, &mut s.answer_formats);
+        take(&self.generation, &mut s.generation);
+        if let Some(v) = &self.levels {
+            s.levels = v.clone();
+        }
+        if let Some(v) = self.minutes {
+            s.minutes = v;
+        }
+        if let Some(v) = self.output {
+            s.output = v;
+        }
+        if let Some(v) = &self.bloom {
+            s.bloom = v.clone();
+        }
+        if let Some(v) = self.question_count {
+            s.question_count = v;
+        }
+        if let Some(v) = &self.bloom_counts {
+            s.bloom_counts = v.clone();
+        }
+        if let Some(v) = &self.objective {
+            s.objective = v.clone();
+        }
+        s
+    }
 }
 
 /// Keeps `chosen` in the order of `allowed`, without duplicates; a value outside the set is an
@@ -349,6 +423,30 @@ impl Settings {
                 ));
             }
         }
+        if let Some(n) = self.question_count {
+            if !bloom::QUESTION_COUNT_RANGE.contains(&n) {
+                return Err(format!(
+                    "題數需為 {} 到 {} 題；也可以不填。",
+                    bloom::QUESTION_COUNT_RANGE.start(),
+                    bloom::QUESTION_COUNT_RANGE.end()
+                ));
+            }
+        }
+        if let Some(counts) = &self.bloom_counts {
+            bloom::check_counts(counts)?;
+        }
+        let objective = self
+            .objective
+            .as_deref()
+            .map(str::trim)
+            .filter(|o| !o.is_empty())
+            .map(str::to_string);
+        if objective
+            .as_ref()
+            .is_some_and(|o| o.chars().count() > bloom::MAX_OBJECTIVE_CHARS)
+        {
+            return Err(format!("學習目標最多 {} 字。", bloom::MAX_OBJECTIVE_CHARS));
+        }
         Ok(Settings {
             material_types: normalise_labels("素材類型", &self.material_types, &MATERIAL_TYPES)?,
             student_tasks: normalise_labels("學生任務", &self.student_tasks, &student_tasks())?,
@@ -356,7 +454,23 @@ impl Settings {
             generation: normalise_labels("產生設定", &self.generation, &GENERATION_OPTIONS)?,
             levels: normalise_levels(&self.levels),
             minutes: self.minutes,
+            output: self.output,
+            bloom: bloom::normalise_levels(&self.bloom),
+            question_count: self.question_count,
+            bloom_counts: self.bloom_counts.clone(),
+            objective,
         })
+    }
+
+    /// The same settings with what says what to make (`output`, `bloom`, `question_count`,
+    /// `bloom_counts`, `objective`) taken from `other`.
+    pub fn with_focus_of(mut self, other: &Settings) -> Settings {
+        self.output = other.output;
+        self.bloom = other.bloom.clone();
+        self.question_count = other.question_count;
+        self.bloom_counts = other.bloom_counts.clone();
+        self.objective = other.objective.clone();
+        self
     }
 
     pub fn wants(&self, generation_option: &str) -> bool {
@@ -463,6 +577,10 @@ pub struct Item {
     pub purpose: Option<ExitKind>,
     pub levels: Vec<Level>,
     pub origin: Origin,
+    /// The question's Bloom level (`null`: not labelled). Teacher version only.
+    pub bloom: Option<Bloom>,
+    /// A hint or sentence starter, printed only in 基礎版.
+    pub hint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -504,6 +622,9 @@ pub struct Block {
     /// The template section this block was generated from (a worksheet made from a template):
     /// regenerating the block re-runs that section.
     pub template_section_id: Option<String>,
+    /// The Bloom level this block was generated for (閱讀理解題／分層練習): regenerating the
+    /// block re-runs that level.
+    pub bloom: Option<Bloom>,
 }
 
 impl Default for Block {
@@ -526,6 +647,7 @@ impl Default for Block {
             message: None,
             sop_block_id: None,
             template_section_id: None,
+            bloom: None,
         }
     }
 }
@@ -635,6 +757,7 @@ impl Content {
                 check_text("題目", &i.prompt)?;
                 check_text("參考答案", &i.answer)?;
                 check_text("依據", &i.evidence)?;
+                check_text("提示", &i.hint)?;
                 if i.options.len() > 12 {
                     return Err("一題最多 12 個選項。".to_string());
                 }
@@ -726,6 +849,7 @@ pub fn suggest_direct(material: &Material) -> Settings {
         ],
         levels: vec![Level::Standard],
         minutes: None,
+        ..Settings::default()
     }
 }
 
@@ -784,6 +908,7 @@ pub fn suggest_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Se
         generation,
         levels: vec![Level::Standard],
         minutes: None,
+        ..Settings::default()
     };
     settings.normalised().unwrap_or_default()
 }
@@ -998,6 +1123,65 @@ mod tests {
             ..Settings::default()
         };
         assert!(s.normalised().is_err());
+    }
+
+    #[test]
+    fn bloom_settings_are_validated_and_patched() {
+        let s = Settings {
+            output: Output::Comprehension,
+            bloom: vec![Bloom::Create, Bloom::Remember, Bloom::Create],
+            question_count: Some(10),
+            objective: Some("  Students can explain the writer's view.  ".into()),
+            ..Settings::default()
+        };
+        let n = s.normalised().unwrap();
+        assert_eq!(n.bloom, vec![Bloom::Remember, Bloom::Create]);
+        assert_eq!(
+            n.objective.as_deref(),
+            Some("Students can explain the writer's view.")
+        );
+        for bad in [2, 31] {
+            let s = Settings {
+                question_count: Some(bad),
+                ..Settings::default()
+            };
+            assert!(s.normalised().unwrap_err().contains("題數"), "{bad}");
+        }
+        let s = Settings {
+            objective: Some("o".repeat(301)),
+            ..Settings::default()
+        };
+        assert!(s.normalised().unwrap_err().contains("學習目標"));
+        let s = Settings {
+            objective: Some("   ".into()),
+            ..Settings::default()
+        };
+        assert_eq!(s.normalised().unwrap().objective, None);
+        let s = Settings {
+            bloom_counts: Some(BTreeMap::from([(Bloom::Apply, 1), (Bloom::Create, 1)])),
+            ..Settings::default()
+        };
+        assert!(s.normalised().is_err(), "2 in all");
+
+        // A patch replaces what it names; null clears an optional field.
+        let patch: SettingsPatch = serde_json::from_value(serde_json::json!({
+            "output": "tiered", "question_count": null, "bloom_counts": { "analyze": 4 },
+        }))
+        .unwrap();
+        let p = patch.apply(&n);
+        assert_eq!(p.output, Output::Tiered);
+        assert_eq!(p.question_count, None);
+        assert_eq!(p.bloom, n.bloom, "not named, kept");
+        assert_eq!(p.objective, n.objective);
+        assert_eq!(p.bloom_counts, Some(BTreeMap::from([(Bloom::Analyze, 4)])));
+        let err =
+            serde_json::from_value::<SettingsPatch>(serde_json::json!({ "bloom": ["think"] }))
+                .unwrap_err();
+        assert!(err.to_string().contains("Bloom"));
+        assert!(
+            serde_json::from_value::<SettingsPatch>(serde_json::json!({ "output": "quiz" }))
+                .is_err()
+        );
     }
 
     #[test]

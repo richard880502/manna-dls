@@ -20,6 +20,8 @@ export interface WorksheetController {
   state: WorksheetState | null;
   setTitle: (title: string) => void;
   setFilename: (filename: string) => void;
+  /** 給 Manna 的要求 (saved with the rest). */
+  setRequest: (request: string) => void;
   setSettings: (change: (settings: WorksheetSettings) => WorksheetSettings) => void;
   setBrief: (change: (brief: WorksheetBrief) => WorksheetBrief) => void;
   /** Every edit of the worksheet goes through here; it is saved a moment later. */
@@ -94,7 +96,14 @@ export function useWorksheet(id: number): WorksheetController {
   const save = useCallback(async (): Promise<string | null> => {
     const now = stateRef.current;
     if (!now) return null;
-    const sent = { title: now.title, filename: now.filename, settings: now.settings, brief: now.brief };
+    const sent = {
+      title: now.title,
+      filename: now.filename,
+      settings: now.settings,
+      brief: now.brief,
+      // Only once there is something to say: an older server does not know the field.
+      ...(now.request !== undefined ? { request: now.request } : {}),
+    };
     // While steps run the blocks belong to the server: the content is not sent.
     const body = now.running ? sent : { ...sent, content: now.content };
     const saved = await api.saveWorksheet(id, body);
@@ -105,6 +114,7 @@ export function useWorksheet(id: number): WorksheetController {
         ...saved,
         title: latest.title,
         filename: latest.filename,
+        request: latest.request,
         settings: latest.settings,
         brief: latest.brief,
         content: latest.running ? saved.content : latest.content,
@@ -130,6 +140,7 @@ export function useWorksheet(id: number): WorksheetController {
 
   const setTitle = useCallback((title: string) => edit((s) => ({ ...s, title })), [edit]);
   const setFilename = useCallback((filename: string) => edit((s) => ({ ...s, filename })), [edit]);
+  const setRequest = useCallback((request: string) => edit((s) => ({ ...s, request })), [edit]);
   const setSettings = useCallback(
     (change: (settings: WorksheetSettings) => WorksheetSettings) =>
       edit((s) => ({ ...s, settings: change(s.settings) })),
@@ -242,6 +253,7 @@ export function useWorksheet(id: number): WorksheetController {
     state,
     setTitle,
     setFilename,
+    setRequest,
     setSettings,
     setBrief,
     setContent,

@@ -1,38 +1,42 @@
-import { useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { CreatePrepSessionRequest, PrepSessionSummary } from "../api/types";
+import type { PrepSessionSummary } from "../api/types";
 import { ErrorText } from "../components/common";
+import { Icon } from "../components/Icon";
 import {
-  MaterialChooser,
-  emptyMaterialChoice,
-  materialFields,
-  type MaterialChoice,
-} from "../components/material/MaterialChooser";
-import { OncePerPage, useFirstOnPage } from "../components/OncePerPage";
-import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
-import { useReadyTemplates } from "../components/template/TemplateSelect";
-import { useApp } from "../context/AppContext";
-import { UPLOAD_WARNING } from "../lib/materials";
-import { ACTION_KINDS, ACTION_LABEL, ASK_PLACEHOLDER, KIND_LABEL, OTHER_LABEL, sessionTitle, type ActionKind } from "../lib/prep";
+  ATTACH_LABEL,
+  AttachDialog,
+  MaterialChip,
+  PrivacyReminder,
+  choiceTitle,
+  type AttachWay,
+} from "../components/material/AttachDialog";
+import { materialFields, type MaterialChoice } from "../components/material/MaterialChooser";
+import { OncePerPage } from "../components/OncePerPage";
+import { usePopover } from "../components/Popover";
+import {
+  MATERIAL_REQUIRED,
+  REQUEST_MAX,
+  TOOLS,
+  TOOL_BLURB,
+  TOOL_CHIP,
+  TOOL_NAME,
+  asCreateRequest,
+  toolFromWords,
+  type StartKind,
+  type Tool,
+} from "../lib/create";
+import { KIND_LABEL, sessionTitle } from "../lib/prep";
+import { useAutoGrow } from "../lib/useAutoGrow";
 import { formatDateTime } from "../lib/worksheet";
-
-type Tab = "material" | "ask";
 
 const RECENT_SHOWN = 5;
 
-/** The privacy reminder, said once on the page (the upload form would otherwise say it too). */
-function PrivacyReminder() {
-  const show = useFirstOnPage();
-  if (!show) return null;
-  return (
-    <p className="material-warning prep-privacy" role="note">
-      {UPLOAD_WARNING}
-    </p>
-  );
-}
+export const HOME_HEADING = "今天想準備什麼？";
+export const QUICK_PLACEHOLDER = "例如：B1 程度、8 題閱讀理解，記憶到評鑑都要有";
 
-/** The latest few conversations, quietly, under the bar. */
+/** The latest few conversations, quietly, under the tools. */
 function RecentSessions() {
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
   useEffect(() => {
@@ -48,9 +52,9 @@ function RecentSessions() {
   }, []);
   if (!sessions || sessions.length === 0) return null;
   return (
-    <section className="prep-recent" aria-labelledby="prep-recent-heading">
+    <section className="home-recent" aria-labelledby="home-recent-heading">
       <div className="head-row">
-        <h2 id="prep-recent-heading">最近的備課</h2>
+        <h2 id="home-recent-heading">最近的備課</h2>
         <Link className="text-link is-plain" to="/prep">
           全部
         </Link>
@@ -63,7 +67,9 @@ function RecentSessions() {
                 <Link to={`/prep/${s.id}`}>{sessionTitle(s)}</Link>
               </h3>
               <p className="meta">
-                {[s.last_kind ? KIND_LABEL[s.last_kind] : null, formatDateTime(s.updated_at)].filter(Boolean).join(" · ")}
+                {[s.last_kind ? (KIND_LABEL[s.last_kind] ?? null) : null, formatDateTime(s.updated_at)]
+                  .filter(Boolean)
+                  .join(" · ")}
               </p>
             </div>
           </li>
@@ -74,42 +80,44 @@ function RecentSessions() {
 }
 
 /**
- * 備課 (the home page): one input bar, as on 築學網. 「從課文開始」 takes the lesson text (upload,
- * library or paste), optional class and template, then an action chip; 「直接問 AI」 takes a
- * question. Either creates a prep session and opens it.
+ * The quick box (like Diffit's): one text box, 附上文章 and send. With a material it makes 閱讀理解題
+ * unless a chip says otherwise; without one, a question to Manna. Typed words pick a chip until the
+ * teacher picks one herself.
  */
-export function PrepHomePage() {
+function QuickBox() {
   const ids = useId();
   const navigate = useNavigate();
-  const { currentClassId } = useApp();
-  const classes = useActiveClasses();
-  const templates = useReadyTemplates();
-  const [tab, setTab] = useState<Tab>("material");
-  const [choice, setChoice] = useState<MaterialChoice>(emptyMaterialChoice);
-  const [topic, setTopic] = useState("");
-  /** undefined: follow the current class (if it is one of the teacher's). */
-  const [classPick, setClassPick] = useState<number | null | undefined>(undefined);
-  const [templateId, setTemplateId] = useState<number | null>(null);
-  const [otherOpen, setOtherOpen] = useState(false);
-  const [otherText, setOtherText] = useState("");
-  const [question, setQuestion] = useState("");
-  const [askMaterial, setAskMaterial] = useState(false);
+  const [text, setText] = useState("");
+  const [choice, setChoice] = useState<MaterialChoice | null>(null);
+  /** null: the teacher has not clicked a chip, so typed words choose. */
+  const [clicked, setClicked] = useState<{ tool: Tool | null } | null>(null);
+  const [dialog, setDialog] = useState<AttachWay | null>(null);
+  const [needMaterial, setNeedMaterial] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { open: attachOpen, toggle: toggleAttach, close: closeAttach, rootRef: attachRoot, triggerRef: attachTrigger, onBlur: attachBlur } =
+    usePopover();
+  const boxRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(boxRef, text);
+  const backToAttach = useCallback(() => attachTrigger.current, [attachTrigger]);
 
-  const defaultClass = classes?.some((c) => c.id === currentClassId) ? currentClassId : null;
-  const classId = classPick === undefined ? defaultClass : classPick;
-  const material = materialFields(choice);
-  const hasMaterial = material !== null;
-  const hasTopic = topic.trim() !== "";
+  const tool = clicked ? clicked.tool : toolFromWords(text);
+  const material = choice ? materialFields(choice) : null;
+  const typed = text.trim();
+  const kind: StartKind | null = tool ?? (material ? "comprehension" : typed ? "ask" : null);
+  const missing = needMaterial && material === null && kind !== null && kind !== "ask";
 
-  async function start(body: CreatePrepSessionRequest) {
-    if (classId !== null) body.class_id = classId;
-    if (templateId !== null && body.kind !== "ask") body.template_id = templateId;
+  async function send() {
+    if (busy || kind === null) return;
+    if (kind !== "ask" && material === null) {
+      setNeedMaterial(true);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const session = await api.createPrepSession(body);
+      const request = typed || (kind === "ask" ? "" : TOOL_CHIP[kind]);
+      const session = await api.createPrepSession(asCreateRequest({ kind, request, ...(material ?? {}) }));
       navigate(`/prep/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
@@ -117,211 +125,151 @@ export function PrepHomePage() {
     }
   }
 
-  function action(kind: ActionKind) {
-    if (material) {
-      void start({ kind, request: ACTION_LABEL[kind], ...material });
-    } else if (kind === "resources" && hasTopic) {
-      void start({ kind, request: ACTION_LABEL[kind], topic: topic.trim() });
-    }
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    void send();
   }
 
-  function sendOther() {
-    const text = otherText.trim();
-    if (!text || !material) return;
-    void start({ kind: "ask", request: text, ...material });
+  function open(way: AttachWay) {
+    closeAttach();
+    setDialog(way);
   }
-
-  function sendQuestion() {
-    const text = question.trim();
-    if (!text) return;
-    void start({ kind: "ask", request: text, ...(askMaterial && material ? material : {}) });
-  }
-
-  const contextChips = (withTemplate: boolean) =>
-    (classes?.length || (withTemplate && templates?.length)) ? (
-      <div className="prep-context" role="group" aria-label="備課情境（可以不選）">
-        {classes && classes.length > 0 && (
-          <ClassChip classes={classes} value={classId} disabled={busy} onChange={setClassPick} />
-        )}
-        {withTemplate && templates && templates.length > 0 && (
-          <TemplateChip id={`${ids}-template`} templates={templates} value={templateId} disabled={busy} onChange={setTemplateId} />
-        )}
-      </div>
-    ) : null;
 
   return (
-    <OncePerPage>
-      <div className="page-head prep-home-head">
-        <h1>老師，今天要教哪一課？</h1>
-      </div>
-
-      <section className="prep-bar-card" aria-label="開始備課">
-        <div className="ws-tabs prep-tabs" role="tablist" aria-label="怎麼開始">
-          {(
-            [
-              ["material", "從課文開始"],
-              ["ask", "直接問 AI"],
-            ] as const
-          ).map(([key, label]) => (
+    <>
+      <section className="compose-card is-quick" aria-label="快速開始">
+        <label className="sr-only" htmlFor={`${ids}-box`}>
+          給 Manna 的要求
+        </label>
+        <textarea
+          id={`${ids}-box`}
+          ref={boxRef}
+          className="prompt-input"
+          rows={2}
+          maxLength={REQUEST_MAX}
+          value={text}
+          placeholder={QUICK_PLACEHOLDER}
+          disabled={busy}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        {choice && (
+          <div className="prompt-chips">
+            <MaterialChip title={choiceTitle(choice)} disabled={busy} onRemove={() => setChoice(null)} />
+          </div>
+        )}
+        <div className="prompt-toolbar">
+          <div className="popover-root" ref={attachRoot} onBlur={attachBlur}>
             <button
-              key={key}
+              ref={attachTrigger}
               type="button"
-              role="tab"
-              id={`${ids}-tab-${key}`}
-              aria-selected={tab === key}
-              aria-controls={`${ids}-panel`}
-              className={tab === key ? "is-current" : ""}
-              onClick={() => {
-                setTab(key);
-                setError(null);
-              }}
+              className="tool-button"
+              aria-expanded={attachOpen}
+              aria-controls={`${ids}-attach`}
+              disabled={busy}
+              onClick={toggleAttach}
             >
-              {label}
+              <Icon name="paperclip" />
+              附上文章
             </button>
-          ))}
-        </div>
-
-        <div id={`${ids}-panel`} role="tabpanel" aria-labelledby={`${ids}-tab-${tab}`} className="prep-panel">
-          <PrivacyReminder />
-
-          {tab === "material" && (
-            <>
-              <MaterialChooser
-                choice={choice}
-                onChange={(next) => {
-                  setChoice(next);
-                  setError(null);
-                }}
-                pasteRows={6}
-              />
-              {!hasMaterial && (
-                <div className="prep-topic">
-                  <label className="field-label" htmlFor={`${ids}-topic`}>
-                    或只輸入主題 <span className="optional-label">只能找教學資源</span>
-                  </label>
-                  <input
-                    id={`${ids}-topic`}
-                    type="text"
-                    maxLength={200}
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                  />
-                </div>
-              )}
-
-              {contextChips(true)}
-
-              <div className="prep-chips" role="group" aria-label="要 Manna 做什麼">
-                {ACTION_KINDS.map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    className="prep-chip"
-                    disabled={busy || !(hasMaterial || (kind === "resources" && hasTopic))}
-                    onClick={() => action(kind)}
-                  >
-                    {ACTION_LABEL[kind]}
+            {attachOpen && (
+              <div className="popover" id={`${ids}-attach`} role="group" aria-label="附上文章">
+                {(["upload", "library", "paste"] as const).map((way) => (
+                  <button key={way} type="button" className="popover-item" onClick={() => open(way)}>
+                    <Icon name={way === "upload" ? "upload" : way === "library" ? "library" : "paste"} />
+                    {ATTACH_LABEL[way]}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  className="prep-chip"
-                  aria-expanded={otherOpen}
-                  disabled={busy || !hasMaterial}
-                  onClick={() => setOtherOpen((o) => !o)}
-                >
-                  {OTHER_LABEL}
-                </button>
               </div>
-              {!hasMaterial && <p className="quiet-note">放進教材之後就可以選；只有主題時可以找教學資源。</p>}
-
-              {otherOpen && hasMaterial && (
-                <form
-                  className="prep-other"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    sendOther();
-                  }}
-                >
-                  <label className="field-label" htmlFor={`${ids}-other`}>
-                    你想做什麼？
-                  </label>
-                  <textarea
-                    id={`${ids}-other`}
-                    rows={3}
-                    maxLength={2000}
-                    value={otherText}
-                    placeholder={ASK_PLACEHOLDER}
-                    onChange={(e) => setOtherText(e.target.value)}
-                  />
-                  <div className="actions">
-                    <button type="submit" className="primary-button" disabled={busy || otherText.trim() === ""}>
-                      {busy ? "送出中…" : "送出"}
-                    </button>
-                  </div>
-                </form>
-              )}
-            </>
+            )}
+          </div>
+          {missing && (
+            <p className="prompt-need" role="alert">
+              {MATERIAL_REQUIRED}
+            </p>
           )}
-
-          {tab === "ask" && (
-            <form
-              className="prep-ask"
-              onSubmit={(e) => {
-                e.preventDefault();
-                sendQuestion();
-              }}
-            >
-              <label className="sr-only" htmlFor={`${ids}-question`}>
-                直接問 AI
-              </label>
-              <textarea
-                id={`${ids}-question`}
-                rows={4}
-                maxLength={2000}
-                value={question}
-                placeholder={ASK_PLACEHOLDER}
-                onChange={(e) => setQuestion(e.target.value)}
-              />
-              {askMaterial ? (
-                <div className="prep-ask-material">
-                  <MaterialChooser choice={choice} onChange={setChoice} pasteRows={5} />
-                  <button
-                    type="button"
-                    className="text-link is-plain"
-                    onClick={() => {
-                      setAskMaterial(false);
-                    }}
-                  >
-                    不附教材
-                  </button>
-                </div>
-              ) : (
-                <p className="quiet-note">
-                  <button type="button" className="text-link is-plain" onClick={() => setAskMaterial(true)}>
-                    附上教材（可以不附）
-                  </button>
-                </p>
-              )}
-              {contextChips(false)}
-              <div className="actions">
-                <button type="submit" className="primary-button" disabled={busy || question.trim() === ""}>
-                  {busy ? "送出中…" : "送出"}
-                </button>
-              </div>
-            </form>
-          )}
-          <ErrorText message={error} />
+          <button
+            type="button"
+            className="send-button"
+            aria-label="送出"
+            disabled={busy || kind === null}
+            onClick={() => void send()}
+          >
+            <Icon name="send" />
+          </button>
         </div>
       </section>
 
-      <RecentSessions />
+      <div className="output-chips" role="group" aria-label="要做什麼">
+        {TOOLS.map((t) => (
+          <button
+            key={t}
+            type="button"
+            className="output-chip"
+            aria-pressed={tool === t}
+            disabled={busy}
+            onClick={() => {
+              setClicked({ tool: tool === t ? null : t });
+              setNeedMaterial(false);
+            }}
+          >
+            {TOOL_CHIP[t]}
+          </button>
+        ))}
+      </div>
+      <ErrorText message={error} />
+      {dialog === null && <PrivacyReminder />}
 
-      <p className="page-foot">
-        <Link className="text-link is-plain" to="/classes">
-          完整備課流程（班級、單元、課例 SOP）
-        </Link>
-      </p>
+      {dialog && (
+        <AttachDialog
+          way={dialog}
+          pasted={choice?.way === "paste" ? { title: choice.title, text: choice.text } : undefined}
+          returnFocus={backToAttach}
+          onClose={() => setDialog(null)}
+          onChoice={(next) => {
+            setChoice(next);
+            setNeedMaterial(false);
+            setDialog(null);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * 首頁: a greeting with the quick box, the five tools (each opens its generator), and the latest
+ * prep sessions.
+ */
+export function PrepHomePage() {
+  return (
+    <OncePerPage>
+      <div className="home-head">
+        <h1>{HOME_HEADING}</h1>
+        <p className="lead">附上一篇文章或教材，選要做什麼，Manna 依 Bloom 認知層次出題。</p>
+      </div>
+
+      <QuickBox />
+
+      <section className="home-tools" aria-labelledby="home-tools-heading">
+        <h2 id="home-tools-heading">Manna 可以幫你做</h2>
+        <ul className="tool-cards">
+          {TOOLS.map((t) => (
+            <li key={t}>
+              <Link className="tool-card" to={`/create/${t}`}>
+                <span className={`tool-card-icon is-${t}`} aria-hidden="true">
+                  <Icon name={t} />
+                </span>
+                <span className="tool-card-title">{TOOL_NAME[t]}</span>
+                <span className="tool-card-blurb">{TOOL_BLURB[t]}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <RecentSessions />
     </OncePerPage>
   );
 }

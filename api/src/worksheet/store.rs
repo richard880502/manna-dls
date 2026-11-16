@@ -27,6 +27,8 @@ pub struct Worksheet {
     /// The teacher's template this worksheet follows, and the version it uses.
     pub template_id: Option<i64>,
     pub template_version_no: Option<i32>,
+    /// The teacher's request (「教師的要求」, ≤2000), sent to every model call; "" when none.
+    pub request: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -48,6 +50,7 @@ struct WorksheetRow {
     generated: bool,
     template_id: Option<i64>,
     template_version_no: Option<i32>,
+    request: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -72,6 +75,7 @@ impl From<WorksheetRow> for Worksheet {
             generated: r.generated,
             template_id: r.template_id,
             template_version_no: r.template_version_no,
+            request: r.request,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -80,7 +84,7 @@ impl From<WorksheetRow> for Worksheet {
 
 const WORKSHEET_COLS: &str = "id, teacher_id, lesson_id, class_id, title, filename, material,
     paragraph_seq, settings, suggested, brief, source_sop_version_id, generated, template_id,
-    template_version_no, created_at, updated_at";
+    template_version_no, request, created_at, updated_at";
 
 /// The worksheet if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<Worksheet> {
@@ -231,6 +235,8 @@ pub struct NewWorksheet<'a> {
     pub template: Option<(i64, i32)>,
     /// The 備課對話 the worksheet is made in.
     pub prep_session_id: Option<i64>,
+    /// 「教師的要求」 ("" when none).
+    pub request: &'a str,
 }
 
 /// Creates the worksheet with its first version. `settings` starts as the suggestion.
@@ -239,8 +245,8 @@ pub async fn insert(db: &PgPool, new: NewWorksheet<'_>) -> AppResult<i64> {
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO worksheets (teacher_id, lesson_id, class_id, title, filename, material,
                                  paragraph_seq, settings, suggested, brief, source_sop_version_id,
-                                 template_id, template_version_no, prep_session_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13) RETURNING id",
+                                 template_id, template_version_no, prep_session_id, request)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $12, $13, $14) RETURNING id",
     )
     .bind(new.teacher_id)
     .bind(new.lesson_id)
@@ -255,6 +261,7 @@ pub async fn insert(db: &PgPool, new: NewWorksheet<'_>) -> AppResult<i64> {
     .bind(new.template.map(|(id, _)| id))
     .bind(new.template.map(|(_, no)| no))
     .bind(new.prep_session_id)
+    .bind(new.request)
     .fetch_one(&mut *tx)
     .await?;
     insert_version(&mut tx, id, new.content, "created").await?;
@@ -455,6 +462,20 @@ pub async fn set_lesson(
     .bind(id)
     .bind(lesson_id)
     .bind(source_sop_version_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Sets the teacher's request ("" clears it).
+pub async fn set_request(db: &PgPool, id: i64, request: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheets SET request = $2,
+                updated_at = CASE WHEN request = $2 THEN updated_at ELSE now() END
+          WHERE id = $1",
+    )
+    .bind(id)
+    .bind(request)
     .execute(db)
     .await?;
     Ok(())

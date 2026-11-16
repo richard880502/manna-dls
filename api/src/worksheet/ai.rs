@@ -53,7 +53,12 @@ pub const STEP_SCAFFOLDS: &str = "scaffolds";
 pub const STEP_EXIT: &str = "exit_ticket";
 /// A generation from a template: one job, one model call per block.
 pub const STEP_TEMPLATE: &str = "template";
+/// 閱讀理解題／分層練習: one job for the calls of all Bloom levels …
+pub const STEP_BLOOM: &str = "bloom";
+/// … and one for the judge (and the regeneration of mismatched questions).
+pub const STEP_BLOOM_CHECK: &str = "bloom_check";
 
+pub mod bloom;
 pub mod template;
 
 // Output budgets: about twice the longest output measured with gemma-4-31B-it
@@ -84,6 +89,9 @@ const MAX_CANDIDATES: usize = 30;
 
 pub const MSG_STALE: &str = "這次產生中斷了（可能是系統剛更新）。請再按一次。";
 const MSG_BLOCKED: &str = "Manna 交出的內容沒有通過檢查";
+/// How the teacher's objective and request are named in every prompt.
+pub const OBJECTIVE_HEADING: &str = "學習目標（教師寫的）";
+pub const REQUEST_HEADING: &str = "教師的要求";
 const MSG_NEED_MATERIAL: &str = "請先貼上教材，Manna 才有東西可以設計。";
 
 struct StepInfo {
@@ -362,6 +370,9 @@ struct Run {
     /// Annotations of the material the teacher marked 「提供給 AI」, as prompt text ("" if none).
     ai_notes: String,
     ai_notes_count: usize,
+    /// 「學習目標（教師寫的）」 and 「教師的要求」, trimmed ("" if none).
+    objective: String,
+    request: String,
     /// The last step's job: kept open until the result is saved.
     hold: Option<i64>,
 }
@@ -417,6 +428,15 @@ impl Run {
         Ok(Self {
             ai_notes: crate::materials::annotations::ai_context_block(&notes),
             ai_notes_count: notes.len(),
+            objective: input
+                .worksheet
+                .settings
+                .objective
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            request: input.worksheet.request.trim().to_string(),
             state: state.clone(),
             temperature: BASE_TEMPERATURE + 0.1 * earlier.min(6) as f32,
             input,
@@ -431,6 +451,23 @@ impl Run {
 
     fn db(&self) -> &PgPool {
         &self.state.db
+    }
+
+    /// The block of shared context for prompts that predate `{{teacher_objective}}` and
+    /// `{{teacher_request}}`: the shared annotations, then the teacher's objective and request,
+    /// each under its own heading ("" when there is nothing).
+    fn notes_for_ai(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if !self.ai_notes.is_empty() {
+            parts.push(self.ai_notes.clone());
+        }
+        if !self.objective.is_empty() {
+            parts.push(format!("{OBJECTIVE_HEADING}：{}", self.objective));
+        }
+        if !self.request.is_empty() {
+            parts.push(format!("{REQUEST_HEADING}：{}", self.request));
+        }
+        parts.join("\n\n")
     }
 
     fn objective_codes(&self) -> Vec<String> {
@@ -471,7 +508,7 @@ impl Run {
             ("passage_numbered", self.input.worksheet.material.numbered()),
             ("student_task_labels", student_tasks().join("、")),
             ("answer_format_labels", ANSWER_FORMATS.join("、")),
-            ("teacher_notes_for_ai", self.ai_notes.clone()),
+            ("teacher_notes_for_ai", self.notes_for_ai()),
         ])
     }
 
@@ -488,6 +525,8 @@ impl Run {
                 &format!("{} 則", self.ai_notes_count),
             );
         }
+        list.add(OBJECTIVE_HEADING, &clip_chars(&self.objective, 80))
+            .add(REQUEST_HEADING, &clip_chars(&self.request, 80));
         for (label, text) in extra {
             list.add(label, text);
         }
@@ -731,6 +770,8 @@ where
         "vocab_candidates",
         "teacher_tasks",
         "done_titles",
+        "earlier_questions",
+        "questions",
     ] {
         if let Some(v) = vars.get(key).cloned() {
             vars.insert(key, prompts::redacted("由教材衍生的內容", &v));
@@ -1437,6 +1478,10 @@ fn check_material(worksheet: &Worksheet) -> AppResult<()> {
 /// Creates the four jobs of a generation (or joins the run in progress) and starts the work.
 pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()> {
     check_material(&input.worksheet)?;
+    // Reading comprehension and tiered practice are made per Bloom level.
+    if input.worksheet.settings.output.by_bloom() {
+        return bloom::start_generation(state, input).await;
+    }
     // A worksheet made from a template follows it instead of the four steps.
     if let Some(tpl) = template::for_generation(&state.db, &input.worksheet).await? {
         return template::start_generation(state, input, tpl).await;
@@ -1713,6 +1758,10 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
     if let Some((tpl, section)) = template::for_block(&state.db, &input.worksheet, &block).await? {
         return template::start_block(state, input, block, tpl, section).await;
     }
+    // A block made for one Bloom level re-runs that level.
+    if let Some(level) = bloom::level_of_block(&input, &block) {
+        return bloom::start_block(state, input, block, level).await;
+    }
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
     let steps: &[&'static str] = match block.kind {
@@ -1880,16 +1929,17 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             (block, interaction_id)
         }
     };
-    replace_block(run, &old, block, interaction_id).await
+    replace_block(run, &old, block, interaction_id, Vec::new()).await
 }
 
 /// Puts a regenerated block in place of `old` in the worksheet as it is now, keeping `old` for
-/// undo.
+/// undo. `notices` are added to the worksheet's.
 async fn replace_block(
     run: &Run,
     old: &Block,
     mut block: Block,
     interaction_id: i64,
+    notices: Vec<String>,
 ) -> AppResult<()> {
     let db = run.db();
     let ws = &run.input.worksheet;
@@ -1911,6 +1961,7 @@ async fn replace_block(
         return Ok(());
     };
     let previous = std::mem::replace(slot, block);
+    next.notices.extend(notices);
     next.normalise().map_err(|e| {
         AppError::Internal(anyhow::anyhow!("regenerated block failed validation: {e}"))
     })?;
