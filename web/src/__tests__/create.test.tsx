@@ -268,7 +268,8 @@ describe("建立: the generator", () => {
     expect(screen.getByText("0/30000")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "用範例試試" }));
     expect(article()).toHaveValue(EXEMPLAR_TEXT);
-    expect(EXEMPLAR_TEXT.split("\n\n")).toHaveLength(5);
+    expect(EXEMPLAR_TEXT.split("\n\n")).toHaveLength(6);
+    expect(EXEMPLAR_TEXT.split("\n\n")[0]).toBe("Why Bees Matter");
     expect(screen.getByText(`${EXEMPLAR_TEXT.length}/30000`)).toBeInTheDocument();
   });
 

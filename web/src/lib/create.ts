@@ -92,6 +92,8 @@ export const asCreateRequest = (body: StartRequest): CreatePrepSessionRequest =>
  * from any textbook.
  */
 export const EXEMPLAR_TEXT = [
+  // A title line first: pasted text without a title is named after its first line.
+  "Why Bees Matter",
   "Most people think of bees as small insects that make honey and sometimes sting. But bees do a much bigger job. When a bee visits a flower, tiny grains of pollen stick to its body. When it flies to the next flower, some of that pollen falls off. This helps the plant make seeds and fruit. Scientists call this pollination.",
   "A large part of the food we eat depends on pollination. Apples, strawberries, pumpkins and even the coffee beans in many adults' morning drink need help from insects like bees. Without them, farmers would grow much less food, and the fruit in our shops would cost a lot more.",
   "Sadly, the number of bees is falling in many countries. Some farmers use chemicals to kill the insects that eat their crops, but these chemicals can hurt bees, too. As cities grow, there are fewer wild flowers for bees to visit. Hotter summers and sudden changes in the weather make their lives even harder.",
