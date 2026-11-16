@@ -15,7 +15,8 @@ export const MATERIAL_WAYS: Array<{ key: MaterialWay; label: string }> = [
 export const NO_TEXT_LINE =
   "這份檔案讀不到文字（可能是掃描檔），Manna 沒辦法照它出題。請換一份，或改用貼上文字。";
 
-export type PickedMaterial = Pick<Material, "id" | "title">;
+/** A chosen library material; `looks_like_worksheet` comes along when the server said so. */
+export type PickedMaterial = Pick<Material, "id" | "title" | "looks_like_worksheet">;
 
 /** Where the material is coming from, and what has been chosen so far. */
 export interface MaterialChoice {
@@ -49,13 +50,13 @@ export function LibraryStep({ way, onPicked }: { way: "upload" | "library"; onPi
   const { library, error, reload } = useMaterialLibrary();
   const [problem, setProblem] = useState<string | null>(null);
 
-  function take(m: Pick<Material, "id" | "title" | "text_status">) {
+  function take(m: Pick<Material, "id" | "title" | "text_status" | "looks_like_worksheet">) {
     if (m.text_status !== "ready") {
       setProblem(NO_TEXT_LINE);
       return;
     }
     setProblem(null);
-    onPicked({ id: m.id, title: m.title });
+    onPicked({ id: m.id, title: m.title, ...(m.looks_like_worksheet ? { looks_like_worksheet: true } : {}) });
   }
 
   if (error) {

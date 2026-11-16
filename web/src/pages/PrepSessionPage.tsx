@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { CreatePrepTurnRequest, PrepSession, PrepTurn, UpdatePrepSessionRequest } from "../api/types";
+import type {
+  CreatePrepTurnRequest,
+  PrepSession,
+  PrepTurn,
+  UpdatePrepSessionRequest,
+  WsTemplateSummary,
+} from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
@@ -201,11 +207,26 @@ function PrepSessionView({ id }: { id: number }) {
     }
   }
 
-  // The session's class or template may no longer be among the teacher's active ones; keep it listed.
+  // The session's class or template may no longer be among the teacher's active ones (or the
+  // template was made from the teacher's worksheet after this page loaded); keep it listed.
   const classOptions = [
     ...(classes ?? []),
     ...(session.class && !(classes ?? []).some((c) => c.id === session.class?.id) ? [session.class] : []),
   ];
+  const templateOptions: WsTemplateSummary[] =
+    templates && templates.length > 0 && session.template && !templates.some((t) => t.id === session.template?.id)
+      ? [
+          ...templates,
+          {
+            ...session.template,
+            status: "ready",
+            section_count: 0,
+            source_material: null,
+            version_no: null,
+            updated_at: session.updated_at,
+          },
+        ]
+      : (templates ?? []);
 
   function worksheetCard(turn: PrepTurn) {
     const wsId = turn.worksheet?.id;
@@ -366,10 +387,10 @@ function PrepSessionView({ id }: { id: number }) {
               onChange={(classId) => void patch({ class_id: classId })}
             />
           )}
-          {templates && templates.length > 0 ? (
+          {templateOptions.length > 0 ? (
             <TemplateChip
               id={`${ids}-template`}
-              templates={templates}
+              templates={templateOptions}
               value={session.template?.id ?? null}
               disabled={locked}
               onChange={(templateId) => void patch({ template_id: templateId })}

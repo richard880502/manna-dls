@@ -1190,6 +1190,8 @@ export interface Material {
   lessons: MaterialLessonUse[];
   worksheet_count: number;
   annotation_count: number;
+  /** 文字看起來像一份學習單（照我的學習單做 的範本）；舊的伺服器沒有這一欄 */
+  looks_like_worksheet?: boolean;
 }
 
 export interface MaterialDetail extends Material {
@@ -1772,6 +1774,8 @@ export interface PrepTurn {
   status: "running" | "done" | "failed";
   error: string | null;
   worksheet: { id: number; title: string; version_no: number; running: boolean } | null;
+  /** 照版型做的學習單：用的版型與它的狀態；extracting 時 worksheet 是 null。舊的伺服器沒有這一欄 */
+  template?: { id: number; title: string; status: WsTemplateStatus } | null;
   result: ActivityPlan | PrepResources | PrepAskResult | PrepReviseResult | null;
   /** 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs } */
   interaction_id: number | null;
@@ -1812,6 +1816,11 @@ export interface CreatePrepSessionRequest {
   topic?: string;
   class_id?: number;
   template_id?: number;
+  /**
+   * 照我的學習單做：老師的一份有文字的教材（學習單範本）。只用於 kind worksheet；伺服器沿用或建立
+   * 它的版型。同時給 template_id 時以 template_id 為準。
+   */
+  template_material_id?: number;
   /** 帶進這次備課做的每一份學習單（省略＝全部層次、自動題數） */
   options?: {
     bloom?: Array<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create">;

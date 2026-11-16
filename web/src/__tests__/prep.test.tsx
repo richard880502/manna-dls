@@ -440,7 +440,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("says the privacy reminder once (in the upload dialog while it is open), lists the five tools and the latest sessions", async () => {
+  it("says the privacy reminder once (in the upload dialog while it is open), lists the tools (照我的學習單做 first) and the latest sessions", async () => {
     signIn();
     mockApi({
       ...baseRoutes(),
@@ -463,6 +463,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
 
     const tools = within(screen.getByRole("region", { name: "Manna 可以幫你做" }));
     expect(tools.getAllByRole("link").map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
+      ["/create/mimic", "照我的學習單做上傳你以前的學習單，Manna 照它的樣式為新課文出題"],
       ["/create/comprehension", "閱讀理解題依 Bloom 六個層次出題，附答案與文本依據"],
       ["/create/tiered", "分層練習同一篇文章，基礎／一般／進階三個版本"],
       ["/create/activity", "課堂活動引起動機到統整的一節課流程"],

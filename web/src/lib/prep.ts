@@ -61,6 +61,8 @@ export const ASK_PLACEHOLDER = "說說你想做什麼，例如：幫我想三個
 export const REVISE_PLACEHOLDER = "針對上面產出的內容，你有什麼想修改的嗎？";
 export const FOLLOW_PLACEHOLDER = "還想問什麼？";
 export const WORKING_LINE = "Manna 正在處理…";
+/** A worksheet turn whose template (the teacher's own worksheet) is still being read. */
+export const READING_SAMPLE_LINE = "Manna 正在讀你的學習單設計…（約 20 秒）";
 export const AI_DISCLAIMER = "AI 產生的內容可能有錯，請核對重要資訊。";
 export const DELETE_CONFIRM = "刪除這次備課對話？學習單會保留。";
 export const OPTION_NAMES = ["選項一", "選項二", "選項三"];

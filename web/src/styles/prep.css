@@ -280,6 +280,15 @@
 }
 
 /* ---------- worksheet / assessment ---------- */
+/* 照「<版型>」的樣式: the teacher's own worksheet this one follows. */
+.prep-ws-template {
+  margin-bottom: var(--space-xs);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  overflow-wrap: anywhere;
+}
+
 .prep-ws-toolbar {
   display: flex;
   flex-wrap: wrap;

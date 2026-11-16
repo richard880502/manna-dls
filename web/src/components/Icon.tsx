@@ -4,6 +4,8 @@
 
 const PATHS = {
   home: "M3 10.5 12 3l9 7.5M5 9v11h5v-6h4v6h5V9",
+  // 照我的學習單做: an old sheet, and a new one made after it.
+  mimic: "M3 3h8v10H3zM5.5 6.5h3M5.5 9.5h3M13 11h8v10h-8zM15.5 14.5h3M15.5 17.5h3M7 16v1.5A2.5 2.5 0 0 0 9.5 20H11m-1.5-1.5L11 20l-1.5 1.5",
   comprehension: "M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5m0-13c2-1.5 5-2 8.5-1.5v13c-3.5-.5-6.5 0-8.5 1.5m0-13v13",
   tiered: "M4 20h16M4 20v-4h5v4m0 0v-8h5v8m0 0V7h5v13",
   activity: "M4 4h16v11H4zM12 15v5m-4 0h8M8 8.5h8M8 11.5h5",
