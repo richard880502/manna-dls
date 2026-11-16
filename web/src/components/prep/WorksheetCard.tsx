@@ -11,10 +11,12 @@ import type {
   WsSheet,
   WsSheetBlock,
 } from "../../api/types";
+import { tally } from "../../lib/bloom";
 import { saveBlob } from "../../lib/download";
 import { prepConfig } from "../../lib/prep";
-import { LEVEL_LABEL } from "../../lib/worksheet";
+import { LEVEL_LABEL, projectSheet } from "../../lib/worksheet";
 import { ErrorText, Loading } from "../common";
+import { BloomDistribution } from "../worksheet/Bloom";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { SheetPreview } from "./SheetPreview";
 
@@ -35,8 +37,10 @@ function interactionFor(jobs: WsJob[], block: WsSheetBlock, fallback: number | n
 }
 
 /**
- * A worksheet or assessment turn: the job progress while Manna works, then the student version as
- * a read-only preview with the tools that lead on (editor, checks, export).
+ * A worksheet turn (學習單, 閱讀理解題, 分層練習, 評量, or the worksheet of a 教學套件): the job
+ * progress while Manna works, then the student version as a read-only preview with the tools that
+ * lead on (editor, checks, export), the version tabs when there are several (分層練習 always has
+ * three), and the Bloom distribution of the version shown (read-only).
  */
 export function WorksheetCard({
   turn,
@@ -138,6 +142,10 @@ export function WorksheetCard({
 
   const levels = state?.content.levels ?? [];
   const current = sheet?.level ?? level;
+  const shownLevel = current ?? levels[0] ?? "standard";
+  const bloomTally = state
+    ? tally(projectSheet(state.content, shownLevel, "teacher").blocks.flatMap((b) => b.items.map(({ item }) => item)))
+    : null;
 
   return (
     <div className="prep-worksheet">
@@ -196,6 +204,10 @@ export function WorksheetCard({
             </button>
           ))}
         </div>
+      )}
+
+      {bloomTally && bloomTally.total > bloomTally.none && (
+        <BloomDistribution tally={bloomTally} label={`Bloom 層次分布（${LEVEL_LABEL[shownLevel]}）`} />
       )}
 
       <ErrorText message={exportError} />

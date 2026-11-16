@@ -172,7 +172,7 @@ export function TemplatesSection({ onMaterialAdded }: { onMaterialAdded: () => v
   }
 
   return (
-    <section className="section templates-section" aria-labelledby={`${ids}-heading`}>
+    <section className="section templates-section" id="templates" aria-labelledby={`${ids}-heading`}>
       <h2 id={`${ids}-heading`}>我的學習單版型</h2>
       <p className="lead">{TEMPLATES_INTRO}</p>
 

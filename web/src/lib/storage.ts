@@ -57,3 +57,23 @@ export function saveCurrentClass(classId: number | null): void {
 }
 
 export const CURRENT_CLASS_STORAGE_KEY = CURRENT_CLASS_KEY;
+
+// The sidebar folded to icons (wide screens): a per-browser convenience, so localStorage.
+const SIDEBAR_KEY = "manna.sidebarCollapsed";
+
+export function loadSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveSidebarCollapsed(collapsed: boolean): void {
+  try {
+    if (collapsed) window.localStorage.setItem(SIDEBAR_KEY, "1");
+    else window.localStorage.removeItem(SIDEBAR_KEY);
+  } catch {
+    // ignore: it only lasts this visit
+  }
+}

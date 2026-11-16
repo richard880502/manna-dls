@@ -17,12 +17,13 @@ describe("login", () => {
     await user.type(screen.getByLabelText("邀請碼"), "  INVITE-42 ");
     await user.click(screen.getByRole("button", { name: "登入" }));
 
-    expect(await screen.findByRole("heading", { name: "老師，今天要教哪一課？" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "今天想準備什麼？" })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/auth/login")[0]?.body).toEqual({ code: "INVITE-42" });
     expect(window.localStorage.getItem(TOKEN_STORAGE_KEY)).toBe("tok-123");
 
-    await waitFor(() => expect(api.callsTo("GET", "/api/classes").length).toBeGreaterThan(0));
-    expect(api.callsTo("GET", "/api/classes")[0]?.headers.Authorization).toBe("Bearer tok-123");
+    // The home page lists the latest prep sessions with the new token.
+    await waitFor(() => expect(api.callsTo("GET", "/api/prep-sessions").length).toBeGreaterThan(0));
+    expect(api.callsTo("GET", "/api/prep-sessions")[0]?.headers.Authorization).toBe("Bearer tok-123");
 
     // logout clears the token and returns to the login page
     await user.click(screen.getByRole("button", { name: "登出" }));

@@ -28,9 +28,19 @@ import {
   toggleIn,
   type SheetBlock,
 } from "../../lib/worksheet";
+import {
+  BLOOM_LABEL,
+  BLOOM_NONE_LABEL,
+  blockBloomLine,
+  isBloom,
+  matchesFilter,
+  tally,
+  type BloomFilter,
+} from "../../lib/bloom";
 import { saveBlob } from "../../lib/download";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
+import { BloomDistribution, BloomSelect } from "./Bloom";
 import { LessonLinkControls } from "./LessonLink";
 import { ProgressPanel, RunOutcome } from "./OptionsView";
 import { SopSyncNotice } from "./SopSync";
@@ -117,10 +127,14 @@ interface BlockProps {
   locked: boolean;
   dragging: string | null;
   setDragging: (id: string | null) => void;
+  /** Show only the items at this Bloom level (the distribution bar); null shows all. */
+  filter: BloomFilter;
 }
 
-function BlockSection({ ws, view, index, count, audience, locked, dragging, setDragging }: BlockProps) {
+function BlockSection({ ws, view, index, count, audience, locked, dragging, setDragging, filter }: BlockProps) {
   const { block, label } = view;
+  const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
+  const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [over, setOver] = useState(false);
   const levels = ws.state?.content.levels ?? [];
@@ -257,6 +271,11 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
           onChange={(title) => patch((b) => ({ ...b, title }))}
         />
       </h3>
+      {teacher && bloomLine && (
+        <p className="ws-bloom-line" lang="zh-Hant">
+          {bloomLine}
+        </p>
+      )}
       {isFromManna(block.origin) && (
         <p className="manna-label ws-origin" lang="zh-Hant">
           <span className="star" aria-hidden="true" />
@@ -402,7 +421,7 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
       ))}
 
       <ol className="ws-items">
-        {view.items.map(({ item, no, lines }) => {
+        {shownItems.map(({ item, no, lines }) => {
           const hasOptions =
             item.options.length > 0 || ["選擇題", "是非題", "配對題"].includes(item.answer_format ?? "");
           return (
@@ -426,6 +445,16 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
                   }
                 />
               )}
+              <div className="ws-hint" lang="zh-Hant">
+                <span>提示（只印在基礎版）</span>
+                <SheetText
+                  label={`提示（只印在基礎版） ${no}`}
+                  value={item.hint ?? ""}
+                  placeholder="Hint: …"
+                  disabled={locked}
+                  onChange={(hint) => patchItem(item.id, (it) => ({ ...it, hint }))}
+                />
+              </div>
               {!teacher &&
                 Array.from({ length: lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
               {teacher && (
@@ -469,6 +498,12 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
                     ))}
                   </select>
                 </label>
+                <BloomSelect
+                  label={`Bloom 層次 ${no}`}
+                  value={item.bloom}
+                  disabled={locked}
+                  onChange={(bloom) => patchItem(item.id, (it) => ({ ...it, bloom }))}
+                />
                 <LevelChips
                   name={`題目 ${no} `}
                   all={levels}
@@ -495,7 +530,10 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
           type="button"
           className="text-link is-plain"
           disabled={locked}
-          onClick={() => patch((b) => ({ ...b, items: [...b.items, newItem(levels)] }))}
+          // While filtering, a new item starts at the level shown, so it does not vanish.
+          onClick={() =>
+            patch((b) => ({ ...b, items: [...b.items, { ...newItem(levels), bloom: isBloom(filter) ? filter : null }] }))
+          }
         >
           加一題
         </button>
@@ -607,6 +645,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const [level, setLevel] = useState<WsLevel>(levels[0] ?? "standard");
   const [audience, setAudience] = useState<WsAudience>("student");
   const [dragging, setDragging] = useState<string | null>(null);
+  const [bloomFilter, setBloomFilter] = useState<BloomFilter>(null);
   const radioName = useId();
 
   // The selected tab must be one of this worksheet's versions (they can change after a new run).
@@ -619,6 +658,12 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
   const chosen = chosenLine(content);
   const needsCount = content.blocks.filter((b) => b.enabled && needsMaterial(b.message)).length;
+  // The distribution of what this version prints. A filter on a level with nothing left is off.
+  const bloomTally = tally(sheet.blocks.flatMap((b) => b.items.map(({ item }) => item)));
+  const tagged = bloomTally.total - bloomTally.none;
+  const filterCount =
+    bloomFilter === null ? 0 : bloomFilter === "none" ? bloomTally.none : bloomTally.counts[bloomFilter];
+  const filter: BloomFilter = filterCount > 0 ? bloomFilter : null;
 
   return (
     <div className="ws-result">
@@ -693,6 +738,20 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
         </ul>
       )}
 
+      {tagged > 0 && (
+        <section className="ws-bloom" aria-label="Bloom 層次">
+          <p className="ws-sub">
+            Bloom 層次 · {LEVEL_LABEL[current]}共 {bloomTally.total} 題
+          </p>
+          <BloomDistribution tally={bloomTally} filter={filter} onFilter={setBloomFilter} />
+          {filter !== null && (
+            <p className="quiet-note" role="status">
+              只顯示「{filter === "none" ? BLOOM_NONE_LABEL : BLOOM_LABEL[filter]}」的題目（{filterCount} 題）。按「全部」看全部。
+            </p>
+          )}
+        </section>
+      )}
+
       <article className="ws" lang="en" aria-label={`${LEVEL_LABEL[current]} ${AUDIENCE_LABEL[audience]}`}>
         <input
           className="ws-title"
@@ -765,6 +824,8 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
 
         {content.blocks.map((block, index) => {
           const view = views.get(block.id);
+          // Filtering by level: only the blocks with an item at that level.
+          if (filter !== null && !view?.items.some(({ item }) => matchesFilter(item.bloom, filter))) return null;
           if (!view) {
             const name = BLOCK_KIND_LABEL[block.kind];
             return (
@@ -799,6 +860,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
               locked={locked}
               dragging={dragging}
               setDragging={setDragging}
+              filter={filter}
             />
           );
         })}

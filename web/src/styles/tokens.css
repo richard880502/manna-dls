@@ -98,6 +98,7 @@
   /* ---------- elevation: space and hairlines do the work; shadows only on things that float ---------- */
   --shadow-overlay: 0 -0.5rem 1.5rem rgb(28 37 51 / 0.16); /* the help sheet over a narrow screen */
   --shadow-dialog: 0 0.75rem 2.5rem rgb(28 37 51 / 0.25); /* the choose-a-class dialog */
+  --shadow-float: 0 0.25rem 1.25rem rgb(28 37 51 / 0.08); /* the prompt card, popovers, the generator's sticky bar */
   --color-scrim: rgb(28 37 51 / 0.38);
 
   /* ---------- controls ---------- */
@@ -119,14 +120,36 @@
   --z-overlay: 400;
 
   /* ---------- layout ---------- */
-  --top-h: 3.5rem; /* 56: the top bar, which is the whole navigation */
-  --bottom-nav-h: 3.75rem; /* 60: the same three items at the bottom of a phone */
+  /* The navigation is a left sidebar (wide screens) or a drawer behind ☰ in a top bar (narrow). */
+  --side-w: 15.5rem; /* 248: the sidebar */
+  --side-w-icons: 4.25rem; /* 68: the sidebar folded to icons */
+  --top-bar-h: 3.5rem; /* 56: the top bar (narrow screens; the in-class console) */
+  --top-h: var(--top-bar-h); /* what sticky things clear at the top: the top bar, when there is one */
+  --shell-left: 0rem; /* where the page starts: fixed panels sit right of the sidebar */
+  --bottom-nav-h: 0rem; /* no bottom navigation any more; kept so older rules still compute */
   --container: 65rem; /* 1040: list pages */
   --container-wide: 75rem; /* 1200: working pages with two columns */
   --container-console: 55rem; /* 880: the in-class console */
   --gutter: 2.5rem;
   --card-pad: var(--space-lg);
   --banner-h: 0rem;
+}
+
+/* Wide screens: the sidebar instead of a top bar, unless a page takes the bar over (the console). */
+@media (min-width: 56.25rem) {
+  :root:has(.shell) {
+    --top-h: 0rem;
+    --shell-left: var(--side-w);
+  }
+
+  :root:has(.shell.is-collapsed) {
+    --shell-left: var(--side-w-icons);
+  }
+
+  :root:has(.shell .top-slot:not(:empty)) {
+    --top-h: var(--top-bar-h);
+    --shell-left: 0rem;
+  }
 }
 
 /* The demo banner is sticky; everything else that sticks starts below it. */

@@ -44,8 +44,8 @@ export function missingMaterialLine(choice: MaterialChoice): string {
   return "請貼上教材文字。";
 }
 
-/** 上傳檔案 and 從教材庫選: both end with one library material that has text. */
-function LibraryStep({ way, onPicked }: { way: "upload" | "library"; onPicked: (m: PickedMaterial) => void }) {
+/** 上傳檔案 and 從教材庫選: both end with one library material that has text (also the home page's attach dialogs). */
+export function LibraryStep({ way, onPicked }: { way: "upload" | "library"; onPicked: (m: PickedMaterial) => void }) {
   const { library, error, reload } = useMaterialLibrary();
   const [problem, setProblem] = useState<string | null>(null);
 

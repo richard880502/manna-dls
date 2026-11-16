@@ -437,6 +437,11 @@ export const api = {
   /** 202；另一個 turn 進行中 → 409 */
   createPrepTurn: (id: number, body: CreatePrepTurnRequest) =>
     post<PrepSession>(`/prep-sessions/${id}/turns`, body),
+  /** The URL of a 教學套件 turn's single DOCX (教學流程, each level's student version, 教師版). */
+  prepKitPath: (id: number, turnId: number) => `/api/prep-sessions/${id}/turns/${turnId}/kit?format=docx`,
+  /** 409 while the kit is still being made; 400 for a turn that is not a kit. */
+  exportPrepKit: (id: number, turnId: number) =>
+    download(`/prep-sessions/${id}/turns/${turnId}/kit`, { format: "docx" }, "教學套件.docx"),
 
   listWorksheetTemplates: () => get<WsTemplateList>("/worksheet-templates"),
   /** 202：在背景讀這份學習單的設計（status=extracting），之後輪詢 */

@@ -1,5 +1,17 @@
 import { useEffect, useId, useState } from "react";
-import type { ExitKind, WorksheetSettings, WsJob, WsLevel } from "../../api/types";
+import type { ExitKind, WorksheetSettings, WsJob, WsLevel, WsOutput } from "../../api/types";
+import {
+  OUTPUTS,
+  OUTPUT_LABEL,
+  countsTotal,
+  fullCounts,
+  outputOf,
+  planFromSettings,
+  planSummary,
+  settingsFromPlan,
+  type BloomPlan,
+  type BloomPresetId,
+} from "../../lib/bloom";
 import {
   ANSWER_FORMATS,
   EXIT_KIND_LABEL,
@@ -18,10 +30,27 @@ import {
 } from "../../lib/worksheet";
 import { AiContextPanel } from "../AiContextPanel";
 import { ErrorText } from "../common";
+import { BloomSettings } from "./BloomSettings";
 import { TemplateOption } from "./TemplateOption";
 import type { WorksheetController } from "./useWorksheet";
 
 type ListField = "material_types" | "student_tasks" | "answer_formats" | "generation";
+
+/** What each output makes (the contract's explore-card lines). */
+const OUTPUT_HINT: Record<WsOutput, string> = {
+  worksheet: "完整學習單，可以照你的版型",
+  comprehension: "依 Bloom 六個層次出題，附答案與文本依據",
+  tiered: "同一篇文章，基礎／一般／進階三個版本",
+};
+
+const GENERATE_LABEL: Record<WsOutput, string> = {
+  worksheet: "產生學習單",
+  comprehension: "產生閱讀理解題",
+  tiered: "產生分層練習",
+};
+
+export const REQUEST_MAX = 2000;
+export const OBJECTIVE_MAX = 300;
 
 function Chip({
   label,
@@ -122,12 +151,26 @@ interface OptionsViewProps {
  */
 export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
   const ids = useId();
+  // The preset is not stored (only the counts are); the teacher's last pick is kept here so that
+  // 自訂 stays 自訂 even while its counts happen to equal a preset's.
+  const [presetChoice, setPresetChoice] = useState<BloomPresetId | null>(null);
   const state = ws.state;
   if (!state) return null;
   const { settings, suggested, brief, content } = state;
   const running = state.running;
   const locked = running || ws.busy;
   const fromLesson = state.lesson !== null;
+  const output = outputOf(settings);
+  const fullWorksheet = output === "worksheet";
+  const derived = planFromSettings(settings);
+  const plan: BloomPlan = { ...derived, preset: presetChoice ?? derived.preset };
+  const countsSet = countsTotal(fullCounts(settings.bloom_counts)) > 0;
+  const request = state.request ?? "";
+
+  const setPlan = (next: BloomPlan) => {
+    setPresetChoice(next.preset);
+    ws.setSettings((s) => ({ ...s, ...settingsFromPlan(next) }));
+  };
 
   const toggle = (field: ListField, value: string, order: readonly string[]) =>
     ws.setSettings((s) => ({ ...s, [field]: toggleIn(s[field], value, order) }) as WorksheetSettings);
@@ -159,67 +202,174 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
   const hasCarried = content.objectives.length > 0 || !briefIsEmpty(brief);
 
   async function generate() {
+    // What the picker shows is what is asked for: the default preset is written before it is sent.
+    if (!fullWorksheet && !countsSet) ws.setSettings((s) => ({ ...s, ...settingsFromPlan(plan) }));
     const ok = await ws.generate();
     if (ok) onGenerated();
   }
 
   return (
     <div className="ws-options">
-      <p className="ws-legend">
-        {anySuggested && (
-          <>
-            有 <span className="star" aria-hidden="true" />
-            <span className="sr-only">星號</span> 的是 Manna 依{fromLesson ? "課例" : "教材"}先幫你選的。
-          </>
-        )}
-        都可以改；全部不選也能產生，Manna 會依教材判斷。
-      </p>
-
-      <section className="ws-opt" aria-labelledby={`${ids}-o1`}>
-        <h2 id={`${ids}-o1`}>素材類型</h2>
-        {chips("material_types", MATERIAL_TYPES, MATERIAL_TYPES)}
-      </section>
-
-      <section className="ws-opt" aria-labelledby={`${ids}-o2`}>
-        <h2 id={`${ids}-o2`}>學生任務</h2>
+      <section className="ws-opt" aria-labelledby={`${ids}-what`}>
+        <h2 id={`${ids}-what`}>要做什麼</h2>
         <div>
-          {STUDENT_TASK_GROUPS.map((group) => (
-            <div key={group.title} role="group" aria-label={group.title}>
-              <p className="ws-sub">{group.title}</p>
-              {chips("student_tasks", group.labels, STUDENT_TASKS)}
-            </div>
-          ))}
+          <div className="ws-seg ws-output" role="radiogroup" aria-labelledby={`${ids}-what`}>
+            {OUTPUTS.map((o) => (
+              <label key={o}>
+                <input
+                  type="radio"
+                  name={`${ids}-output`}
+                  checked={output === o}
+                  // 版型只適用於完整學習單 (the server says 400 otherwise).
+                  disabled={locked || (o !== "worksheet" && Boolean(state.template))}
+                  onChange={() => ws.setSettings((s) => ({ ...s, output: o }))}
+                />
+                <span>{OUTPUT_LABEL[o]}</span>
+              </label>
+            ))}
+          </div>
+          <p className="field-hint">{OUTPUT_HINT[output]}</p>
+          {state.template && fullWorksheet && (
+            <p className="field-hint">版型只適用於完整學習單；要做閱讀理解題或分層練習，先把下面的版型改成「不使用版型」。</p>
+          )}
         </div>
       </section>
 
-      <section className="ws-opt" aria-labelledby={`${ids}-o3`}>
-        <h2 id={`${ids}-o3`}>作答方式</h2>
-        {chips("answer_formats", ANSWER_FORMATS, ANSWER_FORMATS)}
+      <section className="ws-opt" aria-labelledby={`${ids}-goal`}>
+        <h2 id={`${ids}-goal`}>學習目標</h2>
+        <div>
+          <input
+            type="text"
+            aria-labelledby={`${ids}-goal`}
+            aria-describedby={`${ids}-goal-hint`}
+            maxLength={OBJECTIVE_MAX}
+            value={settings.objective ?? ""}
+            placeholder="例如：學生能說出作者的主要論點，並從文中找出兩個理由"
+            disabled={locked}
+            onChange={(e) => ws.setSettings((s) => ({ ...s, objective: e.target.value === "" ? null : e.target.value }))}
+          />
+          <p className="field-hint" id={`${ids}-goal-hint`}>
+            選填，一句話就好。Manna 出題時會照這個目標。
+          </p>
+        </div>
       </section>
 
-      <section className="ws-opt" aria-labelledby={`${ids}-o4`}>
-        <h2 id={`${ids}-o4`}>產生設定</h2>
-        <div>
-          {chips("generation", GENERATION_SETTINGS, GENERATION_SETTINGS)}
-          <div role="group" aria-label={VERSIONS_HEADING}>
-            <p className="ws-sub">{VERSIONS_HEADING}</p>
-            <div className="ws-chips">
-              {LEVELS.map((level) => (
-                <Chip
-                  key={level}
-                  label={LEVEL_LABEL[level]}
-                  checked={settings.levels.includes(level)}
-                  starred={suggested.levels.includes(level)}
-                  disabled={locked}
-                  onChange={() => toggleLevel(level)}
-                />
+      {!fullWorksheet && (
+        <>
+          <section className="ws-opt" aria-labelledby={`${ids}-bloom`}>
+            <h2 id={`${ids}-bloom`}>Bloom 認知層次</h2>
+            <BloomSettings value={plan} disabled={locked} onChange={setPlan} />
+          </section>
+          <section className="ws-opt" aria-labelledby={`${ids}-fmt`}>
+            <h2 id={`${ids}-fmt`}>作答方式</h2>
+            <div>
+              {chips("answer_formats", ANSWER_FORMATS, ANSWER_FORMATS)}
+              <p className="field-hint">不選：每個層次用適合它的作答方式。有選：只用選了的，而且適合那個層次的。</p>
+            </div>
+          </section>
+          <section className="ws-opt" aria-labelledby={`${ids}-levels`}>
+            <h2 id={`${ids}-levels`}>版本</h2>
+            {output === "tiered" ? (
+              <p className="field-hint ws-opt-note">分層練習固定做基礎版、一般版、進階版三個版本；提示只印在基礎版。</p>
+            ) : (
+              <div role="group" aria-label={VERSIONS_HEADING}>
+                <div className="ws-chips">
+                  {LEVELS.map((level) => (
+                    <Chip
+                      key={level}
+                      label={LEVEL_LABEL[level]}
+                      checked={settings.levels.includes(level)}
+                      starred={suggested.levels.includes(level)}
+                      disabled={locked}
+                      onChange={() => toggleLevel(level)}
+                    />
+                  ))}
+                </div>
+                <p className="field-hint">不選：只做一般版。</p>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+
+      {fullWorksheet && (
+        <>
+          <p className="ws-legend">
+            {anySuggested && (
+              <>
+                有 <span className="star" aria-hidden="true" />
+                <span className="sr-only">星號</span> 的是 Manna 依{fromLesson ? "課例" : "教材"}先幫你選的。
+              </>
+            )}
+            都可以改；全部不選也能產生，Manna 會依教材判斷。
+          </p>
+
+          <section className="ws-opt" aria-labelledby={`${ids}-o1`}>
+            <h2 id={`${ids}-o1`}>素材類型</h2>
+            {chips("material_types", MATERIAL_TYPES, MATERIAL_TYPES)}
+          </section>
+
+          <section className="ws-opt" aria-labelledby={`${ids}-o2`}>
+            <h2 id={`${ids}-o2`}>學生任務</h2>
+            <div>
+              {STUDENT_TASK_GROUPS.map((group) => (
+                <div key={group.title} role="group" aria-label={group.title}>
+                  <p className="ws-sub">{group.title}</p>
+                  {chips("student_tasks", group.labels, STUDENT_TASKS)}
+                </div>
               ))}
             </div>
-          </div>
+          </section>
+
+          <section className="ws-opt" aria-labelledby={`${ids}-o3`}>
+            <h2 id={`${ids}-o3`}>作答方式</h2>
+            {chips("answer_formats", ANSWER_FORMATS, ANSWER_FORMATS)}
+          </section>
+
+          <section className="ws-opt" aria-labelledby={`${ids}-o4`}>
+            <h2 id={`${ids}-o4`}>產生設定</h2>
+            <div>
+              {chips("generation", GENERATION_SETTINGS, GENERATION_SETTINGS)}
+              <div role="group" aria-label={VERSIONS_HEADING}>
+                <p className="ws-sub">{VERSIONS_HEADING}</p>
+                <div className="ws-chips">
+                  {LEVELS.map((level) => (
+                    <Chip
+                      key={level}
+                      label={LEVEL_LABEL[level]}
+                      checked={settings.levels.includes(level)}
+                      starred={suggested.levels.includes(level)}
+                      disabled={locked}
+                      onChange={() => toggleLevel(level)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+
+      {(fullWorksheet || state.template) && <TemplateOption ws={ws} locked={locked} />}
+
+      <section className="ws-opt" aria-labelledby={`${ids}-ask`}>
+        <h2 id={`${ids}-ask`}>給 Manna 的要求</h2>
+        <div>
+          <textarea
+            rows={3}
+            aria-labelledby={`${ids}-ask`}
+            aria-describedby={`${ids}-ask-count`}
+            maxLength={REQUEST_MAX}
+            value={request}
+            placeholder="例如：B1 程度，多一點推論題；選項不要太長"
+            disabled={locked}
+            onChange={(e) => ws.setRequest(e.target.value)}
+          />
+          <p className="field-hint ws-count" id={`${ids}-ask-count`}>
+            選填 · {request.length}/{REQUEST_MAX}
+          </p>
         </div>
       </section>
-
-      <TemplateOption ws={ws} locked={locked} />
 
       {hasCarried && (
         <section className="ws-carried" aria-labelledby={`${ids}-carried`}>
@@ -370,7 +520,7 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
 
       {running ? (
         <ProgressPanel jobs={state.jobs} />
-      ) : (
+      ) : fullWorksheet ? (
         <div className="ws-gen-bar">
           <label className="ws-time" htmlFor={`${ids}-minutes`}>
             預計完成時間（分鐘）
@@ -392,13 +542,25 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
           </span>
           <span className="ws-grow" />
           <button type="button" className="primary-button big-button" disabled={ws.busy} onClick={() => void generate()}>
-            {ws.busy ? "送出中…" : "產生學習單"}
+            {ws.busy ? "送出中…" : GENERATE_LABEL.worksheet}
+          </button>
+        </div>
+      ) : (
+        <div className="ws-gen-bar">
+          <p className="ws-summary" role="status" aria-label="這次會出">
+            {planSummary(plan.counts)}
+          </p>
+          <span className="ws-grow" />
+          <button type="button" className="primary-button big-button" disabled={ws.busy} onClick={() => void generate()}>
+            {ws.busy ? "送出中…" : GENERATE_LABEL[output]}
           </button>
         </div>
       )}
       <ErrorText message={ws.actionError} />
       <p className="quiet-note">
-        會同時產生學生版和教師參考版。Exit ticket 預設放在最後，之後可以關掉。
+        {fullWorksheet
+          ? "會同時產生學生版和教師參考版。Exit ticket 預設放在最後，之後可以關掉。"
+          : "會同時產生學生版和教師參考版；教師參考版每一題都標出 Bloom 層次。"}
         {state.generated ? "再產生一次會換掉目前的區塊；之前的內容仍在版本紀錄裡。" : ""}
       </p>
     </div>
