@@ -72,7 +72,10 @@ describe("admin page (pi)", () => {
 
     // the knowledge base has its own page; the PI reaches it from the bar and from here
     expect(screen.queryByRole("region", { name: "匯入知識庫條目" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "知識庫管理" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "知識庫" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: "知識庫" }).map((a) => a.getAttribute("href"))).toContain(
+      "/knowledge?tab=curriculum",
+    );
   });
 
   it("lets the PI invite a 知識庫管理員 and a comprehensive-school teacher", async () => {

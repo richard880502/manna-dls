@@ -1457,7 +1457,11 @@
   word-break: break-all;
 }
 
-/* ================= 知識庫管理 ================= */
+/* ================= 知識庫 (/knowledge): 課綱條目與詞彙 ================= */
+.kb-tab-lead {
+  margin-top: var(--space-lg);
+}
+
 .kb-page .section > .field-label {
   margin-top: var(--space-md);
 }

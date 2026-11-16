@@ -1405,6 +1405,7 @@ interface MaterialAnnotation {
 | DELETE | `/api/materials/:id` | – | `{ deleted: true, annotations: number, lessons: number[] }`（見「刪除」） |
 | POST | `/api/materials/:id/file-link` | – | `{ url, expires_at }`：給 `<img>`／`<audio>`／`<video>` 用的 60 分鐘連結（見下）。沒有原檔 → 404 |
 | GET | `/api/materials/:id/file` | Bearer 權杖，或 `?t=<file-link 的權杖>`；`?download=1` 改為下載；支援 `Range: bytes=…` | 原檔（200 或 206；範圍不合 416） |
+| GET | `/api/materials/:id/thumbnail` | Bearer 權杖 | 預覽圖（JPEG，寬 480 px）：上傳的 PDF 第 1 頁或圖片。見「知識庫：教材牆與預覽圖」 |
 | PUT／DELETE | `/api/lessons/:id/materials/:material_id` | – | 把教材連到課例／取消連結（多對多）。課例 SOP 第 1 步正在用的教材不能在這裡取消（409，請到第 1 步換教材） |
 | GET | `/api/materials/:id/annotations` | – | `MaterialAnnotation[]`，依閱讀順序；隱藏的也列（`hidden: true`），找不到位置的排最後 |
 | POST | `/api/materials/:id/annotations` | `{ paragraph_id, start, end, note?, share_with_ai? }` | `MaterialAnnotation`。範圍必須在該段落內；一份教材最多 500 則；注記 ≤ 2,000 字、標記 ≤ 2,000 字 |
@@ -1430,7 +1431,7 @@ Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)`
 
 `DELETE /api/materials/:id` 依序：
 
-1. 刪除儲存空間中的原檔物件。**刪不掉就整個不刪**，回 503「原檔沒有刪除成功…所以這份教材還沒有刪除」；儲存未設定而教材有原檔時同樣不刪。
+1. 刪除儲存空間中的原檔物件（以及它的預覽圖，見「知識庫：教材牆與預覽圖」；其他教材也是同一個檔案時預覽圖保留）。**刪不掉就整個不刪**，回 503「原檔沒有刪除成功…所以這份教材還沒有刪除」（預覽圖刪不掉時是「預覽圖沒有刪除成功…」）；儲存未設定而教材有原檔時同樣不刪。
 2. 同一個交易內：刪除教材列（文字、段落）、注記、課例與學習單連結；用到它的 SOP 版本 `material_id` 設為 null、`material_deleted = true`，指向它段落的參照改名為 `m<id>-p3`（不會被誤認為下一份教材的段落），**從它逐字引用的片段**（分析與語言重點的 `evidence`）換成「［教材已刪除］」；這些課例的 AI 紀錄（`ai_interactions.output`、`lesson_sop_jobs.result`）中的逐字引文與教材名稱同樣移除。教師自己寫的分析、目標、任務都保留。
 3. `material_deletions` 記一筆（教材 id、類型、大小、是否有原檔、注記數、時間；沒有標題、檔名、雜湊或內容），`usage_logs` 記 `material_deleted`。
 
@@ -2304,3 +2305,28 @@ interface PrepTurn {
 
 - 資料（`0018_ocr.sql`）：`materials.text_source`、`ocr_status`、`ocr_done_pages`、`ocr_total_pages`、`ocr_error`、`ocr_pages`、`ocr_started_at`，以及開放中工作的部分索引。
 - 程式進入點：`materials::ocr`（`poor_text`、`wants_auto`、`check_idle`、`start_manual`、`recover`、`backfill_platform`）、`materials::ocr::job`（背景工作）、`materials::ocr::html`（HTML → 區塊／段落）、`materials::ocr::render`（`pdftoppm`、圖片）；範本等 OCR：`worksheet::template::extract::spawn_after_ocr`。
+
+# 知識庫：教材牆與預覽圖
+
+以下為**新增**；沒有新的資料表或 migration。
+
+`/knowledge`（只有 `manage_knowledge`：`pi`、`kb_manager`）改名為「知識庫」，分兩個分頁：
+
+- **教材**（預設）：所有平台教材（即 `GET /api/browse/materials?area=reference` 的列）排成一面像 Pinterest 的牆：卡片依內容有各自的高度（PDF 第 1 頁、圖片、或文字的前幾行），用 CSS columns 排成數欄，手機上一欄。上面是瀏覽的搜尋框、分類籤（facets）、只看籤與標籤。點卡片打開預覽視窗：PDF 的第 1 頁在左、擷取的文字與段落在右（教材檢視的唯讀版，不載入注記），圖片與影音在檢視裡直接顯示，可下載原檔。頁首「上傳教材」連到「教材與範本管理」（`/admin/library`）。
+- **課綱條目與詞彙**（`?tab=curriculum`）：原本的目前內容、語意索引、CSV 匯入、查看條目與詞彙表，功能不變。
+
+## 預覽圖
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/materials/:id/thumbnail` | Bearer 權杖（`If-None-Match` 選填） | 200 `image/jpeg`；304（`If-None-Match` 相符） |
+
+- **權限**同原檔（`GET /api/materials/:id/file`）：`use_materials`，而且這位教師讀得到這份教材（自己的，或平台的）；別人的個人教材 → 404。沒登入 → 401。
+- **有預覽圖的教材**：上傳的 PDF 與圖片（有原檔）。其他（DOCX、TXT、貼上的文字、網址、影音）→ 404「這份教材沒有預覽圖（只有上傳的 PDF 與圖片有）。」，前端改顯示文字的前幾行。
+- **怎麼做**：PDF 用 `pdftoppm` 把第 1 頁轉成寬 480 px 的圖（與 OCR 同一個轉圖程式）；圖片依 EXIF 方向轉正、縮到寬 480 px、高 1440 px 以內（只縮小不放大）。一律輸出 JPEG（品質 80），透明的地方變白色。全站同時最多轉 2 份（semaphore）。
+- **保存**：第一次轉好後存進檔案儲存空間 `thumbs/w480/<原檔 SHA-256>.jpg`，之後直接讀出。同一個檔案（相同 SHA-256）的教材共用一張；讀得到其中任一份教材的人本來就有這個檔案。存不進去時照樣回應，下次再轉。
+- **刪除**：硬刪除教材時（`DELETE /api/materials/:id`、`DELETE /api/admin/library/:id`），沒有其他教材持有同一個檔案就一併刪除預覽圖；刪不掉時整個不刪（503），和原檔相同。
+- **HTTP 快取**：`Cache-Control: private, max-age=3600`、`ETag: "<SHA-256>-w480"`（教材的原檔不會被換掉）、`Vary: Authorization`（共用電腦換帳號登入時不會拿到上一個帳號的快取）；另有 `X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; sandbox`。
+- **錯誤**：儲存空間沒有設定 → 503；原檔不在儲存空間 → 404；原檔暫時讀不到 → 503；沒有安裝 `pdftoppm` → 503「這個環境沒有安裝 PDF 轉圖工具（pdftoppm），無法產生預覽圖。」；PDF 加密或損壞、圖片解不開 → 404「這份檔案轉不成預覽圖（可能已加密或損壞）。」。前端遇到任何錯誤都改顯示文字卡片。
+- 前端用帶權杖的 `fetch` 取圖（轉成 blob URL），卡片接近畫面時才要。
+- 程式進入點：`materials::thumbnail`（`preview`、`shrink`、`forget`）、`routes::library::thumbnail`。

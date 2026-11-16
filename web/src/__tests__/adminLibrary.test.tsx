@@ -148,13 +148,13 @@ describe("教材與範本管理: who gets it", () => {
     expect(api.calls.some((c) => c.path.startsWith(LIB))).toBe(false);
   });
 
-  it("is in the admin links for a 知識庫管理員 and for the PI, next to 知識庫管理", async () => {
+  it("is in the admin links for a 知識庫管理員 and for the PI, next to 知識庫", async () => {
     signIn();
     mockApi(libraryRoutes(manager));
     const user = userEvent.setup();
     renderApp("/");
     const link = await screen.findByRole("link", { name: "教材與範本管理" });
-    expect(screen.getByRole("link", { name: "知識庫管理" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "知識庫" })).toBeInTheDocument();
     await user.click(link);
     expect(await screen.findByRole("heading", { name: "教材與範本管理", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "知識庫教材" })).toHaveAttribute("aria-selected", "true");

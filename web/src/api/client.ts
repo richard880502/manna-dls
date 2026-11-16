@@ -515,6 +515,8 @@ export const api = {
   runMaterialOcr: (id: number) => post<MaterialDetail>(`/materials/${id}/ocr`),
   /** 給 img／audio／video 用的短時效連結（指向本站 API，不是儲存空間） */
   materialFileLink: (id: number) => post<MaterialFileLink>(`/materials/${id}/file-link`),
+  /** 知識庫的預覽圖：上傳的 PDF 第 1 頁或圖片，480 px 寬的 JPEG；其他教材 404 */
+  materialThumbnail: (id: number) => download(`/materials/${id}/thumbnail`, {}, "thumbnail.jpg").then((r) => r.blob),
   listAnnotations: (materialId: number) => get<MaterialAnnotation[]>(`/materials/${materialId}/annotations`),
   createAnnotation: (materialId: number, body: CreateAnnotationRequest) =>
     post<MaterialAnnotation>(`/materials/${materialId}/annotations`, body),

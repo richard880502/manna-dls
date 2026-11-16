@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, type ChangeEvent, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
   EmbeddingStatus,
@@ -11,6 +11,9 @@ import type {
   VocabularyRow,
 } from "../api/types";
 import { ErrorText, Loading, Notice } from "../components/common";
+import { Icon } from "../components/Icon";
+import { KnowledgeGallery } from "../components/knowledge/Gallery";
+import { Tabs } from "../components/library/Tabs";
 import { useApp } from "../context/AppContext";
 import { ITEM_TRACK_LABELS, formatDateTime } from "../lib/labels";
 import { can } from "../lib/permissions";
@@ -33,15 +36,78 @@ const count = (n: number) => n.toLocaleString("en-US");
 
 type ImportKey = "items" | "vocabulary";
 
+type KbTab = "materials" | "curriculum";
+const KB_TABS: ReadonlyArray<readonly [KbTab, string]> = [
+  ["materials", "教材"],
+  ["curriculum", "課綱條目與詞彙"],
+];
+
+/**
+ * 知識庫 (/knowledge, pi and kb_manager): the platform's materials as a wall of cards with
+ * previews (教材), and the curriculum items and word list with their imports and the semantic
+ * index (課綱條目與詞彙, `?tab=curriculum`). Files are uploaded in 教材與範本管理 (上傳教材).
+ */
 export function KnowledgePage() {
   const { teacher } = useApp();
+  const ids = useId();
+  const [params, setParams] = useSearchParams();
+  const tab: KbTab = params.get("tab") === "curriculum" ? "curriculum" : "materials";
+  const allowed = can(teacher, "manage_knowledge");
+
+  if (!allowed) {
+    return (
+      <section aria-labelledby="kb-heading">
+        <div className="page-head">
+          <h1 id="kb-heading">知識庫</h1>
+          <p className="lead">
+            這個頁面只開放給計畫主持人和負責知識庫的帳號。需要上傳教材或匯入課綱條目、詞彙表的話，請向計畫主持人申請權限。知識庫的教材在「教材參考」裡看得到。
+          </p>
+        </div>
+        <p className="after-rows">
+          <Link className="text-link" to="/reference">
+            到教材參考
+          </Link>
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby="kb-heading" className="kb-page">
+      <div className="head-row page-head">
+        <div>
+          <h1 id="kb-heading">知識庫</h1>
+          <p className="lead">
+            平台上給所有老師參考的教材：歷屆學測、統測英文試題、課綱、詞彙表與考試說明。點一份教材，就能預覽原檔和 Manna 讀到的文字。
+          </p>
+        </div>
+        <Link className="primary-button" to="/admin/library">
+          <Icon name="upload" />
+          上傳教材
+        </Link>
+      </div>
+      <Tabs
+        label="知識庫的內容"
+        tabs={KB_TABS}
+        current={tab}
+        panelId={`${ids}-panel`}
+        onChange={(next) => setParams(next === "curriculum" ? { tab: "curriculum" } : {}, { replace: true })}
+      />
+      <div id={`${ids}-panel`} role="tabpanel" className="library-tabpanel">
+        {tab === "materials" ? <KnowledgeGallery /> : <CurriculumTools />}
+      </div>
+    </section>
+  );
+}
+
+/** 課綱條目與詞彙: what is there, the semantic index, the CSV imports and the read-only lists. */
+function CurriculumTools() {
   const [summary, setSummary] = useState<KnowledgeSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   /** Only one import waits for confirmation at a time, so the page has one filled button. */
   const [pending, setPending] = useState<ImportKey | null>(null);
   /** Bumped after every change so the lists below reload. */
   const [revision, setRevision] = useState(0);
-  const allowed = can(teacher, "manage_knowledge");
 
   const loadSummary = useCallback(() => {
     api.knowledge
@@ -54,26 +120,8 @@ export function KnowledgePage() {
   }, []);
 
   useEffect(() => {
-    if (allowed) loadSummary();
-  }, [allowed, loadSummary]);
-
-  if (!allowed) {
-    return (
-      <section aria-labelledby="kb-heading">
-        <div className="page-head">
-          <h1 id="kb-heading">知識庫管理</h1>
-          <p className="lead">
-            這個頁面只開放給計畫主持人與知識庫管理員。如果你需要管理課綱條目或詞彙表，請向計畫主持人申請權限。
-          </p>
-        </div>
-        <p className="after-rows">
-          <Link className="text-link" to="/classes">
-            回到班級
-          </Link>
-        </p>
-      </section>
-    );
-  }
+    loadSummary();
+  }, [loadSummary]);
 
   function onChanged() {
     setPending(null);
@@ -82,13 +130,10 @@ export function KnowledgePage() {
   }
 
   return (
-    <section aria-labelledby="kb-heading" className="kb-page">
-      <div className="page-head">
-        <h1 id="kb-heading">知識庫管理</h1>
-        <p className="lead">
-          匯入與查看 108 課綱條目和大考中心參考詞彙表。匯入前可以先預覽會變動幾筆；內容有變的條目會成為新的一版，舊的只會停用，不會刪除。
-        </p>
-      </div>
+    <>
+      <p className="lead kb-tab-lead">
+        匯入與查看 108 課綱條目和大考中心參考詞彙表。匯入前可以先預覽會變動幾筆；內容有變的條目會成為新的一版，舊的只會停用，不會刪除。
+      </p>
 
       <StatusSection summary={summary} error={summaryError} onChanged={onChanged} />
       <SemanticIndexSection revision={revision} />
@@ -118,7 +163,7 @@ export function KnowledgePage() {
 
       <ItemsBrowser revision={revision} />
       <VocabularyBrowser revision={revision} />
-    </section>
+    </>
   );
 }
 

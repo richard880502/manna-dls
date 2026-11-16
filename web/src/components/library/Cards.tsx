@@ -18,7 +18,7 @@ import {
 const TAGS_SHOWN = 3;
 
 /** Up to three tags, then 「+n」. */
-function TagList({ tags }: { tags: string[] }) {
+export function TagList({ tags }: { tags: string[] }) {
   if (tags.length === 0) return null;
   const rest = tags.length - TAGS_SHOWN;
   return (
@@ -85,7 +85,7 @@ function TemplatePaper({ card }: { card: TemplateCardData }) {
  * A material as a card: a paper preview of its first lines with the file type (and 學習單？ when
  * Manna thinks it is one) in the corners, the title, a meta line, tags, whose it is, and actions.
  */
-export function MaterialCard({ card, actions }: { card: MaterialCardData; actions: ReactNode }) {
+export function MaterialCard({ card, actions }: { card: MaterialCardData; actions?: ReactNode }) {
   const ids = useId();
   const ocr = ocrBadge(card.ocr);
   return (

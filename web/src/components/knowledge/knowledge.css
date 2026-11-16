@@ -1,0 +1,207 @@
+/* 知識庫 (/knowledge): the wall of materials. Cards keep their own height (a first page, a photo,
+ * a few lines of text) in CSS columns at least 15rem wide: one on a phone, four or five on a
+ * wide screen. Reading order stays the list's order (down each column). */
+
+.lib-grid.is-masonry {
+  display: block;
+  columns: 15rem;
+  column-gap: var(--space-lg);
+}
+
+.kb-card {
+  display: inline-block;
+  width: 100%;
+  margin-bottom: var(--space-lg);
+  break-inside: avoid;
+}
+
+.kb-card-inner {
+  position: relative;
+  overflow: hidden;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-mark);
+  background: var(--color-field);
+}
+
+@media (hover: hover) {
+  .kb-card-inner:hover {
+    box-shadow: var(--shadow-float);
+  }
+
+  .kb-card-inner:hover .kb-card-open {
+    color: var(--color-accent-text);
+  }
+}
+
+/* ---------- the top: a page, an image, or the first lines ---------- */
+.kb-thumb {
+  position: relative;
+  background: var(--color-paper-2);
+}
+
+.kb-thumb.is-pdf,
+.kb-thumb.is-text {
+  padding: var(--space-md) var(--space-md) 0;
+}
+
+.kb-thumb-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--color-sheet);
+}
+
+/* A page lies on the desk like the text cards' sheet. */
+.kb-thumb.is-pdf img {
+  border: var(--rule-hair) solid var(--color-rule);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  box-shadow: var(--shadow-float);
+}
+
+/* A photo is the whole top of its card; a very long one is cut at the bottom. */
+.kb-thumb.is-image:not(.is-pdf) img {
+  max-height: 32rem;
+  object-fit: cover;
+  object-position: top;
+}
+
+/* Waiting for the preview: the shape it will most likely have. */
+.kb-thumb-wait {
+  display: block;
+  aspect-ratio: 210 / 297;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--color-sheet);
+  opacity: 0.7;
+}
+
+.kb-thumb.is-image:not(.is-pdf) .kb-thumb-wait {
+  aspect-ratio: 4 / 3;
+  border-radius: 0;
+}
+
+.kb-excerpt {
+  padding: var(--space-sm) var(--space-md) var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-bottom: 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--color-sheet);
+  box-shadow: var(--shadow-float);
+  color: var(--color-ink-2);
+  font-family: var(--font-print);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.kb-excerpt-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-xs);
+  min-height: 8rem;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.kb-excerpt-empty .ui-icon {
+  width: 2rem;
+  height: 2rem;
+}
+
+/* ---------- the words ---------- */
+.kb-card-body {
+  display: grid;
+  gap: var(--space-2xs);
+  padding: var(--space-sm) var(--space-md) var(--space-md);
+}
+
+.kb-card-title {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+/* The title is the card's button; its ::after stretches over the whole card. */
+.kb-card-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-card-open::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+}
+
+.kb-card-open:focus-visible {
+  outline: 0;
+}
+
+.kb-card-open:focus-visible::after {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+  border-radius: var(--radius-mark);
+}
+
+/* ---------- the preview dialog ---------- */
+.kb-preview-meta {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.kb-preview {
+  display: grid;
+  gap: var(--space-lg);
+  margin-top: var(--space-md);
+}
+
+.kb-preview-page {
+  max-width: 20rem;
+  margin: 0;
+}
+
+.kb-preview-page img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-sheet);
+  box-shadow: var(--shadow-float);
+}
+
+.kb-preview-page figcaption {
+  margin-top: var(--space-xs);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.kb-preview-text {
+  min-width: 0;
+}
+
+/* The dialog's head already names an image or a file without text. */
+.kb-preview-text .material-media-title {
+  display: none;
+}
+
+@media (min-width: 56rem) {
+  .kb-preview.has-page {
+    grid-template-columns: minmax(0, 18rem) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .kb-preview-page {
+    position: sticky;
+    top: 0;
+  }
+}

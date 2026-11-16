@@ -63,6 +63,8 @@ pub struct AppState {
     pub upload_slots: Arc<tokio::sync::Semaphore>,
     /// OCR of scanned files: the provider and the server-wide page and file slots.
     pub ocr: Arc<materials::ocr::Ocr>,
+    /// Bounds how many preview images (知識庫) are rendered at once.
+    pub thumb_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -83,6 +85,9 @@ impl AppState {
                 materials::MAX_CONCURRENT_UPLOADS,
             )),
             ocr,
+            thumb_slots: Arc::new(tokio::sync::Semaphore::new(
+                materials::thumbnail::MAX_CONCURRENT_RENDERS,
+            )),
         }
     }
 }
