@@ -64,17 +64,7 @@ pub async fn create(
         _ => None,
     };
     let material = extract::source(db, teacher.id(), req.material_id).await?;
-    let title = given.unwrap_or_else(|| {
-        let base = material.title.trim();
-        let base = if base.is_empty() {
-            "我的學習單"
-        } else {
-            base
-        };
-        // Room for 「版型」 within the limit.
-        let base: String = base.chars().take(MAX_TITLE_CHARS - 2).collect();
-        format!("{}版型", base.trim_end())
-    });
+    let title = given.unwrap_or_else(|| extract::default_title(&material.title));
     let row = store::insert(db, teacher.id(), &title, material.id).await?;
     // Read the answer before the job starts: a fast extraction could otherwise finish first and
     // the 202 would say "ready" (or "failed") instead of "extracting".

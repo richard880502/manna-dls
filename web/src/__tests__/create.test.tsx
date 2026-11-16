@@ -156,6 +156,7 @@ describe("建立: the generator", () => {
     expect(switcher).toHaveAttribute("aria-expanded", "true");
     const tools = within(screen.getByRole("group", { name: "換一種" }));
     expect(tools.getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "照我的學習單做",
       "閱讀理解題",
       "分層練習",
       "課堂活動",

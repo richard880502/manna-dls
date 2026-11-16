@@ -49,6 +49,27 @@ pub async fn find(db: &PgPool, id: i64, teacher_id: i64) -> sqlx::Result<Option<
     .await
 }
 
+/// The teacher's template made from `material_id` that a new worksheet can follow: the newest
+/// `ready` one, otherwise the newest still `extracting` (its extraction is already under way).
+/// Failed ones are not reused.
+pub async fn reusable_for_material(
+    db: &PgPool,
+    teacher_id: i64,
+    material_id: i64,
+) -> sqlx::Result<Option<TemplateRow>> {
+    sqlx::query_as(&format!(
+        "SELECT {COLS} FROM worksheet_templates
+          WHERE teacher_id = $1 AND source_material_id = $2
+            AND status IN ('{STATUS_READY}', '{STATUS_EXTRACTING}')
+          ORDER BY status = '{STATUS_READY}' DESC, created_at DESC, id DESC
+          LIMIT 1"
+    ))
+    .bind(teacher_id)
+    .bind(material_id)
+    .fetch_optional(db)
+    .await
+}
+
 /// The latest version: its number and content.
 pub async fn latest_version(db: &PgPool, id: i64) -> sqlx::Result<Option<(i32, WsTemplate)>> {
     let row: Option<(i32, serde_json::Value)> = sqlx::query_as(

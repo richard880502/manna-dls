@@ -1,18 +1,29 @@
-// 建立 (the generator, /create/:tool) and the home page's quick box: the five tools, their words,
-// which settings each one takes, and the typed-keyword shortcut. Fixed labels are the contract's
-// (docs: bloom-contract, "Shell and home" and Addendum 1), word for word.
+// 建立 (the generator, /create/:tool) and the home page's quick box: the tools, their words, which
+// settings each one takes, and the typed-keyword shortcut. Fixed labels are the contract's
+// (docs: bloom-contract, "Shell and home" and Addendum 1; mimic-contract, "Frontend"), word for word.
 import type { CreatePrepSessionRequest } from "../api/types";
 
-export const TOOLS = ["comprehension", "tiered", "activity", "kit", "worksheet"] as const;
+/**
+ * The generator's tools, in the sidebar's and the home page's order. 照我的學習單做 (mimic) comes
+ * first: it is the teacher's own worksheet as the model, and makes a 完整學習單 (kind worksheet).
+ */
+export const TOOLS = ["mimic", "comprehension", "tiered", "activity", "kit", "worksheet"] as const;
 export type Tool = (typeof TOOLS)[number];
+
+/** The tools that are a session kind of their own: the home page's chips. */
+export const KIND_TOOLS = ["comprehension", "tiered", "activity", "kit", "worksheet"] as const;
+export type KindTool = (typeof KIND_TOOLS)[number];
 
 export const isTool = (value: string | undefined): value is Tool => (TOOLS as readonly string[]).includes(value ?? "");
 
+/** The session kind a tool makes (照我的學習單做 makes a 完整學習單). */
+export const kindOf = (tool: Tool): KindTool => (tool === "mimic" ? "worksheet" : tool);
+
 /**
- * The contract's chip labels: the home page's chips and tool cards, and the request text sent
- * when the teacher typed nothing (so the server can tell a bare chip from a real request).
+ * The contract's chip labels: the home page's chips, and the request text sent when the teacher
+ * typed nothing (so the server can tell a bare chip from a real request).
  */
-export const TOOL_CHIP: Record<Tool, string> = {
+export const TOOL_CHIP: Record<KindTool, string> = {
   comprehension: "閱讀理解題",
   tiered: "分層練習",
   activity: "課堂活動",
@@ -20,11 +31,12 @@ export const TOOL_CHIP: Record<Tool, string> = {
   worksheet: "學習單",
 };
 
-/** The name in the sidebar's 建立 group and in the generator's heading. */
-export const TOOL_NAME: Record<Tool, string> = { ...TOOL_CHIP, worksheet: "完整學習單" };
+/** The name in the sidebar's 建立 group, on the home page's cards and in the generator's heading. */
+export const TOOL_NAME: Record<Tool, string> = { mimic: "照我的學習單做", ...TOOL_CHIP, worksheet: "完整學習單" };
 
 /** One line per tool: the home page's cards. */
 export const TOOL_BLURB: Record<Tool, string> = {
+  mimic: "上傳你以前的學習單，Manna 照它的樣式為新課文出題",
   comprehension: "依 Bloom 六個層次出題，附答案與文本依據",
   tiered: "同一篇文章，基礎／一般／進階三個版本",
   activity: "引起動機到統整的一節課流程",
@@ -34,6 +46,7 @@ export const TOOL_BLURB: Record<Tool, string> = {
 
 /** The generator's subtitle: what the tool makes from what. */
 export const TOOL_SUBTITLE: Record<Tool, string> = {
+  mimic: "上傳你以前的學習單，Manna 照它的樣式為新課文出題。",
   comprehension: "附上一篇文章，寫下學習目標（可以不寫），Manna 依 Bloom 認知層次出閱讀理解題，附答案與文本依據。",
   tiered: "同一篇文章做成基礎／一般／進階三個版本；基礎版的題目附提示。",
   activity: "附上文章、寫下學習目標，Manna 規劃從引起動機到統整的一節課流程。",
@@ -41,8 +54,12 @@ export const TOOL_SUBTITLE: Record<Tool, string> = {
   worksheet: "暖身、逐段任務到 Exit ticket 的完整學習單，可以照你的版型排版。",
 };
 
-/** Which settings each tool takes (課堂活動: only 班級 and 學習目標). */
+/**
+ * Which settings each tool takes (課堂活動: only 班級 and 學習目標). 照我的學習單做 takes only 班級
+ * and 學習目標 too: its sample decides the questions.
+ */
 export const TOOL_FIELDS: Record<Tool, { bloom: boolean; formats: boolean; template: boolean }> = {
+  mimic: { bloom: false, formats: false, template: false },
   comprehension: { bloom: true, formats: true, template: false },
   tiered: { bloom: true, formats: true, template: false },
   activity: { bloom: false, formats: false, template: false },
@@ -57,12 +74,33 @@ export const defaultCount = (tool: Tool): number => (tool === "tiered" ? 12 : 8)
 export const FORMAT_CHOICES = ["選擇題", "是非題", "配對題", "填空題", "簡答題", "表格整理", "段落寫作"] as const;
 
 export const MATERIAL_REQUIRED = "先附上文章或教材";
+
 export const TEXT_MAX = 30000;
 export const OBJECTIVE_MAX = 300;
 export const REQUEST_MAX = 2000;
 
+// ---------------------------------------------------------------- 照我的學習單做 (mimic-contract)
+
+export const SAMPLE_HEADING = "你的學習單範本";
+export const LESSON_TEXT_HEADING = "這節課的課文";
+export const SAMPLE_LINE = "Manna 會讀這份學習單的題型、順序和作答方式，新的學習單照同樣的樣式出題。第一次約需 20 秒。";
+export const NEED_SAMPLE = "先放你的學習單範本";
+export const NEED_LESSON_TEXT = "先放這節課的課文";
+/** 「照「L2 學習單」的樣式」: the sticky bar's summary and a worksheet card's header. */
+export const styleLine = (name: string) => `照「${name}」的樣式`;
+
+/** The notice when a material put in the article slot looks like a worksheet. */
+export const LOOKS_LIKE_WORKSHEET = "這份看起來是一份學習單。要照它的樣式為新課文出題嗎？";
+export const USE_AS_SAMPLE = "照這份的樣式做";
+export const KEEP_AS_TEXT = "不用，當成課文";
+/** On 完整學習單, beside the 版型 select. */
+export const MIMIC_LINK = "或上傳你的學習單範本 →";
+
+/** Where 照這份的樣式做 goes: the mimic page with this material as the sample. */
+export const mimicPath = (materialId: number) => `/create/mimic?sample=${materialId}`;
+
 /** Typed words that pick a chip, in the contract's order (the first row that matches wins). */
-const KEYWORDS: ReadonlyArray<readonly [Tool, readonly string[]]> = [
+const KEYWORDS: ReadonlyArray<readonly [KindTool, readonly string[]]> = [
   ["tiered", ["分層", "差異化"]],
   ["activity", ["活動", "教案", "流程"]],
   ["kit", ["套件"]],
@@ -70,7 +108,7 @@ const KEYWORDS: ReadonlyArray<readonly [Tool, readonly string[]]> = [
   ["comprehension", ["閱讀", "理解", "題目", "出題"]],
 ];
 
-export function toolFromWords(text: string): Tool | null {
+export function toolFromWords(text: string): KindTool | null {
   for (const [tool, words] of KEYWORDS) {
     if (words.some((w) => text.includes(w))) return tool;
   }
@@ -81,7 +119,7 @@ export function toolFromWords(text: string): Tool | null {
  * The kinds a session can start with from these pages. The server's PrepKind gains comprehension,
  * tiered and kit (agent D adds them to the shared types); until then the body is widened here.
  */
-export type StartKind = Tool | "ask";
+export type StartKind = KindTool | "ask";
 export type StartRequest = Omit<CreatePrepSessionRequest, "kind"> & { kind: StartKind };
 
 export const asCreateRequest = (body: StartRequest): CreatePrepSessionRequest =>

@@ -28,6 +28,10 @@
 //! | `FAKE_TPL_BAD_LABEL`     | extraction: details use labels outside the fixed sets and `item_count` 40 (the server drops / clamps them) |
 //! | `FAKE_BLOCK`             | extraction: unreadable output in both calls (the template fails); in a section's title: that block fails |
 //! | `FAKE_RUNAWAY`           | every call: the first attempt runs to `max_tokens` (the retry succeeds) |
+//! | `FAKE_TPL_BAD_BLOOM`     | generation: every block's first item has a Bloom level outside the six (the server drops it) |
+//!
+//! Generated items carry a Bloom level (prompt version 2): a writing item `create`, the others
+//! `remember`, `understand`, `analyze` in turn; the scaffold is an array of lines.
 //!
 //! 閱讀理解題／分層練習 (per Bloom level), see [`bloom_level`] and [`bloom_check`]:
 //!
@@ -594,6 +598,15 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
     let count = (ctx["item_count"].as_u64().unwrap_or(3) as usize + 1).min(12);
     let external = section["needs_external_material"] == true;
     let run_no = ctx["run_no"].as_i64().unwrap_or(1);
+    let bloom = |k: usize| {
+        if k == 1 && has("FAKE_TPL_BAD_BLOOM") {
+            "comprehend"
+        } else if format == FMT_PARAGRAPH {
+            "create"
+        } else {
+            ["remember", "understand", "analyze"][(k - 1) % 3]
+        }
+    };
     let items: Vec<Value> = (1..=count)
         .map(|k| {
             if external {
@@ -602,6 +615,7 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
                     "prompt": format!("After you study the material your teacher gives you, write down key point {k}: ______"),
                     "options": [],
                     "answer": "Answers depend on the material the teacher provides.",
+                    "bloom": "understand",
                 });
             }
             let raw = item(&format, &label, &sentence, k, TIER_CORE_LABEL);
@@ -610,13 +624,19 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
                 "prompt": format!("{} [v{run_no}.{attempt}]", raw["prompt_en"].as_str().unwrap_or_default()),
                 "options": raw["options"],
                 "answer": raw["answer_en"],
+                "bloom": bloom(k),
             })
         })
         .collect();
+    let scaffold: Vec<&str> = if external {
+        Vec::new()
+    } else {
+        vec!["Look for the key words in the paragraph first."]
+    };
     json!({
         "title": title.replace("[n]", &no.to_string()),
         "instructions": format!("Read {label} and answer the questions."),
-        "scaffold": if external { String::new() } else { "Look for the key words in the paragraph first.".to_string() },
+        "scaffold": scaffold,
         "items": items,
     })
 }

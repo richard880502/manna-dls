@@ -13,7 +13,8 @@ import type {
 } from "../../api/types";
 import { tally } from "../../lib/bloom";
 import { saveBlob } from "../../lib/download";
-import { prepConfig } from "../../lib/prep";
+import { READING_SAMPLE_LINE, prepConfig } from "../../lib/prep";
+import { templateTitle } from "../../lib/templates";
 import { LEVEL_LABEL, projectSheet } from "../../lib/worksheet";
 import { ErrorText, Loading } from "../common";
 import { BloomDistribution } from "../worksheet/Bloom";
@@ -41,6 +42,9 @@ function interactionFor(jobs: WsJob[], block: WsSheetBlock, fallback: number | n
  * progress while Manna works, then the student version as a read-only preview with the tools that
  * lead on (editor, checks, export), the version tabs when there are several (分層練習 always has
  * three), and the Bloom distribution of the version shown (read-only).
+ *
+ * A worksheet made after the teacher's own worksheet (a template) first says that Manna is reading
+ * that worksheet, and once done says whose style it follows, with a link to the template.
  */
 export function WorksheetCard({
   turn,
@@ -119,7 +123,7 @@ export function WorksheetCard({
     return turn.status === "running" ? (
       <p className="manna-label prep-working" role="status">
         <span className="star is-working" aria-hidden="true" />
-        Manna 正在建立學習單…
+        {turn.template?.status === "extracting" ? READING_SAMPLE_LINE : "Manna 正在建立學習單…"}
       </p>
     ) : null;
   }
@@ -147,8 +151,15 @@ export function WorksheetCard({
     ? tally(projectSheet(state.content, shownLevel, "teacher").blocks.flatMap((b) => b.items.map(({ item }) => item)))
     : null;
 
+  const template = turn.template ?? null;
+
   return (
     <div className="prep-worksheet">
+      {template && (
+        <p className="prep-ws-template">
+          照「<Link to={`/templates/${template.id}`}>{templateTitle(template)}</Link>」的樣式
+        </p>
+      )}
       <div className="prep-ws-toolbar">
         <div className="ws-seg" role="radiogroup" aria-label="學生版或教師版">
           {AUDIENCES.map(([a, label]) => (

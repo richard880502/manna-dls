@@ -14,6 +14,8 @@ use super::{
 use crate::error::{AppError, AppResult};
 use crate::worksheet::ai as ws_ai;
 use crate::worksheet::store as ws_store;
+use crate::worksheet::template::extract as tpl_extract;
+use crate::worksheet::template::store as tpl_store;
 use crate::AppState;
 
 pub const MSG_NOT_FOUND: &str = "找不到這個備課對話。";
@@ -57,10 +59,12 @@ pub struct TurnRow {
     pub interaction_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// `worksheet` turns: the template the turn follows (the session's when it started).
+    pub template_id: Option<i64>,
 }
 
 const TURN_COLS: &str = "id, session_id, seq, kind, request, status, error, worksheet_id, result,
-    interaction_id, created_at, finished_at";
+    interaction_id, created_at, finished_at, template_id";
 
 /// The session if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<SessionRow> {
@@ -143,12 +147,14 @@ pub async fn delete(db: &PgPool, id: i64) -> sqlx::Result<()> {
 
 // ---------------------------------------------------------------- turns
 
-/// Opens a turn (`running`). 409 while another turn of the session runs.
+/// Opens a turn (`running`). 409 while another turn of the session runs. `template_id`: the
+/// template a `worksheet` turn follows (ignored when it was deleted meanwhile).
 pub async fn start_turn(
     db: &PgPool,
     session_id: i64,
     kind: &str,
     request: &str,
+    template_id: Option<i64>,
 ) -> AppResult<TurnRow> {
     let mut tx = db.begin().await?;
     sqlx::query("SELECT id FROM prep_sessions WHERE id = $1 FOR UPDATE")
@@ -165,14 +171,16 @@ pub async fn start_turn(
         return Err(AppError::Conflict(MSG_BUSY.to_string()));
     }
     let row: TurnRow = sqlx::query_as(&format!(
-        "INSERT INTO prep_turns (session_id, seq, kind, request, status)
+        "INSERT INTO prep_turns (session_id, seq, kind, request, status, template_id)
          VALUES ($1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM prep_turns WHERE session_id = $1),
-                 $2, $3, '{STATUS_RUNNING}')
+                 $2, $3, '{STATUS_RUNNING}',
+                 (SELECT id FROM worksheet_templates WHERE id = $4))
          RETURNING {TURN_COLS}"
     ))
     .bind(session_id)
     .bind(kind)
     .bind(request)
+    .bind(template_id)
     .fetch_one(&mut *tx)
     .await?;
     sqlx::query("UPDATE prep_sessions SET updated_at = now() WHERE id = $1")
@@ -367,11 +375,20 @@ pub fn stale_after(state: &AppState) -> f64 {
 }
 
 /// Brings the turns of a session up to date: a turn that outlived a restart fails, a turn that
-/// only makes a worksheet is done once its worksheet finished generating (even when a block
-/// failed: the block's `message` says so), and a kit is closed once both its parts are over
-/// ([`close_kit`]).
+/// only makes a worksheet is done once its worksheet's generation started and finished (even
+/// when a block failed: the block's `message` says so), and a kit is closed once both its parts
+/// are over ([`close_kit`]).
 pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
     let db = &state.db;
+    // An extraction that died with the server is reported as failed (its turn then fails too).
+    let teacher_id: Option<i64> =
+        sqlx::query_scalar("SELECT teacher_id FROM prep_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(db)
+            .await?;
+    if let Some(teacher_id) = teacher_id {
+        tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
+    }
     sqlx::query(&format!(
         "UPDATE prep_turns SET status = '{STATUS_FAILED}', error = $2, finished_at = now()
           WHERE session_id = $1 AND status = '{STATUS_RUNNING}'
@@ -391,8 +408,10 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
     .fetch_all(db)
     .await?;
     for (turn_id, worksheet_id) in open {
-        let (_, running) = ws_ai::jobs(state, worksheet_id).await?;
-        if !running {
+        let (jobs, running) = ws_ai::jobs(state, worksheet_id).await?;
+        // No job yet: the worksheet was made but its generation is still being started (a
+        // start that fails closes the turn itself).
+        if !jobs.is_empty() && !running {
             finish(db, turn_id, Ok((None, None))).await?;
         }
     }
@@ -535,6 +554,16 @@ pub struct TurnWorksheet {
     pub running: bool,
 }
 
+/// The template a `worksheet` turn follows, as it is now: while it is `extracting` the turn
+/// waits for it and has no worksheet yet.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct TurnTemplate {
+    pub id: i64,
+    pub title: String,
+    /// `extracting` | `ready` | `failed`
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Turn {
     pub id: i64,
@@ -544,6 +573,8 @@ pub struct Turn {
     pub status: String,
     pub error: Option<String>,
     pub worksheet: Option<TurnWorksheet>,
+    /// `worksheet` turns that follow a template; `null` otherwise (or once it is deleted).
+    pub template: Option<TurnTemplate>,
     pub result: Option<Value>,
     pub interaction_id: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -583,6 +614,13 @@ async fn turn_worksheet(state: &AppState, worksheet_id: i64) -> AppResult<Option
     }))
 }
 
+async fn turn_template(db: &PgPool, template_id: i64) -> sqlx::Result<Option<TurnTemplate>> {
+    sqlx::query_as("SELECT id, title, status FROM worksheet_templates WHERE id = $1")
+        .bind(template_id)
+        .fetch_optional(db)
+        .await
+}
+
 /// The whole session, brought up to date first.
 pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     refresh(state, id).await?;
@@ -592,6 +630,10 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     for r in rows {
         let worksheet = match r.worksheet_id {
             Some(ws) => turn_worksheet(state, ws).await?,
+            None => None,
+        };
+        let template = match r.template_id {
+            Some(t) => turn_template(&state.db, t).await?,
             None => None,
         };
         out.push(Turn {
@@ -607,6 +649,7 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             },
             status: r.status,
             worksheet,
+            template,
             result: r.result,
             interaction_id: r.interaction_id,
             created_at: r.created_at,

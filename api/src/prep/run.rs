@@ -47,6 +47,8 @@ use crate::worksheet::bloom::{self as bl, Bloom, Output};
 use crate::worksheet::checks::{evaluate_section, CleanSection, SectionCtx};
 use crate::worksheet::material::SOURCE_LIBRARY;
 use crate::worksheet::store::{self as ws_store, Worksheet};
+use crate::worksheet::template::extract as tpl_extract;
+use crate::worksheet::template::store as tpl_store;
 use crate::worksheet::template::RawSectionOut;
 use crate::worksheet::{
     Audience, Block, Content, Item, Level, Material, Origin, Settings, ANSWER_FORMATS, FMT_BLANK,
@@ -79,6 +81,9 @@ const MSG_MATERIAL_GONE: &str = "這個備課對話的教材已經刪除了，�
 const MSG_WORKSHEET_GONE: &str = "要修改的學習單已經刪除了。";
 const MSG_WORKSHEET_BUSY: &str =
     "Manna 正在產生這份學習單，這次的修改沒有套用。請等它完成後再說一次。";
+const MSG_TEMPLATE_GONE: &str =
+    "這次要照著做的版型已經刪除了，所以沒有做學習單。請重新放上你的學習單範本，或選其他版型。";
+const MSG_TEMPLATE_FAILED: &str = "Manna 沒有讀出這份學習單範本的設計。請按「再試一次」。";
 
 /// What a turn works with, loaded while the request is still there.
 #[derive(Debug, Clone)]
@@ -91,10 +96,27 @@ pub struct TurnInput {
 }
 
 /// Starts a turn already opened with [`store::start_turn`]. A turn that makes a worksheet makes
-/// it now (a failure closes the turn as `failed`); a kit also spawns its activity plan (which
-/// runs even when the worksheet could not start); the other kinds are spawned.
+/// it now (a failure closes the turn as `failed`); a `worksheet` turn whose template is still
+/// being extracted waits for it in the background first ([`spawn_after_template`]); a kit also
+/// spawns its activity plan (which runs even when the worksheet could not start); the other
+/// kinds are spawned.
 pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
     let kind = input.turn.kind.as_str();
+    if let (KIND_WORKSHEET, Some(template_id)) = (kind, input.turn.template_id) {
+        let teacher_id = input.session.teacher_id;
+        match tpl_store::find(&state.db, template_id, teacher_id).await? {
+            Some(t) if t.status == tpl_store::STATUS_EXTRACTING => {
+                spawn_after_template(state, input, template_id);
+                return Ok(());
+            }
+            Some(t) if t.status == tpl_store::STATUS_FAILED => {
+                let message = t.error.unwrap_or_else(|| MSG_TEMPLATE_FAILED.to_string());
+                store::finish(&state.db, input.turn.id, Err(message)).await?;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
     if kind == KIND_KIT {
         let worksheet_error = start_worksheet(state, &input)
             .await
@@ -191,6 +213,94 @@ fn spawn_kit(state: &AppState, input: TurnInput, worksheet_error: Option<String>
         };
         if let Err(e) = closed {
             tracing::error!(turn_id, error = %e, "could not record the kit's activity plan");
+        }
+    });
+}
+
+/// How long a turn waits between two looks at the template it waits for.
+const TEMPLATE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+enum Waited {
+    Ready,
+    /// The extraction failed (or the template is gone): why, in Chinese.
+    Failed(String),
+    /// The turn is no longer running (its session was deleted, or it went stale).
+    Abandoned,
+}
+
+/// Waits until the template is no longer `extracting`. An extraction that died with the server
+/// is reported as failed by `expire_stale`, so the wait always ends.
+async fn wait_for_template(
+    state: &AppState,
+    turn_id: i64,
+    template_id: i64,
+    teacher_id: i64,
+) -> AppResult<Waited> {
+    let db = &state.db;
+    loop {
+        let status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM prep_turns WHERE id = $1")
+                .bind(turn_id)
+                .fetch_optional(db)
+                .await?;
+        if status.as_deref() != Some(super::STATUS_RUNNING) {
+            return Ok(Waited::Abandoned);
+        }
+        tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
+        let Some(t) = tpl_store::find(db, template_id, teacher_id).await? else {
+            return Ok(Waited::Failed(MSG_TEMPLATE_GONE.to_string()));
+        };
+        match t.status.as_str() {
+            tpl_store::STATUS_READY => return Ok(Waited::Ready),
+            tpl_store::STATUS_FAILED => {
+                return Ok(Waited::Failed(
+                    t.error.unwrap_or_else(|| MSG_TEMPLATE_FAILED.to_string()),
+                ))
+            }
+            _ => tokio::time::sleep(TEMPLATE_POLL).await,
+        }
+    }
+}
+
+/// A `worksheet` turn whose template is being extracted: it stays `running` (without a
+/// worksheet) until the template is ready, then makes and starts the worksheet as usual; when
+/// the extraction fails, the turn fails with the template's error.
+fn spawn_after_template(state: &AppState, input: TurnInput, template_id: i64) {
+    let state = state.clone();
+    let turn_id = input.turn.id;
+    tokio::spawn(async move {
+        let work = {
+            let state = state.clone();
+            tokio::spawn(async move {
+                let teacher_id = input.session.teacher_id;
+                Ok::<_, AppError>(
+                    match wait_for_template(&state, turn_id, template_id, teacher_id).await? {
+                        Waited::Abandoned => None,
+                        Waited::Failed(message) => Some(message),
+                        Waited::Ready => start_worksheet(&state, &input)
+                            .await
+                            .err()
+                            .map(|e| worksheet_failure(&input, &e)),
+                    },
+                )
+            })
+        };
+        let failure = match work.await {
+            Ok(Ok(failure)) => failure,
+            Ok(Err(e)) => {
+                tracing::error!(turn_id, error = %e, "waiting for the template failed");
+                Some(teacher_message(&e))
+            }
+            Err(e) => {
+                tracing::error!(turn_id, error = %e, "waiting for the template panicked");
+                Some(MSG_INTERNAL.to_string())
+            }
+        };
+        // Otherwise the turn runs on with its worksheet (closed by `store::refresh`).
+        if let Some(message) = failure {
+            if let Err(e) = store::finish(&state.db, turn_id, Err(message)).await {
+                tracing::error!(turn_id, error = %e, "could not close the prep turn");
+            }
         }
     });
 }
@@ -1383,8 +1493,9 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
     };
     let kind = input.turn.kind.as_str();
     let assessment = kind == KIND_ASSESSMENT;
+    // The template the turn recorded when it started (the session's then).
     let template_id = if kind == KIND_WORKSHEET {
-        session.template_id
+        input.turn.template_id
     } else {
         None
     };
@@ -1472,6 +1583,7 @@ mod tests {
                     prompt: "Why did she put it there? (revised)".into(),
                     options: vec![],
                     answer: "To help people.".into(),
+                    bloom: None,
                 }],
             }],
         }
@@ -1539,6 +1651,7 @@ mod tests {
                     options: vec![],
                     answer: "Because.".into(),
                     evidence: None,
+                    bloom: None,
                 })
                 .collect(),
             scaffold: String::new(),

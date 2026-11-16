@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { UPLOAD_WARNING } from "../../lib/materials";
-import { Icon } from "../Icon";
+import { Icon, type IconName } from "../Icon";
 import { useFirstOnPage } from "../OncePerPage";
 import { LibraryStep, type MaterialChoice, type PickedMaterial } from "./MaterialChooser";
 
@@ -29,12 +29,25 @@ export function choiceTitle(choice: MaterialChoice): string {
   return choice.picked?.title.trim() || "未命名教材";
 }
 
-/** The attached material inside a prompt card: its title and ×. */
-export function MaterialChip({ title, disabled, onRemove }: { title: string; disabled?: boolean; onRemove: () => void }) {
+/** The attached material inside a prompt card: its title (and a short fact, e.g. 「3 區」) and ×. */
+export function MaterialChip({
+  title,
+  meta,
+  icon = "file",
+  disabled,
+  onRemove,
+}: {
+  title: string;
+  meta?: string;
+  icon?: IconName;
+  disabled?: boolean;
+  onRemove: () => void;
+}) {
   return (
     <span className="attach-chip" role="status">
-      <Icon name="file" />
+      <Icon name={icon} />
       <span className="attach-chip-title">{title}</span>
+      {meta && <span className="attach-chip-meta">· {meta}</span>}
       <button
         type="button"
         className="attach-chip-remove"

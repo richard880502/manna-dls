@@ -94,7 +94,7 @@ pub fn chip_label(kind: &str) -> &'static str {
 
 /// Labels the pages send as a request when the teacher typed nothing: the server's chip labels
 /// and the home page's chips and tool names. Such a request is no 「教師的要求」.
-const BARE_LABELS: [&str; 12] = [
+const BARE_LABELS: [&str; 13] = [
     "做學習單",
     "設計評量",
     "規劃教學活動",
@@ -107,6 +107,7 @@ const BARE_LABELS: [&str; 12] = [
     "教學套件",
     "學習單",
     "完整學習單",
+    "照我的學習單做",
 ];
 
 /// Whether a request is only a chip or tool label.
