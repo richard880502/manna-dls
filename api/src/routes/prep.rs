@@ -1,29 +1,43 @@
 //! 備課對話 endpoints (docs/API.md「Phase 2.6：備課對話」): sessions, their turns (all run in the
-//! background; the page polls `GET /api/prep-sessions/:id`), the context PATCH and the hard
-//! delete. Every session belongs to one teacher; anyone else's id is a 404.
+//! background; the page polls `GET /api/prep-sessions/:id`), the context PATCH, the hard
+//! delete and the 教學套件 download. Every session belongs to one teacher; anyone else's id is
+//! a 404.
 
 use axum::extract::State;
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::AuthTeacher;
-use crate::error::{ApiJson, ApiPath, AppError, AppResult};
+use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::store as material_store;
+use crate::prep::kit::{self, KitWorksheet};
 use crate::prep::run::{self, TurnInput};
 use crate::prep::store::{self, Session, SessionRow, Summary};
 use crate::prep::{
-    chip_label, is_worksheet_kind, AUTO_TITLE_CHARS, KINDS, KIND_ACTIVITY, KIND_ASK,
-    KIND_RESOURCES, KIND_REVISE, MAX_REQUEST_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_CHARS,
+    chip_label, is_worksheet_kind, ActivityPlan, SessionOptions, AUTO_TITLE_CHARS, KINDS,
+    KIND_ACTIVITY, KIND_ASK, KIND_KIT, KIND_RESOURCES, KIND_REVISE, MAX_REQUEST_CHARS,
+    MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_RUNNING,
 };
 use crate::routes::{clip_chars, double_option, log_usage, owned_class};
 use crate::worksheet::ai as ws_ai;
+use crate::worksheet::bloom::Output;
+use crate::worksheet::export;
+use crate::worksheet::safe_filename;
+use crate::worksheet::store as ws_store;
 use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
 use crate::worksheet::template::store as tpl_store;
 use crate::AppState;
 
-const MSG_KIND: &str = "kind 需為 worksheet、assessment、activity、resources、ask 或 revise。";
+const MSG_KIND: &str = "kind 需為 worksheet、assessment、comprehension、tiered、kit、activity、resources、ask 或 revise。";
+const MSG_TURN_NOT_FOUND: &str = "找不到這一輪。";
+const MSG_NOT_KIT: &str = "這一輪不是教學套件，沒有教學套件可以下載。";
+const MSG_KIT_RUNNING: &str = "教學套件還在產生，好了之後再下載。";
+const MSG_KIT_EMPTY: &str = "這個教學套件沒有完成，沒有內容可以下載。請按「再試一次」。";
+const MSG_KIT_FORMAT: &str = "format 需為 docx。";
 const MSG_NEEDS_MATERIAL: &str = "這個動作需要教材：請上傳檔案、從教材庫選，或貼上課文。";
 const MSG_NEEDS_MATERIAL_OR_TOPIC: &str = "找教學資源需要教材或主題。";
 const MSG_NEEDS_REQUEST: &str = "請寫下你想問或想改的內容。";
@@ -95,6 +109,17 @@ pub struct CreateSession {
     pub class_id: Option<i64>,
     #[serde(default)]
     pub template_id: Option<i64>,
+    /// 出題選項, passed into every worksheet the session makes.
+    #[serde(default)]
+    pub options: Option<SessionOptions>,
+}
+
+/// Options checked with the worksheet settings' rules (400 with their message).
+fn checked_options(options: Option<SessionOptions>) -> AppResult<SessionOptions> {
+    options
+        .unwrap_or_default()
+        .normalised()
+        .map_err(AppError::bad_request)
 }
 
 /// A library material the session can work with: the teacher's own, with extracted text.
@@ -150,6 +175,7 @@ pub async fn create(
         ));
     }
     let request = check_request(req.request.as_deref().unwrap_or_default())?;
+    let options = checked_options(req.options.clone())?;
     let topic = req
         .topic
         .as_deref()
@@ -214,6 +240,7 @@ pub async fn create(
             topic: topic.as_deref(),
             class_id: req.class_id,
             template_id: req.template_id,
+            options: &options,
         },
     )
     .await?;
@@ -249,6 +276,9 @@ pub struct PatchSession {
     pub class_id: Option<Option<i64>>,
     #[serde(default, deserialize_with = "double_option")]
     pub template_id: Option<Option<i64>>,
+    /// Replaces all the options; `null` clears them.
+    #[serde(default, deserialize_with = "double_option")]
+    pub options: Option<Option<SessionOptions>>,
 }
 
 pub async fn patch(
@@ -274,7 +304,19 @@ pub async fn patch(
     if let Some(Some(template_id)) = req.template_id {
         tpl_store::ready_for_use(db, teacher.id(), template_id).await?;
     }
-    store::update(db, id, title, req.class_id, req.template_id).await?;
+    let options = match req.options {
+        Some(o) => Some(checked_options(o)?),
+        None => None,
+    };
+    store::update(
+        db,
+        id,
+        title,
+        req.class_id,
+        req.template_id,
+        options.as_ref(),
+    )
+    .await?;
     Ok(Json(store::session(&state, id).await?))
 }
 
@@ -363,4 +405,99 @@ pub async fn create_turn(
         StatusCode::ACCEPTED,
         Json(store::session(&state, id).await?),
     ))
+}
+
+// ---------------------------------------------------------------- 教學套件 download
+
+#[derive(Debug, Deserialize)]
+pub struct KitQuery {
+    #[serde(default)]
+    pub format: Option<String>,
+}
+
+/// `GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`: the kit as one DOCX (教學流程,
+/// the student version of each level, 教師版). 404 for another teacher's session or a turn of
+/// another session, 400 for a turn that is not a kit, 409 while it runs. A kit that failed is
+/// exported with the part that succeeded (409 when neither did).
+pub async fn kit(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
+    ApiQuery(q): ApiQuery<KitQuery>,
+) -> AppResult<Response> {
+    let db = &state.db;
+    let session = store::owned(db, id, teacher.id()).await?;
+    if q.format.as_deref().is_some_and(|f| f.trim() != "docx") {
+        return Err(AppError::bad_request(MSG_KIT_FORMAT));
+    }
+    store::refresh(&state, id).await?;
+    let turn = store::turns(db, id)
+        .await?
+        .into_iter()
+        .find(|t| t.id == turn_id)
+        .ok_or_else(|| AppError::not_found(MSG_TURN_NOT_FOUND))?;
+    if turn.kind != KIND_KIT {
+        return Err(AppError::bad_request(MSG_NOT_KIT));
+    }
+    if turn.status == STATUS_RUNNING {
+        return Err(AppError::Conflict(MSG_KIT_RUNNING.to_string()));
+    }
+    let plan: Option<ActivityPlan> = turn
+        .result
+        .clone()
+        .and_then(|r| serde_json::from_value(r).ok());
+    let worksheet = match turn.worksheet_id {
+        Some(ws_id) => match ws_store::owned(db, ws_id, teacher.id()).await {
+            Ok(ws) => Some((ws, ws_store::latest(db, ws_id).await?)),
+            Err(AppError::NotFound(_)) => None,
+            Err(e) => return Err(e),
+        },
+        None => None,
+    };
+    // A worksheet without questions (it could not start, or every level failed) is no part.
+    let worksheet = worksheet.filter(|(_, v)| v.content.blocks.iter().any(|b| !b.items.is_empty()));
+    if plan.is_none() && worksheet.is_none() {
+        return Err(AppError::Conflict(MSG_KIT_EMPTY.to_string()));
+    }
+    let title = session.title.clone();
+    let made = {
+        let worksheet = worksheet.clone();
+        let plan = plan.clone();
+        tokio::task::spawn_blocking(move || {
+            let ws = worksheet.as_ref().map(|(ws, v)| KitWorksheet {
+                title: &ws.title,
+                content: &v.content,
+                tiered: v
+                    .content
+                    .chosen
+                    .as_ref()
+                    .map_or(ws.settings.output, |c| c.settings.output)
+                    == Output::Tiered,
+            });
+            kit::docx(&title, plan.as_ref(), ws)
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??
+    };
+    let name = format!("{}_教學套件.docx", safe_filename(&session.title));
+    log_usage(
+        db,
+        teacher.id(),
+        "prep_kit_exported",
+        json!({
+            "session_id": id, "turn_id": turn_id,
+            "worksheet_id": worksheet.as_ref().map(|(ws, _)| ws.id),
+            "version_no": worksheet.as_ref().map(|(_, v)| v.version_no),
+            "has_plan": plan.is_some(), "bytes": made.len(),
+        }),
+    )
+    .await?;
+    Ok((
+        [
+            (CONTENT_TYPE, export::DOCX_TYPE.to_string()),
+            (CONTENT_DISPOSITION, export::content_disposition(&name)),
+        ],
+        made,
+    )
+        .into_response())
 }

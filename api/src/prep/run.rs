@@ -1,9 +1,12 @@
 //! The turns of a prep session, run in the background.
 //!
-//! `worksheet` / `assessment` create an ordinary worksheet (the same code as `POST
-//! /api/worksheets`) and start its generation while the request is still there; the turn then
-//! stays `running` until the worksheet's jobs are over ([`super::store::refresh`]). Every other
-//! kind is one spawned task that ends with [`super::store::finish`].
+//! `worksheet` / `assessment` / `comprehension` / `tiered` create an ordinary worksheet (the
+//! same code as `POST /api/worksheets`, with the session's options and request) and start its
+//! generation while the request is still there; the turn then stays `running` until the
+//! worksheet's jobs are over ([`super::store::refresh`]). A `kit` does the same with a tiered
+//! worksheet and also spawns the activity plan; it is closed when both are over
+//! ([`super::store::close_kit`]). Every other kind is one spawned task that ends with
+//! [`super::store::finish`].
 //!
 //! The model calls follow the template extraction: `max_tokens` always set, one retry with the
 //! temperature raised by 0.4 (the gateway caches identical requests) when the output ran away,
@@ -17,12 +20,13 @@ use serde_json::{json, Value};
 
 use super::store::{self, SessionRow, TurnRow};
 use super::{
-    activity_schema, ask_schema, chip_label, clean_answer, clean_plan, clean_text, revise_schema,
-    warmup_ideas, ActivityPlan, Answer, CurriculumRef, MaterialRef, RawAnswer, RawPlan,
-    RawRevision, ResourceItem, Resources, Revision, ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP,
-    ASK_SCHEMA_NAME, CHANGES_MAX, CHANGE_ITEMS_MAX, CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK,
-    KEY_REVISE, KIND_ACTIVITY, KIND_ASK, KIND_ASSESSMENT, KIND_RESOURCES, KIND_REVISE,
-    KIND_WORKSHEET, MATERIALS_TOP, REPLY_CHARS, REVISE_SCHEMA_NAME,
+    activity_schema, ask_schema, chip_label, clean_answer, clean_plan, clean_text, is_bare_label,
+    is_worksheet_kind, output_of, revise_schema, warmup_ideas, ActivityPlan, Answer, CurriculumRef,
+    MaterialRef, RawAnswer, RawPlan, RawRevision, ResourceItem, Resources, Revision,
+    ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP, ASK_SCHEMA_NAME, CHANGES_MAX, CHANGE_ITEMS_MAX,
+    CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK, KEY_REVISE, KIND_ACTIVITY, KIND_ASK, KIND_ASSESSMENT,
+    KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET, MATERIALS_TOP, REPLY_CHARS,
+    REVISE_SCHEMA_NAME,
 };
 use crate::ai::pipeline::InteractionMeta;
 use crate::ai::LlmRequest;
@@ -39,6 +43,7 @@ use crate::sop::store as sop_store;
 use crate::worksheet::ai::template::marked_passage;
 use crate::worksheet::ai::{self as ws_ai};
 use crate::worksheet::assemble::project;
+use crate::worksheet::bloom::{self as bl, Bloom, Output};
 use crate::worksheet::checks::{evaluate_section, CleanSection, SectionCtx};
 use crate::worksheet::material::SOURCE_LIBRARY;
 use crate::worksheet::store::{self as ws_store, Worksheet};
@@ -85,22 +90,36 @@ pub struct TurnInput {
     pub worksheet_id: Option<i64>,
 }
 
-/// Starts a turn already opened with [`store::start_turn`]. A worksheet / assessment turn makes
-/// its worksheet now (a failure closes the turn as `failed`); the other kinds are spawned.
+/// Starts a turn already opened with [`store::start_turn`]. A turn that makes a worksheet makes
+/// it now (a failure closes the turn as `failed`); a kit also spawns its activity plan (which
+/// runs even when the worksheet could not start); the other kinds are spawned.
 pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
     let kind = input.turn.kind.as_str();
-    if kind == KIND_WORKSHEET || kind == KIND_ASSESSMENT {
+    if kind == KIND_KIT {
+        let worksheet_error = start_worksheet(state, &input)
+            .await
+            .err()
+            .map(|e| worksheet_failure(&input, &e));
+        spawn_kit(state, input, worksheet_error);
+        return Ok(());
+    }
+    if is_worksheet_kind(kind) {
         if let Err(e) = start_worksheet(state, &input).await {
-            let message = teacher_message(&e);
-            if matches!(e, AppError::Internal(_)) {
-                tracing::error!(turn_id = input.turn.id, error = %e, "prep worksheet turn failed");
-            }
+            let message = worksheet_failure(&input, &e);
             store::finish(&state.db, input.turn.id, Err(message)).await?;
         }
         return Ok(());
     }
     spawn(state, input);
     Ok(())
+}
+
+/// What the teacher is told when a turn's worksheet could not be made or started.
+fn worksheet_failure(input: &TurnInput, e: &AppError) -> String {
+    if matches!(e, AppError::Internal(_)) {
+        tracing::error!(turn_id = input.turn.id, error = %e, "prep worksheet turn failed");
+    }
+    teacher_message(e)
 }
 
 fn teacher_message(e: &AppError) -> String {
@@ -117,6 +136,22 @@ fn teacher_message(e: &AppError) -> String {
 
 type Outcome = Result<(Option<Value>, Option<i64>), String>;
 
+/// The outcome of a spawned piece of work: an error or a panic is a failure the teacher can
+/// read.
+fn settle(turn_id: i64, joined: Result<AppResult<Outcome>, tokio::task::JoinError>) -> Outcome {
+    match joined {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(e)) => {
+            tracing::error!(turn_id, error = %e, "prep turn failed");
+            Err(teacher_message(&e))
+        }
+        Err(e) => {
+            tracing::error!(turn_id, error = %e, "prep turn panicked");
+            Err(MSG_INTERNAL.to_string())
+        }
+    }
+}
+
 fn spawn(state: &AppState, input: TurnInput) {
     let state = state.clone();
     let turn_id = input.turn.id;
@@ -126,19 +161,36 @@ fn spawn(state: &AppState, input: TurnInput) {
             let state = state.clone();
             tokio::spawn(async move { run(&state, &input).await })
         };
-        let outcome: Outcome = match work.await {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(e)) => {
-                tracing::error!(turn_id, error = %e, "prep turn failed");
-                Err(teacher_message(&e))
-            }
-            Err(e) => {
-                tracing::error!(turn_id, error = %e, "prep turn panicked");
-                Err(MSG_INTERNAL.to_string())
-            }
-        };
+        let outcome = settle(turn_id, work.await);
         if let Err(e) = store::finish(&state.db, turn_id, outcome).await {
             tracing::error!(turn_id, error = %e, "could not close the prep turn");
+        }
+    });
+}
+
+/// The activity plan of a kit. Its outcome is recorded on the turn, which is closed now when
+/// the worksheet could not start (`worksheet_error`) or has already finished generating, and
+/// otherwise by the next [`store::refresh`] after the generation.
+fn spawn_kit(state: &AppState, input: TurnInput, worksheet_error: Option<String>) {
+    let state = state.clone();
+    let turn_id = input.turn.id;
+    tokio::spawn(async move {
+        let work = {
+            let state = state.clone();
+            tokio::spawn(async move { activity(&state, &input).await })
+        };
+        let outcome = settle(turn_id, work.await);
+        let closed = match worksheet_error {
+            Some(w) => store::close_kit_without_worksheet(&state.db, turn_id, &outcome, &w)
+                .await
+                .map_err(AppError::from),
+            None => match store::record_plan(&state.db, turn_id, &outcome).await {
+                Ok(()) => store::close_kit(&state, turn_id).await,
+                Err(e) => Err(e.into()),
+            },
+        };
+        if let Err(e) = closed {
+            tracing::error!(turn_id, error = %e, "could not record the kit's activity plan");
         }
     });
 }
@@ -441,8 +493,12 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     .await?;
     let candidates: Vec<CurriculumRef> = items.iter().map(curriculum_ref).collect();
     let codes: Vec<String> = candidates.iter().map(|c| c.code.clone()).collect();
+    let objective = session.options.0.objective.clone().unwrap_or_default();
+    let request = teacher_request(db, input).await?;
     let vars: HashMap<&'static str, String> = HashMap::from([
         ("class_profile", or_blank(&profile)),
+        ("teacher_objective", or_none(&objective)),
+        ("teacher_request", or_none(&request)),
         (
             "curriculum_items",
             format_curriculum(
@@ -463,6 +519,8 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         vars,
         required: vec![
             ("class_profile", "班級特性"),
+            ("teacher_objective", "學習目標（教師寫的）"),
+            ("teacher_request", "教師的要求"),
             ("curriculum_items", "可對應的課綱條目（只能從這裡選代碼）"),
         ],
         redact: vec![("passage_numbered", "備課對話教材")],
@@ -505,6 +563,34 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     )
     .await?;
     Ok(result.map(|(plan, id): (ActivityPlan, i64)| (Some(json!(plan)), Some(id))))
+}
+
+/// Text shown to the model for an optional teacher field that may be empty.
+fn or_none(s: &str) -> String {
+    if s.trim().is_empty() {
+        "（沒有）".to_string()
+    } else {
+        s.trim().to_string()
+    }
+}
+
+/// 「教師的要求」 of a turn that makes something: what the teacher typed for this turn, or else
+/// the session's first request. A bare chip or tool label is no request.
+async fn teacher_request(db: &sqlx::PgPool, input: &TurnInput) -> AppResult<String> {
+    let own = input.turn.request.trim();
+    if !own.is_empty() && !is_bare_label(own) {
+        return Ok(own.to_string());
+    }
+    let first: Option<String> = sqlx::query_scalar(
+        "SELECT request FROM prep_turns WHERE session_id = $1 ORDER BY seq LIMIT 1",
+    )
+    .bind(input.session.id)
+    .fetch_optional(db)
+    .await?;
+    Ok(first
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty() && !is_bare_label(r))
+        .unwrap_or_default())
 }
 
 fn trace_of(input: &TurnInput, class: Option<&Value>, codes: Option<&[String]>) -> Value {
@@ -658,7 +744,30 @@ async fn own_materials(
 
 // ---------------------------------------------------------------- 直接問 AI
 
-/// What an earlier turn said, in a line (the reply text, or a worksheet's block titles).
+/// A worksheet in a line: its block titles.
+async fn worksheet_summary(db: &sqlx::PgPool, worksheet_id: Option<i64>) -> String {
+    let Some(id) = worksheet_id else {
+        return "學習單".to_string();
+    };
+    let content = ws_store::latest(db, id).await.map(|v| v.content).ok();
+    let titles: Vec<String> = content
+        .map(|c| {
+            c.blocks
+                .iter()
+                .filter(|b| b.enabled && !b.title.trim().is_empty())
+                .map(|b| b.title.trim().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    if titles.is_empty() {
+        "學習單（還沒有區塊）".to_string()
+    } else {
+        format!("學習單區塊：{}", titles.join("、"))
+    }
+}
+
+/// What an earlier turn said, in a line (the reply text, a worksheet's block titles, a plan's
+/// steps).
 async fn turn_summary(db: &sqlx::PgPool, t: &TurnRow) -> AppResult<String> {
     if t.status == super::STATUS_FAILED {
         return Ok("（這一次沒有完成）".to_string());
@@ -668,26 +777,12 @@ async fn turn_summary(db: &sqlx::PgPool, t: &TurnRow) -> AppResult<String> {
     }
     let r = t.result.clone().unwrap_or(Value::Null);
     let text = match t.kind.as_str() {
-        KIND_WORKSHEET | KIND_ASSESSMENT => match t.worksheet_id {
-            Some(id) => {
-                let content = ws_store::latest(db, id).await.map(|v| v.content).ok();
-                let titles: Vec<String> = content
-                    .map(|c| {
-                        c.blocks
-                            .iter()
-                            .filter(|b| b.enabled && !b.title.trim().is_empty())
-                            .map(|b| b.title.trim().to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if titles.is_empty() {
-                    "學習單（還沒有區塊）".to_string()
-                } else {
-                    format!("學習單區塊：{}", titles.join("、"))
-                }
-            }
-            None => "學習單".to_string(),
-        },
+        KIND_KIT => format!(
+            "教學套件：{}；{}",
+            r["title"].as_str().unwrap_or("教學活動規劃"),
+            worksheet_summary(db, t.worksheet_id).await
+        ),
+        k if is_worksheet_kind(k) => worksheet_summary(db, t.worksheet_id).await,
         KIND_ACTIVITY => {
             let steps: Vec<String> = r["steps"]
                 .as_array()
@@ -988,10 +1083,39 @@ fn item_id(block_id: &str, turn_id: i64, block_no: usize, k: usize) -> String {
     }
 }
 
+/// The versions a revised item appears in: those of the item it replaces (same position);
+/// for a new item of a tiered worksheet, those its Bloom level maps to; otherwise all of the
+/// worksheet's. Always some of the worksheet's versions (all of them when nothing is left).
+fn revised_levels(
+    replaced: Option<&Item>,
+    bloom: Option<Bloom>,
+    levels: &[Level],
+    tiered: bool,
+) -> Vec<Level> {
+    let wanted: Option<Vec<Level>> = match (replaced, bloom) {
+        (Some(old), _) => Some(old.levels.clone()),
+        (None, Some(b)) if tiered => Some(bl::tier_levels(b)),
+        _ => None,
+    };
+    let kept: Vec<Level> = match wanted {
+        Some(w) => levels.iter().copied().filter(|l| w.contains(l)).collect(),
+        None => Vec::new(),
+    };
+    if kept.is_empty() {
+        levels.to_vec()
+    } else {
+        kept
+    }
+}
+
+/// `old` with the change applied. Like the exit ticket's purpose, an item's Bloom label, hint
+/// and versions stay with its position; a new item takes the block's Bloom level (blocks made
+/// per Bloom level have one) and, in a tiered worksheet, that level's versions.
 fn revised_block(
     old: &Block,
     out: &CleanSection,
     levels: &[Level],
+    tiered: bool,
     turn_id: i64,
     no: usize,
 ) -> Block {
@@ -1004,23 +1128,39 @@ fn revised_block(
         .items
         .iter()
         .enumerate()
-        .map(|(k, it)| Item {
-            id: item_id(&old.id, turn_id, no, k + 1),
-            answer_format: Some(it.answer_format.clone()),
-            prompt: it.prompt.clone(),
-            options: it.options.clone(),
-            answer: it.answer.clone(),
-            evidence: it.evidence.clone().unwrap_or_default(),
-            purpose: old.items.get(k).and_then(|i| i.purpose),
-            levels: levels.to_vec(),
-            origin: Origin::Ai,
-            // Like the purpose, the Bloom label and the hint stay with the position.
-            bloom: old.items.get(k).and_then(|i| i.bloom),
-            hint: old.items.get(k).map(|i| i.hint.clone()).unwrap_or_default(),
+        .map(|(k, it)| {
+            let replaced = old.items.get(k);
+            let bloom = match replaced {
+                Some(i) => i.bloom,
+                None => old.bloom,
+            };
+            Item {
+                id: item_id(&old.id, turn_id, no, k + 1),
+                answer_format: Some(it.answer_format.clone()),
+                prompt: it.prompt.clone(),
+                options: it.options.clone(),
+                answer: it.answer.clone(),
+                evidence: it.evidence.clone().unwrap_or_default(),
+                purpose: replaced.and_then(|i| i.purpose),
+                levels: revised_levels(replaced, bloom, levels, tiered),
+                origin: Origin::Ai,
+                bloom,
+                hint: replaced.map(|i| i.hint.clone()).unwrap_or_default(),
+            }
         })
         .collect();
     block.message = None;
     block
+}
+
+/// Whether the worksheet's current questions were made as tiered practice (the generation's
+/// settings; before any generation, the worksheet's own).
+fn is_tiered(ws: &Worksheet, content: &Content) -> bool {
+    content
+        .chosen
+        .as_ref()
+        .map_or(ws.settings.output, |c| c.settings.output)
+        == Output::Tiered
 }
 
 fn same_content(a: &Block, b: &Block) -> bool {
@@ -1134,17 +1274,20 @@ async fn apply_revision(
         }
         let latest = ws_store::latest(db, ws.id).await?;
         let mut next = latest.content.clone();
-        let levels: Vec<Level> = if next.levels.is_empty() {
-            vec![Level::Standard]
-        } else {
+        let tiered = is_tiered(ws, &next);
+        let levels: Vec<Level> = if !next.levels.is_empty() {
             next.levels.clone()
+        } else if tiered {
+            Level::ALL.to_vec()
+        } else {
+            vec![Level::Standard]
         };
         for (no, a) in accepted.iter().enumerate() {
             let Some(slot) = next.blocks.iter_mut().find(|b| b.id == a.block_id) else {
                 dropped.push(format!("「{}」", a.block_id));
                 continue;
             };
-            let block = revised_block(slot, &a.section, &levels, input.turn.id, no + 1);
+            let block = revised_block(slot, &a.section, &levels, tiered, input.turn.id, no + 1);
             if same_content(slot, &block) {
                 continue;
             }
@@ -1227,6 +1370,10 @@ async fn plan_warmup(db: &sqlx::PgPool, session_id: i64) -> AppResult<Vec<String
         .unwrap_or_default())
 }
 
+/// Creates the worksheet of a turn that makes one and starts its generation. The session's
+/// options and 「教師的要求」 go into its settings and request; a 閱讀理解題／分層練習／教學套件
+/// worksheet is made per Bloom level, without the session's template (templates only make the
+/// full worksheet) and without warm-up ideas (it has no warm-up).
 async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
     let db = &state.db;
     let session = &input.session;
@@ -1234,11 +1381,12 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
     let Some(material_id) = session.material_id else {
         return Err(AppError::bad_request(MSG_MATERIAL_GONE));
     };
-    let assessment = input.turn.kind == KIND_ASSESSMENT;
-    let template_id = if assessment {
-        None
-    } else {
+    let kind = input.turn.kind.as_str();
+    let assessment = kind == KIND_ASSESSMENT;
+    let template_id = if kind == KIND_WORKSHEET {
         session.template_id
+    } else {
+        None
     };
     let overrides = if assessment {
         let title: String = sqlx::query_scalar("SELECT title FROM materials WHERE id = $1")
@@ -1259,7 +1407,7 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
         }
     } else {
         CreateOverrides {
-            warmup: if template_id.is_none() {
+            warmup: if kind == KIND_WORKSHEET && template_id.is_none() {
                 plan_warmup(db, session.id).await?
             } else {
                 Vec::new()
@@ -1272,6 +1420,12 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
         class_id: session.class_id,
         material_id: Some(material_id),
         template_id,
+        // An assessment keeps its own answer formats.
+        settings: session
+            .options
+            .0
+            .settings_patch(output_of(kind), !assessment),
+        request: Some(teacher_request(db, input).await?),
         ..CreateWorksheet::default()
     };
     let worksheet_id = create_worksheet(db, teacher_id, req, overrides).await?;
@@ -1337,18 +1491,83 @@ mod tests {
     }
 
     #[test]
-    fn revised_items_get_new_ids_and_all_levels() {
+    fn revised_items_get_new_ids_and_keep_their_versions() {
         let c = content();
         let labels = HashMap::new();
         let plan = check_revision(&change(FMT_SHORT), &c, &labels, "text")
             .output
             .unwrap();
         let levels = [Level::Basic, Level::Standard];
-        let b = revised_block(&c.blocks[0], &plan.accepted[0].section, &levels, 7, 1);
+        let b = revised_block(
+            &c.blocks[0],
+            &plan.accepted[0].section,
+            &levels,
+            false,
+            7,
+            1,
+        );
         assert_eq!(b.items[0].id, "b1-v7i1");
-        assert_eq!(b.items[0].levels, levels);
+        assert_eq!(b.items[0].levels, [Level::Standard], "by position");
         assert_eq!(b.items[0].origin, Origin::Ai);
         assert!(!same_content(&c.blocks[0], &b));
         assert_eq!(item_id(&"x".repeat(40), 7, 2, 3), "v7b2i3");
+    }
+
+    #[test]
+    fn revised_items_of_a_tiered_worksheet_keep_their_tiers() {
+        let all = Level::ALL;
+        let old = Block {
+            id: "b4".into(),
+            title: "Part D · Look Closer".into(),
+            bloom: Some(Bloom::Analyze),
+            items: vec![Item {
+                id: "b4-i1".into(),
+                levels: vec![Level::Advanced],
+                bloom: Some(Bloom::Analyze),
+                hint: "Look at paragraph 2.".into(),
+                ..Item::default()
+            }],
+            ..Block::default()
+        };
+        let section = |n: usize| CleanSection {
+            title: "Part D · Look Closer".into(),
+            instructions: "Answer.".into(),
+            items: (0..n)
+                .map(|k| crate::worksheet::checks::CleanSectionItem {
+                    answer_format: FMT_SHORT.into(),
+                    prompt: format!("Why? {k}"),
+                    options: vec![],
+                    answer: "Because.".into(),
+                    evidence: None,
+                })
+                .collect(),
+            scaffold: String::new(),
+        };
+        let b = revised_block(&old, &section(2), &all, true, 9, 1);
+        // The replaced item keeps its versions, label and hint; the new one maps from the
+        // block's level (analyze: 一般版、進階版).
+        assert_eq!(b.items[0].levels, [Level::Advanced]);
+        assert_eq!(b.items[0].bloom, Some(Bloom::Analyze));
+        assert_eq!(b.items[0].hint, "Look at paragraph 2.");
+        assert_eq!(b.items[1].levels, [Level::Standard, Level::Advanced]);
+        assert_eq!(b.items[1].bloom, Some(Bloom::Analyze));
+        assert_eq!(b.items[1].hint, "");
+        // Not tiered: a new item is in every version.
+        let b = revised_block(&old, &section(2), &all, false, 9, 1);
+        assert_eq!(b.items[1].levels, all);
+        // Versions the worksheet no longer has are left out; none left → all of them.
+        let only = [Level::Basic];
+        let b = revised_block(&old, &section(2), &only, true, 9, 1);
+        assert_eq!(b.items[0].levels, only);
+        assert_eq!(b.items[1].levels, only);
+        // A new item without a level: every version.
+        let plain = Block {
+            bloom: None,
+            items: vec![],
+            ..old.clone()
+        };
+        let b = revised_block(&plain, &section(1), &all, true, 9, 1);
+        assert_eq!(b.items[0].levels, all);
+        assert_eq!(b.items[0].bloom, None);
     }
 }

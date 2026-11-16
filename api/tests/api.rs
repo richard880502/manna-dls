@@ -1250,8 +1250,9 @@ async fn admin_prompts_imports_and_permissions() {
         .collect();
     assert_eq!(
         versions,
-        // worksheet_tasks has v2 since Phase 2.7 (0014_bloom.sql).
-        vec![1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]
+        // worksheet_tasks has v2 since Phase 2.7 (0014_bloom.sql), prep_activity since
+        // 0015_prep_bloom.sql.
+        vec![1, 2, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

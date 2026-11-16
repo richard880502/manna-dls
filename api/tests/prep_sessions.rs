@@ -140,7 +140,10 @@ async fn a_worksheet_turn_makes_an_ordinary_worksheet_and_waits_for_it() {
     assert_eq!(turn["worksheet"]["running"], false);
     assert_eq!(turn["worksheet"]["title"], "The Umbrella Stand: Worksheet");
     assert!(turn["worksheet"]["version_no"].as_i64().unwrap() >= 2);
-    assert_eq!(done["next"], json!(["activity", "assessment", "resources"]));
+    assert_eq!(
+        done["next"],
+        json!(["comprehension", "tiered", "activity", "kit"])
+    );
 
     // An ordinary worksheet: listed, generated from the session's material, linked back.
     let (s, list) = app.get("/api/worksheets", Some(&t)).await;
@@ -196,7 +199,11 @@ async fn an_assessment_has_its_own_title_and_settings() {
         .map(|b| b["kind"].as_str().unwrap())
         .collect();
     assert!(!kinds.contains(&"warmup"), "no warm-up: {kinds:?}");
-    assert_eq!(done["next"], json!(["worksheet", "activity", "resources"]));
+    assert_eq!(
+        done["next"],
+        json!(["comprehension", "tiered", "activity", "kit", "worksheet"]),
+        "assessment is no longer suggested"
+    );
 }
 
 #[tokio::test]
@@ -253,7 +260,7 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     assert_eq!(steps[2]["phase"], "統整與評量");
     assert_eq!(
         done["next"],
-        json!(["worksheet", "assessment", "resources"])
+        json!(["comprehension", "tiered", "kit", "worksheet"])
     );
 
     // One call, logged without the material; its retrieval is logged too.
@@ -288,7 +295,7 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     );
     let done = wait(&app, &t, id).await;
     assert_eq!(last(&done)["status"], "done");
-    assert_eq!(done["next"], json!(["assessment", "resources"]));
+    assert_eq!(done["next"], json!(["comprehension", "tiered", "kit"]));
 }
 
 async fn turn_req(app: &common::TestApp, t: &str, id: i64, kind: &str) -> (StatusCode, Value) {
@@ -405,7 +412,7 @@ async fn resources_list_curriculum_and_own_materials_without_a_model() {
         r["note"],
         format!("知識庫裡沒有找到相關條目。{MSG_NO_EXTERNAL}")
     );
-    // Without material only 找教學資源 is offered, and it was done.
+    // Without material nothing is suggested (找教學資源 is no longer a suggestion).
     assert_eq!(done["next"], json!([]));
 }
 
@@ -634,6 +641,10 @@ async fn needs_rules_are_enforced() {
     assert!(bad(json!({ "kind": "chat", "request": "x" }))
         .await
         .contains("kind"));
+    for kind in ["comprehension", "tiered", "kit"] {
+        let m = bad(json!({ "kind": kind, "topic": "trust" })).await;
+        assert!(m.contains("需要教材"), "{kind}: {m}");
+    }
     assert!(bad(json!({ "kind": "ask", "request": "x".repeat(2001) }))
         .await
         .contains("2000"));
@@ -668,7 +679,14 @@ async fn needs_rules_are_enforced() {
     let topic = create(&app, &t, json!({ "kind": "resources", "topic": "trust" })).await;
     let id = sid(&topic);
     wait(&app, &t, id).await;
-    for kind in ["worksheet", "activity", "assessment"] {
+    for kind in [
+        "worksheet",
+        "activity",
+        "assessment",
+        "comprehension",
+        "tiered",
+        "kit",
+    ] {
         let (s, v) = turn_req(&app, &t, id, kind).await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{kind} {v}");
     }

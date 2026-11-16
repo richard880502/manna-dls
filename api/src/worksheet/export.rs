@@ -342,7 +342,9 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
     }
 }
 
-fn document_xml(sheet: &Sheet) -> String {
+/// The paragraphs of one sheet: title, the teacher banner (`banner` replaces the usual one),
+/// the name line, objectives and blocks.
+fn sheet_body(sheet: &Sheet, banner: Option<&str>) -> String {
     let teacher = sheet.audience == Audience::Teacher;
     let mut body = String::new();
     body.push_str(&para(
@@ -356,7 +358,7 @@ fn document_xml(sheet: &Sheet) -> String {
     if teacher {
         body.push_str(&para(
             &[run(
-                &teacher_banner(sheet),
+                &banner.map_or_else(|| teacher_banner(sheet), str::to_string),
                 RunStyle {
                     color: Some(TEACHER_INK),
                     size: Some(18),
@@ -540,6 +542,11 @@ fn document_xml(sheet: &Sheet) -> String {
             ));
         }
     }
+    body
+}
+
+/// A whole `word/document.xml` around `body` (A4, 2 cm margins).
+fn document(body: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
 <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
@@ -548,6 +555,10 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
 <w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" w:header=\"567\" w:footer=\"567\" w:gutter=\"0\"/>\
 </w:sectPr></w:body></w:document>"
     )
+}
+
+fn document_xml(sheet: &Sheet) -> String {
+    document(&sheet_body(sheet, None))
 }
 
 const STYLES_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -559,6 +570,9 @@ const STYLES_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"
 <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/><w:qFormat/></w:style>\
 <w:style w:type=\"paragraph\" w:styleId=\"Title\"><w:name w:val=\"Title\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:qFormat/>\
 <w:rPr><w:b/><w:sz w:val=\"40\"/><w:szCs w:val=\"40\"/></w:rPr></w:style>\
+<w:style w:type=\"paragraph\" w:styleId=\"Heading1\"><w:name w:val=\"heading 1\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:qFormat/>\
+<w:pPr><w:keepNext/><w:spacing w:before=\"0\" w:after=\"160\"/><w:outlineLvl w:val=\"0\"/></w:pPr>\
+<w:rPr><w:b/><w:sz w:val=\"32\"/><w:szCs w:val=\"32\"/></w:rPr></w:style>\
 <w:style w:type=\"paragraph\" w:styleId=\"Heading2\"><w:name w:val=\"heading 2\"/><w:basedOn w:val=\"Normal\"/><w:next w:val=\"Normal\"/><w:qFormat/>\
 <w:pPr><w:keepNext/><w:spacing w:before=\"280\" w:after=\"80\"/><w:outlineLvl w:val=\"1\"/></w:pPr>\
 <w:rPr><w:b/><w:sz w:val=\"26\"/><w:szCs w:val=\"26\"/></w:rPr></w:style>\
@@ -593,7 +607,8 @@ xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator
     )
 }
 
-pub fn docx(sheet: &Sheet) -> anyhow::Result<Vec<u8>> {
+/// The DOCX package of a `word/document.xml`.
+fn package(title: &str, document_xml: &str) -> anyhow::Result<Vec<u8>> {
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -602,15 +617,186 @@ pub fn docx(sheet: &Sheet) -> anyhow::Result<Vec<u8>> {
         ("_rels/.rels", ROOT_RELS.to_string()),
         ("word/_rels/document.xml.rels", DOCUMENT_RELS.to_string()),
         ("word/styles.xml", STYLES_XML.to_string()),
-        ("docProps/core.xml", core_xml(&sheet.title)),
+        ("docProps/core.xml", core_xml(title)),
     ];
     for (name, xml) in parts {
         zip.start_file(name, options)?;
         zip.write_all(xml.as_bytes())?;
     }
     zip.start_file("word/document.xml", options)?;
-    zip.write_all(document_xml(sheet).as_bytes())?;
+    zip.write_all(document_xml.as_bytes())?;
     Ok(zip.finish()?.into_inner())
+}
+
+pub fn docx(sheet: &Sheet) -> anyhow::Result<Vec<u8>> {
+    package(&sheet.title, &document_xml(sheet))
+}
+
+// ---------------------------------------------------------------- several parts in one DOCX
+
+/// A paragraph of a free-form part (for example a lesson plan) of a combined document.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Line {
+    /// A section heading (Heading 2).
+    Heading(String),
+    /// A bold lead-in followed by text: 「卡住了怎麼辦：…」.
+    Labelled(String, String),
+    Text(String),
+    /// A numbered line with a hanging indent.
+    Numbered(usize, String),
+    /// Indented italic text (classroom English).
+    Script(String),
+    /// Small grey text.
+    Muted(String),
+    /// Small text in the teacher colour (Bloom levels).
+    Teacher(String),
+}
+
+/// One part of a combined document; every part after the first starts on a new page under its
+/// own Heading 1.
+#[derive(Debug, Clone)]
+pub enum Part<'a> {
+    Lines {
+        heading: String,
+        lines: Vec<Line>,
+    },
+    /// A sheet as [`docx`] prints it; `banner` replaces the teacher version's usual banner.
+    Sheet {
+        heading: String,
+        sheet: &'a Sheet,
+        banner: Option<String>,
+        /// Lines printed between the heading and the sheet.
+        note: Vec<Line>,
+    },
+}
+
+fn line_xml(l: &Line) -> String {
+    let small = |text: &str, color: &'static str| {
+        para(
+            &[run(
+                text,
+                RunStyle {
+                    color: Some(color),
+                    size: Some(20),
+                    ..RunStyle::default()
+                },
+            )],
+            &ParaStyle {
+                after: 60,
+                ..ParaStyle::default()
+            },
+        )
+    };
+    match l {
+        Line::Heading(t) => para(
+            &[run(t, RunStyle::default())],
+            &ParaStyle {
+                style: Some("Heading2"),
+                keep_next: true,
+                ..ParaStyle::default()
+            },
+        ),
+        Line::Labelled(label, t) => para(
+            &[
+                run(
+                    &format!("{label}："),
+                    RunStyle {
+                        bold: true,
+                        ..RunStyle::default()
+                    },
+                ),
+                run(t, RunStyle::default()),
+            ],
+            &ParaStyle {
+                before: 40,
+                after: 40,
+                ..ParaStyle::default()
+            },
+        ),
+        Line::Text(t) => para(
+            &[run(t, RunStyle::default())],
+            &ParaStyle {
+                after: 60,
+                ..ParaStyle::default()
+            },
+        ),
+        Line::Numbered(n, t) => para(
+            &[run(&format!("{n}.\t{t}"), RunStyle::default())],
+            &ParaStyle {
+                indent: 400,
+                hanging: 400,
+                after: 40,
+                ..ParaStyle::default()
+            },
+        ),
+        Line::Script(t) => para(
+            &[run(
+                t,
+                RunStyle {
+                    italic: true,
+                    ..RunStyle::default()
+                },
+            )],
+            &ParaStyle {
+                indent: 600,
+                after: 20,
+                ..ParaStyle::default()
+            },
+        ),
+        Line::Muted(t) => small(t, MUTED_INK),
+        Line::Teacher(t) => small(t, TEACHER_INK),
+    }
+}
+
+const PAGE_BREAK: &str = "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>";
+
+/// One DOCX of several parts (a 教學套件: the lesson plan, then the student version of each
+/// level, then the teacher version), each starting on its own page.
+pub fn combined_docx(title: &str, parts: &[Part<'_>]) -> anyhow::Result<Vec<u8>> {
+    let mut body = String::new();
+    body.push_str(&para(
+        &[run(title, RunStyle::default())],
+        &ParaStyle {
+            style: Some("Title"),
+            after: 200,
+            ..ParaStyle::default()
+        },
+    ));
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            body.push_str(PAGE_BREAK);
+        }
+        let heading = match part {
+            Part::Lines { heading, .. } | Part::Sheet { heading, .. } => heading,
+        };
+        body.push_str(&para(
+            &[run(heading, RunStyle::default())],
+            &ParaStyle {
+                style: Some("Heading1"),
+                keep_next: true,
+                ..ParaStyle::default()
+            },
+        ));
+        match part {
+            Part::Lines { lines, .. } => {
+                for l in lines {
+                    body.push_str(&line_xml(l));
+                }
+            }
+            Part::Sheet {
+                sheet,
+                banner,
+                note,
+                ..
+            } => {
+                for l in note {
+                    body.push_str(&line_xml(l));
+                }
+                body.push_str(&sheet_body(sheet, banner.as_deref()));
+            }
+        }
+    }
+    package(title, &document(&body))
 }
 
 // ================================================================ PDF

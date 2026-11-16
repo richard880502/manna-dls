@@ -1,28 +1,31 @@
 //! 備課對話 (prep sessions): a conversation-first entry point (docs/API.md「Phase 2.6：備課對話」).
 //!
 //! A session holds the lesson's context (a library material or only a topic, an optional class
-//! and template); every request is one turn, run in the background ([`run`]). The kinds:
-//! `worksheet` / `assessment` make an ordinary worksheet and start its generation; `activity`
-//! plans a lesson (one model call); `resources` lists curriculum items and the teacher's own
-//! materials (no model); `ask` answers a question (one call); `revise` applies a typed
-//! instruction to the session's latest worksheet (one call, every change checked like a
-//! template block).
+//! and template, the teacher's 出題選項 [`SessionOptions`]); every request is one turn, run in
+//! the background ([`run`]). The kinds: `worksheet` / `assessment` / `comprehension` / `tiered`
+//! make an ordinary worksheet and start its generation; `activity` plans a lesson (one model
+//! call); `kit` (教學套件) does both, an activity plan and a tiered worksheet; `resources` lists
+//! curriculum items and the teacher's own materials (no model); `ask` answers a question (one
+//! call); `revise` applies a typed instruction to the session's latest worksheet (one call,
+//! every change checked like a template block).
 //!
 //! Every string and array the model writes has a cap in its JSON schema: the gateway enforces
 //! `maxLength` / `maxItems` while decoding, which is what stops a runaway.
 
 pub mod fake;
+pub mod kit;
 pub mod run;
 pub mod store;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::sop::checks::clean_markup;
+use crate::worksheet::bloom::{Bloom, Output};
 use crate::worksheet::template::{enum_of, obj, s_max, strings_max};
-use crate::worksheet::ANSWER_FORMATS;
+use crate::worksheet::{Settings, SettingsPatch, ANSWER_FORMATS};
 
 pub const KIND_WORKSHEET: &str = "worksheet";
 pub const KIND_ASSESSMENT: &str = "assessment";
@@ -30,20 +33,28 @@ pub const KIND_ACTIVITY: &str = "activity";
 pub const KIND_RESOURCES: &str = "resources";
 pub const KIND_ASK: &str = "ask";
 pub const KIND_REVISE: &str = "revise";
-pub const KINDS: [&str; 6] = [
+pub const KIND_COMPREHENSION: &str = "comprehension";
+pub const KIND_TIERED: &str = "tiered";
+pub const KIND_KIT: &str = "kit";
+pub const KINDS: [&str; 9] = [
     KIND_WORKSHEET,
     KIND_ASSESSMENT,
     KIND_ACTIVITY,
     KIND_RESOURCES,
     KIND_ASK,
     KIND_REVISE,
+    KIND_COMPREHENSION,
+    KIND_TIERED,
+    KIND_KIT,
 ];
-/// The next-step chips, in the order they are offered.
-pub const NEXT_KINDS: [&str; 4] = [
-    KIND_WORKSHEET,
+/// The next-step chips, in the order they are offered (all of them need material).
+/// `assessment` and `resources` stay valid kinds but are no longer suggested.
+pub const NEXT_KINDS: [&str; 5] = [
+    KIND_COMPREHENSION,
+    KIND_TIERED,
     KIND_ACTIVITY,
-    KIND_ASSESSMENT,
-    KIND_RESOURCES,
+    KIND_KIT,
+    KIND_WORKSHEET,
 ];
 
 pub const STATUS_RUNNING: &str = "running";
@@ -74,12 +85,146 @@ pub fn chip_label(kind: &str) -> &'static str {
         KIND_ACTIVITY => "規劃教學活動",
         KIND_RESOURCES => "找教學資源",
         KIND_ASK => "直接問 AI",
+        KIND_COMPREHENSION => "閱讀理解題",
+        KIND_TIERED => "分層練習",
+        KIND_KIT => "教學套件",
         _ => "修改學習單",
     }
 }
 
+/// Labels the pages send as a request when the teacher typed nothing: the server's chip labels
+/// and the home page's chips and tool names. Such a request is no 「教師的要求」.
+const BARE_LABELS: [&str; 12] = [
+    "做學習單",
+    "設計評量",
+    "規劃教學活動",
+    "找教學資源",
+    "直接問 AI",
+    "修改學習單",
+    "閱讀理解題",
+    "分層練習",
+    "課堂活動",
+    "教學套件",
+    "學習單",
+    "完整學習單",
+];
+
+/// Whether a request is only a chip or tool label.
+pub fn is_bare_label(request: &str) -> bool {
+    BARE_LABELS.contains(&request.trim())
+}
+
+/// Kinds whose turn makes a worksheet (a kit makes one beside its activity plan).
 pub fn is_worksheet_kind(kind: &str) -> bool {
-    kind == KIND_WORKSHEET || kind == KIND_ASSESSMENT
+    matches!(
+        kind,
+        KIND_WORKSHEET | KIND_ASSESSMENT | KIND_COMPREHENSION | KIND_TIERED | KIND_KIT
+    )
+}
+
+/// What the worksheet of a turn of `kind` makes: `None` for the full worksheet (`worksheet`,
+/// `assessment`).
+pub fn output_of(kind: &str) -> Option<Output> {
+    match kind {
+        KIND_COMPREHENSION => Some(Output::Comprehension),
+        KIND_TIERED | KIND_KIT => Some(Output::Tiered),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------- session options
+
+/// A list that may also be sent as `null` (taken as empty).
+fn null_as_empty<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
+}
+
+/// 出題選項 of a session (`POST` / `PATCH /api/prep-sessions`, echoed as `PrepSession.options`):
+/// passed into every worksheet the session makes, as the worksheet settings of the same names.
+/// Absent keys are not set (and not serialised): all six levels, the output's default count,
+/// the formats that suit each level, no objective.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SessionOptions {
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "null_as_empty"
+    )]
+    pub bloom: Vec<Bloom>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question_count: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom_counts: Option<BTreeMap<Bloom, i32>>,
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "null_as_empty"
+    )]
+    pub answer_formats: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+}
+
+impl SessionOptions {
+    /// Checked with the worksheet settings' own rules (fixed labels, 3–30 questions, 0–12 per
+    /// level and 3–30 in all, an objective of at most 300 characters) and put in their order:
+    /// levels in Bloom order without duplicates, formats in label order, the objective trimmed
+    /// (empty is none).
+    pub fn normalised(&self) -> Result<SessionOptions, String> {
+        let s = Settings {
+            answer_formats: self.answer_formats.clone(),
+            bloom: self.bloom.clone(),
+            question_count: self.question_count,
+            bloom_counts: self.bloom_counts.clone(),
+            objective: self.objective.clone(),
+            ..Settings::default()
+        }
+        .normalised()?;
+        Ok(SessionOptions {
+            bloom: s.bloom,
+            question_count: s.question_count,
+            bloom_counts: s.bloom_counts,
+            answer_formats: s.answer_formats,
+            objective: s.objective,
+        })
+    }
+
+    /// The partial settings of a worksheet the session makes: `output` (none for the full
+    /// worksheet) and the options that are set. An assessment keeps its own answer formats
+    /// (`with_formats = false`). `None` when there is nothing to set.
+    pub fn settings_patch(
+        &self,
+        output: Option<Output>,
+        with_formats: bool,
+    ) -> Option<SettingsPatch> {
+        let patch = SettingsPatch {
+            output,
+            bloom: (!self.bloom.is_empty()).then(|| self.bloom.clone()),
+            question_count: self.question_count.map(Some),
+            bloom_counts: self.bloom_counts.clone().map(Some),
+            answer_formats: (with_formats && !self.answer_formats.is_empty())
+                .then(|| self.answer_formats.clone()),
+            objective: self.objective.clone().map(Some),
+            ..SettingsPatch::default()
+        };
+        (patch != SettingsPatch::default()).then_some(patch)
+    }
+}
+
+// ---------------------------------------------------------------- 教學套件
+
+/// Why a 教學套件 turn failed, from what went wrong with each part; `None` when both parts
+/// succeeded.
+pub fn kit_error(activity: Option<&str>, worksheet: Option<&str>) -> Option<String> {
+    match (activity, worksheet) {
+        (None, None) => None,
+        (Some(a), None) => Some(format!("教學套件的課堂活動沒有完成：{a}")),
+        (None, Some(w)) => Some(format!("教學套件的分層學習單沒有完成：{w}")),
+        (Some(a), Some(w)) => Some(format!("教學套件沒有完成。課堂活動：{a}分層學習單：{w}")),
+    }
 }
 
 // ---------------------------------------------------------------- caps
@@ -98,6 +243,8 @@ pub const OPTION_SCRIPT_LINES: usize = 4;
 pub const STEP_SCRIPT_LINES: usize = 6;
 pub const SCRIPT_LINE_CHARS: usize = 200;
 pub const STUCK_TIP_CHARS: usize = 200;
+/// Bloom levels of one step.
+pub const STEP_BLOOM_MAX: usize = 3;
 pub const MINUTES_MIN: i64 = 1;
 pub const MINUTES_MAX: i64 = 50;
 
@@ -150,6 +297,10 @@ pub struct Step {
     pub options: Vec<StepOption>,
     pub script: Vec<String>,
     pub stuck_tip: String,
+    /// The Bloom levels the step works on (≤3, in Bloom order). Plans made with version 1 of
+    /// `prep_activity` have none.
+    #[serde(default)]
+    pub bloom: Vec<Bloom>,
 }
 
 /// 規劃教學活動: what the teacher gets (`result` of an `activity` turn).
@@ -230,6 +381,9 @@ pub struct RawStep {
     pub title: String,
     pub minutes: i64,
     pub idea: String,
+    /// Version 2 of the prompt; an id outside the set is dropped by the server.
+    #[serde(default)]
+    pub bloom: Vec<String>,
     pub options: Vec<RawOption>,
     pub script: Vec<String>,
     pub stuck_tip: String,
@@ -275,7 +429,13 @@ fn codes_schema(allowed: &[String], max: usize) -> Value {
     json!({ "type": "array", "items": enum_of(&labels), "maxItems": max })
 }
 
-/// `prep_activity`: curriculum codes only from `candidates` (enum), every string and array capped.
+/// The six Bloom ids, in Bloom order.
+fn bloom_ids() -> Vec<&'static str> {
+    Bloom::ALL.iter().map(|b| b.as_str()).collect()
+}
+
+/// `prep_activity`: curriculum codes only from `candidates` (enum), Bloom levels only from the
+/// six ids (enum, 1–3 per step), every string and array capped.
 pub fn activity_schema(candidates: &[String]) -> Value {
     let option = obj(vec![
         ("title", s_max(STEP_TITLE_CHARS)),
@@ -291,6 +451,15 @@ pub fn activity_schema(candidates: &[String]) -> Value {
         ("title", s_max(STEP_TITLE_CHARS)),
         ("minutes", int()),
         ("idea", s_max(IDEA_CHARS)),
+        (
+            "bloom",
+            json!({
+                "type": "array",
+                "items": enum_of(&bloom_ids()),
+                "minItems": 1,
+                "maxItems": STEP_BLOOM_MAX,
+            }),
+        ),
         (
             "options",
             json!({ "type": "array", "items": option, "maxItems": OPTIONS_MAX }),
@@ -399,10 +568,24 @@ fn clamp_minutes(m: i64) -> i64 {
     m.clamp(MINUTES_MIN, MINUTES_MAX)
 }
 
+/// A step's Bloom levels: ids outside the set and repeats dropped, the first three the model
+/// wrote kept, then put in Bloom order.
+pub fn step_bloom(raw: &[String]) -> Vec<Bloom> {
+    let mut out: Vec<Bloom> = Vec::new();
+    for b in raw.iter().filter_map(|s| Bloom::parse(s)) {
+        if !out.contains(&b) && out.len() < STEP_BLOOM_MAX {
+            out.push(b);
+        }
+    }
+    out.sort();
+    out
+}
+
 /// The checked plan, or what is wrong with it (for the retry). Codes outside `candidates` are
 /// dropped, a step whose phase is not one of the three labels is dropped, minutes are clamped
-/// to 1–50, options are kept for 引起動機 only, and every text is cleaned and capped. The
-/// curriculum list is filled from `candidates` (text from the knowledge base), in their order.
+/// to 1–50, options are kept for 引起動機 only, a step keeps at most three Bloom levels (in
+/// Bloom order), and every text is cleaned and capped. The curriculum list is filled from
+/// `candidates` (text from the knowledge base), in their order.
 pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<ActivityPlan, String> {
     let allowed: HashSet<&str> = candidates.iter().map(|c| c.code.as_str()).collect();
     let goals: Vec<Goal> = raw
@@ -453,6 +636,7 @@ pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<Activit
                 options,
                 script: clean_lines(&s.script, STEP_SCRIPT_LINES, SCRIPT_LINE_CHARS),
                 stuck_tip: clean_text(&s.stuck_tip, STUCK_TIP_CHARS),
+                bloom: step_bloom(&s.bloom),
             }
         })
         .filter(|s| !s.title.is_empty() || !s.idea.is_empty())
@@ -560,6 +744,14 @@ mod tests {
             title: format!("**{phase}**"),
             minutes,
             idea: "想法".into(),
+            bloom: vec![
+                "evaluate".into(),
+                "remember".into(),
+                "Thinking".into(),
+                "remember".into(),
+                "apply".into(),
+                "create".into(),
+            ],
             options: (0..options)
                 .map(|i| RawOption {
                     title: format!("選項{i}"),
@@ -620,6 +812,11 @@ mod tests {
         assert!(plan.steps[1].options.is_empty());
         assert_eq!(plan.steps[0].script.len(), 6);
         assert_eq!(plan.steps[0].title, PHASE_WARMUP);
+        // At most three levels, the first ones written, in Bloom order.
+        assert_eq!(
+            plan.steps[0].bloom,
+            [Bloom::Remember, Bloom::Apply, Bloom::Evaluate]
+        );
         let ideas = warmup_ideas(&plan);
         assert_eq!(ideas.len(), 3);
         assert_eq!(ideas[0], "選項0：做法");
@@ -634,6 +831,92 @@ mod tests {
         };
         let err = clean_plan(&raw, &candidates()).unwrap_err();
         assert!(err.contains("goals") && err.contains("steps"), "{err}");
+    }
+
+    #[test]
+    fn options_are_checked_with_the_settings_rules() {
+        let o = SessionOptions {
+            bloom: vec![Bloom::Evaluate, Bloom::Remember, Bloom::Evaluate],
+            answer_formats: vec!["簡答題".into(), "選擇題".into()],
+            objective: Some("  能說出主旨  ".into()),
+            ..SessionOptions::default()
+        }
+        .normalised()
+        .unwrap();
+        assert_eq!(o.bloom, [Bloom::Remember, Bloom::Evaluate]);
+        assert_eq!(o.answer_formats, ["選擇題", "簡答題"]);
+        assert_eq!(o.objective.as_deref(), Some("能說出主旨"));
+        let blank = SessionOptions {
+            objective: Some(" ".into()),
+            ..SessionOptions::default()
+        };
+        assert_eq!(blank.normalised().unwrap(), SessionOptions::default());
+        for bad in [
+            SessionOptions {
+                question_count: Some(2),
+                ..SessionOptions::default()
+            },
+            SessionOptions {
+                bloom_counts: Some(BTreeMap::from([(Bloom::Apply, 13)])),
+                ..SessionOptions::default()
+            },
+            SessionOptions {
+                answer_formats: vec!["連連看".into()],
+                ..SessionOptions::default()
+            },
+            SessionOptions {
+                objective: Some("字".repeat(301)),
+                ..SessionOptions::default()
+            },
+        ] {
+            assert!(bad.normalised().is_err(), "{bad:?}");
+        }
+        // Serialised without the keys that are not set.
+        assert_eq!(json!(SessionOptions::default()), json!({}));
+        let parsed: SessionOptions =
+            serde_json::from_value(json!({ "bloom": null, "question_count": null })).unwrap();
+        assert_eq!(parsed, SessionOptions::default());
+        assert!(
+            serde_json::from_value::<SessionOptions>(json!({ "bloom": ["thinking"] })).is_err()
+        );
+    }
+
+    #[test]
+    fn options_become_a_settings_patch() {
+        assert_eq!(SessionOptions::default().settings_patch(None, true), None);
+        let o = SessionOptions {
+            question_count: Some(6),
+            answer_formats: vec!["簡答題".into()],
+            objective: Some("O".into()),
+            ..SessionOptions::default()
+        };
+        let p = o.settings_patch(Some(Output::Tiered), true).unwrap();
+        assert_eq!(p.output, Some(Output::Tiered));
+        assert_eq!(p.question_count, Some(Some(6)));
+        assert_eq!(p.answer_formats, Some(vec!["簡答題".to_string()]));
+        assert_eq!(p.objective, Some(Some("O".to_string())));
+        assert_eq!(p.bloom, None, "not set: the worksheet's own");
+        assert_eq!(p.bloom_counts, None);
+        assert_eq!(o.settings_patch(None, false).unwrap().answer_formats, None);
+    }
+
+    #[test]
+    fn labels_and_kit_errors() {
+        assert!(is_bare_label(" 閱讀理解題 "));
+        assert!(is_bare_label(chip_label(KIND_KIT)));
+        assert!(!is_bare_label("閱讀理解題，8 題"));
+        assert_eq!(output_of(KIND_KIT), Some(Output::Tiered));
+        assert_eq!(output_of(KIND_WORKSHEET), None);
+        assert!(is_worksheet_kind(KIND_KIT) && !is_worksheet_kind(KIND_ACTIVITY));
+        assert_eq!(kit_error(None, None), None);
+        assert_eq!(
+            kit_error(Some("A。"), None).unwrap(),
+            "教學套件的課堂活動沒有完成：A。"
+        );
+        assert_eq!(
+            kit_error(Some("A。"), Some("W。")).unwrap(),
+            "教學套件沒有完成。課堂活動：A。分層學習單：W。"
+        );
     }
 
     #[test]

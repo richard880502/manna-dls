@@ -1627,19 +1627,30 @@ prompt key：`worksheet_template_outline`、`worksheet_template_details`、`work
 
 老師帶著這一課的課文（上傳、從教材庫選或貼上；沒有課文時也可以只寫主題），按一個動作（做學習單／規劃教學活動／設計評量／找教學資源），或直接問 AI。每一個請求是對話裡的一**輪**（turn），結果依序顯示；之後可以接著做下一步，或在底部輸入框用一句話修改剛做好的學習單。互動方式參考築學網。做出來的學習單就是一般的學習單：編輯器、檢查、匯出、版型、班級／單元／SOP 全部照舊。
 
+**Phase 2.7 的擴充**（Migration `0015_prep_bloom.sql`，以下各節已併入）：新的輪次 `comprehension`（閱讀理解題）、`tiered`（分層練習）、`kit`（教學套件＝課堂活動＋分層學習單）；對話的**出題選項** `options`（帶進對話做的每一份學習單）；活動規劃的每一步標上 Bloom 層次（`prep_activity` 第 2 版）；教學套件下載成一份 DOCX；`next` 改成 `comprehension, tiered, activity, kit, worksheet`。
+
 ## 資料
 
-- `prep_sessions`：`id`、`teacher_id`（只有擁有者能存取，其他人的 id 回 404）、`title`（≤200；預設為教材標題，沒有教材時為主題，再沒有就是第一個請求的前 40 字）、`material_id`（教材庫教材；教材刪除時變成 null）、`topic`（≤200，沒有教材時用）、`class_id`、`template_id`（刪除時都變成 null）、`created_at`、`updated_at`。
+- `prep_sessions`：`id`、`teacher_id`（只有擁有者能存取，其他人的 id 回 404）、`title`（≤200；預設為教材標題，沒有教材時為主題，再沒有就是第一個請求的前 40 字）、`material_id`（教材庫教材；教材刪除時變成 null）、`topic`（≤200，沒有教材時用）、`class_id`、`template_id`（刪除時都變成 null）、`options`（JSONB，出題選項，預設 `{}`）、`created_at`、`updated_at`。
 - `prep_turns`：`id`、`session_id`（刪除對話時一起刪除）、`seq`（對話內從 1 起編號）、`kind`、`request`（≤2000：老師打的字，或按鈕的名稱）、`status`（`running`｜`done`｜`failed`）、`error`（失敗原因，中文）、`worksheet_id`（這一輪做出的學習單）、`result`（JSONB）、`interaction_id`（產生結果的 `ai_interactions`）、`created_at`、`finished_at`。同一個對話同時只會有一輪在跑（部分唯一索引）。
 - **刪除對話是真的刪除**：對話與所有輪次都刪掉。在對話裡做的學習單完整保留（仍在 /worksheets），只是 `prep_session_id` 變成 null。
 - `worksheets` 新增 `prep_session_id`（做出這份學習單的對話）。`worksheet_versions.cause` 新增 `revise`。
-- `prompt_versions` 新增 `prep_activity`、`prep_ask`、`prep_revise`。`scaffolds` 新增 `SC-PREP-ACTIVITY`、`SC-PREP-ASK`、`SC-PREP-REVISE`。
+- `prompt_versions` 新增 `prep_activity`（第 1、2 版）、`prep_ask`、`prep_revise`。`scaffolds` 新增 `SC-PREP-ACTIVITY`、`SC-PREP-ASK`、`SC-PREP-REVISE`。
+- `prep_turns.kind` 多了 `comprehension`、`tiered`、`kit`（`0015_prep_bloom.sql`）。
 - 每次模型呼叫一列 `ai_interactions`（`module` = prompt key）；輸入快照裡的教材（以及由教材衍生的學習單內容、先前的對話摘要）只記字數與雜湊。檢索記在 `retrieval_logs`（查詢文字含教材時同樣只記字數與雜湊）。
 
 ## 型別
 
 ```ts
-type PrepKind = "worksheet" | "assessment" | "activity" | "resources" | "ask" | "revise";
+type PrepKind = "worksheet" | "assessment" | "activity" | "resources" | "ask" | "revise"
+              | "comprehension" | "tiered" | "kit";
+interface PrepSessionOptions {     // 出題選項；沒有設定的鍵不會出現（都沒設定時是 {}）
+  bloom?: Bloom[];                 // 依 Bloom 順序、去重；沒有＝六個層次
+  question_count?: number;         // 3–30；沒有＝該產出的預設（閱讀理解題 8、分層練習 12）
+  bloom_counts?: Partial<Record<Bloom, number>>;   // 各 0–12、合計 3–30；有值時取代 bloom 與 question_count
+  answer_formats?: string[];       // 固定標籤（作答方式），依標籤順序；沒有＝每個層次適合的
+  objective?: string;              // 學習目標（≤300，前後空白去掉）
+}
 interface PrepSessionSummary {
   id: number; title: string;
   material: { id: number; title: string } | null; topic: string | null;
@@ -1659,8 +1670,9 @@ interface PrepTurn {
 interface PrepSession extends PrepSessionSummary {
   turns: PrepTurn[];               // 依 seq
   running: boolean;
-  next: PrepKind[];                // 建議的下一步：[worksheet, activity, assessment, resources] 中這個對話還沒有 done 的，
-                                   // 依這個順序；前三個只在有教材時出現，resources 只在有教材或主題時出現
+  next: PrepKind[];                // 建議的下一步：[comprehension, tiered, activity, kit, worksheet] 中這個對話還沒有 done 的，
+                                   // 依這個順序；只在有教材時出現（沒有教材時是 []）。assessment、resources 仍是有效的 kind，但不再建議
+  options: PrepSessionOptions;     // 只在 PrepSession（列表的 PrepSessionSummary 沒有）
 }
 interface ActivityPlan {
   title: string;                                                    // ≤100
@@ -1673,6 +1685,7 @@ interface ActivityPlan {
     options: Array<{ title: string; idea: string; script: string[]; minutes: number }>;  // 0–3，只有引起動機；script 每行 ≤200、≤4 行
     script: string[];                                               // ≤6 行、每行 ≤200，英文課堂用語
     stuck_tip: string;                                              // ≤200，卡住了怎麼辦；可為 ""
+    bloom: Bloom[];                                                 // 這一步練到的 Bloom 層次，≤3，依 Bloom 順序（第 1 版 prompt 做的規劃讀出來是 []）
   }>;                                                               // 3–6
   curriculum: Array<{ code: string; text: string }>;                // 實際引用的條目，條文由知識庫帶出
 }
@@ -1691,22 +1704,25 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | Method | Path | 請求 | 回應 |
 |---|---|---|---|
 | GET | `/api/prep-sessions` | – | `{ sessions: PrepSessionSummary[] }`，依 `updated_at` 新到舊 |
-| POST | `/api/prep-sessions` | `{ kind, request?, material_id?, material?: { title?, text }, topic?, class_id?, template_id? }` | 201 `PrepSession`（第一輪已開始） |
+| POST | `/api/prep-sessions` | `{ kind, request?, material_id?, material?: { title?, text }, topic?, class_id?, template_id?, options?: PrepSessionOptions }` | 201 `PrepSession`（第一輪已開始） |
 | GET | `/api/prep-sessions/:id` | – | `PrepSession`（輪詢用） |
-| PATCH | `/api/prep-sessions/:id` | `{ title?, class_id?: number \| null, template_id?: number \| null }` | `PrepSession`（之後的輪次才會用到） |
+| PATCH | `/api/prep-sessions/:id` | `{ title?, class_id?: number \| null, template_id?: number \| null, options?: PrepSessionOptions \| null }` | `PrepSession`（之後的輪次才會用到） |
 | DELETE | `/api/prep-sessions/:id` | – | `{ ok: true }`（真的刪除；學習單保留） |
 | POST | `/api/prep-sessions/:id/turns` | `{ kind?, request }` | 202 `PrepSession` |
+| GET | `/api/prep-sessions/:id/turns/:turn_id/kit?format=docx` | – | 教學套件的 DOCX（見 `kit`） |
 
 **建立對話**
 
 - `kind` 不可以是 `revise`（400）。`request` 選填（≤2000）；沒有時記成按鈕名稱（做學習單、設計評量、規劃教學活動、找教學資源）。
 - 教材：`material_id` 必須是自己教材庫裡、已擷取到文字的教材（不是自己的 → 400「找不到這份教材。」；讀不到文字 → 400「這份檔案讀不到文字（可能是掃描檔）…」）。`material`（貼上的文字）先存進教材庫（和建立學習單時一樣），再當作 `material_id`；兩者都給時以 `material_id` 為準。
 - `class_id` 不是自己的 → 404；`template_id` 必須是自己的、`ready` 的版型 → 否則 400。
-- **需要什麼（400，訊息為中文）**：`worksheet`、`assessment`、`activity` 需要教材；`resources` 需要教材或 `topic`；`ask` 需要 `request`。
+- **需要什麼（400，訊息為中文）**：`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`、`activity` 需要教材；`resources` 需要教材或 `topic`；`ask` 需要 `request`。
+- **出題選項 `options`**：用學習單設定的同一套規則檢查（400，訊息同「Phase 2.7」的驗證：「題數需為 3 到 30 題；也可以不填。」「每個 Bloom 層次的題數需為 0 到 12 題，合計 3 到 30 題。」「學習目標最多 300 字。」、作答方式不是固定標籤、Bloom id 不在表內），任何一個不合格就整個請求 400，什麼都不建立。各鍵可以省略或送 `null`（＝沒有設定）；`objective` 空字串＝沒有。存起來的是整理過的值（層次依 Bloom 順序、作答方式依標籤順序），`PrepSession.options` 原樣回傳。
+- PATCH 的 `options` **整份取代**（`null` 或 `{}` 清空）；沒給 `options` 就不變。之後的輪次才會用到。
 
 **新增一輪**
 
-- 沒有 `kind`（底部輸入框）：對話裡有學習單／評量的輪次 → `revise`，否則 → `ask`。`ask`、`revise` 需要 `request`；其他 kind 沒有 `request` 時記成按鈕名稱。需要什麼的規則同上，用的是對話目前的教材、主題、班級與版型。
+- 沒有 `kind`（底部輸入框）：對話裡有做出學習單的輪次（`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`）→ `revise`，否則 → `ask`。`ask`、`revise` 需要 `request`；其他 kind 沒有 `request` 時記成按鈕名稱。需要什麼的規則同上，用的是對話目前的教材、主題、班級與版型。
 - 409：另一輪還在跑（「Manna 還在處理上一個請求…」）；`revise` 但對話裡沒有學習單；`revise` 但那份學習單正在產生。
 
 **背景與輪詢**：每一輪都在背景執行，前端在有輪次 `running` 時每 2 秒 `GET /api/prep-sessions/:id`。伺服器重啟會中斷工作：`running` 超過 `8 × AI_TIMEOUT_SECS + 60` 秒的輪次，下次讀取時改成 `failed`（「這次處理中斷了…請按「再試一次」」）。失敗的輪次可以用同樣的 `kind` 與 `request` 再送一次。
@@ -1717,13 +1733,39 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 用建立學習單的同一段程式（`material_id` = 對話的教材，`class_id`、`template_id` = 對話的設定）建立學習單，再開始產生（等同 `POST /api/worksheets/:id/generate`）。`worksheet_id` 立刻有值；學習單產生中這一輪是 `running`，工作結束就是 `done`（即使某個區塊失敗：區塊的 `message` 會說明），只有建立或開始失敗時是 `failed`（例如教材超過 40 段）。對話裡已有 `done` 的 `activity`、而且沒有用版型時，那份規劃的引起動機想法（`標題：想法`，有選項時是每個選項）放進學習單的 `brief.warmup`。
 
+**對話做的每一份學習單**（`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`）都帶入：
+
+- 出題選項：`settings` 的 `bloom`、`question_count`、`bloom_counts`、`answer_formats`、`objective`（等同 `POST /api/worksheets { settings }` 的部分設定；沒有設定的鍵維持預設）。`assessment` 的作答方式固定，不套用 `answer_formats`。
+- 「教師的要求」`request`：這一輪老師打的字；這一輪只是按鈕（`request` 是按鈕名稱）時，用對話**第一輪**的 `request`。按鈕或工具的名稱（做學習單、設計評量、規劃教學活動、找教學資源、直接問 AI、修改學習單、閱讀理解題、分層練習、課堂活動、教學套件、學習單、完整學習單）不算要求，學習單的 `request` 是 `""`。
+
+### `comprehension`（閱讀理解題）、`tiered`（分層練習）
+
+和 `worksheet` 一樣（學習單立刻建立、產生中 `running`、結束 `done`），但學習單的 `settings.output` 是 `comprehension`／`tiered`，依 Bloom 層次產生（見「Phase 2.7」）；**不用對話的版型**（版型只做完整學習單），也沒有暖身。標題是學習單預設的標題。
+
 ### `assessment`（設計評量）
 
 和 `worksheet` 一樣，但：標題「評量：<教材標題>」，不用版型，`settings` 固定為 `student_tasks` = 理解內容、字彙練習、文法／句型練習，`answer_formats` = 選擇題、是非題、填空題、配對題、簡答題，`generation` = 顯示學習目標（沒有暖身），`levels` = 一般版。
 
 ### `activity`（規劃教學活動）
 
-一次呼叫（`prep_activity`，`max_tokens` 6000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）。輸出 `ActivityPlan`（不含 `curriculum`），schema 裡每個字串與陣列都有 `maxLength`／`maxItems`，`curriculum_codes` 是候選代碼的 enum。伺服器檢查：不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。沒有目標或可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。
+一次呼叫（`prep_activity` 第 2 版，`max_tokens` 6000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、學習目標（`options.objective`，變數 `{{teacher_objective}}`）與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`；沒有時都是「（沒有）」）。輸出 `ActivityPlan`（不含 `curriculum`），schema 裡每個字串與陣列都有 `maxLength`／`maxItems`，`curriculum_codes` 是候選代碼的 enum，每一步的 `bloom` 是六個 id 的 enum（1–3 個，寫在 `idea` 之後）；需要分行的內容（`script`）是陣列。伺服器檢查：不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；`bloom` 去掉重複、留模型寫的前 3 個、再依 Bloom 順序排；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。沒有目標或可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。
+
+### `kit`（教學套件）
+
+一次做兩件事：**課堂活動**（和 `activity` 相同的呼叫，結果在 `result`）與**分層學習單**（和 `tiered` 相同，學習單在 `worksheet`）。學習單在請求當下建立並開始產生（`worksheet_id` 立刻有值），活動規劃同時在背景進行。
+
+- 兩者都結束前這一輪是 `running`。活動規劃一做好，`result` 就有值（輪詢時可以先顯示）；`error` 只在這一輪結束後才出現。
+- 兩者都成功 → `done`。任何一個失敗 → `failed`，成功的那一部分保留可見（`result` 或 `worksheet`）。`error`：「教學套件的課堂活動沒有完成：…」「教學套件的分層學習單沒有完成：…」，兩個都失敗時「教學套件沒有完成。課堂活動：…分層學習單：…」。分層學習單失敗是指：建立或開始失敗（例如教材超過 40 段），或產生結束時一題都沒有。
+- 下一步建議裡 `kit` 做完不代表 `activity` 做完（反之亦然）。
+
+**下載**：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`（`format` 省略也是 DOCX；其他值 → 400「format 需為 docx。」）。一份 DOCX，每部分從新的一頁開始：
+
+1. **教學流程**：規劃的標題、學習目標（附課綱代碼）、每一步（階段｜標題（分鐘）、`Bloom：理解、應用`、教學思路、引起動機的選項、課堂用語、卡住了怎麼辦）、對應的課綱條目。
+2. **學生版（基礎版）**、**學生版（一般版）**、**學生版（進階版）**（學習單的每個版本）：和 `GET /api/worksheets/:id/export?audience=student` 印的一樣（基礎版有 Hint，沒有 Bloom 標記）。
+3. **教師版**：所有版本的題目各一次、依序編號，附答案、依據與 Bloom 標記（〔Bloom：分析 Analyze〕）與區塊的 Bloom 摘要；分層練習另印版本與層次的對應（「基礎版：記憶＋理解＋應用（附提示）；…」）。
+
+- 用的是學習單**目前**的版本（之後的修改、`revise` 都會反映）。檔名：`<對話標題>_教學套件.docx`（`Content-Disposition` 同學習單匯出，UTF-8 檔名）。
+- 404：不是自己的對話、或這一輪不在這個對話；400：這一輪不是 `kit`；409：這一輪還在跑（「教學套件還在產生，好了之後再下載。」）。`failed` 的教學套件照樣可以下載成功的那一部分（缺的部分印一行說明）；兩部分都沒有 → 409。
 
 ### `resources`（找教學資源）
 
@@ -1735,10 +1777,10 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ### `revise`（用一句話修改學習單）
 
-套用在對話裡最新一個 `worksheet`／`assessment` 輪次的學習單。一次呼叫（`prep_revise`，`max_tokens` 6000）。輸入：老師的指示、加段落標記的教材（學習單自己的教材快照）、學習單目前的區塊 `{block_id, label（學生版上的 A、B…）, kind, title, instructions, items[{answer_format, prompt, options, answer}]}`。輸出 `{ reply ≤300, changes ≤6: [{ block_id（enum）, title, instructions, items ≤12 }] }`。
+套用在對話裡最新一個做出學習單的輪次（`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`）的學習單。一次呼叫（`prep_revise`，`max_tokens` 6000）。輸入：老師的指示、加段落標記的教材（學習單自己的教材快照）、學習單目前的區塊 `{block_id, label（學生版上的 A、B…）, kind, title, instructions, items[{answer_format, prompt, options, answer}]}`。輸出 `{ reply ≤300, changes ≤6: [{ block_id（enum）, title, instructions, items ≤12 }] }`。
 
 - 每個 change 用照版型產生時的同一個檢查（`evaluate_section`，題數上限 12、不需要外部素材）：作答方式只能用固定標籤、選擇題的答案必須是選項之一、題幹不可含答案、音節題依字典修正…。有 change 沒通過時重試一次（附上沒通過的區塊與原因）；重試後還沒通過的 change 不套用，`reply` 後面加上「（B 區沒有改成：修改沒有通過學習單的檢查，維持原樣。）」。
-- 通過的 change 取代該區塊的 `title`、`instructions` 與 `items`：新題目 `origin = "ai"`、`levels` = 學習單的所有版本，出口卡的 `purpose` 依位置保留；鷹架與字詞保留。被取代的區塊先放進 `worksheet_block_history`（編輯器的「復原」照常可用），全部改動寫成**一個**新版本（`cause = "revise"`）。內容沒有實際改變的區塊不算。
+- 通過的 change 取代該區塊的 `title`、`instructions` 與 `items`：新題目 `origin = "ai"`；出口卡的 `purpose`、題目的 `bloom`、`hint` 與 **`levels`（出現在哪些版本）依位置保留**（取代同一個位置的題目）；多出來的新題目 `bloom` = 區塊的層次（依 Bloom 層次產生的區塊才有），分層練習的學習單依那個層次對應的版本（記憶→基礎版；理解、應用→三個版本；分析→一般版、進階版；評鑑、創造→進階版），其他情況是學習單的所有版本（保留的版本只取學習單現有的版本，一個都不剩時也是所有版本）；鷹架與字詞保留。被取代的區塊先放進 `worksheet_block_history`（編輯器的「復原」照常可用），全部改動寫成**一個**新版本（`cause = "revise"`）。內容沒有實際改變的區塊不算。
 - 沒有改動 → 不新增版本（`reply` 本身就是回答，例如一個澄清問題）。`result = { reply, changed_block_ids, version_no }`。
 - 呼叫期間學習單開始產生時，這一輪 `failed`，不套用。
 
@@ -1749,16 +1791,18 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | `FAKE_BLOCK` | activity／ask：兩次都交出不能用的輸出 → `failed` |
 | `FAKE_BLOCK_ONCE` | activity／ask：第一次不能用，重試成功 |
 | `FAKE_PREP_BAD_REVISE` | revise：兩次的 change 都用了固定標籤以外的作答方式 → 不套用，`reply` 說明 |
+| `FAKE_PREP_NO_PLAN` | activity／kit：活動規劃兩次都不能用（不影響學習單的呼叫）→ `activity` 是 `failed`；`kit` 是 `failed`、學習單保留 |
+| `FAKE_PREP_REVISE_ADD` | revise：改的是**最後一個**有題目的區塊，並在最後加一題 |
 
-假模型的活動規劃引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
+假模型的活動規劃引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）；每一步的 `bloom` 順序打亂、有重複，發展活動寫了 4 個（伺服器留前 3 個並排序）。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
 
 ## usage_logs 新事件
 
-`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
 
 ## 試用真模型
 
-prompt key：`prep_activity`、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`。
+prompt key：`prep_activity`（第 2 版）、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`；教學套件的 DOCX 在 `prep::kit`（用 `worksheet::export::combined_docx`）。
 
 ---
 
@@ -1938,3 +1982,15 @@ interface WsSheetBlock { /* …既有欄位… */
 ## 試用真模型
 
 prompt key：`worksheet_bloom_level`、`worksheet_bloom_check`、`worksheet_tasks`（第 2 版）。程式進入點：`worksheet::ai::start_generation`（`settings.output` 是 `comprehension`／`tiered` 時走 `worksheet::ai::bloom`）；題數分配、版本對應、不符的定義與 JSON schema 在 `worksheet::bloom`，檢查在 `worksheet::checks::evaluate_bloom_level`／`evaluate_bloom_check`。
+
+## 備課對話（`0015_prep_bloom.sql`）
+
+備課對話用上面的引擎做學習單，細節併入「Phase 2.6：備課對話」：
+
+- 新的輪次 `comprehension`、`tiered`（`settings.output` 為該值的學習單，不用對話的版型）與 `kit`（教學套件：活動規劃＋分層學習單，兩者都結束才不是 `running`；任何一個失敗是 `failed`，成功的部分保留）。
+- 對話的出題選項 `options: { bloom?, question_count?, bloom_counts?, answer_formats?, objective? }`（建立與 PATCH 都可以給，用本節的驗證規則），和對話的「教師的要求」一起帶進對話做的每一份學習單（`settings` 的同名欄位與 `request`）；`objective` 也送進活動規劃。
+- `prep_activity` 第 2 版：每一步多了 `bloom`（≤3，enum，依 Bloom 順序），prompt 多了 `{{teacher_objective}}`、`{{teacher_request}}`。
+- `next` 的順序：`comprehension, tiered, activity, kit, worksheet`（都需要教材）。
+- 教學套件下載：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`，一份 DOCX：教學流程、每個版本的學生版、教師版（答案與 Bloom 標記）。
+- `revise` 適用最新一份任何種類的學習單；改過的題目保留原本的版本（分層練習不會變成三個版本都有）。
+- 資料：`prep_sessions.options`（JSONB，預設 `{}`）；`prep_turns.kind` 多三個值；`prompt_versions` 新增 `prep_activity` 第 2 版（第 1 版保留）。
