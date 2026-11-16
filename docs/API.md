@@ -73,7 +73,7 @@ interface PlanSuggestOutput { kb_empty: boolean; suggestions: PlanSuggestion[]; 
 ### 公開
 | 方法 | 路徑 | 請求 | 回應 |
 |---|---|---|---|
-| GET | `/api/health` | – | `{ ok: boolean, db: boolean }` |
+| GET | `/api/health` | – | `{ ok: boolean, db: boolean, commit: string }`（`commit`：映像建置時的 commit，沒有時為 `"unknown"`；見 README「`/api/health` 的 commit」） |
 | GET | `/api/config` | – | `{ demo_mode: boolean, ai_enabled: boolean, ai_provider: string, ai_model: string }` |
 | POST | `/api/auth/login` | `{ code: string }` | `{ token: string, teacher: Teacher }`；錯誤碼 401 |
 | POST | `/api/auth/logout` | – | `{ ok: true }` |
