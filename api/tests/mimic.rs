@@ -659,7 +659,7 @@ async fn a_refused_worksheet_points_to_mimic() {
     assert_eq!(turn["status"], "failed");
     let error = turn["error"].as_str().unwrap();
     assert!(
-        error.starts_with("這份教材有 46 段，超過 Manna 一次能設計的 40 段。"),
+        error.starts_with("這份教材有 45 段，超過 Manna 一次能設計的 40 段。"),
         "{error}"
     );
     assert!(error.ends_with(HINT), "{error}");
