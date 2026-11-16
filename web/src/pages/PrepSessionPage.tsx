@@ -5,21 +5,22 @@ import type { CreatePrepTurnRequest, PrepSession, PrepTurn, UpdatePrepSessionReq
 import { ErrorText, Loading } from "../components/common";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
+import { KitDownload } from "../components/prep/KitDownload";
 import { ActivityCard, AskCard, ResourcesCard, ReviseCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
 import {
-  ACTION_LABEL,
   AI_DISCLAIMER,
   DELETE_CONFIRM,
   FOLLOW_PLACEHOLDER,
   KIND_LABEL,
+  NEXT_LABEL,
   REVISE_PLACEHOLDER,
   WORKING_LINE,
   activityOf,
   answerOf,
   hasWorksheet,
-  isActionKind,
+  isNextKind,
   isWorksheetKind,
   prepConfig,
   replyOf,
@@ -147,7 +148,7 @@ function PrepSessionView({ id }: { id: number }) {
   const running = session.running;
   const locked = running || sending;
   const targets = reviseTargets(session.turns);
-  const next = session.next.filter(isActionKind);
+  const next = session.next.filter(isNextKind);
 
   async function send(body: CreatePrepTurnRequest): Promise<boolean> {
     setSending(true);
@@ -206,18 +207,47 @@ function PrepSessionView({ id }: { id: number }) {
     ...(session.class && !(classes ?? []).some((c) => c.id === session.class?.id) ? [session.class] : []),
   ];
 
+  function worksheetCard(turn: PrepTurn) {
+    const wsId = turn.worksheet?.id;
+    const lastRevise = [...session!.turns].reverse().find((t) => t.kind === "revise" && targets.get(t.id) === wsId);
+    return (
+      <WorksheetCard
+        turn={turn}
+        refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}`}
+        highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
+        onLabels={onLabels}
+      />
+    );
+  }
+
   function result(turn: PrepTurn) {
+    // 教學套件: the activity plan and the tiered worksheet, one download for both.
+    if (turn.kind === "kit") {
+      const kitPlan = activityOf(turn);
+      return (
+        <div className="prep-kit">
+          {turn.status !== "failed" && (
+            <KitDownload sessionId={id} turnId={turn.id} ready={turn.status === "done"} />
+          )}
+          {kitPlan ? (
+            <ActivityCard plan={kitPlan} interactionId={turn.interaction_id} />
+          ) : (
+            turn.status === "running" && (
+              <p className="manna-label prep-working" role="status">
+                <span className="star is-working" aria-hidden="true" />
+                Manna 正在規劃教學活動…
+              </p>
+            )
+          )}
+          {(turn.worksheet || turn.status === "running") && worksheetCard(turn)}
+          {turn.status === "failed" && failed(turn)}
+        </div>
+      );
+    }
     if (isWorksheetKind(turn.kind) && (turn.status !== "failed" || turn.worksheet)) {
-      const wsId = turn.worksheet?.id;
-      const lastRevise = [...session!.turns].reverse().find((t) => t.kind === "revise" && targets.get(t.id) === wsId);
       return (
         <>
-          <WorksheetCard
-            turn={turn}
-            refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}`}
-            highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
-            onLabels={onLabels}
-          />
+          {worksheetCard(turn)}
           {turn.status === "failed" && failed(turn)}
         </>
       );
@@ -392,9 +422,9 @@ function PrepSessionView({ id }: { id: number }) {
                 type="button"
                 className="prep-chip"
                 disabled={locked}
-                onClick={() => void send({ kind, request: ACTION_LABEL[kind] })}
+                onClick={() => void send({ kind, request: NEXT_LABEL[kind] })}
               >
-                {ACTION_LABEL[kind]}
+                {NEXT_LABEL[kind]}
               </button>
             ))}
           </div>

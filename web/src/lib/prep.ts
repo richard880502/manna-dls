@@ -9,6 +9,7 @@ import type {
   PrepSession,
   PrepTurn,
 } from "../api/types";
+import { BLOOM_LABEL, BLOOM_ORDER } from "./bloom";
 
 /** How often a session with a running turn is asked for again. Tests shorten it. */
 export const prepConfig = { pollMs: 2000 };
@@ -34,7 +35,27 @@ export const KIND_LABEL: Record<PrepKind, string> = {
   ...ACTION_LABEL,
   ask: "問 AI",
   revise: "修改學習單",
+  comprehension: "閱讀理解題",
+  tiered: "分層練習",
+  kit: "教學套件",
 };
+
+/**
+ * 接下來可以 on the session page, in the server's `next` order (comprehension, tiered, activity,
+ * kit, worksheet). assessment and resources are still valid kinds, no longer suggested; an older
+ * server may still list them.
+ */
+export const NEXT_LABEL: Record<"comprehension" | "tiered" | "activity" | "kit" | "worksheet" | "assessment" | "resources", string> = {
+  comprehension: "閱讀理解題",
+  tiered: "分層練習",
+  activity: "課堂活動",
+  kit: "教學套件",
+  worksheet: "學習單",
+  assessment: "設計評量",
+  resources: "找教學資源",
+};
+export type NextKind = keyof typeof NEXT_LABEL;
+export const isNextKind = (kind: PrepKind): kind is NextKind => kind in NEXT_LABEL;
 
 export const ASK_PLACEHOLDER = "說說你想做什麼，例如：幫我想三個這一課的暖身活動";
 export const REVISE_PLACEHOLDER = "針對上面產出的內容，你有什麼想修改的嗎？";
@@ -46,7 +67,9 @@ export const OPTION_NAMES = ["選項一", "選項二", "選項三"];
 
 export const sessionTitle = (s: { title: string }) => s.title.trim() || "未命名的備課";
 
-export const isWorksheetKind = (kind: PrepKind) => kind === "worksheet" || kind === "assessment";
+/** Turns that make a worksheet (a 教學套件 makes one beside its activity plan). */
+export const isWorksheetKind = (kind: PrepKind) =>
+  kind === "worksheet" || kind === "assessment" || kind === "comprehension" || kind === "tiered" || kind === "kit";
 
 /** The session has a worksheet the bottom bar's words would revise. */
 export const hasWorksheet = (session: PrepSession) =>
@@ -55,7 +78,7 @@ export const hasWorksheet = (session: PrepSession) =>
 // A turn's result, read by its kind (the server sends one of four shapes).
 export function activityOf(turn: PrepTurn): ActivityPlan | null {
   const r = turn.result as Partial<ActivityPlan> | null;
-  return turn.kind === "activity" && r && Array.isArray(r.steps) ? (r as ActivityPlan) : null;
+  return (turn.kind === "activity" || turn.kind === "kit") && r && Array.isArray(r.steps) ? (r as ActivityPlan) : null;
 }
 
 export function resourcesOf(turn: PrepTurn): PrepResources | null {
@@ -86,7 +109,9 @@ export function changedBlocksLine(ids: string[], labels: Record<string, string> 
 
 /** One plan step as plain text, for 複製. */
 export function stepText(step: ActivityPlan["steps"][number]): string {
+  const bloom = BLOOM_ORDER.filter((l) => step.bloom?.includes(l)).map((l) => BLOOM_LABEL[l]);
   const lines = [`【${step.phase}】${step.title}（${step.minutes} 分鐘）`, step.idea];
+  if (bloom.length > 0) lines.push(`Bloom：${bloom.join("、")}`);
   step.options.forEach((o, i) => {
     lines.push(`${OPTION_NAMES[i] ?? `選項 ${i + 1}`}：${o.title}（${o.minutes} 分鐘）`, o.idea, ...o.script);
   });
