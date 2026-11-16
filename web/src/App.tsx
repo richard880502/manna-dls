@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { DemoBanner, ErrorText, Loading } from "./components/common";
 import { Layout } from "./components/Layout";
 import { AppProvider, useApp } from "./context/AppContext";
+import { AdminLibraryPage } from "./pages/AdminLibraryPage";
 import { AdminPage } from "./pages/AdminPage";
 import { ClassPage } from "./pages/ClassPage";
 import { ClassesPage } from "./pages/ClassesPage";
@@ -100,6 +101,8 @@ export function AppRoutes() {
         <Route path="worksheets/:worksheetId/check" element={<WorksheetCheckPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
+        {/* 教材與範本管理: pi and kb_manager seed 教材參考 and the platform 學習單範本. */}
+        <Route path="admin/library" element={<AdminLibraryPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
