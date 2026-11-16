@@ -142,7 +142,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     const { router } = await openLesson();
     await writeExitTicket(user, "要存的題目");
 
-    await user.click(navLink("班級"));
+    await user.click(navLink("班級與課例"));
     await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(savedText(api)).toBe("要存的題目");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -155,7 +155,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     const { router } = await openLesson();
     await writeExitTicket(user, "還沒存的題目");
 
-    await user.click(navLink("班級"));
+    await user.click(navLink("班級與課例"));
     const dialog = within(await screen.findByRole("alertdialog", { name: "還有沒儲存的內容" }));
     expect(dialog.getByText("有內容沒有存到。現在離開，這些內容就會遺失。")).toBeInTheDocument();
     expect(dialog.getByRole("button", { name: "留在這頁" })).toHaveFocus();
@@ -165,12 +165,12 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     expect(screen.getByRole("textbox", { name: "題目" })).toHaveValue("還沒存的題目");
 
     // Escape stays too.
-    await user.click(navLink("我的備課"));
+    await user.click(navLink("工作區"));
     await screen.findByRole("alertdialog");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 
-    await user.click(navLink("班級"));
+    await user.click(navLink("班級與課例"));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "不儲存，直接離開" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
   });
@@ -182,7 +182,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     const user = userEvent.setup();
     const { router } = await openLesson();
     await writeExitTicket(user, "要存的題目");
-    await user.click(navLink("班級"));
+    await user.click(navLink("班級與課例"));
     const dialog = within(await screen.findByRole("alertdialog"));
     await user.click(dialog.getByRole("button", { name: "儲存後離開" }));
     expect(await dialog.findByText("沒有儲存成功，所以還沒離開：伺服器暫時發生問題")).toBeInTheDocument();
@@ -212,7 +212,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
 
     await settleAutosave(user);
     expect(unload()).toBe(false);
-    await user.click(navLink("班級"));
+    await user.click(navLink("班級與課例"));
     await waitFor(() => expect(router.state.location.pathname).toBe("/classes"));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });

@@ -1812,6 +1812,17 @@ export interface CreatePrepSessionRequest {
   topic?: string;
   class_id?: number;
   template_id?: number;
+  /** 帶進這次備課做的每一份學習單（省略＝全部層次、自動題數） */
+  options?: {
+    bloom?: Array<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create">;
+    question_count?: number;
+    /** 每個層次的題數（0–12，合計 3–30）；有它就不看 bloom 與 question_count */
+    bloom_counts?: Partial<Record<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create", number>>;
+    /** 固定標籤（選擇題、是非題…）；省略＝自動 */
+    answer_formats?: string[];
+    /** 學習目標（≤300） */
+    objective?: string;
+  };
 }
 
 export interface UpdatePrepSessionRequest {

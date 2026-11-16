@@ -1,43 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router";
 import { useApp } from "../context/AppContext";
-import { can } from "../lib/permissions";
+import { loadSidebarCollapsed, saveSidebarCollapsed } from "../lib/storage";
 import { DemoBanner, Loading } from "./common";
+import { Icon } from "./Icon";
+import { Sidebar } from "./shell/Sidebar";
 
-interface NavEntry {
-  to: string;
-  label: string;
-  /** Which paths count as being inside this destination. */
-  match: (pathname: string) => boolean;
-}
-
-/**
- * The whole navigation: four destinations, nothing unbuilt. 備課 (the home page) starts a prep
- * conversation; 我的備課 lists them, and the worksheets they made (/worksheets) count as being
- * there. The full SOP path (class → unit → lesson → worksheet) lives under 班級, so units, lessons,
- * runs and the list of all units count as being inside it; materials have their own place under 教材.
- */
-export const NAV: NavEntry[] = [
-  { to: "/", label: "備課", match: (p) => p === "/" },
-  {
-    to: "/prep",
-    label: "我的備課",
-    match: (p) => p === "/prep" || p.startsWith("/prep/") || p.startsWith("/worksheets"),
-  },
-  // 我的學習單版型 live on the 教材 page; a template's own page counts as being there.
-  { to: "/materials", label: "教材", match: (p) => p.startsWith("/materials") || p.startsWith("/templates") },
-  {
-    to: "/classes",
-    label: "班級",
-    match: (p) =>
-      p.startsWith("/classes") ||
-      p.startsWith("/units") ||
-      p.startsWith("/lessons") ||
-      p.startsWith("/runs") ||
-      p === "/record",
-  },
-];
+const SIDEBAR_ID = "shell-sidebar";
 
 /** Working pages with two columns get the wider frame; the in-class console a narrower one. */
 function frameClass(pathname: string): string {
@@ -45,7 +15,9 @@ function frameClass(pathname: string): string {
   if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin|worksheets\/\d+)/.test(pathname)) return " is-wide";
   // 知識庫管理 is a list page: the default frame.
   if (pathname === "/worksheets" || pathname === "/preferences" || pathname === "/prep") return " is-narrow";
-  if (pathname === "/" || /^\/prep\/\d+/.test(pathname)) return " is-prep";
+  if (pathname === "/") return " is-home";
+  if (pathname.startsWith("/create/")) return " is-create";
+  if (/^\/prep\/\d+/.test(pathname)) return " is-prep";
   return "";
 }
 
@@ -54,9 +26,10 @@ interface ShellContext {
 }
 
 /**
- * Lets a page take over the top bar: what it renders here replaces the navigation and the account
- * links (the in-class console shows 「上課中」 and 「結束本節課」 instead). Outside the shell, for
- * example in a page rendered on its own, the content stays in the page.
+ * Lets a page take over the top bar: what it renders here replaces the navigation (the in-class
+ * console shows 「上課中」 and 「結束本節課」, and the sidebar and the menu button step aside, so
+ * nothing invites a stray tap during class). Outside the shell, for example in a page rendered on
+ * its own, the content stays in the page.
  */
 export function TopBarSlot({ children }: { children: ReactNode }) {
   const context = useOutletContext<ShellContext | null>();
@@ -64,65 +37,135 @@ export function TopBarSlot({ children }: { children: ReactNode }) {
   return context.topSlot ? createPortal(children, context.topSlot) : null;
 }
 
-export function Layout() {
-  const { teacher, logout, preferencesStatus } = useApp();
-  const { pathname } = useLocation();
-  const [topSlot, setTopSlot] = useState<HTMLElement | null>(null);
-
+/**
+ * A new page starts at the top; an address with #anchor (我的版型 → /materials#templates) scrolls
+ * to that section, and keeps it in view while the page above it is still loading, until the
+ * teacher scrolls herself.
+ */
+function useScrollOnNavigate(pathname: string, hash: string) {
   useEffect(() => {
-    try {
-      window.scrollTo({ top: 0 });
-    } catch {
-      // jsdom / old browsers
+    const id = decodeURIComponent(hash.replace(/^#/, ""));
+    if (!id) {
+      try {
+        window.scrollTo({ top: 0 });
+      } catch {
+        // jsdom / old browsers
+      }
+      return undefined;
     }
-  }, [pathname]);
+    let stopped = false;
+    const go = () => {
+      if (!stopped) document.getElementById(id)?.scrollIntoView?.({ block: "start" });
+    };
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(go) : null;
+    const stop = () => {
+      stopped = true;
+      observer?.disconnect();
+      window.clearTimeout(timer);
+      for (const type of ["wheel", "touchstart", "keydown"] as const) window.removeEventListener(type, stop);
+    };
+    const timer = window.setTimeout(stop, 2000);
+    for (const type of ["wheel", "touchstart", "keydown"] as const) window.addEventListener(type, stop, { passive: true });
+    observer?.observe(document.body);
+    go();
+    return stop;
+  }, [pathname, hash]);
+}
 
-  const current = (active: boolean) => (active ? ("page" as const) : undefined);
+/**
+ * The app shell: a left sidebar (wide screens: 248px, foldable to icons; narrow screens: a drawer
+ * opened from ☰ in the top bar) and the page beside it. Every signed-in page renders here.
+ */
+export function Layout() {
+  const { preferencesStatus } = useApp();
+  const location = useLocation();
+  const { pathname, hash } = location;
+  const [topSlot, setTopSlot] = useState<HTMLElement | null>(null);
+  const [collapsed, setCollapsed] = useState(loadSidebarCollapsed);
+  // The drawer belongs to the location it was opened at: any navigation closes it.
+  const [drawerAt, setDrawerAt] = useState<string | null>(null);
+  const drawerOpen = drawerAt === location.key;
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const sideRef = useRef<HTMLDivElement>(null);
+
+  useScrollOnNavigate(pathname, hash);
+
+  // The open drawer: Escape or a tap outside closes it. It does not hold focus in.
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    sideRef.current?.querySelector<HTMLElement>("a[href]")?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setDrawerAt(null);
+      menuRef.current?.focus();
+    };
+    const onPointer = (event: Event) => {
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && (sideRef.current?.contains(target) || menuRef.current?.contains(target))) return;
+      setDrawerAt(null);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+    };
+  }, [drawerOpen]);
+
+  const toggleCollapsed = () => {
+    setCollapsed((c) => {
+      saveSidebarCollapsed(!c);
+      return !c;
+    });
+  };
 
   return (
     <>
       <DemoBanner />
-      <header className="top">
-        <Link className="brand" to="/" aria-label="Manna 首頁">
-          <span className="star" aria-hidden="true" />
-          Manna
-        </Link>
-        <div className="top-slot" ref={setTopSlot} />
-        <nav className="top-nav" aria-label="主要導覽">
-          {NAV.map((item) => (
-            <Link key={item.to} to={item.to} aria-current={current(item.match(pathname))}>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="acct">
-          {can(teacher, "manage_knowledge") && (
-            <Link to="/knowledge" aria-current={current(pathname === "/knowledge")}>
-              知識庫管理
-            </Link>
-          )}
-          {can(teacher, "administer") && (
-            <Link to="/admin" aria-current={current(pathname === "/admin")}>
-              後台管理
-            </Link>
-          )}
-          <Link to="/preferences" aria-current={current(pathname === "/preferences")}>
-            {teacher && <span className="acct-id">{teacher.research_id} · </span>}
-            備課偏好
-          </Link>
-          <button type="button" className="acct-logout" onClick={() => void logout()}>
-            登出
-          </button>
-        </div>
-      </header>
+      <div className={`shell${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}>
+        <Sidebar
+          id={SIDEBAR_ID}
+          ref={sideRef}
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+          onCloseDrawer={() => {
+            setDrawerAt(null);
+            menuRef.current?.focus();
+          }}
+        />
+        <div className="side-scrim" aria-hidden="true" />
 
-      <main className={`workspace${frameClass(pathname)}`}>
-        {preferencesStatus === "loading" ? (
-          <Loading label="正在載入你的備課偏好…" />
-        ) : (
-          <Outlet context={{ topSlot } satisfies ShellContext} />
-        )}
-      </main>
+        <div className="shell-main">
+          <header className="shell-top">
+            <button
+              ref={menuRef}
+              type="button"
+              className="side-icon-button shell-menu"
+              aria-label="選單"
+              aria-expanded={drawerOpen}
+              aria-controls={SIDEBAR_ID}
+              onClick={() => setDrawerAt(drawerOpen ? null : location.key)}
+            >
+              <Icon name="menu" />
+            </button>
+            <Link className="brand" to="/" aria-label="Manna 首頁">
+              <span className="star" aria-hidden="true" />
+              Manna
+            </Link>
+            <div className="top-slot" ref={setTopSlot} />
+          </header>
+
+          <main className={`workspace${frameClass(pathname)}`}>
+            {preferencesStatus === "loading" ? (
+              <Loading label="正在載入你的備課偏好…" />
+            ) : (
+              <Outlet context={{ topSlot } satisfies ShellContext} />
+            )}
+          </main>
+        </div>
+      </div>
     </>
   );
 }
