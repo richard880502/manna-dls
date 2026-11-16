@@ -76,6 +76,9 @@ pub async fn create(
         format!("{}版型", base.trim_end())
     });
     let row = store::insert(db, teacher.id(), &title, material.id).await?;
+    // Read the answer before the job starts: a fast extraction could otherwise finish first and
+    // the 202 would say "ready" (or "failed") instead of "extracting".
+    let detail = store::detail(db, row.id).await?;
     extract::spawn(&state, &row, material.text);
     log_usage(
         db,
@@ -84,7 +87,7 @@ pub async fn create(
         json!({ "template_id": row.id, "material_id": row.source_material_id }),
     )
     .await?;
-    Ok((StatusCode::ACCEPTED, Json(store::detail(db, row.id).await?)))
+    Ok((StatusCode::ACCEPTED, Json(detail)))
 }
 
 pub async fn get(
@@ -177,6 +180,7 @@ pub async fn retry(
             "只有讀取失敗的版型可以重試。".to_string(),
         ));
     };
+    let detail = store::detail(db, id).await?;
     extract::spawn(&state, &row, material.text);
     log_usage(
         db,
@@ -185,7 +189,7 @@ pub async fn retry(
         json!({ "template_id": id, "run": row.extract_run }),
     )
     .await?;
-    Ok((StatusCode::ACCEPTED, Json(store::detail(db, id).await?)))
+    Ok((StatusCode::ACCEPTED, Json(detail)))
 }
 
 pub async fn delete(
