@@ -128,7 +128,7 @@ export const BLOOM_PRESETS: readonly BloomPreset[] = [
   { id: "foundation", label: "基礎鞏固", percent: pct(40, 40, 20, 0, 0, 0) },
   { id: "balanced", label: "均衡（預設）", percent: pct(15, 25, 20, 20, 10, 10) },
   { id: "challenge", label: "思考挑戰", percent: pct(0, 15, 20, 30, 20, 15) },
-  { id: "higher", label: "高層次思考", percent: pct(0, 0, 0, 30, 35, 35) },
+  { id: "higher", label: "深度思考", percent: pct(0, 0, 0, 30, 35, 35) },
   { id: "custom", label: "自訂", percent: null },
 ];
 
@@ -138,25 +138,34 @@ export function presetById(id: BloomPresetId): BloomPreset {
   return BLOOM_PRESETS.find((p) => p.id === id) ?? BLOOM_PRESETS[1]!;
 }
 
-/** The smallest total a preset can give: one question for every level it uses (and never under 3). */
-export function presetMinTotal(id: BloomPresetId): number {
-  const percent = presetById(id).percent;
-  if (!percent) return TOTAL_MIN;
-  return Math.max(TOTAL_MIN, BLOOM_ORDER.filter((l) => percent[l] > 0).length);
+/** The smallest total a preset accepts. Below the number of levels it uses, the levels with the
+ * largest share get one question each (see `countsFor`), so every preset takes the global minimum. */
+export function presetMinTotal(_id: BloomPresetId): number {
+  return TOTAL_MIN;
 }
 
 /**
  * A preset and a total → questions per level, by largest remainder, with at least one for every
  * level whose share is above 0. Ties go to the lower level when adding and the higher level when
- * taking away. A total below the preset's minimum is raised to it (the result's sum is
- * `max(total, presetMinTotal(preset))`).
+ * taking away. With fewer questions than levels, the levels with the largest share get one each.
  */
 export function countsFor(preset: FixedPresetId, total: number): FullCounts {
   const percent = presetById(preset).percent!;
   const used = BLOOM_ORDER.filter((l) => percent[l] > 0);
-  const target = Math.max(Math.round(total), used.length);
-  const quota = zeroCounts();
+  const target = Math.max(1, Math.round(total));
   const out = zeroCounts();
+  if (target < used.length) {
+    // Fewer questions than levels: one each for the levels with the largest share (ties to the
+    // lower level), so the teacher's total is kept.
+    [...used]
+      .sort((a, b) => percent[b] - percent[a] || BLOOM_ORDER.indexOf(a) - BLOOM_ORDER.indexOf(b))
+      .slice(0, target)
+      .forEach((l) => {
+        out[l] = 1;
+      });
+    return out;
+  }
+  const quota = zeroCounts();
   for (const l of used) {
     quota[l] = (percent[l] * target) / 100;
     out[l] = Math.max(1, Math.floor(quota[l]));

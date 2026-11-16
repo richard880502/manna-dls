@@ -189,7 +189,7 @@ describe("lib/bloom: presets and counts", () => {
       ["foundation", "基礎鞏固"],
       ["balanced", "均衡（預設）"],
       ["challenge", "思考挑戰"],
-      ["higher", "高層次思考"],
+      ["higher", "深度思考"],
       ["custom", "自訂"],
     ]);
     for (const p of BLOOM_PRESETS) {
@@ -215,21 +215,22 @@ describe("lib/bloom: presets and counts", () => {
       const percent = BLOOM_PRESETS.find((p) => p.id === id)!.percent!;
       for (let total = 1; total <= TOTAL_MAX; total += 1) {
         const counts = countsFor(id, total);
-        expect(countsTotal(counts)).toBe(Math.max(total, BLOOM_ORDER.filter((l) => percent[l] > 0).length));
+        expect(countsTotal(counts)).toBe(total);
+        const used = BLOOM_ORDER.filter((l) => percent[l] > 0).length;
         for (const l of BLOOM_ORDER) {
-          if (percent[l] > 0) expect(counts[l]).toBeGreaterThanOrEqual(1);
-          else expect(counts[l]).toBe(0);
+          if (percent[l] > 0 && total >= used) expect(counts[l]).toBeGreaterThanOrEqual(1);
+          if (percent[l] === 0) expect(counts[l]).toBe(0);
           expect(counts[l]).toBeLessThanOrEqual(12);
         }
       }
     }
   });
 
-  it("a total below what a preset needs is raised to one question per level", () => {
-    expect(presetMinTotal("balanced")).toBe(6);
-    expect(presetMinTotal("challenge")).toBe(5);
-    expect(presetMinTotal("foundation")).toBe(3);
-    expect(countsTotal(countsFor("balanced", 3))).toBe(6);
+  it("fewer questions than levels: the levels with the largest share get one each, and the total is kept", () => {
+    expect(presetMinTotal("balanced")).toBe(3);
+    expect(presetMinTotal("challenge")).toBe(3);
+    expect(countsFor("balanced", 3)).toEqual({ remember: 0, understand: 1, apply: 1, analyze: 1, evaluate: 0, create: 0 });
+    expect(countsFor("challenge", 4)).toEqual({ remember: 0, understand: 1, apply: 1, analyze: 1, evaluate: 1, create: 0 });
   });
 
   it("matchPreset recognises every preset's own counts, anything else is 自訂", () => {
@@ -391,7 +392,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
       "基礎鞏固",
       "均衡（預設）",
       "思考挑戰",
-      "高層次思考",
+      "深度思考",
       "自訂",
     ]);
     expect(presets.getByRole("radio", { name: /均衡（預設）/ })).toBeChecked();
@@ -424,9 +425,9 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
       question_count: 10,
     });
     expect(presets.getByRole("radio", { name: /思考挑戰/ })).toBeChecked();
-    // The preset's minimum is one per level it uses.
-    for (let i = 0; i < 6; i += 1) await user.click(total.getByRole("button", { name: "題數少一題" }));
-    expect(total.getByText("5")).toBeInTheDocument();
+    // Every preset goes down to the global minimum of 3.
+    for (let i = 0; i < 7; i += 1) await user.click(total.getByRole("button", { name: "題數少一題" }));
+    expect(total.getByText("3")).toBeInTheDocument();
     expect(total.getByRole("button", { name: "題數少一題" })).toBeDisabled();
   });
 

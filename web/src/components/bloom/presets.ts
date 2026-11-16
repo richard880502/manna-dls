@@ -1,18 +1,13 @@
 // Bloom presets for the generator (contract Addendum 1, "Frontend: Bloom presets"): a preset and a
 // total become per-level counts by largest remainder. The level ids and Chinese labels are the
-// contract's fixed set; lib/bloom.ts (agent D) holds the shared copy, deduped at integration.
+// contract's fixed set; lib/bloom.ts holds the shared table and rule; this file adapts them for the generator.
 
-export const BLOOM_LEVELS = ["remember", "understand", "apply", "analyze", "evaluate", "create"] as const;
-export type BloomLevel = (typeof BLOOM_LEVELS)[number];
+import { BLOOM_LABEL, BLOOM_ORDER, BLOOM_PRESETS as SHARED_PRESETS, countsFor as sharedCounts } from "../../lib/bloom";
 
-export const BLOOM_ZH: Record<BloomLevel, string> = {
-  remember: "記憶",
-  understand: "理解",
-  apply: "應用",
-  analyze: "分析",
-  evaluate: "評鑑",
-  create: "創造",
-};
+export const BLOOM_LEVELS = BLOOM_ORDER;
+export type BloomLevel = (typeof BLOOM_ORDER)[number];
+
+export const BLOOM_ZH: Record<BloomLevel, string> = BLOOM_LABEL;
 
 export type BloomCounts = Record<BloomLevel, number>;
 
@@ -25,12 +20,12 @@ export interface BloomPreset {
   pct: readonly [number, number, number, number, number, number];
 }
 
-export const BLOOM_PRESETS: readonly BloomPreset[] = [
-  { id: "foundation", label: "基礎鞏固", pct: [40, 40, 20, 0, 0, 0] },
-  { id: "balanced", label: "均衡（預設）", pct: [15, 25, 20, 20, 10, 10] },
-  { id: "challenge", label: "思考挑戰", pct: [0, 15, 20, 30, 20, 15] },
-  { id: "higher", label: "深度思考", pct: [0, 0, 0, 30, 35, 35] },
-];
+/** The shared preset table (lib/bloom.ts) without 自訂, as percentage tuples in Bloom order. */
+export const BLOOM_PRESETS: readonly BloomPreset[] = SHARED_PRESETS.flatMap((p) =>
+  p.percent && p.id !== "custom"
+    ? [{ id: p.id, label: p.label, pct: BLOOM_LEVELS.map((l) => p.percent![l]) as unknown as BloomPreset["pct"] }]
+    : [],
+);
 
 /** 均衡（預設）, the fallback when a preset is unknown. */
 const BALANCED_PCT: BloomPreset["pct"] = [15, 25, 20, 20, 10, 10];
@@ -58,55 +53,13 @@ export const emptyCounts = (): BloomCounts => ({
 export const presetById = (id: PresetId): BloomPreset | undefined => BLOOM_PRESETS.find((p) => p.id === id);
 
 /**
- * A preset's percentages and a total as whole counts. Largest remainder (ties go to the lower
- * level), then every level with a percentage above 0 gets at least one question, taken from the
- * level with the most. When the total is smaller than the number of such levels, the levels with
- * the largest percentages get one each.
+ * A preset's percentages and a total as whole counts: the shared largest-remainder rule
+ * (`countsFor` in lib/bloom.ts), so the generator page and the worksheet settings always agree.
  */
 export function presetCounts(pct: BloomPreset["pct"], total: number): BloomCounts {
-  const levels = BLOOM_LEVELS.map((level, i) => ({ level, i, pct: pct[i] ?? 0 }));
-  const wanted = levels.filter((l) => l.pct > 0);
-  const counts = emptyCounts();
-  if (total <= 0 || wanted.length === 0) return counts;
-
-  if (total < wanted.length) {
-    [...wanted]
-      .sort((a, b) => b.pct - a.pct || a.i - b.i)
-      .slice(0, total)
-      .forEach((l) => {
-        counts[l.level] = 1;
-      });
-    return counts;
-  }
-
-  // Integer arithmetic: share = total * pct / 100, kept as a floor and a remainder out of 100.
-  const remainder: Record<BloomLevel, number> = emptyCounts();
-  let given = 0;
-  for (const l of levels) {
-    counts[l.level] = Math.floor((total * l.pct) / 100);
-    remainder[l.level] = (total * l.pct) % 100;
-    given += counts[l.level];
-  }
-  const byRemainder = [...wanted].sort((a, b) => remainder[b.level] - remainder[a.level] || a.i - b.i);
-  for (let k = 0; given < total; k += 1) {
-    const next = byRemainder[k % byRemainder.length];
-    if (!next) break;
-    counts[next.level] += 1;
-    given += 1;
-  }
-
-  for (const l of wanted) {
-    if (counts[l.level] > 0) continue;
-    // Take one from the level with the most questions (the later level when tied).
-    let donor: BloomLevel | null = null;
-    for (const d of BLOOM_LEVELS) {
-      if (counts[d] > 1 && (donor === null || counts[d] >= counts[donor])) donor = d;
-    }
-    if (donor === null) break;
-    counts[donor] -= 1;
-    counts[l.level] = 1;
-  }
-  return counts;
+  const preset = BLOOM_PRESETS.find((p) => p.pct.every((v, i) => v === pct[i]));
+  if (total <= 0) return emptyCounts();
+  return { ...sharedCounts(preset?.id ?? "balanced", total) };
 }
 
 export const countsTotal = (counts: BloomCounts): number => BLOOM_LEVELS.reduce((sum, l) => sum + counts[l], 0);
