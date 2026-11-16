@@ -189,6 +189,8 @@ interface FrameProps<T> {
   listLabel: string;
   /** Beside the count (排序). */
   extra?: ReactNode;
+  /** `masonry`: cards of their own height in columns (the 知識庫 gallery). */
+  layout?: "grid" | "masonry";
   renderCard: (item: T) => ReactNode;
 }
 
@@ -212,6 +214,7 @@ function BrowseFrame<T>({
   empty,
   listLabel,
   extra,
+  layout = "grid",
   renderCard,
 }: FrameProps<T>) {
   const { items, total, loading, loadingMore, hasMore, error, loadMore, retry } = result;
@@ -265,7 +268,11 @@ function BrowseFrame<T>({
       )}
 
       {items !== null && items.length > 0 && (
-        <ul className={`lib-grid${loading ? " is-busy" : ""}`} aria-label={listLabel} aria-busy={loading || undefined}>
+        <ul
+          className={`lib-grid${layout === "masonry" ? " is-masonry" : ""}${loading ? " is-busy" : ""}`}
+          aria-label={listLabel}
+          aria-busy={loading || undefined}
+        >
           {items.map((item) => renderCard(item))}
         </ul>
       )}
@@ -290,16 +297,26 @@ type MaterialFacets = { categories: FacetCount[]; tags: FacetCount[]; file_types
 
 /**
  * 教材參考 (area=reference) or 我的教材 (area=mine) as a marketplace: search, category chips with
- * counts, 只看 chips, tags, and a grid of cards. The caller gives each card its actions.
+ * counts, 只看 chips, tags, and a grid of cards. The caller gives each card its actions, or draws
+ * the cards itself (the 知識庫 gallery: `renderCard`, `layout="masonry"`).
  */
 export function MaterialBrowser({
   area,
   renderActions,
+  renderCard,
+  layout = "grid",
+  labels,
   empty,
   refreshSignal = 0,
 }: {
   area: MaterialArea;
-  renderActions: (card: MaterialCardData) => ReactNode;
+  /** The actions under each standard card. */
+  renderActions?: (card: MaterialCardData) => ReactNode;
+  /** A card of the caller's own instead of the standard one (an `<li>`). */
+  renderCard?: (card: MaterialCardData) => ReactNode;
+  layout?: "grid" | "masonry";
+  /** What the search field and the list are called (by default after the area). */
+  labels?: { search: string; placeholder: string; list: string };
   empty: ReactNode;
   /** Bumped when the list changed elsewhere (an upload, a rename, a delete): read the first page again. */
   refreshSignal?: number;
@@ -371,8 +388,11 @@ export function MaterialBrowser({
   const sortId = useId();
   return (
     <BrowseFrame
-      searchLabel={area === "reference" ? "搜尋教材參考" : "搜尋我的教材"}
-      searchPlaceholder={area === "reference" ? "搜尋標題、內容或標籤，例如：114 學測、閱讀測驗" : "搜尋我的教材的標題、內容或標籤"}
+      searchLabel={labels?.search ?? (area === "reference" ? "搜尋教材參考" : "搜尋我的教材")}
+      searchPlaceholder={
+        labels?.placeholder ??
+        (area === "reference" ? "搜尋標題、內容或標籤，例如：114 學測、閱讀測驗" : "搜尋我的教材的標題、內容或標籤")
+      }
       search={search}
       categories={categoryChips(REFERENCE_CATEGORIES, facets?.categories ?? [], category)}
       allCount={sumOf(facets?.categories)}
@@ -388,7 +408,8 @@ export function MaterialBrowser({
       onReset={reset}
       noMatch={NO_MATERIALS}
       empty={empty}
-      listLabel={area === "reference" ? "教材參考" : "我的教材"}
+      listLabel={labels?.list ?? (area === "reference" ? "教材參考" : "我的教材")}
+      layout={layout}
       extra={
         <label className="lib-sort" htmlFor={`${sortId}-sort`}>
           排序
@@ -402,7 +423,9 @@ export function MaterialBrowser({
           </select>
         </label>
       }
-      renderCard={(card) => <MaterialCard key={card.id} card={card} actions={renderActions(card)} />}
+      renderCard={(card) =>
+        renderCard ? renderCard(card) : <MaterialCard key={card.id} card={card} actions={renderActions?.(card)} />
+      }
     />
   );
 }

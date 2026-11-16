@@ -93,7 +93,7 @@ describe("app shell: the sidebar", () => {
     expect(screen.getByRole("button", { name: "登出" })).toBeInTheDocument();
     // A teacher does not see the admin entries.
     expect(screen.queryByRole("link", { name: "後台管理" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "知識庫管理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "知識庫" })).not.toBeInTheDocument();
 
     // Nothing unbuilt is offered, and nothing is addressed to developers.
     for (const gone of [/Reflect/, /Share/, /履歷/, /社群動能地圖/, /Teach & Record/, /Phase/, /本輪平台範圍/]) {
@@ -106,7 +106,7 @@ describe("app shell: the sidebar", () => {
     mockApi({ ...baseRoutes(), "GET /api/me": { ...teacher, role: "pi" } });
     renderApp("/");
     expect(await screen.findByRole("link", { name: "後台管理" })).toHaveAttribute("href", "/admin");
-    expect(screen.getByRole("link", { name: "知識庫管理" })).toHaveAttribute("href", "/knowledge");
+    expect(screen.getByRole("link", { name: "知識庫" })).toHaveAttribute("href", "/knowledge");
   });
 
   it("最近 lists the six latest sessions by title and marks the open one", async () => {

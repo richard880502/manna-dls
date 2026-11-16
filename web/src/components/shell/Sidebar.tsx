@@ -254,7 +254,7 @@ export function Sidebar({
         <ul className="side-list">
           <SideLink to="/preferences" icon="prefs" label="備課偏好" current={inside(pathname === "/preferences", false)} />
           {can(teacher, "manage_knowledge") && (
-            <SideLink to="/knowledge" icon="knowledge" label="知識庫管理" current={inside(pathname === "/knowledge", false)} />
+            <SideLink to="/knowledge" icon="knowledge" label="知識庫" current={inside(pathname === "/knowledge", false)} />
           )}
           {can(teacher, "manage_knowledge") && (
             <SideLink

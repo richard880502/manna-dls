@@ -20,7 +20,7 @@ export function AdminPage() {
         <h1>後台管理</h1>
         <p>
           建立邀請碼、維護提示詞版本、匯入教師備課經驗。每次修改提示詞都會產生新版本。課綱條目與詞彙表在
-          <Link to="/knowledge">知識庫管理</Link>。
+          <Link to="/knowledge?tab=curriculum">知識庫</Link>。
         </p>
       </div>
       <PlatformSettings />
