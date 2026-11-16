@@ -234,7 +234,9 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     let app = test_app!();
     import_curriculum(&app).await;
     let t = app.teacher("T-PREP-4", "general").await;
-    let session = pasted(&app, &t, "activity", "").await;
+    // FAKE_SLOW: the fake call waits 3 s, so the 201 reliably shows the turn still running
+    // (without it the fake run could finish before the answer was read; main CI failed on it).
+    let session = pasted(&app, &t, "activity", "FAKE_SLOW").await;
     let id = sid(&session);
     assert_eq!(last(&session)["status"], "running");
     assert_eq!(last(&session)["request"], "規劃教學活動");
