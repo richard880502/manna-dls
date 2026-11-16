@@ -73,7 +73,7 @@ interface PlanSuggestOutput { kb_empty: boolean; suggestions: PlanSuggestion[]; 
 ### 公開
 | 方法 | 路徑 | 請求 | 回應 |
 |---|---|---|---|
-| GET | `/api/health` | – | `{ ok: boolean, db: boolean }` |
+| GET | `/api/health` | – | `{ ok: boolean, db: boolean, commit: string }`（`commit`：映像建置時的 commit，沒有時為 `"unknown"`；見 README「`/api/health` 的 commit」） |
 | GET | `/api/config` | – | `{ demo_mode: boolean, ai_enabled: boolean, ai_provider: string, ai_model: string }` |
 | POST | `/api/auth/login` | `{ code: string }` | `{ token: string, teacher: Teacher }`；錯誤碼 401 |
 | POST | `/api/auth/logout` | – | `{ ok: true }` |
@@ -842,7 +842,7 @@ interface SopState {
 interface SopJob {
   id: number; lesson_id: number; kind: "analysis" | "objectives";
   status: "running" | "done";
-  phase: string;                       // 給教師看的進度，例如「正在讀教材」「補上缺少的段落」
+  phase: string;                       // 給教師看的進度，例如「正在讀教材」「補上缺少的段落」；完成（done）後為空字串
   started_at: string; finished_at: string | null;
   sop_version_no: number | null;       // 這次工作讀的是哪一版 SOP
   result: AiResult<SopAnalysisSuggestion | SopObjectivesSuggestion> | null;   // done 時才有

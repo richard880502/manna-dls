@@ -1770,6 +1770,43 @@ mod tests {
     }
 
     #[test]
+    fn a_word_bank_that_starts_with_its_label_prints_the_label_once() {
+        use crate::worksheet::{Block, Content, Item, Origin, Scaffold, KIND_WORD_LIST};
+        let content = Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                title: "Paragraph 1: Find".into(),
+                items: vec![Item {
+                    id: "i1".into(),
+                    answer_format: Some("簡答題".into()),
+                    prompt: "Why did she start the stand?".into(),
+                    levels: Level::ALL.to_vec(),
+                    ..Item::default()
+                }],
+                scaffolds: vec![Scaffold {
+                    id: "b1-sv1".into(),
+                    kind_type: ScaffoldType::Verbal,
+                    kind: KIND_WORD_LIST.into(),
+                    content: "Word Bank: reason, result, however".into(),
+                    steps: vec![],
+                    levels: Level::ALL.to_vec(),
+                    auto: false,
+                    origin: Origin::Ai,
+                }],
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        };
+        let sheet =
+            crate::worksheet::assemble::project("T", &content, Level::Standard, Audience::Student);
+        let xml = document(docx(&sheet).unwrap()).to_lowercase();
+        assert_eq!(xml.matches("word bank").count(), 1, "{xml}");
+        assert!(xml.contains(">reason, result, however<"));
+        assert!(pdf(&sheet).unwrap().starts_with(b"%PDF-"));
+    }
+
+    #[test]
     fn pdf_of_an_english_sheet_needs_no_cjk_font_and_breaks_pages() {
         let bytes = pdf(&sheet(Audience::Student)).unwrap();
         assert!(bytes.starts_with(b"%PDF-"));

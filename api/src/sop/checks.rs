@@ -45,11 +45,75 @@ pub fn norm(s: &str) -> String {
 /// True when `quote` is one continuous piece of `source`. Surrounding quotation marks and a
 /// trailing punctuation mark are forgiven; a quote spliced with "..." is not a substring.
 pub fn is_verbatim(quote: &str, source: &str) -> bool {
-    let q = norm(quote);
+    locate_verbatim(quote, source).is_some()
+}
+
+/// The piece of `source` that `quote` copies, exactly as `source` writes it. Besides what
+/// [`is_verbatim`] forgives, double quotation marks are ignored on both sides: the model copies
+/// `the words "Trust Stand" on the side` as `the words Trust Stand on the side` (real-model run:
+/// such quotes failed the check, cost a repair call, and some questions were dropped).
+pub fn locate_verbatim(quote: &str, source: &str) -> Option<String> {
+    // Normalised characters, each with the byte range it came from in `source`.
+    fn chars(s: &str) -> Vec<(char, usize, usize)> {
+        let mut out: Vec<(char, usize, usize)> = Vec::new();
+        for (i, c) in s.char_indices() {
+            let end = i + c.len_utf8();
+            let c = match c {
+                '\u{2019}' | '\u{2018}' => '\'',
+                '\u{201c}' | '\u{201d}' | '"' => continue,
+                '\u{2014}' | '\u{2013}' => '-',
+                c if c.is_whitespace() => ' ',
+                c => c,
+            };
+            if c == ' ' && out.last().is_none_or(|(p, _, _)| *p == ' ') {
+                continue;
+            }
+            out.push((c, i, end));
+        }
+        while out.last().is_some_and(|(c, _, _)| *c == ' ') {
+            out.pop();
+        }
+        out
+    }
+    let q: String = chars(quote).into_iter().map(|(c, _, _)| c).collect();
+    let q = q.trim_matches(|c| c == ' ' || c == '\'');
+    // A trailing punctuation mark is forgiven, but kept when the source has it too.
+    let punct = q
+        .chars()
+        .last()
+        .filter(|c| matches!(c, '.' | ',' | ';' | ':' | '!' | '?'));
     let q = q
-        .trim_matches(|c| c == ' ' || c == '"' || c == '\'')
-        .trim_end_matches(['.', ',', ';', ':', '!', '?']);
-    q.chars().count() >= 3 && norm(source).contains(q)
+        .trim_end_matches(['.', ',', ';', ':', '!', '?'])
+        .trim_end();
+    let needle: Vec<char> = q.chars().collect();
+    if needle.len() < 3 {
+        return None;
+    }
+    let hay = chars(source);
+    let at = hay
+        .windows(needle.len())
+        .position(|w| w.iter().zip(&needle).all(|((c, _, _), n)| c == n))?;
+    let (start, mut end) = (hay[at].1, hay[at + needle.len() - 1].2);
+    if let Some(p) = punct.filter(|p| source[end..].starts_with(*p)) {
+        end += p.len_utf8();
+    }
+    // Keep a closing quotation mark that belongs to the copied words.
+    let tail = source[end..]
+        .chars()
+        .next()
+        .filter(|c| matches!(c, '"' | '\u{201d}'));
+    let opens = source[start..end].matches(['"', '\u{201c}']).count();
+    let closes = source[start..end].matches(['"', '\u{201d}']).count();
+    let end = match tail {
+        Some(c)
+            if opens > closes
+                || (opens == closes && source[start..end].matches('"').count() % 2 == 1) =>
+        {
+            end + c.len_utf8()
+        }
+        _ => end,
+    };
+    Some(source[start..end].to_string())
 }
 
 pub fn english_only(s: &str) -> bool {
@@ -519,6 +583,20 @@ mod tests {
         assert!(!is_verbatim("mrs. lin put an umbrella stand", P1));
         assert!(!is_verbatim("it", P1));
         assert!(!is_verbatim("However, something unexpected followed", P1));
+    }
+
+    #[test]
+    fn quotation_marks_inside_a_copy_are_forgiven_and_the_source_is_returned() {
+        let src = "The noodle seller painted the words \"Trust Stand\" on the side. \u{201c}Science is about noticing a problem,\u{201d} she says.";
+        assert_eq!(
+            locate_verbatim("painted the words Trust Stand on the side", src).as_deref(),
+            Some("painted the words \"Trust Stand\" on the side")
+        );
+        assert_eq!(
+            locate_verbatim("Science is about noticing a problem, she says", src).as_deref(),
+            Some("Science is about noticing a problem,\u{201d} she says")
+        );
+        assert!(locate_verbatim("painted the words Trust Shop on the side", src).is_none());
     }
 
     #[test]

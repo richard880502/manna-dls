@@ -37,4 +37,10 @@ ENV STATIC_DIR=/app/web-dist \
     RUST_LOG=info
 USER app
 EXPOSE 8080
+# The commit this image was built from, reported by /api/health. Coolify passes it as the
+# SOURCE_COMMIT build argument when "Include Source Commit in Build" is on (README「部署」);
+# without it (a plain local `docker build`) the API falls back to a runtime SOURCE_COMMIT, then
+# "unknown". Declared last, so a new commit changes only this layer and no build cache.
+ARG SOURCE_COMMIT=""
+ENV BUILD_COMMIT=${SOURCE_COMMIT}
 CMD ["/app/manna-api"]

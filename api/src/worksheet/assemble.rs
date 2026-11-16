@@ -511,21 +511,50 @@ pub struct Sheet {
     pub blocks: Vec<SheetBlock>,
 }
 
+/// The printed heading of each scaffold kind; any other kind prints under [`SUPPORT_FALLBACK`].
+pub const SUPPORT_HEADINGS: [(&str, &str); 12] = [
+    (KIND_GUIDING, "Guiding questions"),
+    (KIND_WORD_LIST, "Word bank"),
+    (KIND_FRAMES, "Sentence frames"),
+    (KIND_EXAMPLE, "Example"),
+    ("改述或重述", "In other words"),
+    ("思考放聲", "Think aloud"),
+    ("提示與追問", "Hints"),
+    ("透過上下文解釋詞義", "Words in context"),
+    ("圖像組織", "Organizer"),
+    ("部分完成的大綱或內容", "Outline"),
+    ("調整文本", "Simplified text"),
+    ("標示關鍵概念或字彙", "Key words"),
+];
+pub const SUPPORT_FALLBACK: &str = "Support";
+
 pub fn support_heading(kind: &str) -> &'static str {
-    match kind {
-        "引導問題" => "Guiding questions",
-        "字詞表" => "Word bank",
-        "句型框架" => "Sentence frames",
-        "作答示例" => "Example",
-        "改述或重述" => "In other words",
-        "思考放聲" => "Think aloud",
-        "提示與追問" => "Hints",
-        "透過上下文解釋詞義" => "Words in context",
-        "圖像組織" => "Organizer",
-        "部分完成的大綱或內容" => "Outline",
-        "調整文本" => "Simplified text",
-        "標示關鍵概念或字彙" => "Key words",
-        _ => "Support",
+    SUPPORT_HEADINGS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map_or(SUPPORT_FALLBACK, |(_, heading)| heading)
+}
+
+/// A support's text without a leading copy of the heading it is printed under. The model often
+/// starts a word bank with 「Word bank:」, which under the heading 「Word bank」 reads twice
+/// (「Word bank: Word Bank: reason, …」). The heading goes, in any case, when a colon follows it
+/// or it stands alone on the first line; a heading word that begins a sentence stays
+/// ("Example (a different question): …", "Outline the main idea …").
+pub fn without_heading<'a>(content: &'a str, heading: &str) -> &'a str {
+    let content = content.trim();
+    let starts_with_heading = content
+        .get(..heading.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(heading));
+    if !starts_with_heading {
+        return content;
+    }
+    let after = content[heading.len()..].trim_start_matches([' ', '\t']);
+    if let Some(rest) = after.strip_prefix([':', '：']) {
+        rest.trim()
+    } else if after.is_empty() || after.starts_with(['\n', '\r']) {
+        after.trim()
+    } else {
+        content
     }
 }
 
@@ -626,14 +655,20 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     definition: v.definition.trim().to_string(),
                 })
                 .collect(),
+            // The one place a support's heading meets its text: every printed form (preview,
+            // 複製, DOCX, PDF) shows the heading once.
             supports: scaffolds
                 .iter()
-                .filter(|s| s.kind_type != ScaffoldType::Procedural && !s.content.trim().is_empty())
-                .map(|s| SheetSupport {
-                    kind_type: s.kind_type,
-                    kind: s.kind.clone(),
-                    heading: support_heading(&s.kind),
-                    content: s.content.trim().to_string(),
+                .filter(|s| s.kind_type != ScaffoldType::Procedural)
+                .filter_map(|s| {
+                    let heading = support_heading(&s.kind);
+                    let content = without_heading(&s.content, heading);
+                    (!content.is_empty()).then(|| SheetSupport {
+                        kind_type: s.kind_type,
+                        kind: s.kind.clone(),
+                        heading,
+                        content: content.to_string(),
+                    })
                 })
                 .collect(),
             items,
@@ -1021,6 +1056,95 @@ mod tests {
                     |(place, text)| place.ends_with("題提示") && text == "Start with: The writer …"
                 )
         );
+    }
+
+    #[test]
+    fn a_support_does_not_repeat_its_heading() {
+        let headings = SUPPORT_HEADINGS
+            .iter()
+            .map(|(_, h)| *h)
+            .chain([SUPPORT_FALLBACK]);
+        for heading in headings {
+            for content in [
+                format!("{heading}: reason, result"),
+                format!("{}: reason, result", heading.to_uppercase()),
+                format!("{}:reason, result", heading.to_lowercase()),
+                format!("  {heading} ：reason, result"),
+                format!("{heading}\nreason, result"),
+                "reason, result".to_string(),
+            ] {
+                assert_eq!(
+                    without_heading(&content, heading),
+                    "reason, result",
+                    "{heading}: {content:?}"
+                );
+            }
+            assert_eq!(without_heading(&format!("{heading}:"), heading), "");
+            assert_eq!(without_heading(heading, heading), "");
+            // The heading word starting a sentence, or a longer word, is part of the text.
+            let sentence = format!("{heading} helps you answer.");
+            assert_eq!(without_heading(&sentence, heading), sentence);
+            let plural = format!("{heading}s: reason");
+            assert_eq!(without_heading(&plural, heading), plural);
+        }
+        let example = "Example (a different question): Q: Why? A: Because.";
+        assert_eq!(without_heading(example, "Example"), example);
+        // Only the support's own heading goes; a different label is its text.
+        assert_eq!(
+            without_heading("Word bank: reason", "Key words"),
+            "Word bank: reason"
+        );
+        // Non-ASCII text where the heading would end does not panic.
+        assert_eq!(without_heading("字詞表：理由", "Hints"), "字詞表：理由");
+    }
+
+    #[test]
+    fn the_sheet_prints_a_support_heading_once() {
+        let all = Level::ALL.to_vec();
+        let mut b = Block {
+            id: "b1".into(),
+            title: "Paragraph 1: Find".into(),
+            items: vec![item("c", &all, "簡答題")],
+            ..Block::default()
+        };
+        let support = |kind: &str, content: &str| crate::worksheet::schemas::RawSupport {
+            kind: kind.into(),
+            content_en: content.into(),
+        };
+        let set = RawScaffoldSet {
+            target: "b1".into(),
+            verbal: vec![
+                support(KIND_WORD_LIST, "Word Bank: reason, result, however"),
+                support(KIND_FRAMES, "Sentence frames:\nI think ___ because ___."),
+                // Nothing but the heading: nothing to print.
+                support(KIND_GUIDING, "Guiding questions:"),
+            ],
+            instructional: vec![],
+            procedural: vec![],
+        };
+        attach_scaffolds(&mut b, Some(&set), &all, &[KIND_GUIDING]);
+        let c = Content {
+            blocks: vec![b],
+            levels: all,
+            ..Content::default()
+        };
+        let sheet = project("T", &c, Level::Basic, Audience::Student);
+        let printed: Vec<(&str, &str)> = sheet.blocks[0]
+            .supports
+            .iter()
+            .map(|s| (s.heading, s.content.as_str()))
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                ("Word bank", "reason, result, however"),
+                ("Sentence frames", "I think ___ because ___."),
+            ]
+        );
+        // The vocabulary check reads the same printed text.
+        assert!(text_lines(&sheet)
+            .iter()
+            .any(|(_, text)| text == "reason, result, however"));
     }
 
     #[test]

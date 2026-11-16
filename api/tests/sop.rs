@@ -903,7 +903,30 @@ async fn a_second_request_joins_the_running_job() {
     let done = wait_job(&app, &t, first["id"].as_i64().unwrap()).await;
     assert_eq!(done["result"]["status"], "shown");
     assert!(done["finished_at"].is_string());
-    wait_job(&app, &t, other["id"].as_i64().unwrap()).await;
+    // A finished job no longer says what it was doing.
+    assert_eq!(done["phase"], "", "{done}");
+    let other_done = wait_job(&app, &t, other["id"].as_i64().unwrap()).await;
+    assert_eq!(other_done["phase"], "", "{other_done}");
+    assert_eq!(get_sop(&app, &t, id).await["jobs"]["analysis"]["phase"], "");
+    let stored: String = sqlx::query_scalar("SELECT phase FROM lesson_sop_jobs WHERE id = $1")
+        .bind(first["id"].as_i64().unwrap())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(stored, "");
+    // A job that finished before the phase was cleared does not show it either.
+    sqlx::query("UPDATE lesson_sop_jobs SET phase = '正在讀教材，逐段分析寫作特色' WHERE id = $1")
+        .bind(first["id"].as_i64().unwrap())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let (_, old) = app
+        .get(&format!("/api/sop-jobs/{}", first["id"]), Some(&t))
+        .await;
+    assert_eq!(
+        (old["status"].as_str(), old["phase"].as_str()),
+        (Some("done"), Some(""))
+    );
     assert_eq!(
         interactions(&app, id)
             .await
@@ -915,8 +938,9 @@ async fn a_second_request_joins_the_running_job() {
 
     // A job left running by a server that went away is closed the next time it is read.
     sqlx::query(
-        "INSERT INTO lesson_sop_jobs (lesson_id, teacher_id, kind, status, created_at)
-         SELECT $1, teacher_id, 'analysis', 'running', now() - interval '1 hour'
+        "INSERT INTO lesson_sop_jobs (lesson_id, teacher_id, kind, status, phase, created_at)
+         SELECT $1, teacher_id, 'analysis', 'running', '正在讀教材，逐段分析寫作特色',
+                now() - interval '1 hour'
            FROM lesson_sop_jobs WHERE lesson_id = $1 LIMIT 1",
     )
     .bind(id)
@@ -926,6 +950,7 @@ async fn a_second_request_joins_the_running_job() {
     let stale = get_sop(&app, &t, id).await;
     assert_eq!(stale["jobs"]["analysis"]["status"], "done");
     assert_eq!(stale["jobs"]["analysis"]["result"]["status"], "error");
+    assert_eq!(stale["jobs"]["analysis"]["phase"], "");
 }
 
 #[tokio::test]
