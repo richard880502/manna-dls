@@ -176,16 +176,20 @@ pub fn split_tags(raw: &str) -> AppResult<Vec<String>> {
 /// 反思 → 學習反思; otherwise 其他. (自學 is tried before 講義 so that 「自學講義」 is not taken
 /// for 課文講義.)
 pub fn suggest_sample_category(worksheet_kind: &str, title: &str) -> &'static str {
+    // The most specific kinds first: a 「自學講義」 is also reading material.
     const RULES: [(&[&str], &str); 7] = [
+        (&["自學"], "自學講義"),
         (&["單字", "字彙", "vocab"], "字彙"),
         (&["文法", "句型", "grammar", "sentence"], "文法句型"),
         (&["閱讀", "reading"], "閱讀理解"),
-        (&["自學"], "自學講義"),
         (&["課文", "講義"], "課文講義"),
         (&["寫作", "writing"], "寫作"),
         (&["反思"], "學習反思"),
     ];
-    for text in [worksheet_kind, title] {
+    // The title the teacher or admin gave (often the file name) first: it names the kind
+    // directly (「三民-B1L5-自學講義」), while the extracted worksheet_kind describes the
+    // activities ("課文深度閱讀…") and filed that handout under 閱讀理解 in a real run.
+    for text in [title, worksheet_kind] {
         let text = text.to_lowercase();
         if let Some((_, category)) = RULES
             .iter()
@@ -287,6 +291,11 @@ mod tests {
         assert_eq!(suggest_sample_category("課文深度閱讀", ""), "閱讀理解");
         assert_eq!(suggest_sample_category("Reading Guide", ""), "閱讀理解");
         assert_eq!(suggest_sample_category("自學講義", ""), "自學講義");
+        // The title wins over the extracted kind (a real 三民 handout).
+        assert_eq!(
+            suggest_sample_category("課文深度閱讀與語言練習", "0001_03_三民-B1L5-自學講義"),
+            "自學講義"
+        );
         assert_eq!(suggest_sample_category("課文講義", ""), "課文講義");
         assert_eq!(suggest_sample_category("寫作引導", ""), "寫作");
         assert_eq!(suggest_sample_category("Writing task", ""), "寫作");

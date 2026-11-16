@@ -1388,7 +1388,10 @@ async fn admins_upload_edit_and_delete_platform_materials_and_templates() {
     let sample_id = card["source_material"]["id"].as_i64().unwrap();
     let ready = wait_template(&app, &t, tpl).await;
     assert_eq!(ready["status"], "ready", "{ready}");
-    assert_eq!(ready["category"], "閱讀理解", "suggested from 課文深度閱讀");
+    assert_eq!(
+        ready["category"], "字彙",
+        "suggested from the title 「龍騰 字彙單」 before the extracted kind 課文深度閱讀"
+    );
     // Teachers read the sample's original file.
     let raw = app
         .send_raw(
