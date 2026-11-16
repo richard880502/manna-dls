@@ -308,12 +308,15 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
     expect(chips().getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "照我的學習單做",
       "閱讀理解題",
       "分層練習",
       "課堂活動",
       "教學套件",
       "學習單",
     ]);
+    // 照我的學習單做 leads, featured, but it is one of the single-select chips.
+    expect(chips().getByRole("button", { name: "照我的學習單做" })).toHaveClass("output-chip", "is-featured");
     expect(pressed()).toEqual([]);
 
     for (const [words, chip] of [
@@ -322,6 +325,12 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
       ["給我一個套件", "教學套件"],
       ["一份學習單", "學習單"],
       ["幫我出題", "閱讀理解題"],
+      // 照我的學習單 is not just 學習單.
+      ["照我的學習單出一份", "照我的學習單做"],
+      ["照這份出題", "照我的學習單做"],
+      ["用我的範本", "照我的學習單做"],
+      ["一樣的樣式", "照我的學習單做"],
+      ["模仿這份學習單", "照我的學習單做"],
     ] as const) {
       await user.clear(box());
       await user.type(box(), words);
@@ -332,6 +341,10 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await user.click(chips().getByRole("button", { name: "教學套件" }));
     expect(pressed()).toEqual(["教學套件"]);
     await user.type(box(), "，要分層");
+    expect(pressed()).toEqual(["教學套件"]);
+    await user.click(chips().getByRole("button", { name: "照我的學習單做" }));
+    expect(pressed()).toEqual(["照我的學習單做"]);
+    await user.click(chips().getByRole("button", { name: "教學套件" }));
     expect(pressed()).toEqual(["教學套件"]);
     // Clicking the filled chip clears it; typed words no longer choose.
     await user.click(chips().getByRole("button", { name: "教學套件" }));

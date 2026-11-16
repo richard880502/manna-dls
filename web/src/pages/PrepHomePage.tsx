@@ -12,23 +12,38 @@ import {
   choiceTitle,
   type AttachWay,
 } from "../components/material/AttachDialog";
-import { materialFields, type MaterialChoice } from "../components/material/MaterialChooser";
-import { WorksheetNotice, type MimicState } from "../components/material/WorksheetNotice";
+import { materialFields, type MaterialChoice, type PickedMaterial } from "../components/material/MaterialChooser";
+import { WorksheetNotice } from "../components/material/WorksheetNotice";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
 import {
-  KIND_TOOLS,
+  SAMPLE_ATTACH,
+  SampleDialog,
+  sampleFields,
+  sampleName,
+  type Sample,
+  type SampleWay,
+} from "../components/template/SampleChooser";
+import {
+  ATTACH_LESSON_TEXT,
+  ATTACH_SAMPLE,
+  LESSON_TEXT_CHIP_LABEL,
   MATERIAL_REQUIRED,
+  QUICK_CHIP,
+  QUICK_NEED_LESSON_TEXT,
+  QUICK_NEED_SAMPLE,
   REQUEST_MAX,
+  SAMPLE_CHIP_LABEL,
+  TAKE_AS_SAMPLE,
   TOOLS,
   TOOL_BLURB,
   TOOL_CHIP,
   TOOL_NAME,
   asCreateRequest,
-  mimicPath,
+  kindOf,
   toolFromWords,
-  type KindTool,
   type StartKind,
+  type Tool,
 } from "../lib/create";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
@@ -38,6 +53,7 @@ const RECENT_SHOWN = 5;
 
 export const HOME_HEADING = "今天想準備什麼？";
 export const QUICK_PLACEHOLDER = "例如：B1 程度、8 題閱讀理解，記憶到評鑑都要有";
+export const MIMIC_PLACEHOLDER = "例如：照這份的樣式，題目少一點、加一題寫作";
 
 /** The latest few conversations, quietly, under the tools. */
 function RecentSessions() {
@@ -82,40 +98,124 @@ function RecentSessions() {
   );
 }
 
+const ARTICLE_WAYS: Array<[AttachWay, string]> = [
+  ["upload", ATTACH_LABEL.upload],
+  ["library", ATTACH_LABEL.library],
+  ["paste", ATTACH_LABEL.paste],
+];
+
+type Popover = ReturnType<typeof usePopover>;
+
+/** A 附上… button in the prompt card with its menu of ways (each way's icon is its own name). */
+function AttachMenu<W extends AttachWay | SampleWay>({
+  id,
+  label,
+  icon,
+  ways,
+  menu: { open, toggle, close, rootRef, triggerRef, onBlur },
+  disabled,
+  onPick,
+}: {
+  id: string;
+  label: string;
+  icon: "paperclip" | "template";
+  ways: ReadonlyArray<readonly [W, string]>;
+  menu: Popover;
+  disabled: boolean;
+  onPick: (way: W) => void;
+}) {
+  return (
+    <div className="popover-root" ref={rootRef} onBlur={onBlur}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="tool-button"
+        aria-expanded={open}
+        aria-controls={id}
+        disabled={disabled}
+        onClick={toggle}
+      >
+        <Icon name={icon} />
+        {label}
+      </button>
+      {open && (
+        <div className="popover" id={id} role="group" aria-label={label}>
+          {ways.map(([way, text]) => (
+            <button
+              key={way}
+              type="button"
+              className="popover-item"
+              onClick={() => {
+                close();
+                onPick(way);
+              }}
+            >
+              <Icon name={way} />
+              {text}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type QuickDialog = { slot: "article"; way: AttachWay } | { slot: "sample"; way: SampleWay };
+
 /**
  * The quick box (like Diffit's): one text box, 附上文章 and send. With a material it makes 閱讀理解題
  * unless a chip says otherwise; without one, a question to Manna. Typed words pick a chip until the
  * teacher picks one herself.
+ *
+ * 照我的學習單做 (the first chip) gives the card two slots, 附上學習單範本 and 附上課文, and sends a
+ * 完整學習單 in the sample's style, as /create/mimic does. A worksheet put in the article slot under
+ * another chip offers 把它當範本, which moves it into the 範本 slot here.
  */
 function QuickBox() {
   const ids = useId();
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [choice, setChoice] = useState<MaterialChoice | null>(null);
+  /** 照我的學習單做's sample; kept while another chip is chosen, but sent only with it. */
+  const [sample, setSample] = useState<Sample | null>(null);
   /** null: the teacher has not clicked a chip, so typed words choose. */
-  const [clicked, setClicked] = useState<{ tool: KindTool | null } | null>(null);
+  const [clicked, setClicked] = useState<{ tool: Tool | null } | null>(null);
   /** Materials the teacher said to keep as the article (no worksheet notice for them). */
   const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
-  const [dialog, setDialog] = useState<AttachWay | null>(null);
+  const [dialog, setDialog] = useState<QuickDialog | null>(null);
   const [needMaterial, setNeedMaterial] = useState(false);
+  /** 照我的學習單做 was sent without its sample or its lesson text. */
+  const [needSlots, setNeedSlots] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { open: attachOpen, toggle: toggleAttach, close: closeAttach, rootRef: attachRoot, triggerRef: attachTrigger, onBlur: attachBlur } =
-    usePopover();
+  const articleMenu = usePopover();
+  const sampleMenu = usePopover();
+  const { triggerRef: articleTrigger } = articleMenu;
+  const { triggerRef: sampleTrigger } = sampleMenu;
   const boxRef = useRef<HTMLTextAreaElement>(null);
   useAutoGrow(boxRef, text);
-  const backToAttach = useCallback(() => attachTrigger.current, [attachTrigger]);
+  const backToArticle = useCallback(() => articleTrigger.current, [articleTrigger]);
+  const backToSample = useCallback(() => sampleTrigger.current, [sampleTrigger]);
 
   const tool = clicked ? clicked.tool : toolFromWords(text);
+  const mimic = tool === "mimic";
   const material = choice ? materialFields(choice) : null;
   const typed = text.trim();
-  const kind: StartKind | null = tool ?? (material ? "comprehension" : typed ? "ask" : null);
+  const kind: StartKind | null = tool ? kindOf(tool) : material ? "comprehension" : typed ? "ask" : null;
   const missing = needMaterial && material === null && kind !== null && kind !== "ask";
+  /** 照我的學習單做 waits for a sample, then for the lesson text. */
+  const slotsNeeded = !mimic ? null : sample === null ? QUICK_NEED_SAMPLE : material === null ? QUICK_NEED_LESSON_TEXT : null;
+  const need = mimic ? (needSlots ? slotsNeeded : null) : missing ? MATERIAL_REQUIRED : null;
   const picked = choice?.picked ?? null;
-  const worksheetLike = picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
+  const worksheetLike =
+    !mimic && picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
 
   async function send() {
     if (busy || kind === null) return;
+    if (mimic && slotsNeeded !== null) {
+      setNeedSlots(true);
+      return;
+    }
     if (kind !== "ask" && material === null) {
       setNeedMaterial(true);
       return;
@@ -124,7 +224,9 @@ function QuickBox() {
     setError(null);
     try {
       const request = typed || (kind === "ask" ? "" : TOOL_CHIP[kind]);
-      const session = await api.createPrepSession(asCreateRequest({ kind, request, ...(material ?? {}) }));
+      const session = await api.createPrepSession(
+        asCreateRequest({ kind, request, ...(material ?? {}), ...(mimic && sample ? sampleFields(sample) : {}) }),
+      );
       navigate(`/prep/${session.id}`);
     } catch (err) {
       setError(errorMessage(err));
@@ -138,10 +240,25 @@ function QuickBox() {
     void send();
   }
 
-  function open(way: AttachWay) {
-    closeAttach();
-    setDialog(way);
+  function chooseSample(next: Sample) {
+    setSample(next);
+    setDialog(null);
+    // The same material cannot be both the sample and the lesson text.
+    if (next.kind === "material") setChoice((c) => (c?.picked?.id === next.material.id ? null : c));
   }
+
+  /** 把它當範本: 照我的學習單做 with this material as the sample; the lesson text goes in next. */
+  function takeAsSample(m: PickedMaterial) {
+    setClicked({ tool: "mimic" });
+    setSample({ kind: "material", material: { id: m.id, title: m.title } });
+    setChoice(null);
+    setNeedMaterial(false);
+    setNeedSlots(false);
+    articleTrigger.current?.focus();
+  }
+
+  const articleLabel = mimic ? ATTACH_LESSON_TEXT : "附上文章";
+  const shownSample = mimic ? sample : null;
 
   return (
     <>
@@ -156,50 +273,64 @@ function QuickBox() {
           rows={2}
           maxLength={REQUEST_MAX}
           value={text}
-          placeholder={QUICK_PLACEHOLDER}
+          placeholder={mimic ? MIMIC_PLACEHOLDER : QUICK_PLACEHOLDER}
           disabled={busy}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        {choice && (
+        {(shownSample || choice) && (
           <div className="prompt-chips">
-            <MaterialChip title={choiceTitle(choice)} disabled={busy} onRemove={() => setChoice(null)} />
-          </div>
-        )}
-        <div className="prompt-toolbar">
-          <div className="popover-root" ref={attachRoot} onBlur={attachBlur}>
-            <button
-              ref={attachTrigger}
-              type="button"
-              className="tool-button"
-              aria-expanded={attachOpen}
-              aria-controls={`${ids}-attach`}
-              disabled={busy}
-              onClick={toggleAttach}
-            >
-              <Icon name="paperclip" />
-              附上文章
-            </button>
-            {attachOpen && (
-              <div className="popover" id={`${ids}-attach`} role="group" aria-label="附上文章">
-                {(["upload", "library", "paste"] as const).map((way) => (
-                  <button key={way} type="button" className="popover-item" onClick={() => open(way)}>
-                    <Icon name={way === "upload" ? "upload" : way === "library" ? "library" : "paste"} />
-                    {ATTACH_LABEL[way]}
-                  </button>
-                ))}
-              </div>
+            {shownSample && (
+              <MaterialChip
+                label={SAMPLE_CHIP_LABEL}
+                title={sampleName(shownSample)}
+                meta={shownSample.kind === "template" ? `${shownSample.template.section_count} 區` : undefined}
+                icon={shownSample.kind === "template" ? "template" : "file"}
+                disabled={busy}
+                onRemove={() => setSample(null)}
+              />
+            )}
+            {choice && (
+              <MaterialChip
+                label={mimic ? LESSON_TEXT_CHIP_LABEL : undefined}
+                title={choiceTitle(choice)}
+                disabled={busy}
+                onRemove={() => setChoice(null)}
+              />
             )}
           </div>
-          {missing && (
-            <p className="prompt-need" role="alert">
-              {MATERIAL_REQUIRED}
+        )}
+        <div className={`prompt-toolbar${mimic ? " has-two-slots" : ""}`}>
+          {mimic && (
+            <AttachMenu
+              id={`${ids}-sample`}
+              label={ATTACH_SAMPLE}
+              icon="template"
+              ways={SAMPLE_ATTACH}
+              menu={sampleMenu}
+              disabled={busy}
+              onPick={(way) => setDialog({ slot: "sample", way })}
+            />
+          )}
+          <AttachMenu
+            id={`${ids}-attach`}
+            label={articleLabel}
+            icon="paperclip"
+            ways={ARTICLE_WAYS}
+            menu={articleMenu}
+            disabled={busy}
+            onPick={(way) => setDialog({ slot: "article", way })}
+          />
+          {need && (
+            <p className={`prompt-need${mimic ? " is-by-send" : ""}`} id={`${ids}-need`} role="alert">
+              {need}
             </p>
           )}
           <button
             type="button"
             className="send-button"
             aria-label="送出"
+            aria-describedby={need ? `${ids}-need` : undefined}
             disabled={busy || kind === null}
             onClick={() => void send()}
           >
@@ -210,40 +341,40 @@ function QuickBox() {
 
       {worksheetLike && (
         <WorksheetNotice
+          useLabel={TAKE_AS_SAMPLE}
           disabled={busy}
-          onUse={() => {
-            const state: MimicState = { sample: { id: worksheetLike.id, title: worksheetLike.title } };
-            navigate(mimicPath(worksheetLike.id), { state });
-          }}
+          onUse={() => takeAsSample(worksheetLike)}
           onKeep={() => setKeptAsText((kept) => new Set(kept).add(worksheetLike.id))}
         />
       )}
 
       <div className="output-chips" role="group" aria-label="要做什麼">
-        {KIND_TOOLS.map((t) => (
+        {TOOLS.map((t) => (
           <button
             key={t}
             type="button"
-            className="output-chip"
+            className={`output-chip${t === "mimic" ? " is-featured" : ""}`}
             aria-pressed={tool === t}
             disabled={busy}
             onClick={() => {
               setClicked({ tool: tool === t ? null : t });
               setNeedMaterial(false);
+              setNeedSlots(false);
             }}
           >
-            {TOOL_CHIP[t]}
+            {t === "mimic" && <Icon name="mimic" />}
+            {QUICK_CHIP[t]}
           </button>
         ))}
       </div>
       <ErrorText message={error} />
       {dialog === null && <PrivacyReminder />}
 
-      {dialog && (
+      {dialog?.slot === "article" && (
         <AttachDialog
-          way={dialog}
+          way={dialog.way}
           pasted={choice?.way === "paste" ? { title: choice.title, text: choice.text } : undefined}
-          returnFocus={backToAttach}
+          returnFocus={backToArticle}
           onClose={() => setDialog(null)}
           onChoice={(next) => {
             setChoice(next);
@@ -251,6 +382,9 @@ function QuickBox() {
             setDialog(null);
           }}
         />
+      )}
+      {dialog?.slot === "sample" && (
+        <SampleDialog way={dialog.way} returnFocus={backToSample} onClose={() => setDialog(null)} onChoice={chooseSample} />
       )}
     </>
   );
