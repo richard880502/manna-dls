@@ -10,7 +10,7 @@ import type { CreatePrepSessionRequest } from "../api/types";
 export const TOOLS = ["mimic", "comprehension", "tiered", "activity", "kit", "worksheet"] as const;
 export type Tool = (typeof TOOLS)[number];
 
-/** The tools that are a session kind of their own: the home page's chips. */
+/** The tools that are a session kind of their own (the home page's chips follow 照我的學習單做 with these). */
 export const KIND_TOOLS = ["comprehension", "tiered", "activity", "kit", "worksheet"] as const;
 export type KindTool = (typeof KIND_TOOLS)[number];
 
@@ -33,6 +33,9 @@ export const TOOL_CHIP: Record<KindTool, string> = {
 
 /** The name in the sidebar's 建立 group, on the home page's cards and in the generator's heading. */
 export const TOOL_NAME: Record<Tool, string> = { mimic: "照我的學習單做", ...TOOL_CHIP, worksheet: "完整學習單" };
+
+/** The home quick box's chips, in TOOLS order: 照我的學習單做 (featured) first, then the kinds. */
+export const QUICK_CHIP: Record<Tool, string> = { mimic: TOOL_NAME.mimic, ...TOOL_CHIP };
 
 /** One line per tool: the home page's cards. */
 export const TOOL_BLURB: Record<Tool, string> = {
@@ -96,11 +99,25 @@ export const KEEP_AS_TEXT = "不用，當成課文";
 /** On 完整學習單, beside the 版型 select. */
 export const MIMIC_LINK = "或上傳你的學習單範本 →";
 
+/** The home quick box with 照我的學習單做: its two attach slots, their chips and what is missing. */
+export const ATTACH_SAMPLE = "附上學習單範本";
+export const ATTACH_LESSON_TEXT = "附上課文";
+export const SAMPLE_CHIP_LABEL = "範本";
+export const LESSON_TEXT_CHIP_LABEL = "課文";
+export const QUICK_NEED_SAMPLE = "先附上你的學習單範本";
+export const QUICK_NEED_LESSON_TEXT = "先附上這節課的課文";
+/** The notice on the home quick box: the material moves into the 範本 slot, on the same page. */
+export const TAKE_AS_SAMPLE = "把它當範本";
+
 /** Where 照這份的樣式做 goes: the mimic page with this material as the sample. */
 export const mimicPath = (materialId: number) => `/create/mimic?sample=${materialId}`;
 
-/** Typed words that pick a chip, in the contract's order (the first row that matches wins). */
-const KEYWORDS: ReadonlyArray<readonly [KindTool, readonly string[]]> = [
+/**
+ * Typed words that pick a chip, in the contract's order (the first row that matches wins).
+ * 照我的學習單做 comes first, so 「照我的學習單」 is not just 學習單.
+ */
+const KEYWORDS: ReadonlyArray<readonly [Tool, readonly string[]]> = [
+  ["mimic", ["照我的", "照這份", "範本", "樣式", "模仿"]],
   ["tiered", ["分層", "差異化"]],
   ["activity", ["活動", "教案", "流程"]],
   ["kit", ["套件"]],
@@ -108,7 +125,7 @@ const KEYWORDS: ReadonlyArray<readonly [KindTool, readonly string[]]> = [
   ["comprehension", ["閱讀", "理解", "題目", "出題"]],
 ];
 
-export function toolFromWords(text: string): KindTool | null {
+export function toolFromWords(text: string): Tool | null {
   for (const [tool, words] of KEYWORDS) {
     if (words.some((w) => text.includes(w))) return tool;
   }

@@ -87,6 +87,15 @@
   font-weight: var(--weight-strong);
 }
 
+/* 照我的學習單做's missing slot is said right beside the send arrow. */
+.prompt-need.is-by-send {
+  margin-left: auto;
+}
+
+.prompt-need.is-by-send + .send-button {
+  margin-left: 0;
+}
+
 .prompt-counter {
   margin-left: auto;
   padding-right: var(--space-2xs);
@@ -194,6 +203,13 @@
   cursor: pointer;
 }
 
+/* Which slot the chip fills when the card has two: 「範本：」, 「課文：」. */
+.attach-chip-label {
+  flex: none;
+  font-weight: var(--weight-regular);
+  white-space: nowrap;
+}
+
 /* A short fact after the title, e.g. a template's 「· 3 區」. */
 .attach-chip-meta {
   flex: none;
@@ -288,6 +304,20 @@
 .output-chip.is-small {
   min-height: var(--control-h-sm);
   padding: 0 var(--space-sm);
+}
+
+/* 照我的學習單做 leads the chips in the teacher's ink, like its tool card; chosen, it fills as the others do. */
+.output-chip.is-featured {
+  gap: var(--space-2xs);
+  border-color: var(--color-accent-rule);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-text);
+}
+
+.output-chip.is-featured .ui-icon {
+  flex: none;
+  width: 1.125rem;
+  height: 1.125rem;
 }
 
 .output-chip[aria-pressed="true"] {
@@ -883,6 +913,26 @@
   .create-select {
     width: 100%;
     min-width: 0;
+  }
+
+  /* 照我的學習單做's two 附上 buttons: their menus open under them but inside the card's width
+   * (the 範本 menu from its left edge, the 課文 menu from its right), never past the screen. */
+  .prompt-toolbar.has-two-slots {
+    position: relative;
+  }
+
+  .prompt-toolbar.has-two-slots > .popover-root {
+    position: static;
+  }
+
+  .prompt-toolbar.has-two-slots .popover {
+    top: auto;
+    margin-top: var(--space-2xs);
+  }
+
+  .prompt-toolbar.has-two-slots > .popover-root + .popover-root .popover {
+    right: 0;
+    left: auto;
   }
 
   .attach-dialog {

@@ -3,8 +3,9 @@ import { Link } from "react-router";
 import type { WsTemplateSummary } from "../../api/types";
 import { templateMeta, templateTitle } from "../../lib/templates";
 import { Loading } from "../common";
-import { MaterialChip } from "../material/AttachDialog";
+import { ATTACH_LABEL, Dialog, MaterialChip } from "../material/AttachDialog";
 import { LibraryStep, type PickedMaterial } from "../material/MaterialChooser";
+import { useReadyTemplates } from "./TemplateSelect";
 
 /**
  * 照我的學習單做: the teacher's worksheet sample. A material (uploaded now or from the library) is
@@ -12,12 +13,21 @@ import { LibraryStep, type PickedMaterial } from "../material/MaterialChooser";
  */
 export type Sample = { kind: "material"; material: PickedMaterial } | { kind: "template"; template: WsTemplateSummary };
 
-type SampleWay = "upload" | "template" | "library";
+export type SampleWay = "upload" | "template" | "library";
+
+const FROM_TEMPLATES = "從我的版型選";
 
 const SAMPLE_WAYS: Array<[SampleWay, string]> = [
   ["upload", "上傳學習單"],
-  ["template", "從我的版型選"],
+  ["template", FROM_TEMPLATES],
   ["library", "從教材庫選"],
+];
+
+/** The home quick box's 附上學習單範本 menu: 附上文章's 上傳檔案 and 從教材庫選, plus 從我的版型選. */
+export const SAMPLE_ATTACH: Array<[SampleWay, string]> = [
+  ["upload", ATTACH_LABEL.upload],
+  ["library", ATTACH_LABEL.library],
+  ["template", FROM_TEMPLATES],
 ];
 
 /** What the sample is called: the file's (material's) name or the template's title. */
@@ -128,5 +138,40 @@ export function SampleChooser({
         )}
       </div>
     </div>
+  );
+}
+
+/** 從我的版型選 in a dialog: the ready templates, asked for when it opens. */
+function ReadyTemplates({ onPick }: { onPick: (t: WsTemplateSummary) => void }) {
+  const templates = useReadyTemplates();
+  return <TemplatePicker templates={templates} disabled={false} onPick={onPick} />;
+}
+
+/**
+ * The sample from one of SAMPLE_ATTACH, in a dialog (like AttachDialog for the article): 上傳檔案
+ * or 從教材庫選 end with a library material, 從我的版型選 with a ready template.
+ */
+export function SampleDialog({
+  way,
+  returnFocus,
+  onChoice,
+  onClose,
+}: {
+  way: SampleWay;
+  returnFocus?: () => HTMLElement | null;
+  onChoice: (sample: Sample) => void;
+  onClose: () => void;
+}) {
+  const title = SAMPLE_ATTACH.find(([key]) => key === way)?.[1] ?? "";
+  return (
+    <Dialog title={title} returnFocus={returnFocus} onClose={onClose}>
+      <div className="attach-step">
+        {way === "template" ? (
+          <ReadyTemplates onPick={(t) => onChoice({ kind: "template", template: t })} />
+        ) : (
+          <LibraryStep way={way} onPicked={(m) => onChoice({ kind: "material", material: m })} />
+        )}
+      </div>
+    </Dialog>
   );
 }

@@ -7,12 +7,14 @@ import { KEEP_AS_TEXT, LOOKS_LIKE_WORKSHEET, USE_AS_SAMPLE } from "../../lib/cre
  * the teacher from generating with it as the article.
  */
 export function WorksheetNotice({
+  useLabel = USE_AS_SAMPLE,
   disabled,
   onUse,
   onKeep,
 }: {
+  /** The primary button: 照這份的樣式做 (opens 照我的學習單做), or 把它當範本 on the home quick box. */
+  useLabel?: string;
   disabled?: boolean;
-  /** 照這份的樣式做 */
   onUse: () => void;
   /** 不用，當成課文 */
   onKeep: () => void;
@@ -23,7 +25,7 @@ export function WorksheetNotice({
       <p id={`${ids}-q`}>{LOOKS_LIKE_WORKSHEET}</p>
       <div className="button-row">
         <button type="button" className="primary-button small-button" disabled={disabled} onClick={onUse}>
-          {USE_AS_SAMPLE}
+          {useLabel}
         </button>
         <button type="button" className="text-link is-plain" disabled={disabled} onClick={onKeep}>
           {KEEP_AS_TEXT}

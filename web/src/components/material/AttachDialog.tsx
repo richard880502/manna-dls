@@ -29,14 +29,19 @@ export function choiceTitle(choice: MaterialChoice): string {
   return choice.picked?.title.trim() || "未命名教材";
 }
 
-/** The attached material inside a prompt card: its title (and a short fact, e.g. 「3 區」) and ×. */
+/**
+ * The attached material inside a prompt card: which slot it fills when there are two (e.g.
+ * 「範本：」), its title (and a short fact, e.g. 「3 區」) and ×.
+ */
 export function MaterialChip({
+  label,
   title,
   meta,
   icon = "file",
   disabled,
   onRemove,
 }: {
+  label?: string;
   title: string;
   meta?: string;
   icon?: IconName;
@@ -46,12 +51,13 @@ export function MaterialChip({
   return (
     <span className="attach-chip" role="status">
       <Icon name={icon} />
+      {label && <span className="attach-chip-label">{label}：</span>}
       <span className="attach-chip-title">{title}</span>
       {meta && <span className="attach-chip-meta">· {meta}</span>}
       <button
         type="button"
         className="attach-chip-remove"
-        aria-label={`移除「${title}」`}
+        aria-label={`移除${label ?? ""}「${title}」`}
         disabled={disabled}
         onClick={onRemove}
       >
