@@ -43,6 +43,32 @@ fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Whether a paragraph reads like a title or heading rather than prose: at most 12 words and
+/// 80 characters, and not ending like a sentence or a line of verse (. ! ? , ; : or a closing
+/// quotation mark). "The Umbrella Stand" is; "The rain is knocking on my window," is not.
+pub fn is_heading_like(text: &str) -> bool {
+    let t = text.trim();
+    let words = t.split_whitespace().count();
+    let ends_like_prose = t.chars().last().is_none_or(|c| {
+        matches!(
+            c,
+            '.' | '!'
+                | '?'
+                | ','
+                | ';'
+                | ':'
+                | '"'
+                | '\u{201d}'
+                | '\''
+                | '\u{2019}'
+                | '。'
+                | '！'
+                | '？'
+        )
+    });
+    (1..=12).contains(&words) && t.chars().count() <= 80 && !ends_like_prose
+}
+
 /// Splits pasted text into paragraphs, in code (never by the model). With blank lines in the
 /// text, a paragraph is a run of non-blank lines (line breaks inside it become spaces, as in
 /// hard-wrapped pastes); without any, every line is a paragraph. Blank paragraphs are skipped.
@@ -752,6 +778,22 @@ mod tests {
                 "Second paragraph."
             ]
         );
+    }
+
+    #[test]
+    fn headings_are_short_lines_that_do_not_end_like_a_sentence() {
+        assert!(is_heading_like("The Umbrella Stand"));
+        assert!(is_heading_like(
+            "Lesson 5 A Recipe for a Delicious Friendship"
+        ));
+        assert!(is_heading_like("Why Bees Matter"));
+        assert!(!is_heading_like("Her neighbors laughed."));
+        assert!(!is_heading_like("The rain is knocking on my window,"));
+        assert!(!is_heading_like("Should Schools Start Later?"));
+        assert!(!is_heading_like(
+            "On a rainy Monday Mrs Lin put an old bucket outside her small bookshop and filled it"
+        ));
+        assert!(!is_heading_like(""));
     }
 
     #[test]
