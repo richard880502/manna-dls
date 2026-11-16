@@ -174,6 +174,15 @@ impl LevelDraft {
 
 // ---------------------------------------------------------------- the two calls
 
+/// What the questions are for. Without it the 閱讀理解題 and 分層練習 requests were identical,
+/// and the gateway answered the second from its cache with the same questions.
+fn purpose_line(output: Output) -> &'static str {
+    match output {
+        Output::Tiered => "分層練習：同一份題目會依層次分成基礎版、一般版、進階版；基礎版會印出 hint，所以每題的 hint 要真的能幫程度較弱的學生起步。",
+        _ => "閱讀理解題：全班同一份，依 Bloom 層次由淺到深。",
+    }
+}
+
 struct LevelRequest<'a> {
     info: &'a StepInfo,
     bloom: Bloom,
@@ -219,6 +228,10 @@ async fn level_call(
         ("bloom_stems", b.stems().to_string()),
         ("answer_formats", r.formats.join("、")),
         ("question_count", r.count.to_string()),
+        (
+            "purpose",
+            purpose_line(run.input.worksheet.settings.output).to_string(),
+        ),
         ("evidence_rule", evidence_rule.to_string()),
         ("earlier_questions", earlier),
         ("passage_numbered", material.numbered()),

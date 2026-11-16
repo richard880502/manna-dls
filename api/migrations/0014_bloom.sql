@@ -121,6 +121,8 @@ $p$學校類型：{{school_track}}
 學習目標（教師寫的）：{{teacher_objective}}
 教師的要求：{{teacher_request}}
 
+用途：{{purpose}}
+
 這個層次要出 {{question_count}} 題。
 
 已經出過的題目（其他層次；不要重複）：
