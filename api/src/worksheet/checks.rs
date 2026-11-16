@@ -16,11 +16,11 @@ use super::schemas::{
 };
 use super::{
     info_function_from_label, student_tasks, ANSWER_FORMATS, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE,
-    FMT_MATCHING, FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
+    FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::checks::CheckResult;
 use crate::routes::clip_chars;
-use crate::sop::checks::{clean_markup, english_only, is_verbatim, norm};
+use crate::sop::checks::{clean_markup, english_only, is_verbatim, locate_verbatim, norm};
 use crate::syllables;
 
 pub struct Eval<T> {
@@ -162,7 +162,8 @@ pub fn verbatim_piece(quote: &str, passage: &str) -> Option<String> {
                 .trim()
                 .to_string()
         })
-        .filter(|p| word_count(p) >= MIN_EVIDENCE_WORDS && is_verbatim(p, passage))
+        .filter(|p| word_count(p) >= MIN_EVIDENCE_WORDS)
+        .filter_map(|p| locate_verbatim(&p, passage))
         .max_by_key(|p| p.chars().count())
 }
 
@@ -205,6 +206,62 @@ const TASK_CHECKS_WITH_BUDGET: [&str; 10] = [
     "at_least_3_info_functions",
     "item_count_within_budget",
 ];
+
+static OPTION_LETTER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^\s*(?:\(([A-Ha-h])\)|([A-Ha-h])[.)．、:])\s*(.*)$").expect("valid regex")
+});
+
+/// Puts a choice item in the form the checks expect, before checking it. The model often writes
+/// options as 「A. …」 and the answer as "B" (real-model run: an exit ticket failed this way):
+/// letters are stripped when every option carries them in order, and an answer that is a letter,
+/// or an option with its letter, or an option in another case, becomes that option exactly.
+pub(crate) fn normalize_choice(options: &mut [String], answer: &mut String) {
+    let lettered: Vec<Option<(char, String)>> = options
+        .iter()
+        .map(|o| {
+            OPTION_LETTER.captures(o).map(|c| {
+                let l = c
+                    .get(1)
+                    .or(c.get(2))
+                    .map_or('?', |m| m.as_str().chars().next().unwrap_or('?'));
+                (l.to_ascii_uppercase(), c[3].trim().to_string())
+            })
+        })
+        .collect();
+    let in_order = !options.is_empty()
+        && lettered.iter().enumerate().all(|(i, l)| {
+            l.as_ref()
+                .is_some_and(|(c, rest)| *c == (b'A' + i as u8) as char && !rest.is_empty())
+        });
+    if in_order {
+        for (o, l) in options.iter_mut().zip(lettered) {
+            if let Some((_, rest)) = l {
+                *o = rest;
+            }
+        }
+    }
+    let a = answer.trim();
+    if options.iter().any(|o| o.trim() == a) {
+        return;
+    }
+    let bare = a.trim_matches(|c: char| c == '(' || c == ')' || c == '.' || c == ' ');
+    if bare.len() == 1 {
+        if let Some(c) = bare.chars().next().filter(char::is_ascii_alphabetic) {
+            let idx = (c.to_ascii_uppercase() as u8).wrapping_sub(b'A') as usize;
+            if let Some(o) = options.get(idx) {
+                *answer = o.clone();
+                return;
+            }
+        }
+    }
+    let text = OPTION_LETTER
+        .captures(a)
+        .map_or(a.to_string(), |c| c[3].trim().to_string());
+    let key = |s: &str| norm(s).to_lowercase().trim_end_matches('.').to_string();
+    if let Some(o) = options.iter().find(|o| key(o) == key(&text)) {
+        *answer = o.clone();
+    }
+}
 
 fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
     match it.answer_format.as_str() {
@@ -418,6 +475,9 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 );
                 continue;
             }
+            if item.answer_format == FMT_CHOICE {
+                normalize_choice(&mut item.options, &mut item.answer_en);
+            }
             if let Err(why) = item_wellformed(&item) {
                 t.fail(
                     "items_wellformed",
@@ -439,7 +499,7 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             // It never costs the step a repair call on its own.
             item.evidence = match it.evidence.as_deref().map(clean) {
                 Some(e) if e.is_empty() => None,
-                Some(e) if is_verbatim(&e, &passage) => Some(e),
+                Some(e) if is_verbatim(&e, &passage) => locate_verbatim(&e, &passage),
                 Some(e) => {
                     let piece = verbatim_piece(&e, &passage);
                     t.fixed(
@@ -684,12 +744,29 @@ pub fn evaluate_warmup(raw: &RawWarmup, ctx: &WarmupCtx<'_>) -> Eval<CleanWarmup
                 "拿掉清單以外的標籤",
             );
         }
+        // A warm-up activity has prompts but no options: as 選擇題 or 配對題 it would print a
+        // question with nothing to choose from (real-model run), so it becomes 簡答題.
+        let answer_format = format_ok.then(|| {
+            if a.answer_format == FMT_CHOICE || a.answer_format == FMT_MATCHING {
+                t.fixed(
+                    "labels_from_spec_sets",
+                    format!(
+                        "{name} 的 answer_format 是「{}」，但暖身活動沒有選項。",
+                        a.answer_format
+                    ),
+                    "改成簡答題",
+                );
+                FMT_SHORT.to_string()
+            } else {
+                a.answer_format.clone()
+            }
+        });
         activities.push(CleanActivity {
             title,
             instructions,
             prompts,
             student_tasks,
-            answer_format: format_ok.then(|| a.answer_format.clone()),
+            answer_format,
             purpose_zh: clean(&a.purpose_zh),
         });
     }
@@ -1040,6 +1117,13 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
             .as_deref()
             .map(clean)
             .filter(|s| !s.is_empty());
+        if item.answer_format == FMT_CHOICE {
+            let mut answer = item.sample_answer_en.clone().unwrap_or_default();
+            normalize_choice(&mut item.options, &mut answer);
+            if item.sample_answer_en.is_some() {
+                item.sample_answer_en = Some(answer);
+            }
+        }
         let english = english_only(&item.prompt_en)
             && item.options.iter().all(|o| english_only(o))
             && item.sample_answer_en.as_deref().is_none_or(english_only);
@@ -1252,6 +1336,7 @@ fn item_checks(item: &mut CleanSectionItem, iname: &str, t: &mut Tally) -> bool 
         return false;
     }
     if item.answer_format == FMT_CHOICE {
+        normalize_choice(&mut item.options, &mut item.answer);
         let distinct: HashSet<&str> = item.options.iter().map(|o| o.trim()).collect();
         let letter = item
             .answer
@@ -1514,8 +1599,8 @@ pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<Cle
         let evidence = clean(&it.evidence);
         item.evidence = if evidence.is_empty() {
             None
-        } else if is_verbatim(&evidence, ctx.passage) {
-            Some(evidence.clone())
+        } else if let Some(span) = locate_verbatim(&evidence, ctx.passage) {
+            Some(span)
         } else {
             verbatim_piece(&evidence, ctx.passage)
         };
@@ -1692,6 +1777,43 @@ mod tests {
             answer: answer.into(),
             bloom: None,
         }
+    }
+
+    #[test]
+    fn choice_letters_are_stripped_and_letter_answers_become_the_option() {
+        let mut options: Vec<String> = [
+            "A. To stop fishing",
+            "B. To use fewer bags",
+            "C. To build a museum",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let mut answer = "B".to_string();
+        normalize_choice(&mut options, &mut answer);
+        assert_eq!(
+            options,
+            ["To stop fishing", "To use fewer bags", "To build a museum"]
+        );
+        assert_eq!(answer, "To use fewer bags");
+
+        let mut options: Vec<String> = ["(A) red", "(B) blue"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut answer = "(B) Blue.".to_string();
+        normalize_choice(&mut options, &mut answer);
+        assert_eq!(answer, "blue");
+
+        // Options that merely start with a capital "A" word are left alone.
+        let mut options: Vec<String> = ["A lot of people", "Few people"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let mut answer = "few people".to_string();
+        normalize_choice(&mut options, &mut answer);
+        assert_eq!(options, ["A lot of people", "Few people"]);
+        assert_eq!(answer, "Few people");
     }
 
     #[test]

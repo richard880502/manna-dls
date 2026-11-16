@@ -804,6 +804,21 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
             )
         })
         .collect();
+    // A level that kept fewer questions than asked (the others failed their checks twice) says
+    // so; before, the worksheet was silently one question short.
+    let mut notices: Vec<String> = plan
+        .iter()
+        .zip(&drafts)
+        .filter(|((_, n), d)| d.failure.is_none() && d.items.len() < *n)
+        .map(|((b, n), d)| {
+            format!(
+                "『{}』層次要出 {n} 題，只留下 {} 題（其他題目沒有通過檢查）。可以在那一區按「重新產生」，或自己補。",
+                b.label(),
+                d.items.len()
+            )
+        })
+        .collect();
+    notices.extend(checked.notices);
     let latest = store::latest(db, ws.id).await?;
     let mut content = Content {
         objectives: latest.content.objectives,
@@ -811,7 +826,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         blocks,
         levels: levels.clone(),
         chosen: Some(chosen),
-        notices: checked.notices,
+        notices,
     };
     content.normalise().map_err(|e| {
         AppError::Internal(anyhow::anyhow!(
