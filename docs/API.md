@@ -2070,3 +2070,132 @@ interface PrepTurn {
 - 程式進入點：偵測 `materials::detect::looks_like_worksheet`；對話等版型 `prep::run::start`（`spawn_after_template`）；schema `worksheet::template::section_out_schema`。
 
 **抽取提示詞 `worksheet_template_details` v2**：逐段（`per_paragraph = true`）的區塊，`item_count` 是「每一段」的題數，不是全部題數。真模型實測時，一份「每段各問一題、共 4 題」的範本被讀成每段 4 題，套到 5 段的新課文就出了 20 題。
+
+---
+
+# Phase 2.9：教材參考、我的教材、學習單範本
+
+以下為**新增或變更**；既有端點只多了選填欄位與回應欄位。Migration `0017_library_areas.sql`。
+
+教材與學習單分開：平台有兩個參考區「教材參考」（知識庫的課綱、詞彙表、歷屆學測／統測英文試題）與「學習單範本」；教師自己上傳的是「我的教材」，自己的學習單範例移到「我的範本」。挑選教材或範本用一個像商店的視窗：搜尋框、有數量的分類籤、篩選籤、卡片格。管理員（`pi`、`kb_manager`）上傳與管理平台的兩個區。
+
+**這一版沒有**：把考卷切成一篇篇文章（OCR）、自動匯入範例、推薦。分類與標籤先放好。
+
+## 資料
+
+- `materials` 新增：
+  - `scope`：`personal`（只有擁有者，和以前一樣）｜`platform`（所有教師可讀可用，只有 ManageKnowledge 能改或刪）。
+  - `purpose`：`material`（教材）｜`worksheet_sample`（學習單範例，版型的來源）。範例不會出現在教材清單。
+  - `category`：平台教材用固定清單（伺服器檢查）：
+    - 教材參考（`purpose = material`）：學測英文、統測英文、課綱、詞彙表、考試說明、其他。
+    - 範例與範本（`purpose = worksheet_sample`）：字彙、文法句型、閱讀理解、課文講義、自學講義、寫作、聽說、學習反思、其他。
+    - 個人的教材通常是空字串。
+  - `tags TEXT[]`：自由標籤（例如年度 `114`、`試題`、`參考答案`、`三民`）。每個 ≤20 字、每列最多 12 個；前後空白去掉、重複的去掉（保留第一次的寫法與順序）。超過 → 400。
+  - **補資料**：當過版型 `source_material_id` 的教材，`purpose` 改成 `worksheet_sample`。
+- `worksheet_templates` 新增 `scope`、`category`（範本清單；可以是空字串）、`tags`。平台範本來自一份平台的範例教材。
+- 平台的列保留上傳的管理員為 `teacher_id`（稽核用）。管理員自己的「我的教材」不包含她上傳的平台教材，個人額度也不算。
+
+## 存取
+
+- **平台的列**：每位登入的教師都可以**讀**（清單、詳細、文字、原檔 `/materials/:id/file` 與 `file-link`、`/worksheet-templates/:id`），也可以**用**（學習單與備課對話的 `material_id`／`template_id`、`template_material_id`、`POST /api/worksheet-templates { material_id }`）。改與刪只有 ManageKnowledge：其他人經由 `PUT`／`DELETE /api/materials/:id`、`PUT`／`PATCH`／`DELETE /api/worksheet-templates/:id`、`POST …/retry` 都是 **403**（版型的訊息請教師「另存成我的範本」）。ManageKnowledge 經由這些教師端點也可以改（和管理端點同一套規則）。
+- **個人的列**：只有擁有者，和以前一樣；別人的 id → 404。
+- **課例連結與課例 SOP 第 1 步**仍然只接受自己的個人教材（平台教材 → 404）。
+- **用平台教材做學習單**照常留下教材快照：之後平台教材被刪，已經做好的學習單不受影響。平台範本被刪，學習單的 `template` 變成 null，內容保留。
+- **注記是個人的**：在平台教材上，每位教師只看得到、只能改刪自己的注記；`annotation_count`、`GET …/annotations`、`GET …/annotations/ai` 與送給 AI 的注記都只算這位教師自己的（`material_annotations.teacher_id`）。教材詳細的 `lessons`、`worksheet_count` 同樣只算自己的。平台教材被刪時，所有人的注記一起刪除。
+
+## 範例離開「我的教材」
+
+- 用個人教材做出版型（任何路徑：`POST /api/worksheet-templates`、備課對話的 `template_material_id`、照我的學習單做的上傳），那份教材的 `purpose` 就變成 `worksheet_sample`（`updated_at` 不變）。平台教材不會被改。
+- 教師上傳與貼上可以帶 `purpose`（上傳是 multipart 欄位，貼上與網址是 JSON 欄位；預設 `material`；其他值 → 400）。照我的學習單做的範例上傳送 `worksheet_sample`。
+- `GET /api/materials` 預設只列 `purpose = material` 的個人教材；`?purpose=worksheet_sample` 列自己的範例；`?purpose=material` 同預設。有 `lesson_id` 而沒有 `purpose` 時，列出連到該課例的所有教材（不分用途）。
+- 備課對話「找教學資源」比對的「自己的教材」只看「我的教材」（個人、`purpose = material`）。
+
+## 型別
+
+```ts
+// 既有型別多的欄位
+interface Material { /* …既有欄位… */
+  scope: "personal" | "platform"; purpose: "material" | "worksheet_sample";
+  category: string; tags: string[];
+}
+interface WsTemplateSummary { /* …既有欄位… */ scope: "personal" | "platform"; category: string; tags: string[]; }
+
+interface MaterialCard {
+  id: number; title: string; scope: "personal" | "platform"; category: string; tags: string[];
+  kind: string;
+  file_type: "pdf" | "docx" | "text" | "image" | "audio" | "video" | "link";  // .txt 上傳與貼上的文字都是 text
+  page_count: number | null; paragraph_count: number; word_count: number;
+  excerpt: string;            // 文字的前 280 字，空白合併成一個空格（沒有文字時是 ""）
+  text_status: string; looks_like_worksheet: boolean; created_at: string;
+  owner_label: "Manna 知識庫" | "我";
+  uploaded_by?: string;       // 只有管理清單：上傳者的研究編號
+  size_bytes?: number;        // 只有管理清單
+}
+interface TemplateCard {
+  id: number; title: string; scope: "personal" | "platform"; status: "extracting" | "ready" | "failed";
+  category: string; tags: string[];
+  worksheet_kind: string; instruction_language: string;   // 還沒有版本時是 ""
+  section_count: number; section_titles: string[];        // 前 6 個 title_pattern
+  source_material: { id: number; title: string; file_type: string; page_count: number | null } | null;
+  updated_at: string; owner_label: "Manna 範本" | "我";
+  uploaded_by?: string; size_bytes?: number;               // 只有管理清單（size_bytes 是範例原檔的大小）
+  error?: string | null;                                   // 只有管理清單：讀取失敗的原因
+}
+interface Facet { key: string; count: number }
+interface BrowsePage<C, F> { items: C[]; next_cursor: string | null; facets: F; total: number }
+type MaterialBrowse = BrowsePage<MaterialCard, { categories: Facet[]; tags: Facet[]; file_types: Facet[] }>;
+type TemplateBrowse = BrowsePage<TemplateCard, { categories: Facet[]; tags: Facet[]; langs: Facet[] }>;
+```
+
+## 瀏覽（登入即可）
+
+| Method | Path | 查詢參數 | 回應 |
+|---|---|---|---|
+| GET | `/api/browse/materials` | `area=reference\|mine`（預設 `reference`）、`q`、`category`、`tag`（可重複，全部都要符合）、`file_type`、`fits_lesson=true`、`sort=new\|title`（預設 `new`）、`cursor`、`limit`（預設 24，最多 60） | `MaterialBrowse` |
+| GET | `/api/browse/templates` | `area=platform\|mine`（預設 `platform`）、`q`、`category`、`tag`、`lang=英文\|中文\|中英並用`、`sort`、`cursor`、`limit` | `TemplateBrowse` |
+
+- 列：`reference` = 平台 + `material`；`mine` = 自己的個人 + `material`。`platform` = 平台範本中 `ready` 的；`mine` = 自己的範本（任何狀態）。
+- `fits_lesson=true`：有文字（`text_status = ready`）且 1–40 段（學習單產生器的上限）。
+- **搜尋** `q`（最多 200 字）：不分大小寫的子字串。教材比對標題、`source_note`、標籤與全文；範本比對標題、分類、標籤、`worksheet_kind` 與範例教材的標題。
+- **facets** 只依 `area` 與 `q` 計算（不看其他篩選），所以每個籤顯示選它會有幾筆。分類依上面的固定清單順序（再來是其他值；空字串不列）；標籤依數量多到少（最多 40 個）；`file_types` 依 pdf、docx、text、image、audio、video、link；`langs` 依 英文、中文、中英並用。只列數量大於 0 的。
+- `total`：符合 `area`、`q` 與所有篩選的總數。
+- **cursor**：穩定的 keyset（`new` 依 `created_at, id` 由新到舊；`title` 依 `title, id`）。不透明字串，照 `next_cursor` 原樣送回；換了 `sort` 的 cursor → 400。
+- 參數值不合（`area`、`file_type`、`lang`、`sort`、`limit` 不是數字、`fits_lesson` 不是 true/false、cursor 讀不懂）→ 400。
+
+## 版型
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| POST | `/api/worksheet-templates` | 多了選填 `category`（範本清單或空字串）、`tags: string[]` | 同前 |
+| PUT／PATCH | `/api/worksheet-templates/:id` | 多了 `category?`（範本清單或 `""`）、`tags?`（陣列或逗號分隔字串）。讀取中也可以改分類與標籤（`title`、`content` 仍是 409） | `WsTemplateDetail`。平台範本 → 403（ManageKnowledge 除外） |
+| POST | `/api/worksheet-templates/:id/copy` | – | 201 `WsTemplateDetail`：「另存成我的範本」。自己看得到的 `ready` 版型（平台的或自己的）複製成個人版型：`ready`、第 1 版是目前的內容（`origin = "teacher"`）、標題「<原標題>（我的版本）」、沿用範例教材（看原檔）、分類與標籤。還沒有內容（讀取中或失敗）→ 409；別人的個人版型 → 404 |
+
+`GET /api/worksheet-templates`（清單）只列自己的個人版型。
+
+**分類建議**：版型的分類是空的時，抽版型完成時由伺服器依 `worksheet_kind`（找不到再看標題）的關鍵字填上：單字／字彙／vocab → 字彙；文法／句型／grammar／sentence → 文法句型；閱讀／reading → 閱讀理解；自學 → 自學講義；課文／講義 → 課文講義；寫作／writing → 寫作；反思 → 學習反思；其他 → 其他（不分大小寫；「自學」比「講義」先比，「自學講義」才不會變成課文講義）。教師或管理員選了分類就不會被改。0017 之前的版型維持空字串。
+
+## 管理（`pi` 或 `kb_manager`，`manage_knowledge`；其他人 403）
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/admin/library` | `kind=materials\|templates`（預設 materials）、`q`、`category`，另可用瀏覽的 `tag`、`file_type`、`lang`、`sort`、`cursor`、`limit` | `MaterialBrowse` 或 `TemplateBrowse`，卡片多 `uploaded_by`、`size_bytes`（範本另有 `error`）。教材是所有平台教材（不含範例）；範本是所有平台範本（任何狀態） |
+| POST | `/api/admin/library` | multipart：`file`（或 `text`，可配 `title`）、`title?`、`category`（教材參考清單，必填）、`tags?`（逗號分隔，`,`、`，`、`、` 都可以）、`source_note?` | `MaterialCard`（含管理欄位）。平台教材，`purpose = material`；擷取和教師上傳相同 |
+| POST | `/api/admin/library/templates` | multipart：`file`（或 `text`）、`title?`、`category?`（範本清單；空的 = 讀完後建議）、`tags?` | 202 `TemplateCard`（`status: "extracting"`，回應在抽取開始之前讀出）。建立平台範例教材（`purpose = worksheet_sample`）與平台範本，抽版型和 `POST /api/worksheet-templates` 相同 |
+| PATCH | `/api/admin/library/:id` | `{ title?, category?, tags? }`（`tags` 是陣列或逗號分隔字串） | `MaterialCard`。分類依那份教材的用途檢查；標題不可空白 |
+| DELETE | `/api/admin/library/:id` | – | `{ deleted, annotations, lessons }`（同教師刪除，真的刪除）。用它做的版型繼續可用，`source_material` 變成 null |
+| PATCH | `/api/admin/library/templates/:id` | `{ title?, category?, tags? }` | `TemplateCard`。分類送 `""` 而版型已有內容時，立刻依內容建議 |
+| DELETE | `/api/admin/library/templates/:id` | – | `{ ok: true }`。真的刪除；它的平台範例教材（沒有其他版型在用時）與原檔一起刪 |
+| POST | `/api/admin/library/templates/:id/retry` | – | 202 `TemplateCard`（`status: "extracting"`）。只有 `failed` 可以（其他 → 409） |
+
+- 上傳的檢查與教師相同（副檔名、檔頭、單檔大小、同時最多 2 個）。重複的檔案（平台教材裡已有相同 SHA-256）→ 409「這個檔案已經在平台教材庫裡了（…）」；教師個人的教材庫不算重複。
+- **容量**：教師的 1 GB／300 份不適用；所有平台原檔合計以 `PLATFORM_LIBRARY_BYTES`（預設 5 GB）為上限，超過 → 400「平台教材庫的空間不夠…」。原檔存在 `platform/` 之下。
+- **範本上傳**：檔案要讀得到文字、不超過 30000 字（和 `POST /api/worksheet-templates` 同樣的 400 訊息）；不合格時什麼都不存（檔案與教材列都沒有）。
+- 非管理員經過這些端點一律 403（在讀取上傳內容之前）。
+
+## usage_logs 新事件
+
+`worksheet_template_copied`（`template_id`、`from_template_id`、`from_scope`）、`library_material_updated`、`library_template_updated`。`material_created` 多了 `scope`、`purpose`；`material_deleted`、`worksheet_template_deleted` 多了 `scope`；平台範本的 `worksheet_template_created` 多了 `scope`。
+
+## 程式進入點
+
+範圍與分類規則 `materials::catalog`；瀏覽與管理清單的查詢、卡片 `materials::browse`；存取 `materials::store::{readable, owned, writable}` 與 `worksheet::template::store::{readable, writable}`；端點 `routes::browse`、`routes::library_admin`、`routes::templates::copy`。

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { api, errorMessage } from "../../api/client";
-import type { Material, MaterialDetail, MaterialLibrary } from "../../api/types";
+import type { Material, MaterialDetail, MaterialLibrary, MaterialPurpose } from "../../api/types";
 import {
   UPLOAD_WARNING,
   acceptAttribute,
@@ -8,11 +8,9 @@ import {
   formatBytes,
   materialMeta,
   ruleForFile,
-  usedInText,
 } from "../../lib/materials";
-import { ErrorText, Loading } from "../common";
+import { ErrorText } from "../common";
 import { useFirstOnPage } from "../OncePerPage";
-import { MaterialViewer } from "./MaterialViewer";
 
 /** The teacher's library as the server reports it: materials, usage, limits, whether uploads work. */
 export function useMaterialLibrary() {
@@ -41,7 +39,7 @@ export function useMaterialLibrary() {
 
 export type AddWay = "upload" | "paste" | "link";
 
-const WAY_LABEL: Record<AddWay, string> = { upload: "上傳檔案", paste: "貼上文字", link: "加入網址" };
+export const ADD_WAY_LABEL: Record<AddWay, string> = { upload: "上傳檔案", paste: "貼上文字", link: "加入網址" };
 
 interface AddFormProps {
   way: AddWay;
@@ -52,13 +50,15 @@ interface AddFormProps {
   onCancel?: () => void;
   /** The submit button's words when the upload leads somewhere else (e.g. 上傳並讀取設計). */
   submitLabel?: string;
+  /** `worksheet_sample` for a worksheet uploaded as a sample: it stays out of 我的教材. */
+  purpose?: MaterialPurpose;
 }
 
 /**
  * One way of adding a material. Every way carries the same warning: no student work, names,
  * grades or photos; the material stays the teacher's own.
  */
-export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, submitLabel }: AddFormProps) {
+export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, submitLabel, purpose }: AddFormProps) {
   const ids = useId();
   const [title, setTitle] = useState("");
   const [sourceNote, setSourceNote] = useState("");
@@ -95,7 +95,12 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
         return;
       }
       if (fileProblem) return;
-      work = api.uploadLibraryMaterial(file, { title: title.trim(), source_note: sourceNote.trim(), lesson_id: lessonId });
+      work = api.uploadLibraryMaterial(file, {
+        title: title.trim(),
+        source_note: sourceNote.trim(),
+        lesson_id: lessonId,
+        ...(purpose ? { purpose } : {}),
+      });
     } else if (way === "paste") {
       if (!text.trim()) {
         setError("請貼上教材文字。");
@@ -107,6 +112,7 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
         source_note: sourceNote.trim(),
         text,
         lesson_id: lessonId,
+        ...(purpose ? { purpose } : {}),
       });
     } else {
       if (!url.trim()) {
@@ -133,7 +139,7 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
 
   if (way === "upload" && !library.uploads_enabled) {
     return (
-      <div className="material-add" role="group" aria-label={WAY_LABEL[way]}>
+      <div className="material-add" role="group" aria-label={ADD_WAY_LABEL[way]}>
         <p className="material-state">
           這個環境還沒有設定檔案儲存空間，所以現在不能上傳檔案。你仍然可以貼上文字或加入網址。
         </p>
@@ -147,7 +153,7 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
   }
 
   return (
-    <form className="material-add" onSubmit={onSubmit} aria-label={WAY_LABEL[way]}>
+    <form className="material-add" onSubmit={onSubmit} aria-label={ADD_WAY_LABEL[way]}>
       {showWarning && (
         <p className="material-warning" role="note">
           {UPLOAD_WARNING}
@@ -252,7 +258,7 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
   );
 }
 
-const titleOf = (m: { title: string }) => m.title.trim() || "未命名教材";
+export const titleOf = (m: { title: string }) => m.title.trim() || "未命名教材";
 
 /** 從教材庫選: the teacher's materials, one 選用 each. */
 export function MaterialPicker({
@@ -299,7 +305,7 @@ export function MaterialPicker({
 }
 
 /** What deleting this material takes with it, said before the teacher confirms. */
-function deleteConsequences(m: Material): string {
+export function deleteConsequences(m: Material): string {
   const parts = [m.has_file ? "原檔、擷取的文字與段落" : "文字與段落"];
   if (m.annotation_count > 0) parts.push(`${m.annotation_count} 則注記`);
   let text = `刪除後無法復原：${parts.join("、")}都會永久刪除。`;
@@ -308,228 +314,4 @@ function deleteConsequences(m: Material): string {
     text += `用到它的課例（${names}）會顯示「教材已刪除」，課例裡引用的原文片段也會移除；你寫的分析、目標與任務會保留。`;
   }
   return text;
-}
-
-/**
- * 教材: the teacher's own material library. List, add (upload, paste, link), open,
- * rename, and delete for good after an in-page confirmation. On its own page (`asPage`, the top
- * bar's 教材) the heading is the page title; elsewhere it is a section.
- */
-export function MaterialsSection({
-  asPage = false,
-  refreshSignal = 0,
-}: {
-  asPage?: boolean;
-  /** Bumped when a material was added elsewhere on the page (a worksheet uploaded as a template). */
-  refreshSignal?: number;
-} = {}) {
-  const ids = useId();
-  const { library, error, reload } = useMaterialLibrary();
-  useEffect(() => {
-    if (refreshSignal > 0) reload();
-  }, [refreshSignal, reload]);
-  const [adding, setAdding] = useState<AddWay | null>(null);
-  const [viewing, setViewing] = useState<number | null>(null);
-  const [renaming, setRenaming] = useState<{ id: number; title: string } | null>(null);
-  const [confirming, setConfirming] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [rowError, setRowError] = useState<{ id: number; message: string } | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const renameRef = useRef<HTMLInputElement>(null);
-  const renamingId = renaming?.id ?? null;
-  // The title field takes the cursor when it opens.
-  useEffect(() => {
-    if (renamingId !== null) renameRef.current?.focus();
-  }, [renamingId]);
-
-  async function rename(event: FormEvent) {
-    event.preventDefault();
-    if (!renaming) return;
-    setBusy(true);
-    setRowError(null);
-    try {
-      await api.updateLibraryMaterial(renaming.id, { title: renaming.title.trim() });
-      setRenaming(null);
-      reload();
-    } catch (err) {
-      setRowError({ id: renaming.id, message: errorMessage(err) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove(m: Material) {
-    setBusy(true);
-    setRowError(null);
-    try {
-      await api.deleteLibraryMaterial(m.id);
-      setConfirming(null);
-      if (viewing === m.id) setViewing(null);
-      setNotice(`已永久刪除「${titleOf(m)}」。`);
-      reload();
-    } catch (err) {
-      setRowError({ id: m.id, message: errorMessage(err) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className={`materials-section${asPage ? " is-page" : ""}`} aria-labelledby={`${ids}-heading`}>
-      <div className={`head-row${asPage ? " page-head" : ""}`}>
-        <div>
-          {asPage ? <h1 id={`${ids}-heading`}>教材</h1> : <h2 id={`${ids}-heading`}>教材</h2>}
-          <p className="lead">
-            你的課文、講義、圖片與影音。只有你看得到；一份教材可以用在好幾個課例和學習單。
-          </p>
-        </div>
-        {library && (
-          <p className="materials-usage">
-            {library.usage.count} 份 · 檔案已使用 {formatBytes(library.usage.used_bytes)}／
-            {formatBytes(library.usage.quota_bytes)}
-          </p>
-        )}
-      </div>
-
-      {error && <ErrorText message={error} />}
-      {!library && !error && <Loading />}
-
-      {library && (
-        <>
-          <div className="button-row materials-add-row" role="group" aria-label="新增教材">
-            {(["upload", "paste", "link"] as const).map((way) => (
-              <button
-                key={way}
-                type="button"
-                className="secondary-button"
-                aria-pressed={adding === way}
-                onClick={() => {
-                  setNotice(null);
-                  setAdding((cur) => (cur === way ? null : way));
-                }}
-              >
-                {WAY_LABEL[way]}
-              </button>
-            ))}
-          </div>
-          {adding && (
-            <MaterialAddForm
-              key={adding}
-              way={adding}
-              library={library}
-              onCancel={() => setAdding(null)}
-              onAdded={(m) => {
-                setAdding(null);
-                setNotice(`已加入「${titleOf(m)}」。`);
-                reload();
-              }}
-            />
-          )}
-          {notice && (
-            <p className="quiet-note" role="status">
-              {notice}
-            </p>
-          )}
-
-          {library.materials.length === 0 ? (
-            <p className="empty-line">教材庫還沒有教材。上傳檔案、貼上文字或加入網址，就能在課例和學習單裡取用。</p>
-          ) : (
-            <ul className="rows material-rows" aria-label="教材">
-              {library.materials.map((m) => (
-                <li key={m.id} className="row">
-                  <div>
-                    <h3>
-                      <button
-                        type="button"
-                        className="row-title-button"
-                        aria-expanded={viewing === m.id}
-                        aria-controls="material-viewer"
-                        onClick={() => setViewing((cur) => (cur === m.id ? null : m.id))}
-                      >
-                        {titleOf(m)}
-                      </button>
-                    </h3>
-                    <p className="meta">
-                      {materialMeta(m)} · {usedInText(m)}
-                    </p>
-                  </div>
-                  <p className="side">
-                    <button
-                      type="button"
-                      className="text-link"
-                      aria-label={`改名「${titleOf(m)}」`}
-                      onClick={() => {
-                        setConfirming(null);
-                        setRenaming({ id: m.id, title: m.title });
-                      }}
-                    >
-                      改名
-                    </button>
-                    <button
-                      type="button"
-                      className="text-link"
-                      aria-label={`刪除「${titleOf(m)}」`}
-                      onClick={() => {
-                        setRenaming(null);
-                        setConfirming(m.id);
-                      }}
-                    >
-                      刪除
-                    </button>
-                  </p>
-                  {renaming?.id === m.id && (
-                    <form className="row-more material-rename" onSubmit={rename} aria-label="教材改名">
-                      <label className="field-label" htmlFor={`${ids}-rename-${m.id}`}>
-                        教材標題
-                      </label>
-                      <input
-                        id={`${ids}-rename-${m.id}`}
-                        type="text"
-                        value={renaming.title}
-                        disabled={busy}
-                        ref={renameRef}
-                        onChange={(e) => setRenaming({ id: m.id, title: e.target.value })}
-                      />
-                      <div className="button-row">
-                        <button type="submit" className="primary-button small-button" disabled={busy}>
-                          儲存標題
-                        </button>
-                        <button type="button" className="text-link is-plain" onClick={() => setRenaming(null)}>
-                          取消
-                        </button>
-                      </div>
-                    </form>
-                  )}
-                  {confirming === m.id && (
-                    <div className="row-more material-delete" role="alertdialog" aria-label="確認永久刪除教材">
-                      <p>
-                        <strong>永久刪除「{titleOf(m)}」？</strong>
-                      </p>
-                      <p>{deleteConsequences(m)}</p>
-                      <div className="button-row">
-                        <button
-                          type="button"
-                          className="danger-button"
-                          disabled={busy}
-                          onClick={() => void remove(m)}
-                        >
-                          {busy ? "刪除中…" : "永久刪除"}
-                        </button>
-                        <button type="button" className="text-link is-plain" disabled={busy} onClick={() => setConfirming(null)}>
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {rowError?.id === m.id && <ErrorText message={rowError.message} />}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      )}
-
-      <MaterialViewer mode="panel" materialId={viewing} open={viewing !== null} onClose={() => setViewing(null)} />
-    </section>
-  );
 }

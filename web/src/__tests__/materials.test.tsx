@@ -1,13 +1,22 @@
-// 教材與注記 (docs/API.md Phase 2.2): the 教材 section of 備課庫 (upload with the privacy warning,
-// delete with an in-page confirmation), the material viewer with teacher annotations, and the
-// viewer as a resizable, collapsible pane for the worksheet generator.
+// 教材與注記 (docs/API.md Phase 2.2): 我的教材 (/materials; cards since the library contract: upload
+// with the privacy warning, rename and delete with a confirmation), the material viewer with teacher
+// annotations, and the viewer as a resizable, collapsible pane for the worksheet generator.
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { Material, MaterialAnnotation, MaterialDetail, MaterialLibrary } from "../api/types";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { segmentsFor, snapToWords } from "../lib/materials";
-import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
+import {
+  baseRoutes,
+  cardOf,
+  materialBrowse,
+  mockApi,
+  renderApp,
+  respond,
+  signIn,
+  type MockCall,
+} from "../test/mockApi";
 
 const P1 = "Mrs. Lin put an umbrella stand outside her shop.";
 const P2 = "In the first month, twelve umbrellas did disappear. However, something unexpected followed.";
@@ -82,8 +91,11 @@ const annotation = (overrides: Partial<MaterialAnnotation> = {}): MaterialAnnota
 
 async function openLibrary() {
   renderApp("/materials");
-  return within(await screen.findByRole("region", { name: "教材" }));
+  return within(await screen.findByRole("region", { name: "我的教材" }));
 }
+
+/** 我的教材's cards for these materials. */
+const browse = (materials: Material[] = [summary()]) => materialBrowse(materials.map((m) => cardOf(m)));
 
 /** Selects `quote` inside paragraph `pid` as a teacher would with the mouse. */
 function selectText(pid: string, quote: string) {
@@ -99,14 +111,17 @@ function selectText(pid: string, quote: string) {
   });
 }
 
-describe("教材 (the material library page)", () => {
-  it("lists the teacher's materials with where they are used and how much space is left", async () => {
+describe("我的教材 (the material library page)", () => {
+  it("shows the teacher's materials as cards (area=mine) and how much space is left", async () => {
     signIn();
-    mockApi({ ...baseRoutes(), "GET /api/materials": library() });
+    const api = mockApi({ ...baseRoutes(), "GET /api/materials": library(), "GET /api/browse/materials": browse() });
     const section = await openLibrary();
-    expect(await section.findByRole("button", { name: "The Umbrella Stand" })).toBeInTheDocument();
-    expect(section.getByText("貼上的文字 · 2 段 · 1 則注記 · 用在：L3／第 2 節 精讀")).toBeInTheDocument();
-    expect(section.getByText("1 份 · 檔案已使用 3 MB／1 GB")).toBeInTheDocument();
+    const card = within(await section.findByRole("article", { name: "The Umbrella Stand" }));
+    expect(card.getByText("貼上的文字 · 2 段")).toBeInTheDocument();
+    expect(card.getByText("文字")).toBeInTheDocument();
+    expect(card.getByText("我")).toBeInTheDocument();
+    expect(await section.findByText("1 份 · 檔案已使用 3 MB／1 GB")).toBeInTheDocument();
+    expect(api.callsTo("GET", "/api/browse/materials").map((c) => c.url)).toEqual(["/api/browse/materials?area=mine"]);
   });
 
   it("uploads a file after the privacy warning; refuses what the server would refuse before sending", async () => {
@@ -115,6 +130,7 @@ describe("教材 (the material library page)", () => {
     const api = mockApi({
       ...baseRoutes(),
       "GET /api/materials": library(),
+      "GET /api/browse/materials": browse(),
       "POST /api/materials/upload": uploaded,
     });
     const user = userEvent.setup({ applyAccept: false });
@@ -141,12 +157,15 @@ describe("教材 (the material library page)", () => {
     await user.type(form.getByRole("textbox", { name: "來源說明" }), "自編講義");
     await user.click(form.getByRole("button", { name: "上傳" }));
     expect(await screen.findByText("已加入「handout」。")).toBeInTheDocument();
-    // Sent as multipart, with the file and the fields.
+    // Sent as multipart, with the file and the fields (a material: no purpose).
     const call = api.fetchMock.mock.calls.find(([url]) => String(url) === "/api/materials/upload");
     const body = call?.[1]?.body as FormData;
     expect(body).toBeInstanceOf(FormData);
     expect((body.get("file") as File).name).toBe("handout.pdf");
     expect(body.get("source_note")).toBe("自編講義");
+    expect(body.get("purpose")).toBeNull();
+    // The cards and the usage are read again.
+    await waitFor(() => expect(api.callsTo("GET", "/api/browse/materials").length).toBe(2));
     expect(api.callsTo("GET", "/api/materials").length).toBe(2);
   });
 
@@ -159,6 +178,7 @@ describe("教材 (the material library page)", () => {
     });
     const user = userEvent.setup();
     const section = await openLibrary();
+    expect(await section.findByText(/^還沒有教材。/)).toBeInTheDocument();
     await user.click(await section.findByRole("button", { name: "上傳檔案" }));
     expect(section.getByText(/還沒有設定檔案儲存空間/)).toBeInTheDocument();
     await user.click(section.getByRole("button", { name: "貼上文字" }));
@@ -172,12 +192,42 @@ describe("教材 (the material library page)", () => {
     );
   });
 
-  it("deletes only after an in-page confirmation that says the deletion is permanent", async () => {
+  it("renames from the card's ⋯ menu", async () => {
     signIn();
-    let deleted = false;
+    let title = "The Umbrella Stand";
     const api = mockApi({
       ...baseRoutes(),
-      "GET /api/materials": () => library(deleted ? [] : [summary({ has_file: true, kind: "document", size_bytes: 2048 })]),
+      "GET /api/materials": library(),
+      "GET /api/browse/materials": () => browse([summary({ title })]),
+      "PUT /api/materials/5": (call: MockCall) => {
+        title = (call.body as { title: string }).title;
+        return detail({ title });
+      },
+    });
+    const user = userEvent.setup();
+    const section = await openLibrary();
+    await user.click(await section.findByRole("button", { name: "更多動作「The Umbrella Stand」" }));
+    await user.click(screen.getByRole("button", { name: "改名" }));
+    const dialog = within(screen.getByRole("dialog", { name: "教材改名" }));
+    const input = dialog.getByRole("textbox", { name: "教材標題" });
+    expect(input).toHaveFocus();
+    await user.clear(input);
+    await user.type(input, "L3 The Umbrella Stand");
+    await user.click(dialog.getByRole("button", { name: "儲存標題" }));
+    expect(await section.findByText("已改名為「L3 The Umbrella Stand」。")).toBeInTheDocument();
+    expect(api.lastBody("PUT", "/api/materials/5")).toEqual({ title: "L3 The Umbrella Stand" });
+    expect(await section.findByRole("article", { name: "L3 The Umbrella Stand" })).toBeInTheDocument();
+  });
+
+  it("deletes only after a confirmation that says the deletion is permanent and what goes with it", async () => {
+    signIn();
+    let deleted = false;
+    const withFile = summary({ has_file: true, kind: "document", size_bytes: 2048, filename: "umbrella.pdf" });
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": () => library(deleted ? [] : [withFile]),
+      "GET /api/browse/materials": () => browse(deleted ? [] : [withFile]),
+      "GET /api/materials/5": detail({ ...withFile }),
       "DELETE /api/materials/5": () => {
         deleted = true;
         return { deleted: true, annotations: 1, lessons: [7] };
@@ -185,20 +235,23 @@ describe("教材 (the material library page)", () => {
     });
     const user = userEvent.setup();
     const section = await openLibrary();
-    await user.click(await section.findByRole("button", { name: "刪除「The Umbrella Stand」" }));
-    const confirm = within(section.getByRole("alertdialog", { name: "確認永久刪除教材" }));
-    expect(confirm.getByText("永久刪除「The Umbrella Stand」？")).toBeInTheDocument();
-    expect(confirm.getByText(/刪除後無法復原：原檔、擷取的文字與段落、1 則注記都會永久刪除/)).toBeInTheDocument();
+    const more = await section.findByRole("button", { name: "更多動作「The Umbrella Stand」" });
+    await user.click(more);
+    await user.click(screen.getByRole("button", { name: "刪除" }));
+    const confirm = within(screen.getByRole("alertdialog", { name: "永久刪除「The Umbrella Stand」？" }));
+    expect(await confirm.findByText(/刪除後無法復原：原檔、擷取的文字與段落、1 則注記都會永久刪除/)).toBeInTheDocument();
     expect(confirm.getByText(/用到它的課例（「第 2 節 精讀」）會顯示「教材已刪除」/)).toBeInTheDocument();
     // Cancelling sends nothing.
     await user.click(confirm.getByRole("button", { name: "取消" }));
     expect(api.callsTo("DELETE", "/api/materials/5")).toHaveLength(0);
+    expect(more).toHaveFocus();
 
-    await user.click(section.getByRole("button", { name: "刪除「The Umbrella Stand」" }));
-    await user.click(within(section.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    await user.click(more);
+    await user.click(screen.getByRole("button", { name: "刪除" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
     expect(await section.findByText("已永久刪除「The Umbrella Stand」。")).toBeInTheDocument();
     expect(api.callsTo("DELETE", "/api/materials/5")).toHaveLength(1);
-    expect(await section.findByText(/教材庫還沒有教材/)).toBeInTheDocument();
+    expect(await section.findByText(/^還沒有教材。/)).toBeInTheDocument();
   });
 
   it("a failed delete keeps the material and says why", async () => {
@@ -206,16 +259,19 @@ describe("教材 (the material library page)", () => {
     mockApi({
       ...baseRoutes(),
       "GET /api/materials": library(),
+      "GET /api/browse/materials": browse(),
+      "GET /api/materials/5": detail(),
       "DELETE /api/materials/5": respond(503, {
         error: { code: "unavailable", message: "原檔沒有刪除成功（儲存空間暫時無法使用），所以這份教材還沒有刪除。請稍後再試一次。" },
       }),
     });
     const user = userEvent.setup();
     const section = await openLibrary();
-    await user.click(await section.findByRole("button", { name: "刪除「The Umbrella Stand」" }));
-    await user.click(within(section.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
-    expect(await section.findByText(/所以這份教材還沒有刪除/)).toBeInTheDocument();
-    expect(section.getByRole("button", { name: "The Umbrella Stand" })).toBeInTheDocument();
+    await user.click(await section.findByRole("button", { name: "更多動作「The Umbrella Stand」" }));
+    await user.click(screen.getByRole("button", { name: "刪除" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    expect(await screen.findByText(/所以這份教材還沒有刪除/)).toBeInTheDocument();
+    expect(section.getByRole("article", { name: "The Umbrella Stand" })).toBeInTheDocument();
   });
 });
 
@@ -224,6 +280,7 @@ describe("material viewer and annotations", () => {
     return {
       ...baseRoutes(),
       "GET /api/materials": library(),
+      "GET /api/browse/materials": browse(),
       "GET /api/materials/5": detail(),
       "GET /api/materials/5/annotations": [
         annotation(),
@@ -241,7 +298,7 @@ describe("material viewer and annotations", () => {
   async function openViewer() {
     const user = userEvent.setup();
     const section = await openLibrary();
-    await user.click(await section.findByRole("button", { name: "The Umbrella Stand" }));
+    await user.click(await section.findByRole("button", { name: "預覽「The Umbrella Stand」" }));
     const viewer = within(await screen.findByRole("complementary", { name: "教材" }));
     await viewer.findByText("先確認學生知道這是什麼");
     return { user, viewer };

@@ -119,7 +119,7 @@ export function Sidebar({
   onCloseDrawer: () => void;
 }) {
   const { teacher, logout } = useApp();
-  const { pathname, hash } = useLocation();
+  const { pathname } = useLocation();
   const sessions = useRecentSessions(pathname);
   const [createOpen, setCreateOpen] = useState(true);
   const [moreOpen, setMoreOpen] = useState(() => inMore(pathname));
@@ -129,8 +129,6 @@ export function Sidebar({
     setSeenPath(pathname);
     if (inMore(pathname) && !moreOpen) setMoreOpen(true);
   }
-
-  const onTemplates = pathname === "/materials" && hash === "#templates";
 
   return (
     <div className="sidebar" id={id} ref={ref}>
@@ -190,19 +188,24 @@ export function Sidebar({
             label="所有學習單"
             current={inside(pathname === "/worksheets", pathname.startsWith("/worksheets/"))}
           />
-          <SideLink
-            to="/materials"
-            icon="library"
-            label="教材庫"
-            current={inside(pathname === "/materials" && !onTemplates, false)}
-          />
-          <SideLink
-            to="/materials#templates"
-            icon="template"
-            label="我的版型"
-            current={inside(onTemplates, pathname.startsWith("/templates/"))}
-          />
         </ul>
+
+        {/* A small label, not a heading: the page's own headings stay the page's. */}
+        <div className="side-section">
+          <p className="side-heading side-label" id={`${id}-resources`}>
+            資源
+          </p>
+          <ul className="side-list" aria-labelledby={`${id}-resources`}>
+            <SideLink to="/reference" icon="reference" label="教材參考" current={inside(pathname === "/reference", false)} />
+            <SideLink to="/materials" icon="library" label="我的教材" current={inside(pathname === "/materials", false)} />
+            <SideLink
+              to="/templates"
+              icon="template"
+              label="學習單範本"
+              current={inside(pathname === "/templates", pathname.startsWith("/templates/"))}
+            />
+          </ul>
+        </div>
 
         {sessions && sessions.length > 0 && (
           <section className="side-recent" aria-labelledby={`${id}-recent`}>
@@ -252,6 +255,14 @@ export function Sidebar({
           <SideLink to="/preferences" icon="prefs" label="備課偏好" current={inside(pathname === "/preferences", false)} />
           {can(teacher, "manage_knowledge") && (
             <SideLink to="/knowledge" icon="knowledge" label="知識庫管理" current={inside(pathname === "/knowledge", false)} />
+          )}
+          {can(teacher, "manage_knowledge") && (
+            <SideLink
+              to="/admin/library"
+              icon="library"
+              label="教材與範本管理"
+              current={inside(pathname === "/admin/library", false)}
+            />
           )}
           {can(teacher, "administer") && (
             <SideLink to="/admin" icon="admin" label="後台管理" current={inside(pathname === "/admin", false)} />

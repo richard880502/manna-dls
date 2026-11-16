@@ -1,6 +1,8 @@
-//! 教材庫 endpoints (docs/API.md「Phase 2.2：教材與注記」): the teacher's own materials, their
-//! original files, lesson links and annotations. Every endpoint only reaches the signed-in
-//! teacher's materials; anyone else's is a 404.
+//! 教材庫 endpoints (docs/API.md「Phase 2.2：教材與注記」, 「Phase 2.9」): the teacher's own
+//! materials, their original files, lesson links and annotations. A teacher reaches her own
+//! (personal) materials and reads every platform material (教材參考, platform samples); another
+//! teacher's personal material is a 404. Platform materials are changed or deleted only by
+//! ManageKnowledge (403 for everyone else). Annotations are personal on every material.
 
 use axum::body::Body;
 use axum::extract::{Multipart, Query, State};
@@ -19,7 +21,8 @@ use serde_json::{json, Value};
 use crate::auth::{AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::annotations::{self, AiNote, Annotation, Patch as AnnotationPatch};
-use crate::materials::store::{self, Deleted, Material, MaterialDetail, Usage};
+use crate::materials::catalog::{self, Placement, PURPOSE_MATERIAL};
+use crate::materials::store::{self, Deleted, Material, MaterialDetail, Upload, Usage};
 use crate::materials::{self, file_type_for_name, Kind, FILE_TYPES};
 use crate::routes::owned_lesson;
 use crate::storage::{ByteRange, StorageError};
@@ -71,6 +74,10 @@ pub struct ListQuery {
     /// Only the materials linked to this lesson.
     #[serde(default)]
     pub lesson_id: Option<i64>,
+    /// `material` (我的教材, the default) or `worksheet_sample` (the teacher's samples). With
+    /// `lesson_id` and no `purpose`, every material linked to the lesson is listed.
+    #[serde(default)]
+    pub purpose: Option<String>,
 }
 
 pub async fn list(
@@ -82,8 +89,13 @@ pub async fn list(
     if let Some(lesson_id) = q.lesson_id {
         owned_lesson(&state.db, lesson_id, teacher.id()).await?;
     }
+    let purpose = match (q.purpose.as_deref(), q.lesson_id) {
+        (Some(p), _) => Some(catalog::parse_purpose(Some(p))?),
+        (None, Some(_)) => None,
+        (None, None) => Some(PURPOSE_MATERIAL),
+    };
     Ok(Json(Library {
-        materials: store::list(&state.db, teacher.id(), q.lesson_id).await?,
+        materials: store::list(&state.db, teacher.id(), q.lesson_id, purpose).await?,
         usage: store::usage(&state.db, teacher.id()).await?,
         limits: limits(),
         storage: state
@@ -101,8 +113,8 @@ pub async fn get_one(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<MaterialDetail>> {
     teacher.require(Capability::UseMaterials)?;
-    let row = store::owned(&state.db, id, teacher.id()).await?;
-    Ok(Json(store::detail(&state.db, row).await?))
+    let row = store::readable(&state.db, id, teacher.id()).await?;
+    Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
 }
 
 // ---------------------------------------------------------------- create
@@ -122,6 +134,10 @@ pub struct CreateMaterial {
     /// Link the new material to this lesson straight away.
     #[serde(default)]
     pub lesson_id: Option<i64>,
+    /// `material` (default) or `worksheet_sample` (a sample of the teacher's worksheet: it goes
+    /// to 我的範本 instead of 我的教材).
+    #[serde(default)]
+    pub purpose: Option<String>,
 }
 
 async fn link_new(
@@ -146,14 +162,31 @@ pub async fn create(
     if let Some(lesson_id) = req.lesson_id {
         owned_lesson(&state.db, lesson_id, teacher.id()).await?;
     }
+    let purpose = catalog::parse_purpose(req.purpose.as_deref())?;
     let title = req.title.trim();
     let source_note = req.source_note.trim();
     let row = match req.kind.as_str() {
         "text" => {
-            store::create_text(&state.db, teacher.id(), title, source_note, &req.text).await?
+            store::create_text_placed(
+                &state.db,
+                teacher.id(),
+                title,
+                source_note,
+                &req.text,
+                &Placement::personal(purpose),
+            )
+            .await?
         }
         "link" => {
-            store::create_link(&state.db, teacher.id(), title, source_note, req.url.trim()).await?
+            store::create_link(
+                &state.db,
+                teacher.id(),
+                title,
+                source_note,
+                req.url.trim(),
+                purpose,
+            )
+            .await?
         }
         _ => {
             return Err(AppError::bad_request(
@@ -162,12 +195,13 @@ pub async fn create(
         }
     };
     link_new(&state, teacher.id(), row.id, req.lesson_id).await?;
-    Ok(Json(store::detail(&state.db, row).await?))
+    Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
 }
 
-/// `multipart/form-data` with the fields `file` (required), `title`, `source_note` and
-/// `lesson_id` (optional). The file is read into memory while its size is checked against the
-/// limit of its kind, so an oversized upload is refused before it is all received.
+/// `multipart/form-data` with the fields `file` (required), `title`, `source_note`,
+/// `lesson_id` and `purpose` (`material`, the default, or `worksheet_sample`; optional). The
+/// file is read into memory while its size is checked against the limit of its kind, so an
+/// oversized upload is refused before it is all received.
 pub async fn upload(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -191,10 +225,14 @@ pub async fn upload(
     let mut title = String::new();
     let mut source_note = String::new();
     let mut lesson_id: Option<i64> = None;
+    let mut purpose = PURPOSE_MATERIAL;
     let mut file: Option<(String, Bytes)> = None;
     while let Some(mut field) = form.next_field().await.map_err(bad_form)? {
         match field.name().unwrap_or_default() {
             "title" => title = field.text().await.map_err(bad_form)?,
+            "purpose" => {
+                purpose = catalog::parse_purpose(Some(&field.text().await.map_err(bad_form)?))?
+            }
             "source_note" => source_note = field.text().await.map_err(bad_form)?,
             "lesson_id" => {
                 let raw = field.text().await.map_err(bad_form)?;
@@ -206,28 +244,7 @@ pub async fn upload(
                     );
                 }
             }
-            "file" => {
-                let filename = field.file_name().unwrap_or_default().to_string();
-                let Some(file_type) = file_type_for_name(&filename) else {
-                    return Err(AppError::bad_request(format!(
-                        "不支援這種檔案。可以上傳：{}。",
-                        materials::allowed_extensions_label()
-                    )));
-                };
-                let max = file_type.kind.max_bytes();
-                let mut data = BytesMut::new();
-                while let Some(chunk) = field.chunk().await.map_err(bad_form)? {
-                    if (data.len() + chunk.len()) as u64 > max {
-                        return Err(AppError::bad_request(format!(
-                            "{}檔案最大 {} MB，這個檔案超過了。",
-                            file_type.kind.label(),
-                            max / (1024 * 1024)
-                        )));
-                    }
-                    data.extend_from_slice(&chunk);
-                }
-                file = Some((filename, data.freeze()));
-            }
+            "file" => file = Some(read_file_field(&mut field).await?),
             _ => {}
         }
     }
@@ -240,14 +257,50 @@ pub async fn upload(
     let row = store::create_upload(
         &state,
         teacher.id(),
-        &filename,
-        title.trim(),
-        source_note.trim(),
-        data,
+        Upload {
+            filename: &filename,
+            title: title.trim(),
+            source_note: source_note.trim(),
+            data,
+        },
+        &Placement::personal(purpose),
+        &store::accept_any,
     )
     .await?;
     link_new(&state, teacher.id(), row.id, lesson_id).await?;
-    Ok(Json(store::detail(&state.db, row).await?))
+    Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
+}
+
+/// Reads the `file` field of an upload form: its name and bytes. The size is checked against
+/// the limit of its kind while it arrives, so an oversized upload is refused before it is all
+/// received; an extension that is not on the list is refused at once.
+pub async fn read_file_field(
+    field: &mut axum::extract::multipart::Field<'_>,
+) -> AppResult<(String, Bytes)> {
+    let filename = field.file_name().unwrap_or_default().to_string();
+    let Some(file_type) = file_type_for_name(&filename) else {
+        return Err(AppError::bad_request(format!(
+            "不支援這種檔案。可以上傳：{}。",
+            materials::allowed_extensions_label()
+        )));
+    };
+    let max = file_type.kind.max_bytes();
+    let mut data = BytesMut::new();
+    while let Some(chunk) = field
+        .chunk()
+        .await
+        .map_err(|e| AppError::bad_request(format!("上傳的內容讀不出來：{}", e.body_text())))?
+    {
+        if (data.len() + chunk.len()) as u64 > max {
+            return Err(AppError::bad_request(format!(
+                "{}檔案最大 {} MB，這個檔案超過了。",
+                file_type.kind.label(),
+                max / (1024 * 1024)
+            )));
+        }
+        data.extend_from_slice(&chunk);
+    }
+    Ok((filename, data.freeze()))
 }
 
 // ---------------------------------------------------------------- change, delete
@@ -271,10 +324,10 @@ pub async fn update(
     ApiJson(req): ApiJson<UpdateMaterial>,
 ) -> AppResult<Json<MaterialDetail>> {
     teacher.require(Capability::UseMaterials)?;
+    let row = store::writable(&state.db, id, &teacher).await?;
     let row = store::update(
         &state.db,
-        teacher.id(),
-        id,
+        row,
         store::Patch {
             title: req.title.map(|t| t.trim().to_string()),
             source_note: req.source_note.map(|t| t.trim().to_string()),
@@ -283,7 +336,7 @@ pub async fn update(
         },
     )
     .await?;
-    Ok(Json(store::detail(&state.db, row).await?))
+    Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
 }
 
 pub async fn remove(
@@ -292,7 +345,8 @@ pub async fn remove(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<Deleted>> {
     teacher.require(Capability::UseMaterials)?;
-    Ok(Json(store::delete(&state, teacher.id(), id).await?))
+    let row = store::writable(&state.db, id, &teacher).await?;
+    Ok(Json(store::delete(&state, teacher.id(), row).await?))
 }
 
 // ---------------------------------------------------------------- lesson links
@@ -349,7 +403,7 @@ pub async fn file_link(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<FileLink>> {
     teacher.require(Capability::UseMaterials)?;
-    let row = store::owned(&state.db, id, teacher.id()).await?;
+    let row = store::readable(&state.db, id, teacher.id()).await?;
     if row.storage_key.is_none() {
         return Err(AppError::not_found("這份教材沒有原檔。"));
     }
@@ -457,8 +511,9 @@ pub async fn file(
     };
     teacher.require(Capability::UseMaterials)?;
     let teacher_id = teacher.id();
-    // A link outlives nothing: the material must still exist and still be this teacher's.
-    let row = store::owned(&state.db, id, teacher_id).await?;
+    // A link outlives nothing: the material must still exist and still be readable by this
+    // teacher (her own, or a platform one).
+    let row = store::readable(&state.db, id, teacher_id).await?;
     let (Some(key), Some(storage)) = (row.storage_key.as_deref(), state.storage.as_ref()) else {
         return Err(AppError::not_found("這份教材沒有原檔。"));
     };
@@ -527,9 +582,9 @@ pub async fn list_annotations(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<Vec<Annotation>>> {
     teacher.require(Capability::UseMaterials)?;
-    let row = store::owned(&state.db, id, teacher.id()).await?;
+    let row = store::readable(&state.db, id, teacher.id()).await?;
     Ok(Json(
-        annotations::list(&state.db, id, &row.paragraphs.0).await?,
+        annotations::list(&state.db, id, teacher.id(), &row.paragraphs.0).await?,
     ))
 }
 
@@ -594,7 +649,8 @@ pub async fn create_annotation(
     ApiJson(req): ApiJson<CreateAnnotation>,
 ) -> AppResult<Json<Annotation>> {
     teacher.require(Capability::UseMaterials)?;
-    let row = store::owned(&state.db, id, teacher.id()).await?;
+    // Platform materials can be annotated too: the notes are the teacher's own.
+    let row = store::readable(&state.db, id, teacher.id()).await?;
     let note = req.note.trim();
     check_note(note)?;
     let anchor = stored_anchor(&row, &req.anchor)?;
@@ -635,7 +691,7 @@ pub async fn update_annotation(
 ) -> AppResult<Json<Annotation>> {
     teacher.require(Capability::UseMaterials)?;
     let material_id = annotations::owned(&state.db, id, teacher.id()).await?;
-    let row = store::owned(&state.db, material_id, teacher.id()).await?;
+    let row = store::readable(&state.db, material_id, teacher.id()).await?;
     let note = req.note.as_deref().map(str::trim);
     if let Some(note) = note {
         check_note(note)?;
@@ -686,7 +742,7 @@ pub async fn ai_annotations(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<AiNotes>> {
     teacher.require(Capability::UseMaterials)?;
-    store::owned(&state.db, id, teacher.id()).await?;
+    store::readable(&state.db, id, teacher.id()).await?;
     let notes = annotations::shared_with_ai(&state.db, teacher.id(), id).await?;
     Ok(Json(AiNotes {
         material_id: id,

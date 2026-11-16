@@ -1,13 +1,19 @@
 //! The teacher's material library (docs/API.md「Phase 2.2：教材與注記」): what may be uploaded,
 //! text extraction, storage of the original file, annotations and the hard delete.
 //!
-//! Rules that hold everywhere in this module (docs/BLUEPRINT.md §13.3): a material belongs to
-//! exactly one teacher and is never readable by another account; nothing here is shared, put in
-//! the common knowledge base or used for training; deleting a material removes the original
-//! object, the extracted text, the paragraphs and the annotations.
+//! Rules that hold everywhere in this module (docs/BLUEPRINT.md §13.3): a teacher's own
+//! (`personal`) material belongs to exactly one teacher and is never readable by another account;
+//! it is never shared, put in the common knowledge base or used for training; deleting a material
+//! removes the original object, the extracted text, the paragraphs and the annotations.
+//!
+//! Since Phase 2.9 the platform library sits beside it ([`catalog`]): `platform` materials
+//! (教材參考, worksheet samples of 平台範本) are uploaded by ManageKnowledge, read and used by
+//! every teacher, and changed only by ManageKnowledge. Annotations stay personal on both.
 
 pub mod access;
 pub mod annotations;
+pub mod browse;
+pub mod catalog;
 pub mod detect;
 pub mod extract;
 pub mod store;

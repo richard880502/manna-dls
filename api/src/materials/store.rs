@@ -10,13 +10,14 @@ use serde_json::{json, Value};
 use sqlx::types::Json;
 use sqlx::{PgPool, Postgres, Transaction};
 
+use super::catalog::{Placement, PURPOSE_MATERIAL, SCOPE_PERSONAL, SCOPE_PLATFORM};
 use super::detect;
 use super::extract::{self, Extracted, TextStatus};
 use super::{
     allowed_extensions_label, clean_filename, content_matches, file_type_for_name, Kind,
     MAX_PASTED_CHARS, TEACHER_MAX_MATERIALS, TEACHER_QUOTA_BYTES,
 };
-use crate::auth::sha256_hex;
+use crate::auth::{sha256_hex, AuthTeacher, Capability};
 use crate::error::{AppError, AppResult};
 use crate::routes::log_usage;
 use crate::sop::{
@@ -53,11 +54,18 @@ pub struct MaterialRow {
     /// Computed from `text` whenever it is written ([`detect::looks_like_worksheet`]); `None`
     /// only for rows written before migration 0016 (computed and stored on their first read).
     pub looks_like_worksheet: Option<bool>,
+    /// `personal` (owner-only) or `platform` (every teacher reads it; ManageKnowledge writes it).
+    pub scope: String,
+    /// `material` or `worksheet_sample`.
+    pub purpose: String,
+    pub category: String,
+    pub tags: Vec<String>,
 }
 
 pub const COLS: &str = "id, teacher_id, kind, origin, title, source_note, url, filename, ext,
     content_type, size_bytes, sha256, storage_key, text_status, text, text_truncated, paragraphs,
-    paragraph_seq, page_count, revision, created_at, updated_at, looks_like_worksheet";
+    paragraph_seq, page_count, revision, created_at, updated_at, looks_like_worksheet, scope,
+    purpose, category, tags";
 
 /// A lesson that uses a material.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -97,6 +105,12 @@ pub struct Material {
     /// The text looks like a worksheet rather than a lesson text (the page then offers
     /// 「照我的學習單做」). Deterministic: [`detect::looks_like_worksheet`].
     pub looks_like_worksheet: bool,
+    /// `personal` or `platform` (教材參考／平台範本: read-only for teachers).
+    pub scope: String,
+    /// `material` or `worksheet_sample`.
+    pub purpose: String,
+    pub category: String,
+    pub tags: Vec<String>,
 }
 
 /// A material with its text and paragraphs (the viewer).
@@ -146,25 +160,90 @@ impl MaterialRow {
             worksheet_count,
             annotation_count,
             looks_like_worksheet: self.looks_like_worksheet(),
+            scope: self.scope.clone(),
+            purpose: self.purpose.clone(),
+            category: self.category.clone(),
+            tags: self.tags.clone(),
         }
+    }
+
+    pub fn is_platform(&self) -> bool {
+        self.scope == SCOPE_PLATFORM
     }
 }
 
 // ---------------------------------------------------------------- reading
 
-/// The material if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
+pub const MSG_NOT_FOUND: &str = "找不到這份教材。";
+pub const MSG_PLATFORM_READ_ONLY: &str =
+    "這是 Manna 知識庫的教材，只有計畫主持人或知識庫管理員可以修改或刪除。";
+
+/// SQL condition (on `materials`, unqualified, `$2` = the teacher) for the rows a teacher may
+/// read: her own personal rows and every platform row.
+pub const READABLE_SQL: &str = "(scope = 'platform' OR (scope = 'personal' AND teacher_id = $2))";
+
+/// One of the teacher's own personal materials; anything else (another teacher's, a platform
+/// row) is a 404 (no existence leak). For what only the owner may do: link it to a lesson, the
+/// SOP, the per-teacher quota.
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<MaterialRow> {
     sqlx::query_as(&format!(
-        "SELECT {COLS} FROM materials WHERE id = $1 AND teacher_id = $2"
+        "SELECT {COLS} FROM materials WHERE id = $1 AND teacher_id = $2 AND scope = '{SCOPE_PERSONAL}'"
     ))
     .bind(id)
     .bind(teacher_id)
     .fetch_optional(db)
     .await?
-    .ok_or_else(|| AppError::not_found("找不到這份教材。"))
+    .ok_or_else(|| AppError::not_found(MSG_NOT_FOUND))
 }
 
-async fn lesson_uses(db: &PgPool, material_ids: &[i64]) -> sqlx::Result<Vec<(i64, LessonUse)>> {
+/// A material the teacher may read and use: her own personal one or any platform one; another
+/// teacher's personal material is a 404.
+pub async fn readable(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<MaterialRow> {
+    sqlx::query_as(&format!(
+        "SELECT {COLS} FROM materials WHERE id = $1 AND {READABLE_SQL}"
+    ))
+    .bind(id)
+    .bind(teacher_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::not_found(MSG_NOT_FOUND))
+}
+
+/// A material the teacher may change or delete: her own personal one, or a platform one when
+/// she holds ManageKnowledge (403 otherwise). Another teacher's personal material is a 404.
+pub async fn writable(db: &PgPool, id: i64, teacher: &AuthTeacher) -> AppResult<MaterialRow> {
+    let row = readable(db, id, teacher.id()).await?;
+    if row.is_platform() && !teacher.can(Capability::ManageKnowledge) {
+        return Err(AppError::Forbidden(MSG_PLATFORM_READ_ONLY.into()));
+    }
+    Ok(row)
+}
+
+/// The platform row `id` (any purpose), for the admin endpoints; anything else is a 404.
+pub async fn platform(db: &PgPool, id: i64) -> AppResult<MaterialRow> {
+    sqlx::query_as(&format!(
+        "SELECT {COLS} FROM materials WHERE id = $1 AND scope = '{SCOPE_PLATFORM}'"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::not_found("找不到這份平台教材。"))
+}
+
+pub async fn by_id(db: &PgPool, id: i64) -> sqlx::Result<Option<MaterialRow>> {
+    sqlx::query_as(&format!("SELECT {COLS} FROM materials WHERE id = $1"))
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// The viewer's lessons that use these materials (a platform material can be in many teachers'
+/// lessons; each sees only her own).
+async fn lesson_uses(
+    db: &PgPool,
+    material_ids: &[i64],
+    viewer: i64,
+) -> sqlx::Result<Vec<(i64, LessonUse)>> {
     #[derive(sqlx::FromRow)]
     struct Use {
         material_id: i64,
@@ -177,10 +256,11 @@ async fn lesson_uses(db: &PgPool, material_ids: &[i64]) -> sqlx::Result<Vec<(i64
            FROM material_links k
            JOIN lessons l ON l.id = k.target_id AND l.deleted_at IS NULL
            JOIN units u ON u.id = l.unit_id AND u.deleted_at IS NULL
-          WHERE k.target_kind = 'lesson' AND k.material_id = ANY($1)
+          WHERE k.target_kind = 'lesson' AND k.material_id = ANY($1) AND u.teacher_id = $2
           ORDER BY l.id",
     )
     .bind(material_ids)
+    .bind(viewer)
     .fetch_all(db)
     .await?;
     Ok(rows
@@ -198,8 +278,17 @@ async fn lesson_uses(db: &PgPool, material_ids: &[i64]) -> sqlx::Result<Vec<(i64
         .collect())
 }
 
-async fn counts(db: &PgPool, sql: &str, material_ids: &[i64]) -> sqlx::Result<Vec<(i64, i64)>> {
-    sqlx::query_as(sql).bind(material_ids).fetch_all(db).await
+async fn counts(
+    db: &PgPool,
+    sql: &str,
+    material_ids: &[i64],
+    viewer: i64,
+) -> sqlx::Result<Vec<(i64, i64)>> {
+    sqlx::query_as(sql)
+        .bind(material_ids)
+        .bind(viewer)
+        .fetch_all(db)
+        .await
 }
 
 /// Stores `looks_like_worksheet` for rows written before it existed (computed from their text
@@ -225,22 +314,27 @@ async fn fill_worksheet_flags(db: &PgPool, rows: &[MaterialRow]) -> sqlx::Result
     Ok(())
 }
 
-async fn summaries(db: &PgPool, rows: &[MaterialRow]) -> sqlx::Result<Vec<Material>> {
+/// The list entries as `viewer` sees them: lessons, worksheet and annotation counts are her own
+/// (a platform material is used and annotated by many teachers, each privately).
+async fn summaries(db: &PgPool, rows: &[MaterialRow], viewer: i64) -> sqlx::Result<Vec<Material>> {
     fill_worksheet_flags(db, rows).await?;
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let uses = lesson_uses(db, &ids).await?;
+    let uses = lesson_uses(db, &ids, viewer).await?;
     let worksheets = counts(
         db,
-        "SELECT material_id, COUNT(*) FROM material_links
-          WHERE target_kind = 'worksheet' AND material_id = ANY($1) GROUP BY material_id",
+        "SELECT k.material_id, COUNT(*) FROM material_links k
+           JOIN worksheets w ON w.id = k.target_id AND w.teacher_id = $2
+          WHERE k.target_kind = 'worksheet' AND k.material_id = ANY($1) GROUP BY k.material_id",
         &ids,
+        viewer,
     )
     .await?;
     let annotations = counts(
         db,
         "SELECT material_id, COUNT(*) FROM material_annotations
-          WHERE material_id = ANY($1) GROUP BY material_id",
+          WHERE material_id = ANY($1) AND teacher_id = $2 GROUP BY material_id",
         &ids,
+        viewer,
     )
     .await?;
     let count_of = |list: &[(i64, i64)], id: i64| {
@@ -266,8 +360,9 @@ async fn summaries(db: &PgPool, rows: &[MaterialRow]) -> sqlx::Result<Vec<Materi
         .collect())
 }
 
-pub async fn detail(db: &PgPool, row: MaterialRow) -> sqlx::Result<MaterialDetail> {
-    let material = summaries(db, std::slice::from_ref(&row))
+/// The material with its text, as `viewer` sees it (her own lessons, worksheets and notes).
+pub async fn detail(db: &PgPool, row: MaterialRow, viewer: i64) -> sqlx::Result<MaterialDetail> {
+    let material = summaries(db, std::slice::from_ref(&row), viewer)
         .await?
         .pop()
         .expect("one row in, one summary out");
@@ -278,36 +373,30 @@ pub async fn detail(db: &PgPool, row: MaterialRow) -> sqlx::Result<MaterialDetai
     })
 }
 
-/// The teacher's materials, newest first; with `lesson_id`, only those linked to that lesson.
+/// The teacher's own (personal) materials, newest first. `purpose` keeps one purpose
+/// (`material`: 我的教材, `worksheet_sample`: her samples); `None` keeps both. With `lesson_id`,
+/// only those linked to that lesson.
 pub async fn list(
     db: &PgPool,
     teacher_id: i64,
     lesson_id: Option<i64>,
+    purpose: Option<&str>,
 ) -> sqlx::Result<Vec<Material>> {
-    let rows: Vec<MaterialRow> = match lesson_id {
-        None => {
-            sqlx::query_as(&format!(
-                "SELECT {COLS} FROM materials WHERE teacher_id = $1 ORDER BY id DESC"
-            ))
-            .bind(teacher_id)
-            .fetch_all(db)
-            .await?
-        }
-        Some(lesson_id) => {
-            sqlx::query_as(&format!(
-                "SELECT {COLS} FROM materials m
-                  WHERE teacher_id = $1 AND EXISTS (
-                        SELECT 1 FROM material_links k
-                         WHERE k.material_id = m.id AND k.target_kind = 'lesson' AND k.target_id = $2)
-                  ORDER BY id DESC"
-            ))
-            .bind(teacher_id)
-            .bind(lesson_id)
-            .fetch_all(db)
-            .await?
-        }
-    };
-    summaries(db, &rows).await
+    let rows: Vec<MaterialRow> = sqlx::query_as(&format!(
+        "SELECT {COLS} FROM materials m
+          WHERE teacher_id = $1 AND scope = '{SCOPE_PERSONAL}'
+            AND ($3::TEXT IS NULL OR purpose = $3)
+            AND ($2::BIGINT IS NULL OR EXISTS (
+                 SELECT 1 FROM material_links k
+                  WHERE k.material_id = m.id AND k.target_kind = 'lesson' AND k.target_id = $2))
+          ORDER BY id DESC"
+    ))
+    .bind(teacher_id)
+    .bind(lesson_id)
+    .bind(purpose)
+    .fetch_all(db)
+    .await?;
+    summaries(db, &rows, teacher_id).await
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -318,12 +407,14 @@ pub struct Usage {
     pub max_count: i64,
 }
 
+/// The teacher's own (personal) materials against her quota. Platform rows she uploaded as an
+/// admin do not count.
 pub async fn usage(db: &PgPool, teacher_id: i64) -> sqlx::Result<Usage> {
-    let (used, count): (i64, i64) = sqlx::query_as(
+    let (used, count): (i64, i64) = sqlx::query_as(&format!(
         "SELECT COALESCE(SUM(size_bytes) FILTER (WHERE storage_key IS NOT NULL), 0)::BIGINT,
                 COUNT(*)
-           FROM materials WHERE teacher_id = $1",
-    )
+           FROM materials WHERE teacher_id = $1 AND scope = '{SCOPE_PERSONAL}'"
+    ))
     .bind(teacher_id)
     .fetch_one(db)
     .await?;
@@ -333,6 +424,16 @@ pub async fn usage(db: &PgPool, teacher_id: i64) -> sqlx::Result<Usage> {
         count,
         max_count: TEACHER_MAX_MATERIALS,
     })
+}
+
+/// Bytes of all stored files of the platform library.
+pub async fn platform_used_bytes(db: &PgPool) -> sqlx::Result<i64> {
+    sqlx::query_scalar(&format!(
+        "SELECT COALESCE(SUM(size_bytes) FILTER (WHERE storage_key IS NOT NULL), 0)::BIGINT
+           FROM materials WHERE scope = '{SCOPE_PLATFORM}'"
+    ))
+    .fetch_one(db)
+    .await
 }
 
 async fn check_count(db: &PgPool, teacher_id: i64) -> AppResult<Usage> {
@@ -372,8 +473,9 @@ pub fn check_pasted(text: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Inserts a pasted-text material. `previous` continues another material's paragraph ids
-/// (a paragraph with the same text keeps its id), `None` starts at `p1`.
+/// Inserts a pasted-text material of the teacher's own library (我的教材). `previous` continues
+/// another material's paragraph ids (a paragraph with the same text keeps its id), `None`
+/// starts at `p1`.
 pub async fn insert_text(
     tx: &mut Transaction<'_, Postgres>,
     teacher_id: i64,
@@ -381,6 +483,28 @@ pub async fn insert_text(
     source_note: &str,
     text: &str,
     previous: Option<(&[Paragraph], i32)>,
+) -> sqlx::Result<MaterialRow> {
+    insert_text_placed(
+        tx,
+        teacher_id,
+        title,
+        source_note,
+        text,
+        previous,
+        &Placement::personal(PURPOSE_MATERIAL),
+    )
+    .await
+}
+
+/// [`insert_text`] into any area.
+pub async fn insert_text_placed(
+    tx: &mut Transaction<'_, Postgres>,
+    teacher_id: i64,
+    title: &str,
+    source_note: &str,
+    text: &str,
+    previous: Option<(&[Paragraph], i32)>,
+    placement: &Placement,
 ) -> sqlx::Result<MaterialRow> {
     let (prev, seq) = previous.unwrap_or((&[], 0));
     let (paragraphs, seq) = assign_paragraph_ids(prev, seq, split_paragraphs(text));
@@ -391,8 +515,9 @@ pub async fn insert_text(
     };
     sqlx::query_as(&format!(
         "INSERT INTO materials (teacher_id, kind, origin, title, source_note, size_bytes, sha256,
-                                text_status, text, paragraphs, paragraph_seq, looks_like_worksheet)
-         VALUES ($1, 'text', 'paste', $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                                text_status, text, paragraphs, paragraph_seq, looks_like_worksheet,
+                                scope, purpose, category, tags)
+         VALUES ($1, 'text', 'paste', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          RETURNING {COLS}"
     ))
     .bind(teacher_id)
@@ -409,6 +534,10 @@ pub async fn insert_text(
     .bind(Json(&paragraphs))
     .bind(seq)
     .bind(detect::looks_like_worksheet(text))
+    .bind(placement.scope)
+    .bind(placement.purpose)
+    .bind(&placement.category)
+    .bind(&placement.tags)
     .fetch_one(&mut **tx)
     .await
 }
@@ -433,6 +562,7 @@ pub fn title_from_text(text: &str) -> String {
     format!("{}…", cut[..at].trim_end())
 }
 
+/// Pasted text into the teacher's own library (我的教材).
 pub async fn create_text(
     db: &PgPool,
     teacher_id: i64,
@@ -440,19 +570,51 @@ pub async fn create_text(
     source_note: &str,
     text: &str,
 ) -> AppResult<MaterialRow> {
+    create_text_placed(
+        db,
+        teacher_id,
+        title,
+        source_note,
+        text,
+        &Placement::personal(PURPOSE_MATERIAL),
+    )
+    .await
+}
+
+/// Pasted text into any area. The per-teacher count applies to personal rows only.
+pub async fn create_text_placed(
+    db: &PgPool,
+    teacher_id: i64,
+    title: &str,
+    source_note: &str,
+    text: &str,
+    placement: &Placement,
+) -> AppResult<MaterialRow> {
     check_meta(title, source_note)?;
     check_pasted(text)?;
     if text.trim().is_empty() {
         return Err(AppError::bad_request("請貼上教材文字。"));
     }
-    check_count(db, teacher_id).await?;
+    if !placement.is_platform() {
+        check_count(db, teacher_id).await?;
+    }
     let mut tx = db.begin().await?;
-    let row = insert_text(&mut tx, teacher_id, title, source_note, text, None).await?;
+    let row = insert_text_placed(
+        &mut tx,
+        teacher_id,
+        title,
+        source_note,
+        text,
+        None,
+        placement,
+    )
+    .await?;
     log_usage(
         &mut *tx,
         teacher_id,
         "material_created",
-        json!({ "material_id": row.id, "kind": "text", "origin": "paste" }),
+        json!({ "material_id": row.id, "kind": "text", "origin": "paste",
+                "scope": row.scope, "purpose": row.purpose }),
     )
     .await?;
     tx.commit().await?;
@@ -467,6 +629,7 @@ pub async fn create_link(
     title: &str,
     source_note: &str,
     url: &str,
+    purpose: &str,
 ) -> AppResult<MaterialRow> {
     check_meta(title, source_note)?;
     if !super::valid_link(url) {
@@ -478,14 +641,15 @@ pub async fn create_link(
     let mut tx = db.begin().await?;
     let row: MaterialRow = sqlx::query_as(&format!(
         "INSERT INTO materials (teacher_id, kind, origin, title, source_note, url, text_status,
-                                looks_like_worksheet)
-         VALUES ($1, 'link', 'url', $2, $3, $4, 'not_applicable', FALSE)
+                                looks_like_worksheet, purpose)
+         VALUES ($1, 'link', 'url', $2, $3, $4, 'not_applicable', FALSE, $5)
          RETURNING {COLS}"
     ))
     .bind(teacher_id)
     .bind(title)
     .bind(source_note)
     .bind(url)
+    .bind(purpose)
     .fetch_one(&mut *tx)
     .await?;
     log_usage(
@@ -515,16 +679,37 @@ pub fn storage_missing() -> AppError {
     )
 }
 
-/// Stores an uploaded file: type and size checks, quota, SHA-256, text extraction, then the
-/// object and the row. Nothing is left behind when a step fails.
+/// An uploaded file and what the uploader said about it.
+pub struct Upload<'a> {
+    pub filename: &'a str,
+    /// Blank: the file name without its extension.
+    pub title: &'a str,
+    pub source_note: &'a str,
+    pub data: Bytes,
+}
+
+/// Accepts every extraction result (the usual upload).
+pub fn accept_any(_: Kind, _: &Extracted) -> AppResult<()> {
+    Ok(())
+}
+
+/// Stores an uploaded file: type and size checks, quota (the teacher's for a personal row, the
+/// platform library's for a platform row), SHA-256, text extraction, `accept` (a caller's check
+/// of the extracted text, e.g. that a worksheet sample has text), then the object and the row.
+/// Nothing is left behind when a step fails.
 pub async fn create_upload(
     state: &AppState,
     teacher_id: i64,
-    filename: &str,
-    title: &str,
-    source_note: &str,
-    data: Bytes,
+    upload: Upload<'_>,
+    placement: &Placement,
+    accept: &(dyn Fn(Kind, &Extracted) -> AppResult<()> + Sync),
 ) -> AppResult<MaterialRow> {
+    let Upload {
+        filename,
+        title,
+        source_note,
+        data,
+    } = upload;
     let Some(storage) = state.storage.clone() else {
         return Err(storage_missing());
     };
@@ -555,14 +740,27 @@ pub async fn create_upload(
         )));
     }
     let db = &state.db;
-    let usage = check_count(db, teacher_id).await?;
-    if usage.used_bytes as u64 + size > TEACHER_QUOTA_BYTES {
-        return Err(AppError::bad_request(format!(
-            "教材庫的空間不夠：上限 {}，已使用 {}，這個檔案 {}。請先刪除不再使用的教材。",
-            megabytes(TEACHER_QUOTA_BYTES),
-            megabytes(usage.used_bytes as u64),
-            megabytes(size)
-        )));
+    if placement.is_platform() {
+        let used = platform_used_bytes(db).await?.max(0) as u64;
+        let cap = state.config.platform_library_bytes;
+        if used + size > cap {
+            return Err(AppError::bad_request(format!(
+                "平台教材庫的空間不夠：上限 {}，已使用 {}，這個檔案 {}。請先刪除不再使用的教材。",
+                megabytes(cap),
+                megabytes(used),
+                megabytes(size)
+            )));
+        }
+    } else {
+        let usage = check_count(db, teacher_id).await?;
+        if usage.used_bytes as u64 + size > TEACHER_QUOTA_BYTES {
+            return Err(AppError::bad_request(format!(
+                "教材庫的空間不夠：上限 {}，已使用 {}，這個檔案 {}。請先刪除不再使用的教材。",
+                megabytes(TEACHER_QUOTA_BYTES),
+                megabytes(usage.used_bytes as u64),
+                megabytes(size)
+            )));
+        }
     }
 
     let (sha256, extracted) = {
@@ -584,17 +782,27 @@ pub async fn create_upload(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("extraction task failed: {e}")))?
     };
+    // The same file twice in one library: the teacher's own, or the platform's.
     let existing: Option<String> = sqlx::query_scalar(
-        "SELECT title FROM materials WHERE teacher_id = $1 AND sha256 = $2 AND storage_key IS NOT NULL
+        "SELECT title FROM materials
+          WHERE sha256 = $2 AND storage_key IS NOT NULL
+            AND CASE WHEN $3 = 'platform' THEN scope = 'platform'
+                     ELSE scope = 'personal' AND teacher_id = $1 END
           LIMIT 1",
     )
     .bind(teacher_id)
     .bind(&sha256)
+    .bind(placement.scope)
     .fetch_optional(db)
     .await?;
     if let Some(existing) = existing {
         return Err(AppError::Conflict(format!(
-            "這個檔案已經在教材庫裡了（{}）。",
+            "這個檔案已經在{}裡了（{}）。",
+            if placement.is_platform() {
+                "平台教材庫"
+            } else {
+                "教材庫"
+            },
             if existing.trim().is_empty() {
                 "未命名教材"
             } else {
@@ -602,6 +810,7 @@ pub async fn create_upload(
             }
         )));
     }
+    accept(file_type.kind, &extracted)?;
 
     let text = extracted.text();
     let looks_like_worksheet = detect::looks_like_worksheet(&text);
@@ -622,11 +831,15 @@ pub async fn create_upload(
         title.to_string()
     };
 
-    let key = format!(
-        "t{teacher_id}/{}.{}",
-        crate::auth::new_token(),
-        file_type.ext
-    );
+    let key = if placement.is_platform() {
+        format!("platform/{}.{}", crate::auth::new_token(), file_type.ext)
+    } else {
+        format!(
+            "t{teacher_id}/{}.{}",
+            crate::auth::new_token(),
+            file_type.ext
+        )
+    };
     storage
         .put(&key, file_type.content_type, data)
         .await
@@ -640,9 +853,9 @@ pub async fn create_upload(
             "INSERT INTO materials
                (teacher_id, kind, origin, title, source_note, filename, ext, content_type,
                 size_bytes, sha256, storage_key, text_status, text, text_truncated, paragraphs,
-                paragraph_seq, page_count, looks_like_worksheet)
+                paragraph_seq, page_count, looks_like_worksheet, scope, purpose, category, tags)
              VALUES ($1, $2, 'upload', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
-                     $17)
+                     $17, $18, $19, $20, $21)
              RETURNING {COLS}"
         ))
         .bind(teacher_id)
@@ -662,6 +875,10 @@ pub async fn create_upload(
         .bind(seq)
         .bind(extracted.page_count)
         .bind(looks_like_worksheet)
+        .bind(placement.scope)
+        .bind(placement.purpose)
+        .bind(&placement.category)
+        .bind(&placement.tags)
         .fetch_one(&mut *tx)
         .await?;
         log_usage(
@@ -669,7 +886,8 @@ pub async fn create_upload(
             teacher_id,
             "material_created",
             json!({ "material_id": row.id, "kind": row.kind, "origin": "upload",
-                    "ext": file_type.ext, "size_bytes": size, "text_status": row.text_status }),
+                    "ext": file_type.ext, "size_bytes": size, "text_status": row.text_status,
+                    "scope": row.scope, "purpose": row.purpose }),
         )
         .await?;
         tx.commit().await?;
@@ -740,6 +958,45 @@ pub async fn set_meta(
     .await
 }
 
+/// The admin's catalogue fields of a platform row (already validated).
+pub async fn set_catalog(
+    db: &PgPool,
+    id: i64,
+    title: &str,
+    category: &str,
+    tags: &[String],
+) -> sqlx::Result<MaterialRow> {
+    sqlx::query_as(&format!(
+        "UPDATE materials
+            SET title = $2, category = $3, tags = $4,
+                updated_at = CASE WHEN (title, category, tags) IS DISTINCT FROM ($2, $3, $4)
+                                  THEN now() ELSE updated_at END
+          WHERE id = $1 RETURNING {COLS}"
+    ))
+    .bind(id)
+    .bind(title)
+    .bind(category)
+    .bind(tags)
+    .fetch_one(db)
+    .await
+}
+
+/// A personal material a template was made from is a worksheet sample from now on: it leaves
+/// 我的教材 for 我的範本 (docs/API.md「Phase 2.9」). Platform rows are not touched.
+pub async fn mark_sample<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    material_id: i64,
+) -> sqlx::Result<()> {
+    sqlx::query(&format!(
+        "UPDATE materials SET purpose = '{}' WHERE id = $1 AND scope = '{SCOPE_PERSONAL}'",
+        super::catalog::PURPOSE_SAMPLE
+    ))
+    .bind(material_id)
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 pub struct Patch {
     pub title: Option<String>,
@@ -750,8 +1007,10 @@ pub struct Patch {
     pub url: Option<String>,
 }
 
-pub async fn update(db: &PgPool, teacher_id: i64, id: i64, patch: Patch) -> AppResult<MaterialRow> {
-    let mut row = owned(db, id, teacher_id).await?;
+/// Changes a material the caller has checked she may write ([`writable`]).
+pub async fn update(db: &PgPool, row: MaterialRow, patch: Patch) -> AppResult<MaterialRow> {
+    let mut row = row;
+    let id = row.id;
     let title = patch.title.unwrap_or_else(|| row.title.clone());
     let source_note = patch.source_note.unwrap_or_else(|| row.source_note.clone());
     check_meta(&title, &source_note)?;
@@ -942,9 +1201,12 @@ pub struct Deleted {
 ///    verbatim quotes taken from it; the same quotes are removed from the logged AI outputs and
 ///    job results. The teacher's own analysis, objectives and tasks stay;
 /// 3. a row in `material_deletions` records that a material was deleted: no title, no text.
-pub async fn delete(state: &AppState, teacher_id: i64, id: i64) -> AppResult<Deleted> {
+///
+/// `row` is one the caller may delete ([`writable`]); `actor_id` is who deletes it (the owner,
+/// or the admin deleting a platform row) and is logged.
+pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppResult<Deleted> {
     let db = &state.db;
-    let row = owned(db, id, teacher_id).await?;
+    let id = row.id;
     if let Some(key) = &row.storage_key {
         let Some(storage) = state.storage.as_ref() else {
             return Err(AppError::Unavailable(
@@ -1082,7 +1344,7 @@ pub async fn delete(state: &AppState, teacher_id: i64, id: i64) -> AppResult<Del
          VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(id)
-    .bind(teacher_id)
+    .bind(row.teacher_id)
     .bind(&row.kind)
     .bind(row.size_bytes)
     .bind(row.storage_key.is_some())
@@ -1091,9 +1353,10 @@ pub async fn delete(state: &AppState, teacher_id: i64, id: i64) -> AppResult<Del
     .await?;
     log_usage(
         &mut *tx,
-        teacher_id,
+        actor_id,
         "material_deleted",
-        json!({ "material_id": id, "kind": row.kind, "lessons": lessons.len() }),
+        json!({ "material_id": id, "kind": row.kind, "lessons": lessons.len(),
+                "scope": row.scope }),
     )
     .await?;
     tx.commit().await?;

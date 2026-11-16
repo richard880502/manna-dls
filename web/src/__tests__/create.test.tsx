@@ -1,5 +1,5 @@
 // 建立 (/create/:tool), the generator from Bloom contract Addendum 1 (like Eduaide's): the tool
-// switcher in the heading, the 內容 card (objective, article, file or library instead, the exemplar),
+// switcher in the heading, the 內容 card (objective, article, a file or 從教材挑選 instead, the exemplar),
 // the 設定 card per tool (班級, 題數, Bloom presets, 題型, 版型), the sticky summary and the POST body.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -13,7 +13,16 @@ import {
   type BloomCounts,
 } from "../components/bloom/presets";
 import { EXEMPLAR_TEXT } from "../lib/create";
-import { baseRoutes, emptyLibrary, mockApi, renderApp, schoolClass, signIn } from "../test/mockApi";
+import {
+  baseRoutes,
+  cardOf,
+  emptyLibrary,
+  materialBrowse,
+  mockApi,
+  renderApp,
+  schoolClass,
+  signIn,
+} from "../test/mockApi";
 
 const SESSIONS = "/api/prep-sessions";
 
@@ -83,6 +92,7 @@ function routes(extra: Record<string, unknown> = {}) {
     ...baseRoutes(),
     "GET /api/classes": [schoolClass({ id: 3, name: "高一 3 班" })],
     "GET /api/materials": { ...emptyLibrary(), materials: [material] },
+    "GET /api/browse/materials": materialBrowse([cardOf(material)]),
     [`POST ${SESSIONS}`]: created,
     [`GET ${SESSIONS}/7`]: created,
     ...extra,
@@ -292,22 +302,23 @@ describe("建立: the generator", () => {
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
   });
 
-  it("a library material shows as a chip instead of the article box, and goes as material_id", async () => {
+  it("a material from 從教材挑選 shows as a chip instead of the article box, and goes as material_id", async () => {
     signIn();
     const api = mockApi(routes());
     const user = userEvent.setup();
     await open("/create/activity");
     await user.type(article(), "this text gives way");
-    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
-    const dialog = within(await screen.findByRole("dialog", { name: "從教材庫選" }));
+    await user.click(screen.getByRole("button", { name: "從教材挑選" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "從教材挑選" }));
     await user.click(await dialog.findByRole("button", { name: "選用「The Umbrella Stand」" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "文章或主題" })).not.toBeInTheDocument();
     expect(screen.queryByText(/\/30000$/)).not.toBeInTheDocument();
     // Taking the chip away brings the pasted text back.
     await user.click(screen.getByRole("button", { name: "移除「The Umbrella Stand」" }));
     expect(article()).toHaveValue("this text gives way");
 
-    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
+    await user.click(screen.getByRole("button", { name: "從教材挑選" }));
     await user.click(await screen.findByRole("button", { name: "選用「The Umbrella Stand」" }));
     await user.click(generate());
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
@@ -415,12 +426,12 @@ describe("建立: the generator", () => {
     expect(api.lastBody("POST", SESSIONS)).toEqual({ ...body, material: { title: "", text: EXEMPLAR_TEXT } });
   });
 
-  it("完整學習單 without templates points to 我的版型", async () => {
+  it("完整學習單 without templates points to 學習單範本's 我的範本", async () => {
     signIn();
     mockApi(routes());
     await open("/create/worksheet");
     expect(heading()).toHaveTextContent("來做一份 完整學習單");
     const main = within(screen.getByRole("main"));
-    expect(await main.findByRole("link", { name: "我的版型" })).toHaveAttribute("href", "/materials#templates");
+    expect(await main.findByRole("link", { name: "學習單範本" })).toHaveAttribute("href", "/templates?tab=mine");
   });
 });

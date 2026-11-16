@@ -1,5 +1,5 @@
 // The app shell (Bloom contract, "Shell and home" and Addendum 1): a left sidebar like Eduaide's —
-// 首頁, 建立 (照我的學習單做 first, then the five tools), 工作區, 所有學習單, 教材庫, 我的版型, 最近, a folded 更多 — that folds to
+// 首頁, 建立 (照我的學習單做 first, then the five tools), 工作區, 所有學習單, 資源 (教材參考, 我的教材, 學習單範本), 最近, a folded 更多 — that folds to
 // icons on a wide screen and is a drawer behind ☰ on a phone. Every page renders inside it, and
 // old addresses keep working.
 import { act, screen, waitFor, within } from "@testing-library/react";
@@ -62,9 +62,16 @@ describe("app shell: the sidebar", () => {
       ["完整學習單", "/create/worksheet"],
       ["工作區", "/prep"],
       ["所有學習單", "/worksheets"],
-      ["教材庫", "/materials"],
-      ["我的版型", "/materials#templates"],
+      ["教材參考", "/reference"],
+      ["我的教材", "/materials"],
+      ["學習單範本", "/templates"],
     ]);
+    // The three under a small label 「資源」.
+    expect(
+      within(nav().getByRole("list", { name: "資源" }))
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["教材參考", "我的教材", "學習單範本"]);
     expect(nav().getByRole("link", { name: "首頁" })).toHaveAttribute("aria-current", "page");
     expect(nav().getByRole("button", { name: "建立" })).toHaveAttribute("aria-expanded", "true");
 
@@ -236,20 +243,32 @@ describe("app shell: the sidebar", () => {
     expect(currentNav()).toEqual(["班級與課例"]);
   });
 
-  it("教材庫 is the material library; 我的版型 is its templates section, by anchor", async () => {
+  it("資源: 教材參考, 我的教材 and 學習單範本 each mark their page; a template page is inside 學習單範本", async () => {
     signIn();
     mockApi({ ...baseRoutes(), "GET /api/materials": emptyLibrary() });
     const user = userEvent.setup();
-    const { router } = renderApp("/");
-    await user.click(await screen.findByRole("link", { name: "教材庫" }));
-    expect(await screen.findByRole("heading", { name: "教材", level: 1 })).toBeInTheDocument();
-    expect(currentNav()).toEqual(["教材庫"]);
+    renderApp("/");
+    await user.click(await screen.findByRole("link", { name: "教材參考" }));
+    expect(await screen.findByRole("heading", { name: "教材參考", level: 1 })).toBeInTheDocument();
+    expect(currentNav()).toEqual(["教材參考"]);
 
-    await user.click(nav().getByRole("link", { name: "我的版型" }));
-    await waitFor(() => expect(router.state.location.hash).toBe("#templates"));
-    expect(currentNav()).toEqual(["我的版型"]);
-    const section = screen.getByRole("region", { name: "我的學習單版型" });
-    expect(section).toHaveAttribute("id", "templates");
+    await user.click(nav().getByRole("link", { name: "我的教材" }));
+    expect(await screen.findByRole("heading", { name: "我的教材", level: 1 })).toBeInTheDocument();
+    expect(currentNav()).toEqual(["我的教材"]);
+
+    await user.click(nav().getByRole("link", { name: "學習單範本" }));
+    expect(await screen.findByRole("heading", { name: "學習單範本", level: 1 })).toBeInTheDocument();
+    expect(currentNav()).toEqual(["學習單範本"]);
+  });
+
+  it("the old 我的版型 anchor (/materials#templates) leads to 學習單範本's 我的範本", async () => {
+    signIn();
+    mockApi(baseRoutes());
+    const { router } = renderApp("/materials#templates");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/templates"));
+    expect(router.state.location.search).toBe("?tab=mine");
+    expect(await screen.findByRole("tab", { name: "我的範本" })).toHaveAttribute("aria-selected", "true");
+    expect(currentNav()).toEqual(["學習單範本"]);
   });
 
   it.each(["/library", "/plan"])("the old %s address leads to 備課庫, the list of every unit", async (path) => {

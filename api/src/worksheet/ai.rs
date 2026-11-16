@@ -1471,9 +1471,10 @@ pub const MSG_LOOKS_LIKE_WORKSHEET: &str = "這份看起來是學習單範本：
 /// on the snapshot's paragraphs.
 async fn material_looks_like_worksheet(db: &PgPool, worksheet: &Worksheet) -> sqlx::Result<bool> {
     if let Some(id) = worksheet.material.source.material_id {
-        let row: Option<(Option<bool>, String)> = sqlx::query_as(
-            "SELECT looks_like_worksheet, text FROM materials WHERE id = $1 AND teacher_id = $2",
-        )
+        let row: Option<(Option<bool>, String)> = sqlx::query_as(&format!(
+            "SELECT looks_like_worksheet, text FROM materials WHERE id = $1 AND {}",
+            crate::materials::store::READABLE_SQL
+        ))
         .bind(id)
         .bind(worksheet.teacher_id)
         .fetch_optional(db)

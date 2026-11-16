@@ -22,6 +22,7 @@ use crate::ai::pipeline::InteractionMeta;
 use crate::ai::LlmRequest;
 use crate::checks::{self as base_checks, CheckResult};
 use crate::error::{AppError, AppResult};
+use crate::materials::catalog::suggest_sample_category;
 use crate::materials::store::{self as material_store, MaterialRow};
 use crate::prompts;
 use crate::routes::{log_usage, scaffold_id};
@@ -52,28 +53,36 @@ const MSG_ERROR: &str = "AI 暫時無法使用，這次沒有讀出版型。請�
 const MSG_DISABLED: &str = "這個環境沒有開啟 AI 協助，無法讀出版型。";
 const MSG_INTERNAL: &str = "讀取版型時發生錯誤。請按「重試」。";
 
-/// The source material for an extraction: one of the teacher's library materials with
-/// extracted text. Anything else is a 400 with a message the teacher can act on.
+/// The source material for an extraction: a library material the teacher can read (her own or
+/// a platform one) with extracted text. Anything else is a 400 with a message the teacher can
+/// act on.
 pub async fn source(
     db: &sqlx::PgPool,
     teacher_id: i64,
     material_id: i64,
 ) -> AppResult<MaterialRow> {
-    let row = material_store::owned(db, material_id, teacher_id)
+    let row = material_store::readable(db, material_id, teacher_id)
         .await
         .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
-    if row.text_status == "not_applicable" {
+    check_source_text(&row.text_status, &row.text)?;
+    Ok(row)
+}
+
+/// Whether a text can be read as one worksheet: there is extracted text (not an image, audio,
+/// video or link; not a scanned file) and it is not longer than [`MAX_SOURCE_CHARS`].
+pub fn check_source_text(text_status: &str, text: &str) -> AppResult<()> {
+    if text_status == "not_applicable" {
         return Err(AppError::bad_request(MSG_NOT_A_DOCUMENT));
     }
-    if row.text_status != "ready" || row.text.trim().is_empty() {
+    if text_status != "ready" || text.trim().is_empty() {
         return Err(AppError::bad_request(MSG_NO_TEXT));
     }
-    if row.text.chars().count() > MAX_SOURCE_CHARS {
+    if text.chars().count() > MAX_SOURCE_CHARS {
         return Err(AppError::bad_request(format!(
             "這份檔案的文字超過 {MAX_SOURCE_CHARS} 字，不像是一份學習單。請上傳單一份學習單。"
         )));
     }
-    Ok(row)
+    Ok(())
 }
 
 /// A new template's title when the teacher gave none: the material's title and 「版型」.
@@ -130,15 +139,26 @@ async fn finish(
 ) -> AppResult<()> {
     let db = &state.db;
     let mut tx = db.begin().await?;
-    let current: Option<(String, i32)> = sqlx::query_as(
-        "SELECT status, extract_run FROM worksheet_templates WHERE id = $1 FOR UPDATE",
+    let current: Option<(String, i32, String, String)> = sqlx::query_as(
+        "SELECT status, extract_run, title, category FROM worksheet_templates
+          WHERE id = $1 FOR UPDATE",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?;
-    if current != Some((STATUS_EXTRACTING.to_string(), run)) {
+    let Some((status, current_run, title, category)) = current else {
+        return Ok(());
+    };
+    if status != STATUS_EXTRACTING || current_run != run {
         return Ok(());
     }
+    // Nobody chose a category: suggest one from what was read (docs/API.md「Phase 2.9」).
+    let category = match &outcome {
+        Ok(content) if category.is_empty() => {
+            suggest_sample_category(&content.worksheet_kind, &title).to_string()
+        }
+        _ => category,
+    };
     let (status, error, version_no) = match &outcome {
         Ok(content) => {
             let no = store::add_version(&mut *tx, id, content, "ai").await?;
@@ -147,11 +167,13 @@ async fn finish(
         Err(message) => (STATUS_FAILED, Some(message.as_str()), None),
     };
     sqlx::query(
-        "UPDATE worksheet_templates SET status = $2, error = $3, updated_at = now() WHERE id = $1",
+        "UPDATE worksheet_templates SET status = $2, error = $3, category = $4, updated_at = now()
+          WHERE id = $1",
     )
     .bind(id)
     .bind(status)
     .bind(error)
+    .bind(&category)
     .execute(&mut *tx)
     .await?;
     log_usage(

@@ -131,9 +131,10 @@ fn checked_options(options: Option<SessionOptions>) -> AppResult<SessionOptions>
         .map_err(AppError::bad_request)
 }
 
-/// A library material the session can work with: the teacher's own, with extracted text.
+/// A library material the session can work with: the teacher's own or a platform one, with
+/// extracted text.
 async fn usable_material(db: &sqlx::PgPool, teacher_id: i64, id: i64) -> AppResult<(i64, String)> {
-    let row = material_store::owned(db, id, teacher_id)
+    let row = material_store::readable(db, id, teacher_id)
         .await
         .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
     if row.text_status != "ready" || row.paragraphs.0.is_empty() {
@@ -339,7 +340,8 @@ async fn template_to_retry(
     let Some(t) = tpl_store::find(db, template_id, teacher_id).await? else {
         return Ok(None);
     };
-    if t.status != tpl_store::STATUS_FAILED {
+    // A platform template is retried by its admins, never from a teacher's session.
+    if t.status != tpl_store::STATUS_FAILED || t.is_platform() {
         return Ok(None);
     }
     let Some(material_id) = t.source_material_id else {

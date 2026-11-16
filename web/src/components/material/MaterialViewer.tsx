@@ -623,6 +623,8 @@ export interface MaterialViewerProps {
   empty?: ReactNode;
   /** Pane mode: start collapsed. */
   defaultCollapsed?: boolean;
+  /** Notes on the text (the teacher's own materials). A platform material is read only. */
+  annotate?: boolean;
 }
 
 /**
@@ -644,6 +646,7 @@ export function MaterialViewer({
   material,
   empty,
   defaultCollapsed = false,
+  annotate = true,
 }: MaterialViewerProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
@@ -697,7 +700,7 @@ export function MaterialViewer({
     materialId === null ? (
       (empty ?? <p className="quiet-note">還沒有教材。</p>)
     ) : (
-      <MaterialContent key={materialId} materialId={materialId} material={material} />
+      <MaterialContent key={materialId} materialId={materialId} material={material} annotate={annotate} />
     );
 
   if (mode === "panel") {

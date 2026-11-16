@@ -220,13 +220,14 @@ pub struct CreateWorksheet {
     pub request: Option<String>,
 }
 
-/// A library material the teacher chose, as the worksheet's material snapshot.
+/// A library material the teacher chose (her own, or a platform one from 教材參考), as the
+/// worksheet's material snapshot: deleting the material later does not change the worksheet.
 async fn chosen_material(
     db: &sqlx::PgPool,
     teacher_id: i64,
     material_id: i64,
 ) -> AppResult<(Material, i32)> {
-    let row = material_store::owned(db, material_id, teacher_id)
+    let row = material_store::readable(db, material_id, teacher_id)
         .await
         .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
     if row.text_status != "ready" || row.paragraphs.0.is_empty() {

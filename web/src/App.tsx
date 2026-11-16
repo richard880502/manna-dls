@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router";
 import { DemoBanner, ErrorText, Loading } from "./components/common";
 import { Layout } from "./components/Layout";
 import { AppProvider, useApp } from "./context/AppContext";
+import { AdminLibraryPage } from "./pages/AdminLibraryPage";
 import { AdminPage } from "./pages/AdminPage";
 import { ClassPage } from "./pages/ClassPage";
 import { ClassesPage } from "./pages/ClassesPage";
@@ -18,10 +19,12 @@ import { PrepHomePage } from "./pages/PrepHomePage";
 import { PrepListPage } from "./pages/PrepListPage";
 import { PrepSessionPage } from "./pages/PrepSessionPage";
 import { RecordIndexPage } from "./pages/RecordIndexPage";
+import { ReferencePage } from "./pages/ReferencePage";
 import { RemotePage } from "./pages/RemotePage";
 import { RunConsolePage } from "./pages/RunConsolePage";
 import { RunReviewPage } from "./pages/RunReviewPage";
 import { TemplatePage } from "./pages/TemplatePage";
+import { TemplatesPage } from "./pages/TemplatesPage";
 import { UnitPage } from "./pages/UnitPage";
 import { WorksheetCheckPage } from "./pages/WorksheetCheckPage";
 import { WorksheetPage } from "./pages/WorksheetPage";
@@ -84,7 +87,11 @@ export function AppRoutes() {
         <Route path="classes/:classId" element={<ClassPage />} />
         {/* 備課庫 (every unit, to reuse one in another class) is reached from 班級, not the top bar. */}
         <Route path="units" element={<LibraryPage />} />
+        {/* 資源: 教材參考 (the knowledge base), 我的教材, 學習單範本 (平台範本 | 我的範本). */}
+        <Route path="reference" element={<ReferencePage />} />
+        {/* /materials#templates (the old 我的版型) goes on to /templates?tab=mine. */}
         <Route path="materials" element={<MaterialsPage />} />
+        <Route path="templates" element={<TemplatesPage />} />
         <Route path="templates/:templateId" element={<TemplatePage />} />
         {/* Old links keep working: /library and /plan were the library; removed pages fall through to home. */}
         <Route path="library" element={<Navigate to="/units" replace />} />
@@ -100,6 +107,8 @@ export function AppRoutes() {
         <Route path="worksheets/:worksheetId/check" element={<WorksheetCheckPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
+        {/* 教材與範本管理: pi and kb_manager seed 教材參考 and the platform 學習單範本. */}
+        <Route path="admin/library" element={<AdminLibraryPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

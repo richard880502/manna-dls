@@ -319,12 +319,13 @@ async fn run(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
 
 // ---------------------------------------------------------------- shared context
 
-/// The session's material with its paragraphs, if it still exists and has text.
+/// The session's material with its paragraphs, if it still exists (the teacher's own or a
+/// platform one) and has text.
 async fn material(db: &sqlx::PgPool, session: &SessionRow) -> AppResult<Option<Material>> {
     let Some(id) = session.material_id else {
         return Ok(None);
     };
-    let Ok(row) = material_store::owned(db, id, session.teacher_id).await else {
+    let Ok(row) = material_store::readable(db, id, session.teacher_id).await else {
         return Ok(None);
     };
     if row.text_status != "ready" || row.paragraphs.0.is_empty() {
@@ -771,8 +772,8 @@ async fn resources(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     Ok(Ok((Some(json!(result)), None)))
 }
 
-/// The teacher's own library materials that share words with `query` (keyword ranking), best
-/// first, without the session's own.
+/// The teacher's own library materials (我的教材: personal, not worksheet samples) that share
+/// words with `query` (keyword ranking), best first, without the session's own.
 async fn own_materials(
     db: &sqlx::PgPool,
     session: &SessionRow,
@@ -780,7 +781,8 @@ async fn own_materials(
 ) -> AppResult<Vec<MaterialRef>> {
     let rows: Vec<(i64, String, String)> = sqlx::query_as(
         "SELECT id, title, left(text, 6000) FROM materials
-          WHERE teacher_id = $1 AND ($2::BIGINT IS NULL OR id <> $2)
+          WHERE teacher_id = $1 AND scope = 'personal' AND purpose = 'material'
+            AND ($2::BIGINT IS NULL OR id <> $2)
           ORDER BY id DESC LIMIT 500",
     )
     .bind(session.teacher_id)
