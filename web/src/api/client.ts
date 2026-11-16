@@ -99,6 +99,11 @@ import type {
   CreateWsTemplateRequest,
   UpdateWsTemplateRequest,
   WsTemplateDetail,
+  MaterialBrowse,
+  MaterialBrowseQuery,
+  MaterialPurpose,
+  TemplateBrowse,
+  TemplateBrowseQuery,
   WsTemplateList,
   WsSheet,
   WsVersionRow,
@@ -153,19 +158,26 @@ interface RequestOptions {
   contentType?: string;
   /** multipart/form-data (file uploads); the browser sets the boundary header itself. */
   form?: FormData;
-  query?: Record<string, string | undefined>;
+  query?: Query;
   /** Skip the global 401 handler (used by login and the phone remote). */
   skipAuthHandler?: boolean;
   /** Bearer token to send instead of the teacher's session (phone remote; null = none). */
   token?: string | null;
 }
 
-function buildUrl(path: string, query?: Record<string, string | undefined>): string {
+/** Query values; a list repeats the key (`tag=a&tag=b`). Empty values are left out. */
+type Query = Record<string, string | string[] | undefined>;
+
+function buildUrl(path: string, query?: Query): string {
   const url = `/api${path}`;
   if (!query) return url;
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== "") params.set(key, value);
+    if (Array.isArray(value)) {
+      for (const one of value) if (one !== "") params.append(key, one);
+    } else if (value !== undefined && value !== "") {
+      params.set(key, value);
+    }
   }
   const qs = params.toString();
   return qs ? `${url}?${qs}` : url;
@@ -220,7 +232,7 @@ async function request<T>(method: string, path: string, options: RequestOptions 
   return data as T;
 }
 
-const get = <T>(path: string, query?: Record<string, string | undefined>) =>
+const get = <T>(path: string, query?: Query) =>
   request<T>("GET", path, { query });
 const post = <T>(path: string, json?: unknown) => request<T>("POST", path, { json: json ?? {} });
 const put = <T>(path: string, json: unknown, query?: Record<string, string | undefined>) =>
@@ -232,6 +244,14 @@ const del = <T>(path: string) => request<T>("DELETE", path);
 const queryOf = (params: object): Record<string, string | undefined> =>
   Object.fromEntries(
     Object.entries(params as Record<string, unknown>).map(([k, v]) => [k, v === undefined ? undefined : String(v)]),
+  );
+/** Browse queries: lists repeat their key, `false` is left out (only `fits_lesson=true` is sent). */
+const browseQuery = (params: object): Query =>
+  Object.fromEntries(
+    Object.entries(params as Record<string, unknown>).map(([k, v]) => [
+      k,
+      v === undefined || v === null || v === false ? undefined : Array.isArray(v) ? v.map(String) : String(v),
+    ]),
   );
 /** The file name of a download: RFC 5987 `filename*` first, then the plain `filename`. */
 export function dispositionFilename(header: string | null, fallback: string): string {
@@ -251,7 +271,7 @@ export function dispositionFilename(header: string | null, fallback: string): st
 /** A binary download with the teacher's token. Errors carry the server's JSON message. */
 async function download(
   path: string,
-  query: Record<string, string | undefined>,
+  query: Query,
   fallbackName: string,
 ): Promise<{ blob: Blob; filename: string }> {
   const headers: Record<string, string> = {};
@@ -454,6 +474,14 @@ export const api = {
   retryWorksheetTemplate: (id: number) => post<WsTemplateDetail>(`/worksheet-templates/${id}/retry`),
   /** 永久刪除版型與所有版本 */
   deleteWorksheetTemplate: (id: number) => del<OkResponse>(`/worksheet-templates/${id}`),
+  /** 平台範本另存成我的範本（scope personal、標題加「（我的版本）」），回傳新的那一份 */
+  copyWorksheetTemplate: (id: number) => post<WsTemplateDetail>(`/worksheet-templates/${id}/copy`),
+
+  // ---- 教材參考、我的教材、學習單範本（Phase 2.9 瀏覽）
+  /** area=reference：知識庫的教材；area=mine：我的教材。分面只依 area 與 q 計算 */
+  browseMaterials: (query: MaterialBrowseQuery) => get<MaterialBrowse>("/browse/materials", browseQuery(query)),
+  /** area=platform：平台範本（ready）；area=mine：我的範本（任何狀態） */
+  browseTemplates: (query: TemplateBrowseQuery) => get<TemplateBrowse>("/browse/templates", browseQuery(query)),
 
   // ---- 教材庫與注記（Phase 2.2）
   /** 自己的教材、用量與上傳限制；帶 lessonId 時只列連到那個課例的教材 */
@@ -463,11 +491,16 @@ export const api = {
   /** 貼上文字或加入網址 */
   createLibraryMaterial: (body: CreateLibraryMaterialRequest) => post<MaterialDetail>("/materials", body),
   /** 上傳檔案（multipart）；後端檢查副檔名、內容、大小與用量 */
-  uploadLibraryMaterial: (file: File, fields: { title?: string; source_note?: string; lesson_id?: number } = {}) => {
+  uploadLibraryMaterial: (
+    file: File,
+    fields: { title?: string; source_note?: string; lesson_id?: number; purpose?: MaterialPurpose } = {},
+  ) => {
     const form = new FormData();
     if (fields.title) form.append("title", fields.title);
     if (fields.source_note) form.append("source_note", fields.source_note);
     if (fields.lesson_id) form.append("lesson_id", String(fields.lesson_id));
+    // 學習單範本（照我的學習單做、學習單範本頁）：不列進我的教材
+    if (fields.purpose) form.append("purpose", fields.purpose);
     form.append("file", file, file.name);
     return request<MaterialDetail>("POST", "/materials/upload", { form });
   },

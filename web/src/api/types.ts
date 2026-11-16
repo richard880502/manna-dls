@@ -1192,6 +1192,11 @@ export interface Material {
   annotation_count: number;
   /** 文字看起來像一份學習單（照我的學習單做 的範本）；舊的伺服器沒有這一欄 */
   looks_like_worksheet?: boolean;
+  /** Phase 2.9：personal＝我的教材；platform＝教材參考（知識庫）。舊的伺服器沒有這幾欄 */
+  scope?: LibraryScope;
+  purpose?: MaterialPurpose;
+  category?: string;
+  tags?: string[];
 }
 
 export interface MaterialDetail extends Material {
@@ -1220,6 +1225,8 @@ export interface CreateLibraryMaterialRequest {
   text?: string;
   url?: string;
   lesson_id?: number;
+  /** Phase 2.9：省略＝material；學習單範本＝worksheet_sample */
+  purpose?: MaterialPurpose;
 }
 
 export interface UpdateLibraryMaterialRequest {
@@ -1625,6 +1632,10 @@ export interface WsTemplateSummary {
   source_material: { id: number; title: string } | null;
   version_no: number | null;
   updated_at: string;
+  /** Phase 2.9：platform＝平台範本（唯讀，可另存成我的範本）。舊的伺服器沒有這幾欄 */
+  scope?: LibraryScope;
+  category?: string;
+  tags?: string[];
 }
 
 export interface WsTemplateDetail extends WsTemplateSummary {
@@ -1645,6 +1656,99 @@ export interface UpdateWsTemplateRequest {
   title?: string;
   /** 有 content 就多一個版本（origin=teacher） */
   content?: WsTemplate;
+}
+
+// ---- Phase 2.9：教材參考、我的教材、學習單範本（瀏覽；教師端）----
+
+/** personal：老師自己的；platform：知識庫（教材參考、平台範本），每位老師都能讀、能用 */
+export type LibraryScope = "personal" | "platform";
+/** material：教材；worksheet_sample：學習單範本的原檔（不列在教材裡） */
+export type MaterialPurpose = "material" | "worksheet_sample";
+export type BrowseFileType = "pdf" | "docx" | "text" | "image" | "audio" | "video" | "link";
+
+export interface FacetCount {
+  key: string;
+  count: number;
+}
+
+/** GET /api/browse/materials 的一張卡 */
+export interface MaterialCard {
+  id: number;
+  title: string;
+  scope: LibraryScope;
+  category: string;
+  tags: string[];
+  kind: string;
+  file_type: string;
+  page_count: number | null;
+  paragraph_count: number;
+  word_count: number;
+  /** 文字的前約 280 字，空白已合併（沒有文字時為 ""） */
+  excerpt: string;
+  text_status: string;
+  looks_like_worksheet: boolean;
+  created_at: string;
+  owner_label: "Manna 知識庫" | "我";
+}
+
+/** 分面只依 area 與 q 計算（每個 chip 顯示選了會有幾份） */
+export interface MaterialBrowse {
+  items: MaterialCard[];
+  next_cursor: string | null;
+  facets: { categories: FacetCount[]; tags: FacetCount[]; file_types: FacetCount[] };
+  total: number;
+}
+
+export interface MaterialBrowseQuery {
+  area: "reference" | "mine";
+  q?: string;
+  category?: string;
+  /** 可重複；全部都要符合 */
+  tag?: string[];
+  file_type?: BrowseFileType;
+  /** 有文字且 ≤ 40 段 */
+  fits_lesson?: boolean;
+  /** 預設 new */
+  sort?: "new" | "title";
+  cursor?: string;
+  /** 預設 24，最多 60 */
+  limit?: number;
+}
+
+/** GET /api/browse/templates 的一張卡 */
+export interface TemplateCard {
+  id: number;
+  title: string;
+  scope: LibraryScope;
+  status: WsTemplateStatus;
+  category: string;
+  tags: string[];
+  worksheet_kind: string;
+  instruction_language: string;
+  section_count: number;
+  /** 前 6 個區塊的標題寫法 */
+  section_titles: string[];
+  source_material: { id: number; title: string; file_type: string; page_count: number | null } | null;
+  updated_at: string;
+  owner_label: "Manna 範本" | "我";
+}
+
+export interface TemplateBrowse {
+  items: TemplateCard[];
+  next_cursor: string | null;
+  facets: { categories: FacetCount[]; tags: FacetCount[]; langs: FacetCount[] };
+  total: number;
+}
+
+export interface TemplateBrowseQuery {
+  /** platform：平台範本（只有 ready）；mine：我的範本（任何狀態） */
+  area: "platform" | "mine";
+  q?: string;
+  category?: string;
+  tag?: string[];
+  lang?: WsInstructionLanguage;
+  cursor?: string;
+  limit?: number;
 }
 
 /** 學習單記下的版型與版本 */

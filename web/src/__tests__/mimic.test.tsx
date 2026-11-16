@@ -1,5 +1,5 @@
 // 照我的學習單做 (mimic-contract, "Frontend"): the tool at /create/mimic (first in the sidebar and on
-// the home page) with its sample card (上傳學習單, 從我的版型選, 從教材庫選), the lesson text, the
+// the home page) with its sample card (上傳學習單 here, or 從範本挑選: 平台範本 | 我的範本), the lesson text, the
 // settings and the sticky bar; the notice when a worksheet lands in the article slot (on any create
 // page, and on the home quick box, where 把它當範本 keeps the teacher there); the home quick box's
 // 照我的學習單做 chip with its 範本 and 課文 slots; the 完整學習單 link; and the session page while
@@ -22,7 +22,18 @@ import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { EXEMPLAR_TEXT } from "../lib/create";
 import { prepConfig } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
-import { baseRoutes, emptyLibrary, mockApi, renderApp, schoolClass, signIn } from "../test/mockApi";
+import {
+  baseRoutes,
+  cardOf,
+  emptyLibrary,
+  materialBrowse,
+  mockApi,
+  renderApp,
+  schoolClass,
+  signIn,
+  templateBrowse,
+  templateCard,
+} from "../test/mockApi";
 
 const SESSIONS = "/api/prep-sessions";
 const S7 = `${SESSIONS}/7`;
@@ -117,6 +128,14 @@ function routes(extra: Record<string, unknown> = {}) {
     "GET /api/worksheet-templates": {
       templates: [template(), template({ id: 10, title: "還在讀的版型", status: "extracting", section_count: 0 })],
     },
+    // 從教材挑選 and 從範本挑選 (the same cards in both tabs unless a test says otherwise).
+    "GET /api/browse/materials": materialBrowse(
+      [sampleMaterial(), material(), material({ id: 8, title: "掃描檔", text_status: "no_text" })].map((m) => cardOf(m)),
+    ),
+    "GET /api/browse/templates": templateBrowse([
+      templateCard({ id: 9, title: "L2 學習單版型", section_count: 3 }),
+      templateCard({ id: 10, title: "還在讀的版型", status: "extracting", section_count: 0, section_titles: [] }),
+    ]),
     [`POST ${SESSIONS}`]: created,
     [`GET ${S7}`]: created,
     ...extra,
@@ -128,7 +147,11 @@ const summaryText = () => (document.querySelector(".create-summary") as HTMLElem
 const generate = () => screen.getByRole("button", { name: "產生" });
 const sampleCard = () => within(screen.getByRole("region", { name: "你的學習單範本" }));
 const lessonCard = () => within(screen.getByRole("region", { name: "這節課的課文" }));
-const ways = () => within(screen.getByRole("group", { name: "範本從哪裡來" }));
+/** 從範本挑選 on the mimic page: the picker, open. */
+async function pickTemplate(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(sampleCard().getByRole("button", { name: "從範本挑選" }));
+  return within(await screen.findByRole("dialog", { name: "從範本挑選" }));
+}
 const notice = () => screen.queryByRole("group", { name: NOTICE });
 
 async function openMimic(path = "/create/mimic") {
@@ -188,7 +211,7 @@ describe("照我的學習單做: where it is", () => {
     expect(sampleCard().getByText(/請不要上傳學生作業/)).toBeInTheDocument();
     expect(lessonCard().getByRole("button", { name: "用範例試試" })).toBeInTheDocument();
     expect(lessonCard().getByRole("button", { name: "上傳檔案" })).toBeInTheDocument();
-    expect(lessonCard().getByRole("button", { name: "從教材庫選" })).toBeInTheDocument();
+    expect(lessonCard().getByRole("button", { name: "從教材挑選" })).toBeInTheDocument();
 
     const settings = within(screen.getByRole("region", { name: "設定" }));
     expect(settings.getByRole("combobox", { name: "班級／程度" })).toBeInTheDocument();
@@ -230,18 +253,16 @@ describe("照我的學習單做: where it is", () => {
 // ---------------------------------------------------------------- the three ways to a sample
 
 describe("照我的學習單做: the sample and the request", () => {
-  it("上傳學習單 is the default; 產生 waits for a sample, then for the text; the upload goes as template_material_id", async () => {
+  it("上傳學習單 is right here (as a worksheet sample); 產生 waits for a sample, then for the text; the upload goes as template_material_id", async () => {
     const api = mockApi(
       routes({ "POST /api/materials/upload": detail(sampleMaterial({ id: 6, title: "期中學習單" })) }),
     );
     const user = userEvent.setup({ applyAccept: false });
     const { router } = await openMimic();
 
-    expect(ways().getAllByRole("button").map((b) => [b.textContent, b.getAttribute("aria-pressed")])).toEqual([
-      ["上傳學習單", "true"],
-      ["從我的版型選", "false"],
-      ["從教材庫選", "false"],
-    ]);
+    // 從範本挑選 opens the picker; the upload form is in the card already.
+    expect(sampleCard().getByRole("button", { name: "從範本挑選" })).toHaveAttribute("aria-haspopup", "dialog");
+    expect(sampleCard().getByRole("region", { name: "上傳學習單" })).toBeInTheDocument();
     expect(generate()).toBeDisabled();
     expect(summaryText()).toBe("先放你的學習單範本");
     expect(generate()).toHaveAccessibleDescription("先放你的學習單範本");
@@ -251,7 +272,11 @@ describe("照我的學習單做: the sample and the request", () => {
     await user.upload(form.getByLabelText("選擇檔案"), new File(["PK"], "midterm.docx"));
     await user.click(form.getByRole("button", { name: "上傳" }));
     expect(await sampleCard().findByRole("button", { name: "移除「期中學習單」" })).toBeInTheDocument();
-    expect(sampleCard().queryByRole("group", { name: "範本從哪裡來" })).not.toBeInTheDocument();
+    expect(sampleCard().queryByRole("button", { name: "從範本挑選" })).not.toBeInTheDocument();
+    // A worksheet sample: it stays out of 我的教材.
+    const upload = api.fetchMock.mock.calls.find(([url]) => String(url) === "/api/materials/upload");
+    const sent = upload?.[1]?.body as FormData;
+    expect(sent.get("purpose")).toBe("worksheet_sample");
     expect(generate()).toBeDisabled();
     expect(summaryText()).toBe("照「期中學習單」的樣式 · 先放這節課的課文");
 
@@ -274,16 +299,26 @@ describe("照我的學習單做: the sample and the request", () => {
     });
   });
 
-  it("從我的版型選 lists the ready templates; the chip shows the title, the sections and 看版型內容; it goes as template_id", async () => {
+  it("從範本挑選 opens 平台範本 | 我的範本; a ready template's chip shows the title, the sections and 看版型內容; it goes as template_id", async () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     await openMimic();
-    await user.click(ways().getByRole("button", { name: "從我的版型選" }));
-    const step = within(sampleCard().getByRole("region", { name: "從我的版型選" }));
-    expect(step.getByText("3 區 · 第 1 版 · 來自「L2 學習單」")).toBeInTheDocument();
+    const dialog = await pickTemplate(user);
+    expect(dialog.getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([
+      ["平台範本", "true"],
+      ["我的範本", "false"],
+    ]);
+    await user.click(dialog.getByRole("tab", { name: "我的範本" }));
+    await waitFor(() =>
+      expect(api.calls.filter((c) => c.path === "/api/browse/templates").map((c) => c.url)).toEqual([
+        "/api/browse/templates?area=platform",
+        "/api/browse/templates?area=mine",
+      ]),
+    );
     // Only ready templates can be used.
-    expect(step.queryByRole("button", { name: "選用「還在讀的版型」" })).not.toBeInTheDocument();
-    await user.click(step.getByRole("button", { name: "選用「L2 學習單版型」" }));
+    expect(await dialog.findByRole("button", { name: "選用「還在讀的版型」" })).toBeDisabled();
+    await user.click(dialog.getByRole("button", { name: "選用「L2 學習單版型」" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     const chip = sampleCard().getByRole("status");
     expect(chip).toHaveTextContent("L2 學習單版型· 3 區");
@@ -304,36 +339,31 @@ describe("照我的學習單做: the sample and the request", () => {
     });
   });
 
-  it("removing the sample brings the three ways back", async () => {
+  it("removing the sample brings 從範本挑選 and the upload back", async () => {
     mockApi(routes());
     const user = userEvent.setup();
     await openMimic();
-    await user.click(ways().getByRole("button", { name: "從我的版型選" }));
-    await user.click(await sampleCard().findByRole("button", { name: "選用「L2 學習單版型」" }));
+    const dialog = await pickTemplate(user);
+    await user.click(await dialog.findByRole("button", { name: "選用「L2 學習單版型」" }));
     await user.click(sampleCard().getByRole("button", { name: "移除「L2 學習單版型」" }));
-    expect(ways().getByRole("button", { name: "從我的版型選" })).toHaveAttribute("aria-pressed", "true");
+    expect(sampleCard().getByRole("button", { name: "從範本挑選" })).toBeInTheDocument();
+    expect(sampleCard().getByRole("region", { name: "上傳學習單" })).toBeInTheDocument();
     expect(generate()).toBeDisabled();
     expect(summaryText()).toBe("先放你的學習單範本");
   });
 
-  it("從教材庫選 offers materials with text; the library sample goes as template_material_id beside the article's material_id", async () => {
+  it("從教材挑選 offers the lesson text (materials without text cannot be chosen); it goes as material_id beside the template_id", async () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     await openMimic();
-    await user.click(ways().getByRole("button", { name: "從教材庫選" }));
-    const step = within(sampleCard().getByRole("region", { name: "從教材庫選" }));
-    expect(await step.findByRole("button", { name: "選用「L2 學習單」" })).toBeInTheDocument();
-    expect(step.queryByRole("button", { name: "選用「掃描檔」" })).not.toBeInTheDocument();
-    await user.click(step.getByRole("button", { name: "選用「L2 學習單」" }));
-    expect(sampleCard().getByRole("button", { name: "移除「L2 學習單」" })).toBeInTheDocument();
-    expect(sampleCard().queryByRole("link", { name: "看版型內容" })).not.toBeInTheDocument();
+    await user.click(await (await pickTemplate(user)).findByRole("button", { name: "選用「L2 學習單版型」" }));
 
-    // The lesson text from the library too.
-    await user.click(lessonCard().getByRole("button", { name: "從教材庫選" }));
-    const dialog = within(await screen.findByRole("dialog", { name: "從教材庫選" }));
-    await user.click(await dialog.findByRole("button", { name: "選用「The Umbrella Stand」" }));
+    await user.click(lessonCard().getByRole("button", { name: "從教材挑選" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "從教材挑選" }));
+    expect(await dialog.findByRole("button", { name: "選用「掃描檔」" })).toBeDisabled();
+    await user.click(dialog.getByRole("button", { name: "選用「The Umbrella Stand」" }));
     expect(lessonCard().getByRole("button", { name: "移除「The Umbrella Stand」" })).toBeInTheDocument();
-    expect(summaryText()).toBe("照「L2 學習單」的樣式");
+    expect(summaryText()).toBe("照「L2 學習單版型」的樣式");
 
     await user.click(generate());
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
@@ -341,7 +371,7 @@ describe("照我的學習單做: the sample and the request", () => {
       kind: "worksheet",
       request: "學習單",
       material_id: 5,
-      template_material_id: 4,
+      template_id: 9,
     });
   });
 
@@ -375,12 +405,12 @@ describe("a worksheet in the article slot", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "班級／程度" }), "高一 3 班");
 
     // A material without the mark shows no notice.
-    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
+    await user.click(screen.getByRole("button", { name: "從教材挑選" }));
     await user.click(await screen.findByRole("button", { name: "選用「The Umbrella Stand」" }));
     expect(notice()).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "移除「The Umbrella Stand」" }));
 
-    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
+    await user.click(screen.getByRole("button", { name: "從教材挑選" }));
     await user.click(await screen.findByRole("button", { name: "選用「L2 學習單」" }));
     const box = within(notice()!);
     // It never blocks generating with it as the article.
@@ -418,14 +448,14 @@ describe("a worksheet in the article slot", () => {
     const user = userEvent.setup();
     renderApp("/create/activity");
     await waitFor(() => expect(heading()).toHaveTextContent("來做一份 課堂活動"));
-    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
+    await user.click(screen.getByRole("button", { name: "從教材挑選" }));
     await user.click(await screen.findByRole("button", { name: "選用「L2 學習單」" }));
     await user.click(within(notice()!).getByRole("button", { name: "不用，當成課文" }));
     expect(notice()).not.toBeInTheDocument();
 
     // Taken away and chosen again: still no notice for it.
     await user.click(screen.getByRole("button", { name: "移除「L2 學習單」" }));
-    await user.click(screen.getByRole("button", { name: "從教材庫選" }));
+    await user.click(screen.getByRole("button", { name: "從教材挑選" }));
     await user.click(await screen.findByRole("button", { name: "選用「L2 學習單」" }));
     expect(notice()).not.toBeInTheDocument();
 
@@ -506,17 +536,17 @@ const quickPressed = () =>
 const quickBox = () => screen.getByRole("textbox", { name: "給 Manna 的要求" });
 
 /** 附上學習單範本 → one of its ways; the dialog it opens. */
-async function openSampleWay(user: ReturnType<typeof userEvent.setup>, way: "上傳檔案" | "從教材庫選" | "從我的版型選") {
+async function openSampleWay(user: ReturnType<typeof userEvent.setup>, way: "上傳檔案" | "從範本挑選") {
   await user.click(quickCard().getByRole("button", { name: "附上學習單範本" }));
   await user.click(within(screen.getByRole("group", { name: "附上學習單範本" })).getByRole("button", { name: way }));
   return within(await screen.findByRole("dialog", { name: way }));
 }
 
-/** 附上課文 → 從教材庫選 → 選用. */
+/** 附上課文 → 從教材挑選 → 選用. */
 async function attachLessonText(user: ReturnType<typeof userEvent.setup>, title: string) {
   await user.click(quickCard().getByRole("button", { name: "附上課文" }));
-  await user.click(within(screen.getByRole("group", { name: "附上課文" })).getByRole("button", { name: "從教材庫選" }));
-  const dialog = within(await screen.findByRole("dialog", { name: "從教材庫選" }));
+  await user.click(within(screen.getByRole("group", { name: "附上課文" })).getByRole("button", { name: "從教材挑選" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "從教材挑選" }));
   await user.click(await dialog.findByRole("button", { name: `選用「${title}」` }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 }
@@ -541,20 +571,20 @@ describe("照我的學習單做 on the home quick box", () => {
     expect(toolbar()).toEqual(["附上學習單範本", "附上課文"]);
     expect(quickBox()).toHaveAttribute("placeholder", "例如：照這份的樣式，題目少一點、加一題寫作");
 
-    // The 範本 menu is 附上文章's file ways plus 我的版型; the 課文 menu is 附上文章's.
+    // The 範本 menu is 上傳檔案 and 從範本挑選; the 課文 menu is 附上文章's.
     await user.click(quickCard().getByRole("button", { name: "附上學習單範本" }));
     expect(
       within(screen.getByRole("group", { name: "附上學習單範本" }))
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["上傳檔案", "從教材庫選", "從我的版型選"]);
+    ).toEqual(["上傳檔案", "從範本挑選"]);
     await user.keyboard("{Escape}");
     await user.click(quickCard().getByRole("button", { name: "附上課文" }));
     expect(
       within(screen.getByRole("group", { name: "附上課文" }))
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["上傳檔案", "從教材庫選", "貼上文字"]);
+    ).toEqual(["上傳檔案", "從教材挑選", "貼上文字"]);
     await user.keyboard("{Escape}");
 
     // Clicked again, it is cleared and the card has one slot again.
@@ -591,6 +621,10 @@ describe("照我的學習單做 on the home quick box", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(quickCard().getByRole("button", { name: "附上學習單範本" })).toHaveFocus();
     expect(quickCard().getByRole("status")).toHaveTextContent("範本：期中學習單");
+    // Sent as a worksheet sample: it stays out of 我的教材.
+    const upload = api.fetchMock.mock.calls.find(([url]) => String(url) === "/api/materials/upload");
+    const sent = upload?.[1]?.body as FormData;
+    expect(sent.get("purpose")).toBe("worksheet_sample");
 
     await user.click(quickCard().getByRole("button", { name: "附上課文" }));
     await user.click(screen.getByRole("button", { name: "貼上文字" }));
@@ -612,22 +646,29 @@ describe("照我的學習單做 on the home quick box", () => {
     });
   });
 
-  it("從教材庫選: a library worksheet is the 範本 (template_material_id) beside the 課文's material_id; the typed text is the request", async () => {
-    const api = mockApi(routes());
+  it("從範本挑選: a 平台範本 is the 範本 (template_id) beside the 課文's material_id; the typed text is the request", async () => {
+    const api = mockApi(
+      routes({
+        "GET /api/browse/templates": templateBrowse([
+          templateCard({ id: 21, title: "三民 L3 閱讀學習單", scope: "platform", owner_label: "Manna 範本", section_count: 4 }),
+        ]),
+      }),
+    );
     const user = userEvent.setup();
     const { router } = await openHome();
     await user.click(quickChips().getByRole("button", { name: "照我的學習單做" }));
 
-    const dialog = await openSampleWay(user, "從教材庫選");
-    expect(await dialog.findByRole("button", { name: "選用「L2 學習單」" })).toBeInTheDocument();
-    // Only materials with text.
-    expect(dialog.queryByRole("button", { name: "選用「掃描檔」" })).not.toBeInTheDocument();
-    await user.click(dialog.getByRole("button", { name: "選用「L2 學習單」" }));
-    expect(quickCard().getByRole("status")).toHaveTextContent("範本：L2 學習單");
+    const dialog = await openSampleWay(user, "從範本挑選");
+    // It opens on 平台範本, with the search field ready for typing.
+    expect(dialog.getByRole("tab", { name: "平台範本" })).toHaveAttribute("aria-selected", "true");
+    expect(dialog.getByRole("searchbox", { name: "搜尋平台範本" })).toHaveFocus();
+    await user.click(await dialog.findByRole("button", { name: "選用「三民 L3 閱讀學習單」" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(quickCard().getByRole("status")).toHaveTextContent("範本：三民 L3 閱讀學習單· 4 區");
 
     await attachLessonText(user, "The Umbrella Stand");
     expect(quickCard().getAllByRole("status").map((c) => c.textContent)).toEqual([
-      "範本：L2 學習單",
+      "範本：三民 L3 閱讀學習單· 4 區",
       "課文：The Umbrella Stand",
     ]);
     await user.type(quickBox(), "照這份的樣式，題目少一點、加一題寫作{Enter}");
@@ -636,21 +677,22 @@ describe("照我的學習單做 on the home quick box", () => {
       kind: "worksheet",
       request: "照這份的樣式，題目少一點、加一題寫作",
       material_id: 5,
-      template_material_id: 4,
+      template_id: 21,
     });
   });
 
-  it("從我的版型選: lists the ready templates; the chip shows the title and sections; it goes as template_id", async () => {
+  it("從範本挑選 → 我的範本: only ready ones can be chosen; the chip shows the title and sections; it goes as template_id", async () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     const { router } = await openHome();
-    // The templates are asked for only when 從我的版型選 opens.
-    expect(api.callsTo("GET", "/api/worksheet-templates")).toHaveLength(0);
+    // The templates are asked for only when 從範本挑選 opens.
+    expect(api.callsTo("GET", "/api/browse/templates")).toHaveLength(0);
     await user.click(quickChips().getByRole("button", { name: "照我的學習單做" }));
 
-    const dialog = await openSampleWay(user, "從我的版型選");
-    expect(await dialog.findByText("3 區 · 第 1 版 · 來自「L2 學習單」")).toBeInTheDocument();
-    expect(dialog.queryByRole("button", { name: "選用「還在讀的版型」" })).not.toBeInTheDocument();
+    const dialog = await openSampleWay(user, "從範本挑選");
+    await user.click(dialog.getByRole("tab", { name: "我的範本" }));
+    const extracting = await dialog.findByRole("button", { name: "選用「還在讀的版型」" });
+    expect(extracting).toBeDisabled();
     await user.click(dialog.getByRole("button", { name: "選用「L2 學習單版型」" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(quickCard().getByRole("status")).toHaveTextContent("範本：L2 學習單版型· 3 區");
@@ -666,13 +708,15 @@ describe("照我的學習單做 on the home quick box", () => {
     });
   });
 
-  it("從我的版型選 without templates says so", async () => {
-    mockApi(routes({ "GET /api/worksheet-templates": { templates: [] } }));
+  it("從範本挑選 without templates says so in each tab", async () => {
+    mockApi(routes({ "GET /api/browse/templates": templateBrowse([]) }));
     const user = userEvent.setup();
     await openHome();
     await user.click(quickChips().getByRole("button", { name: "照我的學習單做" }));
-    const dialog = await openSampleWay(user, "從我的版型選");
-    expect(await dialog.findByText("還沒有版型。")).toBeInTheDocument();
+    const dialog = await openSampleWay(user, "從範本挑選");
+    expect(await dialog.findByText("還沒有平台範本。")).toBeInTheDocument();
+    await user.click(dialog.getByRole("tab", { name: "我的範本" }));
+    expect(await dialog.findByText(/^還沒有我的範本。/)).toBeInTheDocument();
   });
 
   it("without a 範本 says 先附上你的學習單範本, without a 課文 先附上這節課的課文, beside 送出, and sends nothing", async () => {
@@ -699,8 +743,8 @@ describe("照我的學習單做 on the home quick box", () => {
 
     // A 範本 without a 課文.
     await user.click(quickCard().getByRole("button", { name: "移除課文「The Umbrella Stand」" }));
-    const dialog = await openSampleWay(user, "從教材庫選");
-    await user.click(await dialog.findByRole("button", { name: "選用「L2 學習單」" }));
+    const dialog = await openSampleWay(user, "從範本挑選");
+    await user.click(await dialog.findByRole("button", { name: "選用「L2 學習單版型」" }));
     expect(screen.getByRole("alert")).toHaveTextContent("先附上這節課的課文");
     await user.type(quickBox(), "題目少一點{Enter}");
     expect(screen.getByRole("alert")).toHaveTextContent("先附上這節課的課文");
@@ -715,20 +759,24 @@ describe("照我的學習單做 on the home quick box", () => {
       kind: "worksheet",
       request: "題目少一點",
       material_id: 5,
-      template_material_id: 4,
+      template_id: 9,
     });
   });
 
   it("the 範本 and 課文 chips each come off with ×; the same material cannot be both", async () => {
-    mockApi(routes());
-    const user = userEvent.setup();
+    mockApi(routes({ "POST /api/materials/upload": detail(sampleMaterial()) }));
+    const user = userEvent.setup({ applyAccept: false });
     await openHome();
     await user.click(quickChips().getByRole("button", { name: "照我的學習單做" }));
     await attachLessonText(user, "L2 學習單");
     // In its own slot, a worksheet as the 課文 asks nothing.
     expect(notice()).not.toBeInTheDocument();
-    const dialog = await openSampleWay(user, "從教材庫選");
-    await user.click(await dialog.findByRole("button", { name: "選用「L2 學習單」" }));
+    // The same file as the 範本 leaves the 課文 slot.
+    const dialog = await openSampleWay(user, "上傳檔案");
+    const form = within(await dialog.findByRole("form", { name: "上傳檔案" }));
+    await user.upload(form.getByLabelText("選擇檔案"), new File(["PK"], "l2.docx"));
+    await user.click(form.getByRole("button", { name: "上傳" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(quickCard().getAllByRole("status").map((c) => c.textContent)).toEqual(["範本：L2 學習單"]);
 
     await attachLessonText(user, "The Umbrella Stand");
@@ -743,7 +791,7 @@ describe("照我的學習單做 on the home quick box", () => {
     const user = userEvent.setup();
     await openHome();
     await user.click(quickChips().getByRole("button", { name: "照我的學習單做" }));
-    const dialog = await openSampleWay(user, "從我的版型選");
+    const dialog = await openSampleWay(user, "從範本挑選");
     await user.click(await dialog.findByRole("button", { name: "選用「L2 學習單版型」" }));
     await attachLessonText(user, "The Umbrella Stand");
 
@@ -761,10 +809,10 @@ describe("照我的學習單做 on the home quick box", () => {
   });
 });
 
-/** 附上文章 → 從教材庫選 → 選用 on the home page. */
+/** 附上文章 → 從教材挑選 → 選用 on the home page. */
 async function attachFromLibrary(user: ReturnType<typeof userEvent.setup>, title: string) {
   await user.click(screen.getByRole("button", { name: "附上文章" }));
-  await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "從教材庫選" }));
+  await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "從教材挑選" }));
   await user.click(await screen.findByRole("button", { name: `選用「${title}」` }));
 }
 

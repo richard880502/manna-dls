@@ -16,11 +16,12 @@ import { materialFields, type MaterialChoice, type PickedMaterial } from "../com
 import { WorksheetNotice } from "../components/material/WorksheetNotice";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
+import { LibraryPicker, pickedOf } from "../components/library/LibraryPicker";
 import {
   SAMPLE_ATTACH,
-  SampleDialog,
   sampleFields,
   sampleName,
+  templateSample,
   type Sample,
   type SampleWay,
 } from "../components/template/SampleChooser";
@@ -370,7 +371,19 @@ function QuickBox() {
       <ErrorText message={error} />
       {dialog === null && <PrivacyReminder />}
 
-      {dialog?.slot === "article" && (
+      {dialog?.slot === "article" && dialog.way === "library" && (
+        <LibraryPicker
+          kind="material"
+          returnFocus={backToArticle}
+          onClose={() => setDialog(null)}
+          onPickMaterial={(card) => {
+            setChoice({ way: "library", picked: pickedOf(card), title: "", text: "" });
+            setNeedMaterial(false);
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog?.slot === "article" && dialog.way !== "library" && (
         <AttachDialog
           way={dialog.way}
           pasted={choice?.way === "paste" ? { title: choice.title, text: choice.text } : undefined}
@@ -383,8 +396,24 @@ function QuickBox() {
           }}
         />
       )}
-      {dialog?.slot === "sample" && (
-        <SampleDialog way={dialog.way} returnFocus={backToSample} onClose={() => setDialog(null)} onChoice={chooseSample} />
+      {dialog?.slot === "sample" && dialog.way === "upload" && (
+        <AttachDialog
+          way="upload"
+          purpose="worksheet_sample"
+          returnFocus={backToSample}
+          onClose={() => setDialog(null)}
+          onChoice={(next) => {
+            if (next.picked) chooseSample({ kind: "material", material: next.picked });
+          }}
+        />
+      )}
+      {dialog?.slot === "sample" && dialog.way === "template" && (
+        <LibraryPicker
+          kind="template"
+          returnFocus={backToSample}
+          onClose={() => setDialog(null)}
+          onPickTemplate={(card) => chooseSample(templateSample(card))}
+        />
       )}
     </>
   );

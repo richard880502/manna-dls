@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate, useParams } from "react-router";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { CreatePrepSessionRequest } from "../api/types";
 import { BloomPicker } from "../components/bloom/BloomPicker";
@@ -17,6 +17,8 @@ import {
 } from "../components/bloom/presets";
 import { ErrorText } from "../components/common";
 import { Icon } from "../components/Icon";
+import { PICK_MATERIAL } from "../components/library/labels";
+import { LibraryPicker, pickedOf } from "../components/library/LibraryPicker";
 import { AttachDialog, MaterialChip, PrivacyReminder, choiceTitle } from "../components/material/AttachDialog";
 import { NO_TEXT_LINE, materialFields, type MaterialChoice } from "../components/material/MaterialChooser";
 import { WorksheetNotice, type MimicState } from "../components/material/WorksheetNotice";
@@ -24,7 +26,13 @@ import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
 import { NO_CLASS_LABEL, useActiveClasses } from "../components/prep/ContextChips";
 import { Stepper } from "../components/Stepper";
-import { SampleChooser, sampleFields, sampleName, type Sample } from "../components/template/SampleChooser";
+import {
+  SampleChooser,
+  sampleFields,
+  sampleName,
+  templateSample,
+  type Sample,
+} from "../components/template/SampleChooser";
 import { TemplateSelect, useReadyTemplates } from "../components/template/TemplateSelect";
 import { useApp } from "../context/AppContext";
 import {
@@ -73,12 +81,15 @@ function Generator({ tool }: { tool: Tool }) {
   const ids = useId();
   const navigate = useNavigate();
   const location = useLocation();
+  const [params, setParams] = useSearchParams();
   const { currentClassId } = useApp();
   const classes = useActiveClasses();
   const templates = useReadyTemplates();
   const { open: switchOpen, toggle: toggleSwitch, close: closeSwitch, rootRef: switchRoot, triggerRef: switchTrigger, onBlur: switchBlur } =
     usePopover();
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const pickRef = useRef<HTMLButtonElement>(null);
+  const backToPick = useCallback(() => pickRef.current, []);
 
   const [objective, setObjective] = useState("");
   const [text, setText] = useState("");
@@ -94,6 +105,8 @@ function Generator({ tool }: { tool: Tool }) {
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [sample, setSample] = useState<Sample | null>(null);
   const [sampleError, setSampleError] = useState<string | null>(null);
+  /** Why ?material=<id> could not fill the article slot. */
+  const [materialError, setMaterialError] = useState<string | null>(null);
   /** Materials the teacher said to keep as the article (no worksheet notice for them). */
   const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
   const [needMaterial, setNeedMaterial] = useState(false);
@@ -119,22 +132,41 @@ function Generator({ tool }: { tool: Tool }) {
   const worksheetLike =
     pickedMaterial?.looks_like_worksheet === true && !keptAsText.has(pickedMaterial.id) ? pickedMaterial : null;
 
+  /** Takes a handled parameter out of the address (the rest stays). */
+  const setParamsRef = useRef(setParams);
+  useEffect(() => {
+    setParamsRef.current = setParams;
+  }, [setParams]);
+  const drop = useCallback((name: string) => {
+    setParamsRef.current(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete(name);
+        return next;
+      },
+      { replace: true },
+    );
+  }, []);
+
   // 照這份的樣式做 lands here with ?sample=<material id>: that material becomes the sample (and
-  // leaves the article slot), then the address goes back to /create/mimic.
-  const sampleParam = mimic ? Number(new URLSearchParams(location.search).get("sample")) : Number.NaN;
+  // leaves the article slot), then the parameter leaves the address.
+  const idParam = (name: string) => {
+    const value = Number(params.get(name));
+    return Number.isInteger(value) && value > 0 ? value : null;
+  };
+  const sampleParam = mimic ? idParam("sample") : null;
   const sampleState = (location.state as MimicState | null)?.sample;
   useEffect(() => {
-    if (!Number.isInteger(sampleParam) || sampleParam <= 0) return undefined;
+    if (sampleParam === null) return undefined;
     let alive = true;
     const take = (m: { id: number; title: string }) => {
       setSample({ kind: "material", material: { id: m.id, title: m.title } });
       setSampleError(null);
       setPicked((p) => (p?.picked?.id === m.id ? null : p));
     };
-    const done = () => navigate("/create/mimic", { replace: true });
     if (sampleState?.id === sampleParam) {
       take(sampleState);
-      done();
+      drop("sample");
       return undefined;
     }
     api
@@ -143,17 +175,72 @@ function Generator({ tool }: { tool: Tool }) {
         if (!alive) return;
         if (m.text_status === "ready") take(m);
         else setSampleError(NO_TEXT_LINE);
-        done();
+        drop("sample");
       })
       .catch((err: unknown) => {
         if (!alive) return;
         setSampleError(errorMessage(err));
-        done();
+        drop("sample");
       });
     return () => {
       alive = false;
     };
-  }, [sampleParam, sampleState, navigate]);
+  }, [sampleParam, sampleState, drop]);
+
+  // 照這個範本做 (學習單範本) lands here with ?template=<id>: that template is the sample.
+  const templateParam = mimic ? idParam("template") : null;
+  useEffect(() => {
+    if (templateParam === null) return undefined;
+    let alive = true;
+    api
+      .getWorksheetTemplate(templateParam)
+      .then((t) => {
+        if (!alive) return;
+        if (t.status === "ready") {
+          setSample(templateSample(t));
+          setSampleError(null);
+        } else {
+          setSampleError("這個範本還沒準備好（Manna 還在讀，或沒有讀成功），請換一份。");
+        }
+        drop("template");
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setSampleError(errorMessage(err));
+        drop("template");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [templateParam, drop]);
+
+  // 用這篇出題 (教材參考, 我的教材) lands here with ?material=<id>: that material in the article slot.
+  const materialParam = idParam("material");
+  useEffect(() => {
+    if (materialParam === null) return undefined;
+    let alive = true;
+    api
+      .getLibraryMaterial(materialParam)
+      .then((m) => {
+        if (!alive) return;
+        if (m.text_status === "ready") {
+          setPicked({ way: "library", picked: pickedOf(m), title: "", text: "" });
+          setNeedMaterial(false);
+          setMaterialError(null);
+        } else {
+          setMaterialError(NO_TEXT_LINE);
+        }
+        drop("material");
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setMaterialError(errorMessage(err));
+        drop("material");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [materialParam, drop]);
 
   function chooseSample(next: Sample | null) {
     setSample(next);
@@ -272,9 +359,16 @@ function Generator({ tool }: { tool: Tool }) {
             <Icon name="upload" />
             上傳檔案
           </button>
-          <button type="button" className="tool-button" disabled={busy} onClick={() => setDialog("library")}>
+          <button
+            ref={pickRef}
+            type="button"
+            className="tool-button"
+            aria-haspopup="dialog"
+            disabled={busy}
+            onClick={() => setDialog("library")}
+          >
             <Icon name="library" />
-            從教材庫選
+            {PICK_MATERIAL}
           </button>
           {!picked && (
             <span className="prompt-counter" id={`${ids}-count`}>
@@ -288,6 +382,7 @@ function Generator({ tool }: { tool: Tool }) {
           {MATERIAL_REQUIRED}
         </p>
       )}
+      <ErrorText message={materialError} />
       {worksheetLike && (
         <WorksheetNotice
           disabled={busy}
@@ -367,7 +462,7 @@ function Generator({ tool }: { tool: Tool }) {
         <>
           <section className="create-card" aria-labelledby={`${ids}-sample`}>
             <h2 id={`${ids}-sample`}>{SAMPLE_HEADING}</h2>
-            <SampleChooser sample={sample} templates={templates} disabled={busy} onChange={chooseSample} />
+            <SampleChooser sample={sample} disabled={busy} onChange={chooseSample} />
             <ErrorText message={sampleError} />
             <p className="field-hint sample-line">{SAMPLE_LINE}</p>
             {dialog === null && <PrivacyReminder />}
@@ -464,7 +559,7 @@ function Generator({ tool }: { tool: Tool }) {
               </>
             ) : (
               <p className="field-hint">
-                還沒有版型。可以在 <Link to="/materials#templates">我的版型</Link> 上傳一份你的學習單。
+                還沒有版型。可以在 <Link to="/templates?tab=mine">學習單範本</Link> 上傳一份你的學習單。
               </p>
             )}
             <p className="field-hint mimic-link">
@@ -491,13 +586,27 @@ function Generator({ tool }: { tool: Tool }) {
         </button>
       </div>
 
-      {dialog && (
+      {dialog === "upload" && (
         <AttachDialog
-          way={dialog}
+          way="upload"
           onClose={() => setDialog(null)}
           onChoice={(next) => {
             setPicked(next);
             setNeedMaterial(false);
+            setMaterialError(null);
+            setDialog(null);
+          }}
+        />
+      )}
+      {dialog === "library" && (
+        <LibraryPicker
+          kind="material"
+          returnFocus={backToPick}
+          onClose={() => setDialog(null)}
+          onPickMaterial={(card) => {
+            setPicked({ way: "library", picked: pickedOf(card), title: "", text: "" });
+            setNeedMaterial(false);
+            setMaterialError(null);
             setDialog(null);
           }}
         />
