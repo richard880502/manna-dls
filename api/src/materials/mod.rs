@@ -18,6 +18,7 @@ pub mod detect;
 pub mod extract;
 pub mod ocr;
 pub mod store;
+pub mod thumbnail;
 
 /// Pasted text (same bound as before for the lesson SOP).
 pub const MAX_PASTED_CHARS: usize = crate::sop::MAX_MATERIAL_CHARS;

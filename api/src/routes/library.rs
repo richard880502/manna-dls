@@ -8,7 +8,8 @@ use axum::body::Body;
 use axum::extract::{Multipart, Query, State};
 use axum::http::header::{
     ACCEPT_RANGES, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE,
-    CONTENT_SECURITY_POLICY, CONTENT_TYPE, RANGE, X_CONTENT_TYPE_OPTIONS,
+    CONTENT_SECURITY_POLICY, CONTENT_TYPE, ETAG, IF_NONE_MATCH, RANGE, VARY,
+    X_CONTENT_TYPE_OPTIONS,
 };
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
@@ -24,6 +25,7 @@ use crate::materials::annotations::{self, AiNote, Annotation, Patch as Annotatio
 use crate::materials::catalog::{self, Placement, PURPOSE_MATERIAL};
 use crate::materials::ocr;
 use crate::materials::store::{self, Deleted, Material, MaterialDetail, Upload, Usage};
+use crate::materials::thumbnail;
 use crate::materials::{self, file_type_for_name, Kind, FILE_TYPES};
 use crate::routes::owned_lesson;
 use crate::storage::{ByteRange, StorageError};
@@ -598,6 +600,66 @@ pub async fn file(
         .map_err(|e| AppError::Internal(e.into()))
 }
 
+// ---------------------------------------------------------------- the preview image
+
+/// How long a browser keeps a preview before asking again (with `If-None-Match`).
+const THUMBNAIL_MAX_AGE_SECS: u32 = 3600;
+
+/// Whether `If-None-Match` names this validator (or `*`).
+fn etag_matches(header: Option<&str>, etag: &str) -> bool {
+    header.is_some_and(|h| {
+        h.split(',').any(|t| {
+            let t = t.trim();
+            t == "*" || t.strip_prefix("W/").unwrap_or(t) == etag
+        })
+    })
+}
+
+/// A small preview of an uploaded PDF (its first page) or image, for the 知識庫 gallery
+/// (docs/API.md「知識庫：教材牆與預覽圖」). Read like the original file: the material must be
+/// readable by this teacher. Rendered once per file and kept ([`thumbnail::preview`]); the
+/// browser keeps it for an hour, then revalidates (`ETag`, 304). `Vary: Authorization`, so a
+/// shared computer never shows one account's preview to the next.
+pub async fn thumbnail(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    teacher.require(Capability::UseMaterials)?;
+    let row = store::readable(&state.db, id, teacher.id()).await?;
+    if !thumbnail::has_preview(&row) {
+        return Err(AppError::not_found(thumbnail::MSG_NONE));
+    }
+    let etag = thumbnail::etag(&row);
+    let response = Response::builder()
+        .header(
+            CACHE_CONTROL,
+            format!("private, max-age={THUMBNAIL_MAX_AGE_SECS}"),
+        )
+        .header(ETAG, &etag)
+        .header(VARY, "Authorization");
+    let fresh = etag_matches(
+        headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()),
+        &etag,
+    );
+    if fresh {
+        return response
+            .status(StatusCode::NOT_MODIFIED)
+            .body(Body::empty())
+            .map_err(|e| AppError::Internal(e.into()));
+    }
+    let bytes = thumbnail::preview(&state, &row).await?;
+    response
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, thumbnail::MIME)
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox")
+        .body(Body::from(bytes))
+        .map_err(|e| AppError::Internal(e.into()))
+}
+
 // ---------------------------------------------------------------- annotations
 
 pub async fn list_annotations(
@@ -827,5 +889,16 @@ mod tests {
         assert!(d.starts_with("attachment; filename=\"___ __.pdf\""), "{d}");
         assert!(d.contains("filename*=UTF-8''%E7%AC%AC"), "{d}");
         assert!(d.is_ascii());
+    }
+
+    #[test]
+    fn if_none_match() {
+        let tag = "\"ab12-w480\"";
+        assert!(etag_matches(Some("\"ab12-w480\""), tag));
+        assert!(etag_matches(Some("W/\"ab12-w480\""), tag));
+        assert!(etag_matches(Some("\"x\", \"ab12-w480\""), tag));
+        assert!(etag_matches(Some("*"), tag));
+        assert!(!etag_matches(Some("\"ab12-w360\""), tag));
+        assert!(!etag_matches(None, tag));
     }
 }

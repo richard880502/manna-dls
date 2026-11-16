@@ -177,6 +177,7 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/materials/{id}/file", get(library::file))
         .route("/materials/{id}/file-link", post(library::file_link))
+        .route("/materials/{id}/thumbnail", get(library::thumbnail))
         .route("/materials/{id}/ocr", post(library::run_ocr))
         .route(
             "/materials/{id}/annotations",

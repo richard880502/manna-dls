@@ -95,9 +95,19 @@ pub fn parse_pdfinfo_pages(stdout: &str) -> Option<i32> {
 
 /// Page `page` (from 1) of `pdf` as PNG bytes. The file is written into `dir` and removed.
 pub async fn render_pdf_page(pdf: &Path, dir: &Path, page: i32) -> Result<Vec<u8>, String> {
+    render_pdf_page_at(pdf, dir, page, PAGE_WIDTH_PX).await
+}
+
+/// Page `page` (from 1) of `pdf` as a PNG `width` pixels wide (the 知識庫 previews are small).
+pub async fn render_pdf_page_at(
+    pdf: &Path,
+    dir: &Path,
+    page: i32,
+    width: u32,
+) -> Result<Vec<u8>, String> {
     let prefix = dir.join(format!("page-{page}"));
     let page_arg = page.to_string();
-    let width = PAGE_WIDTH_PX.to_string();
+    let width = width.to_string();
     let args: Vec<&std::ffi::OsStr> = vec![
         "-png".as_ref(),
         "-f".as_ref(),
@@ -158,7 +168,8 @@ pub fn prepare_image(data: &[u8], ext: &str) -> Result<PageImage, String> {
     encode(&image, ext).map_err(|_| MSG_IMAGE_UNREADABLE.to_string())
 }
 
-fn decode(data: &[u8]) -> image::ImageResult<(DynamicImage, Orientation)> {
+/// Decodes an image within the memory limit, with its EXIF orientation (not yet applied).
+pub(crate) fn decode(data: &[u8]) -> image::ImageResult<(DynamicImage, Orientation)> {
     let mut reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
     let mut limits = Limits::default();
     limits.max_alloc = Some(MAX_DECODE_BYTES);

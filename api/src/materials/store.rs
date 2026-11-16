@@ -1224,8 +1224,9 @@ pub struct Deleted {
 
 /// Deletes a material for good (docs/BLUEPRINT.md §13.3):
 ///
-/// 1. the original object is removed from the store first. If that fails nothing else happens
-///    and the teacher is told, so a file can never be left behind unreachable;
+/// 1. the original object (and its preview image, unless another material holds the same file)
+///    is removed from the store first. If that fails nothing else happens and the teacher is
+///    told, so a file can never be left behind unreachable;
 /// 2. in one transaction: the row (with the extracted text and paragraphs), its annotations and
 ///    links; SOP versions that pointed at it keep `material_deleted` (「教材已刪除」) and lose the
 ///    verbatim quotes taken from it; the same quotes are removed from the logged AI outputs and
@@ -1244,6 +1245,8 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
                     .into(),
             ));
         };
+        // Its preview first (知識庫): a failure there also leaves everything in place.
+        super::thumbnail::forget(state, &row).await?;
         match storage.delete(key).await {
             Ok(()) | Err(StorageError::NotFound) => {}
             Err(e) => {
