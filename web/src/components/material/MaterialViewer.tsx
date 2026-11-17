@@ -123,10 +123,10 @@ function AnnotationNote({ annotation, busy, onChange, onDelete, onPlace, placing
       ref={ref}
       className={`anno-note${lost ? " is-lost" : ""}${annotation.hidden ? " is-hidden" : ""}${focused ? " is-focused" : ""}`}
       role="group"
-      aria-label={`我的注記：${clipQuote(annotation.quote, 30)}`}
+      aria-label={`我的註記：${clipQuote(annotation.quote, 30)}`}
     >
       <p className="anno-head">
-        <b>我的注記</b>
+        <b>我的註記</b>
         {lost && <span className="anno-flag">需要重新確認位置</span>}
         {annotation.hidden && <span className="anno-flag is-quiet">已隱藏</span>}
         <span className="anno-quote" lang="en">
@@ -135,7 +135,7 @@ function AnnotationNote({ annotation, busy, onChange, onDelete, onPlace, placing
       </p>
       {lost && (
         <p className="anno-why">
-          教材改過之後，找不到這段原本標的文字。注記還在；請重新選它要標的位置，或刪除它。
+          教材改過之後，找不到這段原本標的文字。註記還在；請重新選它要標的位置，或刪除它。
         </p>
       )}
       {editing ? (
@@ -148,7 +148,7 @@ function AnnotationNote({ annotation, busy, onChange, onDelete, onPlace, placing
           }}
         >
           <label className="sr-only" htmlFor={`${ids}-note`}>
-            注記內容
+            註記內容
           </label>
           <textarea
             id={`${ids}-note`}
@@ -160,7 +160,7 @@ function AnnotationNote({ annotation, busy, onChange, onDelete, onPlace, placing
           />
           <div className="anno-actions">
             <button type="submit" className="primary-button small-button" disabled={busy}>
-              儲存注記
+              儲存註記
             </button>
             <button
               type="button"
@@ -205,8 +205,8 @@ function AnnotationNote({ annotation, busy, onChange, onDelete, onPlace, placing
             {annotation.hidden ? "取消隱藏" : "隱藏"}
           </button>
           {confirming ? (
-            <span className="confirm-row" role="group" aria-label="確認刪除注記">
-              刪除這則注記？教材不會變動。
+            <span className="confirm-row" role="group" aria-label="確認刪除註記">
+              刪除這則註記？教材不會變動。
               <button type="button" className="ghost-button small-button" disabled={busy} onClick={onDelete}>
                 確定刪除
               </button>
@@ -238,7 +238,7 @@ export interface MaterialContentProps {
 /**
  * A material as a printed sheet with the teacher's notes: paragraph numbers in the margin,
  * annotated spans underlined in ink blue, notes under their paragraph. Selecting text offers
- * 加注記. Images, audio and video are previewed with the browser's own players; they have no
+ * 加註記. Images, audio and video are previewed with the browser's own players; they have no
  * text to annotate (規格 §4.4(10)).
  */
 export function MaterialContent({ materialId, material: given, annotate = true }: MaterialContentProps) {
@@ -434,10 +434,10 @@ export function MaterialContent({ materialId, material: given, annotate = true }
   return (
     <div className="material-content">
       {lost.length > 0 && (
-        <section className="anno-lost" aria-label="需要重新確認位置的注記">
+        <section className="anno-lost" aria-label="需要重新確認位置的註記">
           {placing !== null && (
             <p className="anno-placing" role="status">
-              請在下面的教材裡選取這則注記要標的文字。
+              請在下面的教材裡選取這則註記要標的文字。
             </p>
           )}
           {lost.map((a) => (
@@ -470,7 +470,7 @@ export function MaterialContent({ materialId, material: given, annotate = true }
 
       {material.text_status === "no_text" && material.kind === "document" && !reading && (
         <p className="material-state">
-          這份文件沒有可以選取的文字（可能是掃描檔），所以還不能在上面加注記，也不能請 Manna 分析。
+          這份文件沒有可以選取的文字（可能是掃描檔），所以還不能在上面加註記，也不能請 Manna 分析。
           {showRerun
             ? `可以按「${OCR_RERUN}」讓 Manna 辨識文字，或下載原檔對照、另外貼上文字。`
             : "你可以下載原檔對照，或另外貼上文字。"}
@@ -529,7 +529,7 @@ export function MaterialContent({ materialId, material: given, annotate = true }
                   {draft && draft.position.paragraph_id === p.id && (
                     <form
                       className="anno-note is-draft"
-                      aria-label="新增注記"
+                      aria-label="新增註記"
                       lang="zh-Hant"
                       onSubmit={(e) => {
                         e.preventDefault();
@@ -537,13 +537,13 @@ export function MaterialContent({ materialId, material: given, annotate = true }
                       }}
                     >
                       <p className="anno-head">
-                        <b>新增注記</b>
+                        <b>新增註記</b>
                         <span className="anno-quote" lang="en">
                           「{clipQuote(draft.position.text)}」
                         </span>
                       </p>
                       <label className="sr-only" htmlFor={`${ids}-draft`}>
-                        注記內容
+                        註記內容
                       </label>
                       <textarea
                         id={`${ids}-draft`}
@@ -564,7 +564,7 @@ export function MaterialContent({ materialId, material: given, annotate = true }
                           提供給 AI
                         </label>
                         <button type="submit" className="primary-button small-button" disabled={busy}>
-                          儲存注記
+                          儲存註記
                         </button>
                         <button type="button" className="text-link is-plain" onClick={() => setDraft(null)}>
                           取消
@@ -599,11 +599,11 @@ export function MaterialContent({ materialId, material: given, annotate = true }
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => setDraft({ position: picked, note: "", share: false })}
                   >
-                    加注記
+                    加註記
                   </button>
                 </>
               ) : (
-                <span>一則注記標在同一段裡的文字。請只選一段裡的文字。</span>
+                <span>一則註記標在同一段裡的文字。請只選一段裡的文字。</span>
               )}
             </div>
           )}
@@ -613,7 +613,7 @@ export function MaterialContent({ materialId, material: given, annotate = true }
       <ErrorText message={error} />
       {annotationsError && (
         <p className="quiet-note">
-          注記沒有載入成功。
+          註記沒有載入成功。
           <button type="button" className="text-link is-plain" onClick={() => setReload((n) => n + 1)}>
             再試一次
           </button>
@@ -621,20 +621,20 @@ export function MaterialContent({ materialId, material: given, annotate = true }
       )}
       {hiddenCount > 0 && (
         <p className="quiet-note">
-          有 {hiddenCount} 則隱藏的注記。
+          有 {hiddenCount} 則隱藏的註記。
           <button
             type="button"
             className="text-link is-plain"
             aria-pressed={showHidden}
             onClick={() => setShowHidden(!showHidden)}
           >
-            {showHidden ? "收起隱藏的注記" : "顯示隱藏的注記"}
+            {showHidden ? "收起隱藏的註記" : "顯示隱藏的註記"}
           </button>
         </p>
       )}
       {canAnnotate && (
         <p className="field-hint material-hint">
-          選取文字就能加注記。注記不會改動教材，也不會出現在學生版；勾了「提供給 AI」的才會被參考。
+          選取文字就能加註記。註記不會改動教材，也不會出現在學生版；勾了「提供給 AI」的才會被參考。
         </p>
       )}
     </div>

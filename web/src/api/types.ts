@@ -1154,11 +1154,11 @@ export interface SaveSopMaterialRequest {
   text?: string;
 }
 
-// ---------------------------------------------------------------- Phase 2.2：教材與注記
+// ---------------------------------------------------------------- Phase 2.2：教材與註記
 
 export type MaterialKind = "text" | "document" | "image" | "audio" | "video" | "link";
 export type MaterialOrigin = "paste" | "upload" | "url";
-/** ready：有文字可讀、可注記；no_text：文件沒有文字層（掃描檔）；failed：讀不出來；not_applicable：圖片、影音、網址 */
+/** ready：有文字可讀、可註記；no_text：文件沒有文字層（掃描檔）；failed：讀不出來；not_applicable：圖片、影音、網址 */
 export type MaterialTextStatus = "ready" | "no_text" | "failed" | "not_applicable";
 
 // ---- Phase 2.10：掃描檔與 OCR ----
@@ -1270,7 +1270,7 @@ export interface MaterialFileLink {
 
 export type AnchorStatus = "ok" | "moved" | "lost";
 
-/** 注記現在在教材的哪裡；`lost`＝找不到原本標的文字，需要重新確認位置 */
+/** 註記現在在教材的哪裡；`lost`＝找不到原本標的文字，需要重新確認位置 */
 export interface AnnotationAnchor {
   status: AnchorStatus;
   paragraph_id: string | null;
@@ -1358,7 +1358,7 @@ export interface WorksheetMaterial {
     lesson_id: number | null;
     material_version_no: number | null;
     note: string;
-    /** 教材庫裡的那一份（檢視與注記用）；舊資料可能沒有 */
+    /** 教材庫裡的那一份（檢視與註記用）；舊資料可能沒有 */
     material_id?: number | null;
   };
 }

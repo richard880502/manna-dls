@@ -1,4 +1,4 @@
-// 教材與注記 (docs/API.md Phase 2.2): 我的教材 (/materials; cards since the library contract: upload
+// 教材與註記 (docs/API.md Phase 2.2): 我的教材 (/materials; cards since the library contract: upload
 // with the privacy warning, rename and delete with a confirmation), the material viewer with teacher
 // annotations, and the viewer as a resizable, collapsible pane for the worksheet generator.
 import { act, render, screen, waitFor, within } from "@testing-library/react";
@@ -239,7 +239,7 @@ describe("我的教材 (the material library page)", () => {
     await user.click(more);
     await user.click(screen.getByRole("button", { name: "刪除" }));
     const confirm = within(screen.getByRole("alertdialog", { name: "永久刪除「The Umbrella Stand」？" }));
-    expect(await confirm.findByText(/刪除後無法復原：原檔、擷取的文字與段落、1 則注記都會永久刪除/)).toBeInTheDocument();
+    expect(await confirm.findByText(/刪除後無法復原：原檔、擷取的文字與段落、1 則註記都會永久刪除/)).toBeInTheDocument();
     expect(confirm.getByText(/用到它的課例（「第 2 節 精讀」）會顯示「教材已刪除」/)).toBeInTheDocument();
     // Cancelling sends nothing.
     await user.click(confirm.getByRole("button", { name: "取消" }));
@@ -315,15 +315,15 @@ describe("material viewer and annotations", () => {
     expect(viewer.getByText("第 1 段：")).toBeInTheDocument();
     expect(viewer.getByText("來源：課本第三課")).toBeInTheDocument();
     // The lost note is kept and flagged.
-    const lost = within(viewer.getByRole("region", { name: "需要重新確認位置的注記" }));
+    const lost = within(viewer.getByRole("region", { name: "需要重新確認位置的註記" }));
     expect(lost.getByText("需要重新確認位置")).toBeInTheDocument();
     expect(lost.getByText("學生常忽略這個轉折")).toBeInTheDocument();
     // AI sharing is off unless the teacher turns it on.
-    const note = within(viewer.getByRole("group", { name: "我的注記：umbrella stand" }));
+    const note = within(viewer.getByRole("group", { name: "我的註記：umbrella stand" }));
     expect(note.getByRole("checkbox", { name: "提供給 AI" })).not.toBeChecked();
   });
 
-  it("selecting text and 加注記 stores a note anchored to the paragraph; it can be shared with AI, hidden and deleted", async () => {
+  it("selecting text and 加註記 stores a note anchored to the paragraph; it can be shared with AI, hidden and deleted", async () => {
     signIn();
     const created = annotation({
       id: 40,
@@ -341,12 +341,12 @@ describe("material viewer and annotations", () => {
     const { user, viewer } = await openViewer();
 
     selectText("p2", "twelve umbrellas");
-    await user.click(await viewer.findByRole("button", { name: "加注記" }));
-    const draft = within(viewer.getByRole("form", { name: "新增注記" }));
+    await user.click(await viewer.findByRole("button", { name: "加註記" }));
+    const draft = within(viewer.getByRole("form", { name: "新增註記" }));
     expect(draft.getByText("「twelve umbrellas」")).toBeInTheDocument();
     expect(draft.getByRole("checkbox", { name: "提供給 AI" })).not.toBeChecked();
-    await user.type(draft.getByRole("textbox", { name: "注記內容" }), "數字題");
-    await user.click(draft.getByRole("button", { name: "儲存注記" }));
+    await user.type(draft.getByRole("textbox", { name: "註記內容" }), "數字題");
+    await user.click(draft.getByRole("button", { name: "儲存註記" }));
     // Where, not what: the server takes the quote from the paragraph.
     await waitFor(() =>
       expect(api.lastBody("POST", "/api/materials/5/annotations")).toEqual({
@@ -357,7 +357,7 @@ describe("material viewer and annotations", () => {
         share_with_ai: false,
       }),
     );
-    const note = within(await viewer.findByRole("group", { name: "我的注記：twelve umbrellas" }));
+    const note = within(await viewer.findByRole("group", { name: "我的註記：twelve umbrellas" }));
     expect(document.querySelectorAll("mark.anno")).toHaveLength(2);
 
     await user.click(note.getByRole("checkbox", { name: "提供給 AI" }));
@@ -365,22 +365,22 @@ describe("material viewer and annotations", () => {
     expect(note.getByRole("checkbox", { name: "提供給 AI" })).toBeChecked();
 
     await user.click(note.getByRole("button", { name: "修改" }));
-    const edit = note.getByRole("textbox", { name: "注記內容" });
+    const edit = note.getByRole("textbox", { name: "註記內容" });
     await user.clear(edit);
     await user.type(edit, "數字與比例");
-    await user.click(note.getByRole("button", { name: "儲存注記" }));
+    await user.click(note.getByRole("button", { name: "儲存註記" }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/annotations/40")).toEqual({ note: "數字與比例" }));
 
     await user.click(note.getByRole("button", { name: "隱藏" }));
     await waitFor(() => expect(api.lastBody("PUT", "/api/annotations/40")).toEqual({ hidden: true }));
-    expect(await viewer.findByText("有 1 則隱藏的注記。")).toBeInTheDocument();
-    expect(viewer.queryByRole("group", { name: "我的注記：twelve umbrellas" })).not.toBeInTheDocument();
-    await user.click(viewer.getByRole("button", { name: "顯示隱藏的注記" }));
-    const shown = within(viewer.getByRole("group", { name: "我的注記：twelve umbrellas" }));
+    expect(await viewer.findByText("有 1 則隱藏的註記。")).toBeInTheDocument();
+    expect(viewer.queryByRole("group", { name: "我的註記：twelve umbrellas" })).not.toBeInTheDocument();
+    await user.click(viewer.getByRole("button", { name: "顯示隱藏的註記" }));
+    const shown = within(viewer.getByRole("group", { name: "我的註記：twelve umbrellas" }));
     expect(shown.getByText("已隱藏")).toBeInTheDocument();
 
     await user.click(shown.getByRole("button", { name: "刪除" }));
-    expect(shown.getByRole("group", { name: "確認刪除注記" })).toHaveTextContent("教材不會變動");
+    expect(shown.getByRole("group", { name: "確認刪除註記" })).toHaveTextContent("教材不會變動");
     await user.click(shown.getByRole("button", { name: "確定刪除" }));
     await waitFor(() => expect(api.callsTo("DELETE", "/api/annotations/40")).toHaveLength(1));
     // The material was never sent anywhere.
@@ -406,11 +406,11 @@ describe("material viewer and annotations", () => {
       window.getSelection()?.setBaseAndExtent(p1, 2, p2, 5);
       document.dispatchEvent(new Event("selectionchange"));
     });
-    expect(await viewer.findByText("一則注記標在同一段裡的文字。請只選一段裡的文字。")).toBeInTheDocument();
+    expect(await viewer.findByText("一則註記標在同一段裡的文字。請只選一段裡的文字。")).toBeInTheDocument();
 
-    const lost = within(viewer.getByRole("region", { name: "需要重新確認位置的注記" }));
+    const lost = within(viewer.getByRole("region", { name: "需要重新確認位置的註記" }));
     await user.click(lost.getByRole("button", { name: "重新選位置" }));
-    expect(viewer.getByText("請在下面的教材裡選取這則注記要標的文字。")).toBeInTheDocument();
+    expect(viewer.getByText("請在下面的教材裡選取這則註記要標的文字。")).toBeInTheDocument();
     selectText("p2", "something unexpected");
     await waitFor(() =>
       expect(api.lastBody("PUT", "/api/annotations/32")).toEqual({
@@ -437,9 +437,9 @@ describe("material viewer and annotations", () => {
     first.unmount();
     render(<MaterialViewer mode="pane" materialId={10} />);
     // A server without OCR (no `ocr` on the material): nothing to start, so no 用 OCR 重新讀取.
-    expect(await screen.findByText(/沒有可以選取的文字（可能是掃描檔），所以還不能在上面加注記.*你可以下載原檔對照/)).toBeInTheDocument();
+    expect(await screen.findByText(/沒有可以選取的文字（可能是掃描檔），所以還不能在上面加註記.*你可以下載原檔對照/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "用 OCR 重新讀取" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/選取文字就能加注記/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/選取文字就能加註記/)).not.toBeInTheDocument();
   });
 });
 

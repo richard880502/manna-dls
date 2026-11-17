@@ -4,7 +4,7 @@ AI 輔助英文教師備課的研究型平台（國科會蔓娜計畫）。Phase
 
 - 設計藍圖：[docs/BLUEPRINT.md](docs/BLUEPRINT.md)
 - API 合約：[docs/API.md](docs/API.md)
-- 教材與注記的工程回覆（規格 §12）：[docs/ENGINEERING_REPLY.md](docs/ENGINEERING_REPLY.md)
+- 教材與註記的工程回覆（規格 §12）：[docs/ENGINEERING_REPLY.md](docs/ENGINEERING_REPLY.md)
 
 ## 結構
 

@@ -15,7 +15,7 @@ function frameClass(pathname: string): string {
   if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin|worksheets\/\d+)/.test(pathname)) return " is-wide";
   if (pathname === "/worksheets" || pathname === "/preferences" || pathname === "/prep") return " is-narrow";
   // 資源 (教材參考, 我的教材, 學習單範本): a grid of cards, three across on a wide screen; 知識庫 a
-  // wall of them in columns.
+  // wall of smaller ones, four or five across.
   if (["/reference", "/materials", "/templates", "/knowledge"].includes(pathname)) return " is-wide";
   if (pathname === "/") return " is-home";
   if (pathname.startsWith("/create/")) return " is-create";

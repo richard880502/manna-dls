@@ -324,7 +324,7 @@ function PrepSessionView({ id }: { id: number }) {
   }
 
   return (
-    <div className="prep-session">
+    <div className={`prep-session${viewing !== null ? " with-viewer" : ""}`}>
       <div className="page-head prep-head">
         <p className="crumbs">
           <Link to="/prep">我的備課</Link>

@@ -189,8 +189,8 @@ interface FrameProps<T> {
   listLabel: string;
   /** Beside the count (排序). */
   extra?: ReactNode;
-  /** `masonry`: cards of their own height in columns (the 知識庫 gallery). */
-  layout?: "grid" | "masonry";
+  /** `wall`: more, narrower cards of one size in even rows (the 知識庫 gallery). */
+  layout?: "grid" | "wall";
   renderCard: (item: T) => ReactNode;
 }
 
@@ -269,7 +269,7 @@ function BrowseFrame<T>({
 
       {items !== null && items.length > 0 && (
         <ul
-          className={`lib-grid${layout === "masonry" ? " is-masonry" : ""}${loading ? " is-busy" : ""}`}
+          className={`lib-grid${layout === "wall" ? " is-wall" : ""}${loading ? " is-busy" : ""}`}
           aria-label={listLabel}
           aria-busy={loading || undefined}
         >
@@ -298,7 +298,7 @@ type MaterialFacets = { categories: FacetCount[]; tags: FacetCount[]; file_types
 /**
  * 教材參考 (area=reference) or 我的教材 (area=mine) as a marketplace: search, category chips with
  * counts, 只看 chips, tags, and a grid of cards. The caller gives each card its actions, or draws
- * the cards itself (the 知識庫 gallery: `renderCard`, `layout="masonry"`).
+ * the cards itself (the 知識庫 gallery: `renderCard`, `layout="wall"`).
  */
 export function MaterialBrowser({
   area,
@@ -314,7 +314,7 @@ export function MaterialBrowser({
   renderActions?: (card: MaterialCardData) => ReactNode;
   /** A card of the caller's own instead of the standard one (an `<li>`). */
   renderCard?: (card: MaterialCardData) => ReactNode;
-  layout?: "grid" | "masonry";
+  layout?: "grid" | "wall";
   /** What the search field and the list are called (by default after the area). */
   labels?: { search: string; placeholder: string; list: string };
   empty: ReactNode;

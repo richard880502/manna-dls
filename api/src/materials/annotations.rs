@@ -327,7 +327,7 @@ pub async fn create(
     .await?;
     if count >= MAX_ANNOTATIONS_PER_MATERIAL {
         return Err(AppError::bad_request(format!(
-            "一份教材最多 {MAX_ANNOTATIONS_PER_MATERIAL} 則注記。"
+            "一份教材最多 {MAX_ANNOTATIONS_PER_MATERIAL} 則註記。"
         )));
     }
     let row: Row = sqlx::query_as(&format!(
@@ -365,7 +365,7 @@ pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<i64> {
     .bind(teacher_id)
     .fetch_optional(db)
     .await?
-    .ok_or_else(|| AppError::not_found("找不到這則注記。"))
+    .ok_or_else(|| AppError::not_found("找不到這則註記。"))
 }
 
 #[derive(Default)]
@@ -505,7 +505,7 @@ pub async fn shared_with_ai(
 /// The heading every prompt uses for teacher notes, so a model (and a reader of the log)
 /// cannot take them for the material itself or for AI output.
 pub const AI_NOTES_HEADING: &str =
-    "教師注記（教師自己寫的備課筆記，不是教材原文，也不是外部來源；只供理解教學重點，不得寫進學生版）";
+    "教師註記（教師自己寫的備課筆記，不是教材原文，也不是外部來源；只供理解教學重點，不得寫進學生版）";
 
 /// The notes as a block of prompt text, or an empty string when there are none.
 pub fn ai_context_block(notes: &[AiNote]) -> String {
@@ -520,7 +520,7 @@ pub fn ai_context_block(notes: &[AiNote]) -> String {
             } else {
                 n.note.trim()
             };
-            format!("- [P{}]「{}」→ 教師注記：{}", n.paragraph_no, n.quote, note)
+            format!("- [P{}]「{}」→ 教師註記：{}", n.paragraph_no, n.quote, note)
         })
         .collect();
     format!("{AI_NOTES_HEADING}：\n{}", lines.join("\n"))
@@ -671,7 +671,7 @@ mod tests {
             },
         ]);
         assert!(block.starts_with(AI_NOTES_HEADING));
-        assert!(block.contains("- [P2]「however」→ 教師注記：學生常忽略轉折"));
+        assert!(block.contains("- [P2]「however」→ 教師註記：學生常忽略轉折"));
         assert!(block.contains("沒有寫說明"));
     }
 }

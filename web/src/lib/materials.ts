@@ -49,7 +49,7 @@ export function materialMeta(m: Material): string {
   if (m.text_status === "failed") parts.push("文字讀不出來");
   if (m.page_count) parts.push(`${m.page_count} 頁`);
   if (m.has_file) parts.push(formatBytes(m.size_bytes));
-  if (m.annotation_count > 0) parts.push(`${m.annotation_count} 則注記`);
+  if (m.annotation_count > 0) parts.push(`${m.annotation_count} 則註記`);
   return parts.join(" · ");
 }
 

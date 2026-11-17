@@ -6,6 +6,55 @@
   max-width: 54rem;
 }
 
+/* 教材 open beside the conversation. The sheet is fixed at the page's left (28rem, sop.css).
+ * When the conversation can keep at least 26rem beside it, the frame widens by the sheet and the
+ * conversation moves clear of it; on a narrower screen the sheet lies over the page, with a
+ * shadow, until it is closed. 74rem / 62.75rem: 26rem of conversation + the sheet + gutters,
+ * beside the full sidebar / the sidebar folded to icons. */
+.workspace.is-prep:has(.prep-session.with-viewer) {
+  --prep-frame: calc(54rem + 28rem + var(--space-xl));
+}
+
+.prep-session.with-viewer .material-viewer {
+  box-shadow: var(--shadow-overlay);
+}
+
+@media (min-width: 74rem) {
+  .workspace.is-prep:has(.prep-session.with-viewer) {
+    max-width: var(--prep-frame);
+  }
+
+  .prep-session.with-viewer {
+    max-width: calc(54rem - 2 * var(--gutter));
+    margin-left: max(
+      0px,
+      calc(28rem + var(--space-xl) - var(--gutter) - max(0px, (100vw - var(--shell-left) - var(--prep-frame)) / 2))
+    );
+  }
+
+  .prep-session.with-viewer .material-viewer {
+    box-shadow: none;
+  }
+}
+
+@media (min-width: 62.75rem) {
+  :root:has(.shell.is-collapsed) .workspace.is-prep:has(.prep-session.with-viewer) {
+    max-width: var(--prep-frame);
+  }
+
+  :root:has(.shell.is-collapsed) .prep-session.with-viewer {
+    max-width: calc(54rem - 2 * var(--gutter));
+    margin-left: max(
+      0px,
+      calc(28rem + var(--space-xl) - var(--gutter) - max(0px, (100vw - var(--shell-left) - var(--prep-frame)) / 2))
+    );
+  }
+
+  :root:has(.shell.is-collapsed) .prep-session.with-viewer .material-viewer {
+    box-shadow: none;
+  }
+}
+
 /* ================= the material slot (shared with 學習單) ================= */
 .material-chooser,
 .material-paste {

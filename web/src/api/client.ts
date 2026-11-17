@@ -483,7 +483,7 @@ export const api = {
   /** area=platform：平台範本（ready）；area=mine：我的範本（任何狀態） */
   browseTemplates: (query: TemplateBrowseQuery) => get<TemplateBrowse>("/browse/templates", browseQuery(query)),
 
-  // ---- 教材庫與注記（Phase 2.2）
+  // ---- 教材庫與註記（Phase 2.2）
   /** 自己的教材、用量與上傳限制；帶 lessonId 時只列連到那個課例的教材 */
   listLibraryMaterials: (lessonId?: number) =>
     get<MaterialLibrary>("/materials", lessonId ? { lesson_id: String(lessonId) } : undefined),
@@ -506,7 +506,7 @@ export const api = {
   },
   updateLibraryMaterial: (id: number, body: UpdateLibraryMaterialRequest) =>
     put<MaterialDetail>(`/materials/${id}`, body),
-  /** 永久刪除：原檔、擷取文字、段落與注記一併刪除 */
+  /** 永久刪除：原檔、擷取文字、段落與註記一併刪除 */
   deleteLibraryMaterial: (id: number) => del<MaterialDeleted>(`/materials/${id}`),
   /**
    * 用 OCR 重新讀取（Phase 2.10）：202 回來時 ocr.status = "queued"。辨識中 → 409；不是上傳的 PDF

@@ -178,7 +178,7 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
             }}
           />
           <p className="field-hint" id={`${ids}-limits`}>
-            {describeLimits(rules)}。文件會擷取文字供對照與注記；掃描的 PDF 與課本照片會在上傳後試著辨識文字（OCR）；影音只保存和預覽。
+            {describeLimits(rules)}。文件會擷取文字供對照與註記；掃描的 PDF 與課本照片會在上傳後試著辨識文字（OCR）；影音只保存和預覽。
             已使用 {formatBytes(library.usage.used_bytes)}／{formatBytes(library.usage.quota_bytes)}。
           </p>
           <ErrorText message={fileProblem} />
@@ -309,7 +309,7 @@ export function MaterialPicker({
 /** What deleting this material takes with it, said before the teacher confirms. */
 export function deleteConsequences(m: Material): string {
   const parts = [m.has_file ? "原檔、擷取的文字與段落" : "文字與段落"];
-  if (m.annotation_count > 0) parts.push(`${m.annotation_count} 則注記`);
+  if (m.annotation_count > 0) parts.push(`${m.annotation_count} 則註記`);
   let text = `刪除後無法復原：${parts.join("、")}都會永久刪除。`;
   if (m.lessons.length > 0) {
     const names = m.lessons.map((l) => `「${l.lesson_title}」`).join("、");
