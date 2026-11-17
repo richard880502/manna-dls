@@ -60,6 +60,7 @@ pub const STEP_BLOOM: &str = "bloom";
 pub const STEP_BLOOM_CHECK: &str = "bloom_check";
 
 pub mod bloom;
+pub mod revise;
 pub mod template;
 
 // Output budgets: about twice the longest output measured with gemma-4-31B-it
@@ -426,9 +427,26 @@ impl Run {
             }
             None => Vec::new(),
         };
+        // Notes the teacher left on this worksheet for Manna (逐區修改的註記): a new generation
+        // reads the open ones too, under their own heading.
+        let ws_notes = super::comments::open_for_ai(
+            &state.db,
+            input.worksheet.id,
+            input.worksheet.teacher_id,
+            &input.content,
+        )
+        .await?;
+        let ai_notes = [
+            crate::materials::annotations::ai_context_block(&notes),
+            super::comments::generation_block(&ws_notes, &input.content),
+        ]
+        .into_iter()
+        .filter(|b| !b.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
         Ok(Self {
-            ai_notes: crate::materials::annotations::ai_context_block(&notes),
-            ai_notes_count: notes.len(),
+            ai_notes,
+            ai_notes_count: notes.len() + ws_notes.len(),
             objective: input
                 .worksheet
                 .settings

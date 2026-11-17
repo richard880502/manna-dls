@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { WsSheet, WsSheetBlock } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL } from "../../lib/worksheet";
@@ -26,18 +27,30 @@ export function sheetBlockText(b: WsSheetBlock): string {
   return lines.filter((l) => l.trim() !== "").join("\n");
 }
 
+/** What a page adds to a block of the preview: more tools, and what goes under the block. */
+export interface SheetBlockExtras {
+  tools?: ReactNode;
+  below?: ReactNode;
+  /** The block is the one the bottom bar will revise. */
+  targeted?: boolean;
+}
+
 /**
  * The printed sheet, read-only, as the server assembles it (the same projection the exports use).
- * Each block is a section with 複製 and 有幫助／不合用; changed blocks can be highlighted.
+ * Each block is a section with 複製 and 有幫助／不合用; changed blocks can be highlighted. Blocks,
+ * questions and the texts a selection is measured in carry `data-block`, `data-item` and
+ * `data-field`, so a selection can be turned into a note ([`selectionOnSheet`]).
  */
 export function SheetPreview({
   sheet,
   highlight,
   interactionFor,
+  extras,
 }: {
   sheet: WsSheet;
   highlight: ReadonlySet<string>;
   interactionFor: (block: WsSheetBlock) => number | null;
+  extras?: (block: WsSheetBlock) => SheetBlockExtras;
 }) {
   const teacher = sheet.audience === "teacher";
   return (
@@ -61,22 +74,29 @@ export function SheetPreview({
       {sheet.blocks.map((b) => {
         const name = sheetBlockName(b);
         const bloomLine = teacher ? blockBloomLine(b.items) : "";
+        const extra = extras?.(b) ?? {};
         return (
           <section
             key={b.id}
-            className={`ws-block prep-sheet-block${highlight.has(b.id) ? " is-changed" : ""}`}
+            id={`sheet-block-${b.id}`}
+            data-block={b.id}
+            className={`ws-block prep-sheet-block${highlight.has(b.id) ? " is-changed" : ""}${extra.targeted ? " is-targeted" : ""}`}
             aria-label={`區塊 ${name}`}
           >
             <h3 className="ws-block-head">
               {b.label && <span className="ws-letter">{b.label}.</span>}
-              <span>{b.title}</span>
+              <span data-field="title">{b.title}</span>
             </h3>
             {bloomLine && (
               <p className="ws-bloom-line" lang="zh-Hant">
                 {bloomLine}
               </p>
             )}
-            {b.instructions.trim() && <p className="prep-sheet-steps">{b.instructions}</p>}
+            {b.instructions.trim() && (
+              <p className="prep-sheet-steps" data-field="instructions">
+                {b.instructions}
+              </p>
+            )}
             {b.steps.length > 0 && (
               <div className="ws-procedure">
                 <ol>
@@ -115,9 +135,9 @@ export function SheetPreview({
             {b.items.length > 0 && (
               <ol className="ws-items">
                 {b.items.map((it) => (
-                  <li key={it.no} value={it.no}>
+                  <li key={it.no} value={it.no} data-item={it.id}>
                     <p className="prep-pre">
-                      {it.prompt}
+                      <span data-field="item">{it.prompt}</span>
                       {/* Bloom tags: the teacher version only (the student sheet never has them). */}
                       {teacher && isBloom(it.bloom) && (
                         <>
@@ -164,8 +184,11 @@ export function SheetPreview({
                 </div>
               </div>
             )}
+            {extra.below}
             <div lang="zh-Hant">
-              <SectionTools name={`區塊 ${name}`} text={sheetBlockText(b)} interactionId={interactionFor(b)} />
+              <SectionTools name={`區塊 ${name}`} text={sheetBlockText(b)} interactionId={interactionFor(b)}>
+                {extra.tools}
+              </SectionTools>
             </div>
           </section>
         );

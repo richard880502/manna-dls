@@ -340,7 +340,7 @@ pub async fn list_versions(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<V
     .await
 }
 
-async fn insert_version(
+pub(crate) async fn insert_version(
     tx: &mut Transaction<'_, Postgres>,
     worksheet_id: i64,
     content: &Content,
@@ -365,6 +365,9 @@ async fn insert_version(
     Ok(row.into())
 }
 
+/// Said when an editor saves over a version it has not seen (409).
+pub const MSG_EDITED_ELSEWHERE: &str = "這份學習單在你編輯的同時有了新的版本（例如在備課對話採用了 Manna 的逐區修改），所以你最近的修改沒有存進去。請重新載入，再改一次。";
+
 /// Appends a version (already validated). Returns the latest one unchanged when the content is
 /// the same. Saves of one worksheet are serialised by locking its row.
 pub async fn save_content(
@@ -372,6 +375,19 @@ pub async fn save_content(
     worksheet_id: i64,
     content: &Content,
     cause: &str,
+) -> AppResult<Version> {
+    save_content_over(db, worksheet_id, content, cause, None).await
+}
+
+/// [`save_content`] for an editor that last saw `base_version_no`: when a newer version exists
+/// and this content differs from it, nothing is saved and the answer is a 409 (the editor would
+/// otherwise overwrite, for example, a block revision accepted elsewhere). `None` skips the check.
+pub async fn save_content_over(
+    db: &PgPool,
+    worksheet_id: i64,
+    content: &Content,
+    cause: &str,
+    base_version_no: Option<i32>,
 ) -> AppResult<Version> {
     let mut tx = db.begin().await?;
     sqlx::query("SELECT id FROM worksheets WHERE id = $1 FOR UPDATE")
@@ -388,6 +404,9 @@ pub async fn save_content(
     if let Some(v) = current.map(Version::from) {
         if v.content == *content {
             return Ok(v);
+        }
+        if base_version_no.is_some_and(|base| base != v.version_no) {
+            return Err(AppError::Conflict(MSG_EDITED_ELSEWHERE.to_string()));
         }
     }
     let saved = insert_version(&mut tx, worksheet_id, content, cause).await?;

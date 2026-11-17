@@ -93,7 +93,14 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
         </div>
         <p className={`saved${ws.saveError ? " is-failed" : ""}`} role="status">
           {savedLine}
-          {ws.saveError && (
+          {ws.conflict ? (
+            <>
+              {" "}
+              <button type="button" className="text-link is-plain" onClick={ws.reload}>
+                重新載入
+              </button>
+            </>
+          ) : ws.saveError && (
             <>
               {" "}
               <button type="button" className="text-link is-plain" onClick={() => void ws.flush()}>

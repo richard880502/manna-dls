@@ -26,7 +26,7 @@ pub fn utf16_len(s: &str) -> usize {
 }
 
 /// Byte index of the UTF-16 offset `at`, when it falls on a character boundary.
-fn byte_index(s: &str, at: usize) -> Option<usize> {
+pub(crate) fn byte_index(s: &str, at: usize) -> Option<usize> {
     let mut units = 0;
     for (i, c) in s.char_indices() {
         if units == at {
@@ -49,7 +49,7 @@ pub fn utf16_slice(s: &str, start: usize, end: usize) -> Option<&str> {
     Some(&s[byte_index(s, start)?..byte_index(s, end)?])
 }
 
-fn context_before(text: &str, byte_start: usize) -> String {
+pub(crate) fn context_before(text: &str, byte_start: usize) -> String {
     let before: Vec<char> = text[..byte_start]
         .chars()
         .rev()
@@ -58,7 +58,7 @@ fn context_before(text: &str, byte_start: usize) -> String {
     before.into_iter().rev().collect()
 }
 
-fn context_after(text: &str, byte_end: usize) -> String {
+pub(crate) fn context_after(text: &str, byte_end: usize) -> String {
     text[byte_end..].chars().take(CONTEXT_CHARS).collect()
 }
 

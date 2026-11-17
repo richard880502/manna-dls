@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { Thumbs } from "../../api/types";
 import { copyText } from "../../lib/download";
@@ -12,11 +12,14 @@ export function SectionTools({
   name,
   text,
   interactionId,
+  children,
 }: {
   /** What the section is called, for the buttons' accessible names. */
   name: string;
   text: string;
   interactionId: number | null;
+  /** More tools of the section (a worksheet block: 改這一區、加註記…). */
+  children?: ReactNode;
 }) {
   const [copied, setCopied] = useState<boolean | null>(null);
   const [thumbs, setThumbs] = useState<Thumbs | null>(null);
@@ -73,6 +76,7 @@ export function SectionTools({
           </button>
         </>
       )}
+      {children}
       <ErrorText message={error} />
     </div>
   );

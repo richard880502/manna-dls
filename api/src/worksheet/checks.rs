@@ -1405,83 +1405,21 @@ pub fn evaluate_section(
     };
     let syllable_section = syllables::mentions_syllables(&out.title)
         || syllables::mentions_syllables(&out.instructions);
-    if syllable_section {
-        // An example in the instructions ("e.g., be-hav-ior") is a division too.
-        for (what, field) in [
-            ("instructions", &mut out.instructions),
-            ("scaffold", &mut out.scaffold),
-        ] {
-            let (fixed, corrections) = syllables::correct(field);
-            if !corrections.is_empty() {
-                t.fixed(
-                    "syllables_match_dictionary",
-                    format!("{what} 的音節劃分與字典不同：{}", described(&corrections)),
-                    "依字典改正",
-                );
-                *field = fixed;
-            }
-        }
-    }
-    if ctx.needs_external {
-        for (what, field) in [
+    section_text_checks(
+        [
             ("title", &mut out.title),
             ("instructions", &mut out.instructions),
             ("scaffold", &mut out.scaffold),
-        ] {
-            if names_a_resource(field) {
-                t.fail(
-                    "no_invented_material",
-                    format!("{what} 寫出了外部素材（網址或影片網站）；這一區的素材要由教師提供，不可以寫出或編造。"),
-                    "清空這個欄位",
-                );
-                field.clear();
-            }
-        }
-    }
+        ],
+        syllable_section,
+        ctx,
+        &mut t,
+    );
     for (ii, it) in raw.items.iter().enumerate() {
         let iname = format!("第 {} 題", ii + 1);
-        let format = it.answer_format.trim().to_string();
-        if !ANSWER_FORMATS.contains(&format.as_str()) {
-            t.fail(
-                "labels_from_spec_sets",
-                format!(
-                    "{iname} 的 answer_format「{}」不在允許的清單內。",
-                    it.answer_format
-                ),
-                "拿掉這一題",
-            );
-            continue;
+        if let Some(item) = section_item(it, &iname, syllable_section, ctx, &mut t) {
+            out.items.push(item);
         }
-        let mut item = CleanSectionItem {
-            answer_format: format,
-            prompt: clean(&it.prompt),
-            options: clean_all(&it.options),
-            answer: clean(&it.answer),
-            evidence: None,
-            // A label outside the fixed set (a provider that ignores the schema) is dropped.
-            bloom: it.bloom.as_deref().and_then(Bloom::parse),
-        };
-        if !item_checks(&mut item, &iname, &mut t) {
-            continue;
-        }
-        if ctx.needs_external {
-            let texts = std::iter::once(&item.prompt).chain(item.options.iter());
-            if texts.into_iter().any(|x| names_a_resource(x)) {
-                t.fail(
-                    "no_invented_material",
-                    format!("{iname} 寫出了外部素材（網址或影片網站）；題目只能留空位給教師提供的素材。"),
-                    "拿掉這一題",
-                );
-                continue;
-            }
-        } else {
-            item.evidence = verbatim_piece(&item.answer, ctx.passage);
-        }
-        let about_syllables = syllable_section || syllables::mentions_syllables(&item.prompt);
-        if about_syllables && !syllable_answer_from_dictionary(&mut item, &iname, &mut t) {
-            continue;
-        }
-        out.items.push(item);
     }
     if out.items.len() > ctx.item_count {
         t.fixed(
@@ -1504,6 +1442,165 @@ pub fn evaluate_section(
         return t.finish(None);
     }
     t.finish(Some(out))
+}
+
+/// The checks of a section's own text: in a section about syllables, the dictionary's division
+/// in the instructions and scaffold (an example there, "e.g., be-hav-ior", is a division too);
+/// in a section that needs the teacher's material, no named or invented resource (cleared).
+fn section_text_checks<const N: usize>(
+    fields: [(&str, &mut String); N],
+    syllable_section: bool,
+    ctx: &SectionCtx<'_>,
+    t: &mut Tally,
+) {
+    for (what, field) in fields {
+        if syllable_section && what != "title" {
+            let (fixed, corrections) = syllables::correct(field);
+            if !corrections.is_empty() {
+                t.fixed(
+                    "syllables_match_dictionary",
+                    format!("{what} 的音節劃分與字典不同：{}", described(&corrections)),
+                    "依字典改正",
+                );
+                *field = fixed;
+            }
+        }
+        if ctx.needs_external && names_a_resource(field) {
+            t.fail(
+                "no_invented_material",
+                format!("{what} 寫出了外部素材（網址或影片網站）；這一區的素材要由教師提供，不可以寫出或編造。"),
+                "清空這個欄位",
+            );
+            field.clear();
+        }
+    }
+}
+
+/// One generated item, cleaned and checked like every item of a template section (fixed
+/// answer-format label, well-formed, no answer in the stem, no invented resource, the
+/// dictionary's syllables); `None` when it failed (recorded in `t`). An answer quoted from the
+/// material gets that quote as its evidence.
+fn section_item(
+    it: &crate::worksheet::template::RawOutItem,
+    iname: &str,
+    syllable_section: bool,
+    ctx: &SectionCtx<'_>,
+    t: &mut Tally,
+) -> Option<CleanSectionItem> {
+    let format = it.answer_format.trim().to_string();
+    if !ANSWER_FORMATS.contains(&format.as_str()) {
+        t.fail(
+            "labels_from_spec_sets",
+            format!(
+                "{iname} 的 answer_format「{}」不在允許的清單內。",
+                it.answer_format
+            ),
+            "拿掉這一題",
+        );
+        return None;
+    }
+    let mut item = CleanSectionItem {
+        answer_format: format,
+        prompt: clean(&it.prompt),
+        options: clean_all(&it.options),
+        answer: clean(&it.answer),
+        evidence: None,
+        // A label outside the fixed set (a provider that ignores the schema) is dropped.
+        bloom: it.bloom.as_deref().and_then(Bloom::parse),
+    };
+    if !item_checks(&mut item, iname, t) {
+        return None;
+    }
+    if ctx.needs_external {
+        let texts = std::iter::once(&item.prompt).chain(item.options.iter());
+        if texts.into_iter().any(|x| names_a_resource(x)) {
+            t.fail(
+                "no_invented_material",
+                format!(
+                    "{iname} 寫出了外部素材（網址或影片網站）；題目只能留空位給教師提供的素材。"
+                ),
+                "拿掉這一題",
+            );
+            return None;
+        }
+    } else {
+        item.evidence = verbatim_piece(&item.answer, ctx.passage);
+    }
+    let about_syllables = syllable_section || syllables::mentions_syllables(&item.prompt);
+    if about_syllables && !syllable_answer_from_dictionary(&mut item, iname, t) {
+        return None;
+    }
+    Some(item)
+}
+
+// ---------------------------------------------------------------- one block revised (逐區修改)
+
+const REVISION_CHECKS: [&str; 5] = [
+    "labels_from_spec_sets",
+    "items_wellformed",
+    "answer_not_in_prompt",
+    "no_invented_material",
+    "syllables_match_dictionary",
+];
+
+/// What `worksheet_block_revise` wrote for one block, before it is merged with the block.
+pub struct RevisionDraft<'a> {
+    /// The new title and instructions; `None` when the model left them unchanged.
+    pub title: Option<&'a str>,
+    pub instructions: Option<&'a str>,
+    /// The block's title and instructions as they will read (to tell a section about syllables).
+    pub effective_title: &'a str,
+    pub effective_instructions: &'a str,
+    /// The items the model modified or added, with the name the model knows them by ("Q2",
+    /// "新增的第 1 題"). Items it kept are the teacher's and are never checked here.
+    pub items: Vec<(String, &'a crate::worksheet::template::RawOutItem)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CleanRevision {
+    pub title: Option<String>,
+    pub instructions: Option<String>,
+    /// One entry per item of the draft, in order: the cleaned item, or `None` when it failed.
+    pub items: Vec<Option<CleanSectionItem>>,
+}
+
+/// Checks a block revision the way [`evaluate_section`] checks a template block, item by item,
+/// keeping the position of every item so the caller can tell which change failed (and keep the
+/// original there). There is no item-count or has-items check: the kept items are the block's.
+pub fn evaluate_revision(draft: &RevisionDraft<'_>, ctx: &SectionCtx<'_>) -> Eval<CleanRevision> {
+    let mut t = Tally::new(&REVISION_CHECKS);
+    let mut title = draft.title.map(clean);
+    let mut instructions = draft.instructions.map(clean);
+    let syllable_section =
+        syllables::mentions_syllables(title.as_deref().unwrap_or(draft.effective_title))
+            || syllables::mentions_syllables(
+                instructions
+                    .as_deref()
+                    .unwrap_or(draft.effective_instructions),
+            );
+    let mut scratch = (String::new(), String::new());
+    section_text_checks(
+        [
+            ("title", title.as_mut().unwrap_or(&mut scratch.0)),
+            (
+                "instructions",
+                instructions.as_mut().unwrap_or(&mut scratch.1),
+            ),
+        ],
+        syllable_section,
+        ctx,
+        &mut t,
+    );
+    let items = draft
+        .items
+        .iter()
+        .map(|(name, it)| section_item(it, name, syllable_section, ctx, &mut t))
+        .collect();
+    t.finish(Some(CleanRevision {
+        title,
+        instructions,
+        items,
+    }))
 }
 
 // ---------------------------------------------------------------- questions of one Bloom level

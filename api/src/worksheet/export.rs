@@ -1674,6 +1674,7 @@ mod tests {
                 supports: vec![SheetSupport { kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames", content: "She started it because ___.".into() }],
                 items: (1..=30)
                     .map(|no| SheetItem {
+                        id: format!("b1-i{no}"),
                         no,
                         answer_format: Some(if no % 3 == 0 { FMT_TABLE.to_string() } else { "簡答題".to_string() }),
                         prompt: format!("Question {no}: why did the neighbours laugh at the idea of a free umbrella stand outside the station on rainy mornings?"),
