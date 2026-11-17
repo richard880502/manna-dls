@@ -1249,7 +1249,7 @@ async fn pasted_material_goes_to_the_library_and_only_shared_notes_reach_the_mod
         .clone();
     assert!(tasks_job["context"]
         .to_string()
-        .contains("教師注記（提供給 AI）"));
+        .contains("教師註記（提供給 AI）"));
     // Notes never reach the student sheet.
     let student = sheet(&app, &t, id, "standard", "student").await;
     assert!(!student.to_string().contains("學生常忽略"));

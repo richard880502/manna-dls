@@ -2,7 +2,7 @@
 
 - 日期：2026-11-15　對應：《學習單產生器：教師選項與 SOP 整合規格》（2026-11-14）
 - 實作：分支 `feature/worksheet-generator`（改版第 3 步）。API 契約見 `docs/API.md`「Phase 2.3」；模型實測依據見 `docs/LLM_VALIDATION.md`。
-- 這一版**不含**：外部資源搜尋（§4.3）、AI 資深教師（§4.5）、歷屆考題分析（沒有資料）。教材並排與注記來自教材庫（Phase 2.2），本分支只把它接進產生器。§9.6 只做了決定性的「詞彙級別檢查」。
+- 這一版**不含**：外部資源搜尋（§4.3）、AI 資深教師（§4.5）、歷屆考題分析（沒有資料）。教材並排與註記來自教材庫（Phase 2.2），本分支只把它接進產生器。§9.6 只做了決定性的「詞彙級別檢查」。
 
 ## 0. 這一版做到的流程
 
@@ -22,7 +22,7 @@
 | 版本復原 | 「復原上一版」只在有上一版時出現；可一路復原到最早 | 取代前的區塊存在 `worksheet_block_history`；整份學習單另有只增不改的版本紀錄（`worksheet_versions`，含 `cause`） |
 | 失敗 | 每一步各自顯示「完成／略過／沒有成功＋原因」；沒產生成功的區塊留空並說明 | 任何失敗都不擋手動編輯 |
 
-教材欄是可替換的插槽（`web/src/components/worksheet/MaterialPane.tsx`、`WorksheetPage` 的 `materialPane`）；後端只認 `WorksheetMaterial { title, paragraphs[{id,text}], source }`（`api/src/worksheet/material.rs`）。已接上教材庫（Phase 2.2）：貼上的文字存進教材庫並連到學習單，教材欄顯示 `MaterialViewer`（可選字加注記），勾了「提供給 AI」的注記會帶進產生的 prompt；產生流程、檢查、組裝與匯出都沒有因此改動。上傳檔案（PDF、DOCX 等）作為學習單教材的入口還沒做：目前要先放進課例或貼上文字。
+教材欄是可替換的插槽（`web/src/components/worksheet/MaterialPane.tsx`、`WorksheetPage` 的 `materialPane`）；後端只認 `WorksheetMaterial { title, paragraphs[{id,text}], source }`（`api/src/worksheet/material.rs`）。已接上教材庫（Phase 2.2）：貼上的文字存進教材庫並連到學習單，教材欄顯示 `MaterialViewer`（可選字加註記），勾了「提供給 AI」的註記會帶進產生的 prompt；產生流程、檢查、組裝與匯出都沒有因此改動。上傳檔案（PDF、DOCX 等）作為學習單教材的入口還沒做：目前要先放進課例或貼上文字。
 
 ## 2. 第 3 項：DOCX 與 PDF 的產製方式、版面與字型
 

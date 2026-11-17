@@ -1,4 +1,4 @@
-//! Phase 2.2 (docs/API.md「教材與注記」): the material library on the filesystem backend:
+//! Phase 2.2 (docs/API.md「教材與註記」): the material library on the filesystem backend:
 //! upload rules, text extraction, ownership, the hard delete, the lesson SOP on top of the
 //! library (including the data migration), annotations, and `STORAGE_BACKEND=none`.
 
@@ -901,10 +901,10 @@ async fn annotations_are_separate_anchored_and_only_shared_with_ai_when_switched
     );
     let block = ai["prompt_block"].as_str().unwrap();
     assert!(
-        block.starts_with("教師注記（教師自己寫的備課筆記，不是教材原文"),
+        block.starts_with("教師註記（教師自己寫的備課筆記，不是教材原文"),
         "{block}"
     );
-    assert!(block.contains("[P3]「However」→ 教師注記：學生常忽略這個轉折"));
+    assert!(block.contains("[P3]「However」→ 教師註記：學生常忽略這個轉折"));
     assert!(
         !block.contains("先確認學生知道這是什麼"),
         "not shared: {block}"
@@ -931,13 +931,13 @@ async fn annotations_are_separate_anchored_and_only_shared_with_ai_when_switched
         .put(
             &format!("/api/annotations/{}", a["id"]),
             Some(&t),
-            json!({ "note": "改過的注記", "share_with_ai": true }),
+            json!({ "note": "改過的註記", "share_with_ai": true }),
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(
         (v["note"].as_str(), v["share_with_ai"].as_bool()),
-        (Some("改過的注記"), Some(true))
+        (Some("改過的註記"), Some(true))
     );
     let (s, v) = app
         .put(
@@ -957,7 +957,7 @@ async fn annotations_are_separate_anchored_and_only_shared_with_ai_when_switched
         .collect();
     assert_eq!(
         shared_notes,
-        ["改過的注記", "指示句"],
+        ["改過的註記", "指示句"],
         "a hidden note is not handed to a model"
     );
     // Hidden notes are still listed (the viewer offers to show them again).

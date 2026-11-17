@@ -522,7 +522,7 @@ impl Run {
         }
         if self.ai_notes_count > 0 {
             list.add(
-                "教師注記（提供給 AI）",
+                "教師註記（提供給 AI）",
                 &format!("{} 則", self.ai_notes_count),
             );
         }

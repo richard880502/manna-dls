@@ -99,7 +99,7 @@ export function WorksheetMaterialPane(props: MaterialPaneProps) {
             : material.source.kind === "library"
               ? "從你的教材庫取用的教材。"
               : "你貼上的教材，已放進你的教材庫。"}
-          勾了「提供給 AI」的注記會在產生時參考；注記不會出現在學習單上。
+          勾了「提供給 AI」的註記會在產生時參考；註記不會出現在學習單上。
         </p>
         <p className="quiet-note">
           <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setReplacing(true)}>

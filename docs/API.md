@@ -927,7 +927,7 @@ interface SopObjectivesSuggestion {
 
 以下為**新增**；既有端點不變。Migration `0010_worksheets.sql`（`0009` 保留給教材庫分支）。依據：《學習單產生器：教師選項與 SOP 整合規格》§4.1、§4.2、§4.6、§5–§9.5、§9.7，`docs/LLM_VALIDATION.md` §5–§10（步驟 (c)(d)(e)(f)，(g) 改由程式組裝），`docs/DESIGN_OVERHAUL.md` 第 3 步。工程說明與規格 §12 第 2–6 項的回覆在 `docs/ENGINEERING_REPLY_WORKSHEET.md`。
 
-不在這一版：外部資源搜尋（§4.3）、教材注記與教材庫（另一分支，見「教材接縫」）、AI 資深教師（§4.5）、歷屆考題分析（沒有資料）。§9.6 只做決定性的詞彙級別檢查。
+不在這一版：外部資源搜尋（§4.3）、教材註記與教材庫（另一分支，見「教材接縫」）、AI 資深教師（§4.5）、歷屆考題分析（沒有資料）。§9.6 只做決定性的詞彙級別檢查。
 
 ## 固定標籤（規格 §5，逐字；伺服器只接受這些值）
 
@@ -965,9 +965,9 @@ interface WorksheetMaterial {
             material_id: number | null };   // 教材庫（Phase 2.2）裡的那一份
 }
 // 貼上的文字先存進教師的教材庫（`materials`，並以 `material_links` 連到這份學習單），學習單保存當時的快照；
-// 從課例進入時用課例目前的教材庫教材。教材欄顯示教材庫的 MaterialViewer（含注記）。
-// 產生時，該教材上教師勾了「提供給 AI」的注記（`materials::annotations::shared_with_ai`）會以
-// 「教師注記」的標題放進每一步的 prompt，並列在「Manna 已帶入的資訊」；其他注記不會送出，也不會出現在學習單上。
+// 從課例進入時用課例目前的教材庫教材。教材欄顯示教材庫的 MaterialViewer（含註記）。
+// 產生時，該教材上教師勾了「提供給 AI」的註記（`materials::annotations::shared_with_ai`）會以
+// 「教師註記」的標題放進每一步的 prompt，並列在「Manna 已帶入的資訊」；其他註記不會送出，也不會出現在學習單上。
 
 interface WsObjective {
   id: string; type: "content" | "language";
@@ -1215,7 +1215,7 @@ interface WsVocabCheck {
 ## 前端
 
 - `/worksheets`：做過的學習單清單＋「直接做一份」（貼上教材）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
-- 教材欄是一個可替換的插槽（`materialPane`）：這一版放唯讀的教材檢視；教材庫分支的 `MaterialViewer`（含注記）之後接在同一個位置。
+- 教材欄是一個可替換的插槽（`materialPane`）：這一版放唯讀的教材檢視；教材庫分支的 `MaterialViewer`（含註記）之後接在同一個位置。
 
 ---
 
@@ -1316,7 +1316,7 @@ fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字
 
 ---
 
-# Phase 2.2：教材與注記
+# Phase 2.2：教材與註記
 
 以下為**新增或變更**；未提到的端點維持原樣。Migration `0009_materials.sql`。依據：《學習單產生器：教師選項與 SOP 整合規格》§4.2、§4.4、§9.7、§10 第 23–28 項，`docs/BLUEPRINT.md` §13.3（教材只屬於一位教師、不共用、不訓練；刪除即實際刪除原檔與衍生資料）。給規格 §12 第 1、11、12、13 項的回覆在 `docs/ENGINEERING_REPLY.md`。外部資源搜尋（§4.3）不在這一版。
 
@@ -1324,8 +1324,8 @@ fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字
 
 - **教師自己的教材庫**：貼上文字、上傳檔案、或記下一個網址。只有擁有者看得到；其他人存取任何一份都是 404。
 - **原檔放物件儲存**（`STORAGE_BACKEND=s3|fs|none`，見 README「教材檔案儲存」），瀏覽器從不直接連到儲存空間。
-- **刪除是真的刪除**：原檔物件、擷取的文字與段落、注記、課例連結一起刪；課例 SOP 留下「教材已刪除」，逐字引文從 SOP 與 AI 紀錄移除（見「刪除」）。
-- **注記另外存**，不改教材；每則可勾「提供給 AI」（預設不勾）。只有勾了、沒隱藏、找得到位置的注記會給 AI，並標明是教師注記。注記不會出現在學生版或任何學生端輸出。
+- **刪除是真的刪除**：原檔物件、擷取的文字與段落、註記、課例連結一起刪；課例 SOP 留下「教材已刪除」，逐字引文從 SOP 與 AI 紀錄移除（見「刪除」）。
+- **註記另外存**，不改教材；每則可勾「提供給 AI」（預設不勾）。只有勾了、沒隱藏、找得到位置的註記會給 AI，並標明是教師註記。註記不會出現在學生版或任何學生端輸出。
 - 課例 SOP 第 1 步改用教材庫（貼上、從教材庫選、上傳），舊的 `lesson_sop_materials` 搬進教材庫後刪除。
 
 ## 能力（capability）
@@ -1336,7 +1336,7 @@ fused = 1.0 × (關鍵字分數 / 本次最高關鍵字分數) / (60 + 關鍵字
 
 | 類型 `kind` | 副檔名 | 單檔上限 | 處理 |
 |---|---|---|---|
-| `document` | `.txt` `.docx` `.pdf` | 20 MB | 擷取文字（見下），可注記、可給 Manna 分析 |
+| `document` | `.txt` `.docx` `.pdf` | 20 MB | 擷取文字（見下），可註記、可給 Manna 分析 |
 | `image` | `.png` `.jpg`（`.jpeg`）`.webp` `.gif` | 10 MB | 保存、在檢視區顯示；開啟 OCR 時辨識文字（Phase 2.10） |
 | `audio` | `.mp3` `.m4a` `.wav` | 30 MB | 保存、瀏覽器內建播放器（可拖曳）；不分析 |
 | `video` | `.mp4` `.webm` | 100 MB | 同上 |
@@ -1382,7 +1382,7 @@ interface MaterialAnnotation {
   id: number; material_id: number;
   quote: string;                // 標記的原文（伺服器從段落取，不採用用戶端送的文字）
   note: string; share_with_ai: boolean; hidden: boolean;
-  anchor: {                     // 注記「現在」在哪裡，每次讀取時重新定位
+  anchor: {                     // 註記「現在」在哪裡，每次讀取時重新定位
     status: "ok" | "moved" | "lost";     // lost → 前端顯示「需要重新確認位置」
     paragraph_id: string | null; paragraph_no: number | null;
     start: number | null; end: number | null;   // 段落文字內的 UTF-16 位置（與瀏覽器選取相同）
@@ -1408,32 +1408,32 @@ interface MaterialAnnotation {
 | GET | `/api/materials/:id/thumbnail` | Bearer 權杖 | 預覽圖（JPEG，寬 480 px）：上傳的 PDF 第 1 頁或圖片。見「知識庫：教材牆與預覽圖」 |
 | PUT／DELETE | `/api/lessons/:id/materials/:material_id` | – | 把教材連到課例／取消連結（多對多）。課例 SOP 第 1 步正在用的教材不能在這裡取消（409，請到第 1 步換教材） |
 | GET | `/api/materials/:id/annotations` | – | `MaterialAnnotation[]`，依閱讀順序；隱藏的也列（`hidden: true`），找不到位置的排最後 |
-| POST | `/api/materials/:id/annotations` | `{ paragraph_id, start, end, note?, share_with_ai? }` | `MaterialAnnotation`。範圍必須在該段落內；一份教材最多 500 則；注記 ≤ 2,000 字、標記 ≤ 2,000 字 |
+| POST | `/api/materials/:id/annotations` | `{ paragraph_id, start, end, note?, share_with_ai? }` | `MaterialAnnotation`。範圍必須在該段落內；一份教材最多 500 則；註記 ≤ 2,000 字、標記 ≤ 2,000 字 |
 | PUT | `/api/annotations/:id` | `{ note?, share_with_ai?, hidden?, anchor?: { paragraph_id, start, end } }` | `MaterialAnnotation`。`anchor` 用於教師重新確認位置 |
-| DELETE | `/api/annotations/:id` | – | `{ deleted: true }`。只刪注記，教材不變 |
-| GET | `/api/materials/:id/annotations/ai` | – | `{ material_id, notes: Array<{ annotation_id, paragraph_id, paragraph_no, quote, note }>, prompt_block }`：**只有**勾了提供給 AI、未隱藏、找得到位置的注記 |
+| DELETE | `/api/annotations/:id` | – | `{ deleted: true }`。只刪註記，教材不變 |
+| GET | `/api/materials/:id/annotations/ai` | – | `{ material_id, notes: Array<{ annotation_id, paragraph_id, paragraph_no, quote, note }>, prompt_block }`：**只有**勾了提供給 AI、未隱藏、找得到位置的註記 |
 
 ### 為什麼是後端串流，不是 MinIO 的 presigned URL
 
 `file-link` 發的是**本站 API** 的連結：權杖以後端程序內的隨機金鑰（HMAC-SHA256）簽章，綁定教材 id、教師 id 與到期時間；使用時仍重新檢查教材存在且屬於該教師。所以 MinIO 不必對外開放、連結外流也打不開別人的東西、教材一刪除連結立即失效。代價是檔案流量經過後端，影音以 Range 分段傳送，對 2 核心主機可以接受。
 
-### 給 AI 管線的注記
+### 給 AI 管線的註記
 
-Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)` 回傳上述 `notes`，`ai_context_block(&notes)` 產生 prompt 文字，開頭固定為「教師注記（教師自己寫的備課筆記，不是教材原文，也不是外部來源；只供理解教學重點，不得寫進學生版）」。這是注記進入任何 AI 管線的唯一入口；沒勾的注記不會被讀到。輸入快照記錄注記時比照教材：只記 id 與雜湊，不記內容（學習單產生器接上時遵守）。
+Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)` 回傳上述 `notes`，`ai_context_block(&notes)` 產生 prompt 文字，開頭固定為「教師註記（教師自己寫的備課筆記，不是教材原文，也不是外部來源；只供理解教學重點，不得寫進學生版）」。這是註記進入任何 AI 管線的唯一入口；沒勾的註記不會被讀到。輸入快照記錄註記時比照教材：只記 id 與雜湊，不記內容（學習單產生器接上時遵守）。
 
-## 注記的定位
+## 註記的定位
 
-- 存的是：段落 id、段落內 UTF-16 起訖位置、標記的原文（由伺服器從段落取出）、前後各 32 字的上下文，以及做注記時教材的 `revision`。
-- 每次讀取重新定位：同段同位置文字相同 → `ok`；同段內找得到原文（有多處時取上下文最吻合、再取最近）→ `moved`；別的段落中有一處明顯最吻合 → `moved`；否則 `lost`（前端顯示「需要重新確認位置」，注記內容保留，教師可重新選取位置或刪除）。
-- 前端選取若落在英文單字中間，會延伸到整個單字；跨段落的選取不能成為一則注記（請只選一段）。
+- 存的是：段落 id、段落內 UTF-16 起訖位置、標記的原文（由伺服器從段落取出）、前後各 32 字的上下文，以及做註記時教材的 `revision`。
+- 每次讀取重新定位：同段同位置文字相同 → `ok`；同段內找得到原文（有多處時取上下文最吻合、再取最近）→ `moved`；別的段落中有一處明顯最吻合 → `moved`；否則 `lost`（前端顯示「需要重新確認位置」，註記內容保留，教師可重新選取位置或刪除）。
+- 前端選取若落在英文單字中間，會延伸到整個單字；跨段落的選取不能成為一則註記（請只選一段）。
 
 ## 刪除
 
 `DELETE /api/materials/:id` 依序：
 
 1. 刪除儲存空間中的原檔物件（以及它的預覽圖，見「知識庫：教材牆與預覽圖」；其他教材也是同一個檔案時預覽圖保留）。**刪不掉就整個不刪**，回 503「原檔沒有刪除成功…所以這份教材還沒有刪除」（預覽圖刪不掉時是「預覽圖沒有刪除成功…」）；儲存未設定而教材有原檔時同樣不刪。
-2. 同一個交易內：刪除教材列（文字、段落）、注記、課例與學習單連結；用到它的 SOP 版本 `material_id` 設為 null、`material_deleted = true`，指向它段落的參照改名為 `m<id>-p3`（不會被誤認為下一份教材的段落），**從它逐字引用的片段**（分析與語言重點的 `evidence`）換成「［教材已刪除］」；這些課例的 AI 紀錄（`ai_interactions.output`、`lesson_sop_jobs.result`）中的逐字引文與教材名稱同樣移除。教師自己寫的分析、目標、任務都保留。
-3. `material_deletions` 記一筆（教材 id、類型、大小、是否有原檔、注記數、時間；沒有標題、檔名、雜湊或內容），`usage_logs` 記 `material_deleted`。
+2. 同一個交易內：刪除教材列（文字、段落）、註記、課例與學習單連結；用到它的 SOP 版本 `material_id` 設為 null、`material_deleted = true`，指向它段落的參照改名為 `m<id>-p3`（不會被誤認為下一份教材的段落），**從它逐字引用的片段**（分析與語言重點的 `evidence`）換成「［教材已刪除］」；這些課例的 AI 紀錄（`ai_interactions.output`、`lesson_sop_jobs.result`）中的逐字引文與教材名稱同樣移除。教師自己寫的分析、目標、任務都保留。
+3. `material_deletions` 記一筆（教材 id、類型、大小、是否有原檔、註記數、時間；沒有標題、檔名、雜湊或內容），`usage_logs` 記 `material_deleted`。
 
 前端在頁面上確認，明說「永久刪除、無法復原」以及會一起刪掉什麼、哪些課例會顯示「教材已刪除」。
 
@@ -1473,8 +1473,8 @@ Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)`
     ```
   - Props：`materialId: number | null`、`mode`、`open?`／`onClose?`（panel）、`material?`（已有資料時免再請求）、`empty?`（沒有教材時顯示）、`defaultCollapsed?`（pane）。
   - 1100px 以下 pane 改為蓋在頁面上；760px 以下兩種都是全螢幕的教材頁，頂端固定「收起教材」。
-  - 內容：印刷樣式、頁邊段落編號、PDF 頁碼分隔、注記（藍色底線＋藍色淡底小塊，絕不用金色）、選取文字出現「加注記」、提供給 AI、修改、隱藏／顯示隱藏的注記、刪除（頁內確認）、重新確認位置；圖片／音訊／影片以瀏覽器內建元件預覽，可下載原檔；網址教材顯示連結（新分頁開啟）。
-- **備課庫 → 教材**：列出教材（類型、段數、頁數、大小、注記數、用在哪些課例）、上傳檔案／貼上文字／加入網址（每種都有隱私與著作權提醒）、改名、永久刪除（頁內確認）。
+  - 內容：印刷樣式、頁邊段落編號、PDF 頁碼分隔、註記（藍色底線＋藍色淡底小塊，絕不用金色）、選取文字出現「加註記」、提供給 AI、修改、隱藏／顯示隱藏的註記、刪除（頁內確認）、重新確認位置；圖片／音訊／影片以瀏覽器內建元件預覽，可下載原檔；網址教材顯示連結（新分頁開啟）。
+- **備課庫 → 教材**：列出教材（類型、段數、頁數、大小、註記數、用在哪些課例）、上傳檔案／貼上文字／加入網址（每種都有隱私與著作權提醒）、改名、永久刪除（頁內確認）。
 - **課例第 1 步**：貼上文字、從教材庫選、上傳檔案；有教材時可修改（貼上的）、換一份、從這個課例移除；教材被刪除時顯示「教材已刪除」。
 
 ---
@@ -1886,7 +1886,7 @@ interface WsSheetBlock { /* …既有欄位… */
 `request`（存在 `worksheets.request`）與 `settings.objective` 會送進這份學習單**每一次**模型呼叫：
 
 - 新的 prompt（`worksheet_bloom_level`）有自己的變數 `{{teacher_request}}`、`{{teacher_objective}}`（沒有時是「（沒有）」）。
-- 既有的 prompt（`worksheet_tasks`、`worksheet_warmup`、`worksheet_scaffolds`、`worksheet_exit_ticket`、`worksheet_template_section`）不必改：它們接在教材注記（`teacher_notes_for_ai`）同一段後面，各自一行「學習目標（教師寫的）：…」「教師的要求：…」。
+- 既有的 prompt（`worksheet_tasks`、`worksheet_warmup`、`worksheet_scaffolds`、`worksheet_exit_ticket`、`worksheet_template_section`）不必改：它們接在教材註記（`teacher_notes_for_ai`）同一段後面，各自一行「學習目標（教師寫的）：…」「教師的要求：…」。
 - 兩者都列在工作的 `context`（「Manna 已帶入的資訊」），只顯示前 80 字。
 - 例外：判斷層次的 `worksheet_bloom_check` 不帶這兩者，讓判斷不受教師期待影響。
 
@@ -1903,7 +1903,7 @@ interface WsSheetBlock { /* …既有欄位… */
 
 **每個層次一次呼叫**（`worksheet_bloom_level`，鷹架 `SC-WS-BLOOM`），依 Bloom 順序一個接一個（同時跑時，「理解」會重問「記憶」剛出過的題目），`WsJob.phase` 例如「正在出『分析』層次的題目」。`max_tokens` = 400 + 300 × 題數（1500–6000）。
 
-- 輸入：用途（閱讀理解題，或分層練習與基礎版提示的說明；兩者的請求因此不同，閘道不會拿快取的題目回應）、層次的定義、英文題幹、可用的作答方式、題數、學校類型、班級特性、學習目標、教師的要求、加了段落代號（`[P1]`…）的教材、較低層次已經出好的題目（不要重複），以及教師注記（有勾「提供給 AI」時）。
+- 輸入：用途（閱讀理解題，或分層練習與基礎版提示的說明；兩者的請求因此不同，閘道不會拿快取的題目回應）、層次的定義、英文題幹、可用的作答方式、題數、學校類型、班級特性、學習目標、教師的要求、加了段落代號（`[P1]`…）的教材、較低層次已經出好的題目（不要重複），以及教師註記（有勾「提供給 AI」時）。
 - 輸出 schema（欄位照撰寫順序，每個字串與陣列都有上限）：`{ instructions ≤200, items: [正好 n 題] { answer_format: 該層次可用的作答方式（enum）, prompt ≤500, options ≤6×150, answer ≤400, evidence ≤300, paragraph_ids: ["P1"…]（enum，≤3）, hint ≤150 } }`。`paragraph_ids` 由伺服器換成教材的段落 id，聯集成區塊的 `paragraph_ids`。
 - **檢查**（和照版型產生的 `evaluate_section` 同一套）：作答方式只能是這個層次可用的；選擇題至少 2 個不重複選項、答案必須是其中之一（只寫字母時換成該選項）；配對題至少 2 個選項；填空題要有 `___`；題幹不可含答案；音節題依字典修正；是非題沒給選項時補 True／False；超過題數由程式只留前面幾題。**記憶、理解**層次每一題都要有逐字依據：不是逐字的依據改成其中最長、至少 5 個字的逐字片段；找不到就算這一題沒通過。其他層次不需要依據，不是逐字的直接清空。
 - 沒通過 → **修復一次**（temperature +0.4，附上沒通過的項目）；還是沒通過的題目拿掉；一題都沒有時，這個層次的區塊留空並在 `message` 說明。
@@ -2102,7 +2102,7 @@ interface PrepTurn {
 - **個人的列**：只有擁有者，和以前一樣；別人的 id → 404。
 - **課例連結與課例 SOP 第 1 步**仍然只接受自己的個人教材（平台教材 → 404）。
 - **用平台教材做學習單**照常留下教材快照：之後平台教材被刪，已經做好的學習單不受影響。平台範本被刪，學習單的 `template` 變成 null，內容保留。
-- **注記是個人的**：在平台教材上，每位教師只看得到、只能改刪自己的注記；`annotation_count`、`GET …/annotations`、`GET …/annotations/ai` 與送給 AI 的注記都只算這位教師自己的（`material_annotations.teacher_id`）。教材詳細的 `lessons`、`worksheet_count` 同樣只算自己的。平台教材被刪時，所有人的注記一起刪除。
+- **註記是個人的**：在平台教材上，每位教師只看得到、只能改刪自己的註記；`annotation_count`、`GET …/annotations`、`GET …/annotations/ai` 與送給 AI 的註記都只算這位教師自己的（`material_annotations.teacher_id`）。教材詳細的 `lessons`、`worksheet_count` 同樣只算自己的。平台教材被刪時，所有人的註記一起刪除。
 
 ## 範例離開「我的教材」
 
@@ -2251,7 +2251,7 @@ DOCX 與 TXT 從不辨識。`OCR_PROVIDER=none` 時以上都不發生（手動 �
   | `Page-Header`、`Page-Footer`、`Picture`（以及 `Image`、`Figure`） | 不進文字；圖片計數 |
 
   `List-Group`／`Table` 裡找不到 `<li>`／`<tr>` 時當一般文字。整頁沒有任何有標籤的元素（純 HTML 或 markdown）時，每一行一段（`#` 開頭的行視為標題）。
-- **結果**：教材的 `text`、`paragraphs`（每段有 `page`，圖片是第 1 頁）換成辨識結果，`text_status = "ready"`、`text_source = "ocr"`；文字和原本相同的段落沿用原 id，文字有變時 `revision` 加 1。字數上限與上傳相同（300,000 字，超過截斷並 `text_truncated = true`；因頁數上限略過頁時也是 `true`）。`looks_like_worksheet` 依辨識後的文字重算。舊的注記照常重新定位（多半變成「需要重新確認位置」）。
+- **結果**：教材的 `text`、`paragraphs`（每段有 `page`，圖片是第 1 頁）換成辨識結果，`text_status = "ready"`、`text_source = "ocr"`；文字和原本相同的段落沿用原 id，文字有變時 `revision` 加 1。字數上限與上傳相同（300,000 字，超過截斷並 `text_truncated = true`；因頁數上限略過頁時也是 `true`）。`looks_like_worksheet` 依辨識後的文字重算。舊的註記照常重新定位（多半變成「需要重新確認位置」）。
 - 原始逐頁區塊存在 `materials.ocr_pages`（不在 API 回應裡，給之後依 `Section-Header` 切分考卷用）：`[{ page, blocks: [{ label, text, bbox: [x0,y0,x1,y1] | null }], pictures, error? }]`。表格與清單的區塊文字一列／一項一行。`pictures` 是該頁圖片數（「此頁有 n 張圖」只放在這裡，不寫進文字）。
 - **沒有一頁成功**：`ocr.status = "failed"`，`ocr.error` 說明，教材文字不變。**部分頁失敗或略過**：`done`，`ocr.error` 是附註，例如「第 2 頁沒有辨識成功。」「這份檔案有 52 頁，只辨識了前 40 頁。」。**都讀了但沒有字**：`done`，附註「辨識完成，但沒有找到文字。」，教材文字不變。
 - **紀錄**：每一頁的每一次呼叫一筆 `ai_interactions`（`module = "material_ocr"`，重試是 `attempt = 2`、`retry_of`）；`input_snapshot` 只有教材 id、頁碼、圖的位元組數、SHA-256 與 content type、prompt 與 `max_tokens`；`output` 只有 `{ chars }`（輸出長度）。**從不記圖或文字。** `usage_logs`：`material_ocr_requested`（手動）、`material_ocr_finished`（狀態、頁數、失敗頁、略過頁、字數）。
@@ -2312,7 +2312,7 @@ interface PrepTurn {
 
 `/knowledge`（只有 `manage_knowledge`：`pi`、`kb_manager`）改名為「知識庫」，分兩個分頁：
 
-- **教材**（預設）：所有平台教材（即 `GET /api/browse/materials?area=reference` 的列）排成一面像 Pinterest 的牆：卡片依內容有各自的高度（PDF 第 1 頁、圖片、或文字的前幾行），用 CSS columns 排成數欄，手機上一欄。上面是瀏覽的搜尋框、分類籤（facets）、只看籤與標籤。點卡片打開預覽視窗：PDF 的第 1 頁在左、擷取的文字與段落在右（教材檢視的唯讀版，不載入注記），圖片與影音在檢視裡直接顯示，可下載原檔。頁首「上傳教材」連到「教材與範本管理」（`/admin/library`）。
+- **教材**（預設）：所有平台教材（即 `GET /api/browse/materials?area=reference` 的列）排成一面像 Pinterest 的牆：卡片依內容有各自的高度（PDF 第 1 頁、圖片、或文字的前幾行），用 CSS columns 排成數欄，手機上一欄。上面是瀏覽的搜尋框、分類籤（facets）、只看籤與標籤。點卡片打開預覽視窗：PDF 的第 1 頁在左、擷取的文字與段落在右（教材檢視的唯讀版，不載入註記），圖片與影音在檢視裡直接顯示，可下載原檔。頁首「上傳教材」連到「教材與範本管理」（`/admin/library`）。
 - **課綱條目與詞彙**（`?tab=curriculum`）：原本的目前內容、語意索引、CSV 匯入、查看條目與詞彙表，功能不變。
 
 ## 預覽圖

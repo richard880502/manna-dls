@@ -127,7 +127,7 @@ function DeleteDialog({
         {detail ? (
           <p>{deleteConsequences(detail)}</p>
         ) : loadError ? (
-          <p>刪除後無法復原：原檔、擷取的文字與段落和你的注記都會永久刪除。</p>
+          <p>刪除後無法復原：原檔、擷取的文字與段落和你的註記都會永久刪除。</p>
         ) : (
           <Loading />
         )}

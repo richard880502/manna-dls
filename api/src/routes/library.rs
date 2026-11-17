@@ -1,4 +1,4 @@
-//! 教材庫 endpoints (docs/API.md「Phase 2.2：教材與注記」, 「Phase 2.9」): the teacher's own
+//! 教材庫 endpoints (docs/API.md「Phase 2.2：教材與註記」, 「Phase 2.9」): the teacher's own
 //! materials, their original files, lesson links and annotations. A teacher reaches her own
 //! (personal) materials and reads every platform material (教材參考, platform samples); another
 //! teacher's personal material is a 404. Platform materials are changed or deleted only by
@@ -695,7 +695,7 @@ pub struct CreateAnnotation {
 fn check_note(note: &str) -> AppResult<()> {
     if note.chars().count() > annotations::MAX_NOTE_CHARS {
         return Err(AppError::bad_request(format!(
-            "注記最多 {} 字。",
+            "註記最多 {} 字。",
             annotations::MAX_NOTE_CHARS
         )));
     }
@@ -718,7 +718,7 @@ fn stored_anchor(
         .ok_or_else(|| AppError::bad_request("選取的範圍不在這個段落裡。"))?;
     if anchor.quote.chars().count() > annotations::MAX_QUOTE_CHARS {
         return Err(AppError::bad_request(format!(
-            "一則注記最多標記 {} 字。",
+            "一則註記最多標記 {} 字。",
             annotations::MAX_QUOTE_CHARS
         )));
     }

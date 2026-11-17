@@ -1,4 +1,4 @@
-//! The teacher's material library (docs/API.md「Phase 2.2：教材與注記」): what may be uploaded,
+//! The teacher's material library (docs/API.md「Phase 2.2：教材與註記」): what may be uploaded,
 //! text extraction, storage of the original file, annotations and the hard delete.
 //!
 //! Rules that hold everywhere in this module (docs/BLUEPRINT.md §13.3): a teacher's own
