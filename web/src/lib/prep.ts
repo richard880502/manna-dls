@@ -302,7 +302,7 @@ export const SIOP_WORDS = {
   /** 「學習單之後改過了（第 5 版）」 */
   stale: (version: number) => `這是第 ${version} 版的檢核；學習單之後改過了。`,
   recheck: "重新檢核",
-  partial: "只看書面",
+  partial: "只能部分判斷",
   classroom: "需課堂觀察",
   classroomLine: "這幾項要在課堂上看，AI 不評：",
   notJudged: "這次沒有判斷",

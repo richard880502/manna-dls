@@ -1166,7 +1166,7 @@ describe("課堂活動的 SIOP 欄位與 SIOP 自我檢核", () => {
     expect(within(panel.getByText("分組").closest("li")!).getByText("未見")).toBeInTheDocument();
     // Judged on the visible part only: the panel says so.
     const visual = within(panel.getByText("讓概念清楚的技巧").closest("li")!);
-    expect(visual.getByText("只看書面：只看得到書面的視覺輔助")).toBeInTheDocument();
+    expect(visual.getByText("只能部分判斷：只看得到書面的視覺輔助")).toBeInTheDocument();
     // An item this check did not judge.
     expect(within(panel.getByText("評量").closest("li")!).getByText("這次沒有判斷")).toBeInTheDocument();
     // The classroom items: named, never rated.
@@ -1231,6 +1231,8 @@ describe("課堂活動的 SIOP 欄位與 SIOP 自我檢核", () => {
     await user.click(wsPanel!.getByRole("button", { name: "重新檢核" }));
     await waitFor(() => expect(wsPanel!.queryByText(/學習單之後改過了/)).toBeNull());
     expect(api.callsTo("POST", `${S7}/turns/${ws.id}/siop-check`)).toHaveLength(1);
+    // The new results show open, as the teacher left the panel.
+    expect(wsPanel!.getByText("SIOP 自我檢核", { selector: "summary" }).closest("details")).toHaveAttribute("open");
 
     expect(oldPanel!.getByText("這份產出還沒有做 SIOP 自我檢核。")).toBeInTheDocument();
     await user.click(oldPanel!.getByRole("button", { name: "開始檢核" }));

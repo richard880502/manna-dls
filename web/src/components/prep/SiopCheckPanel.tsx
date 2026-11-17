@@ -47,6 +47,8 @@ function ItemRow({ item }: { item: SiopCheckItem }) {
 export function SiopCheckPanel({ sessionId, turn }: { sessionId: number; turn: PrepTurn }) {
   const ids = useId();
   const [local, setLocal] = useState<SiopCheck | null>(null);
+  /** Whether the teacher opened the results: a new run (重新檢核) shows open again when it is done. */
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const check = newer(turn.siop_check ?? null, local);
@@ -114,7 +116,7 @@ export function SiopCheckPanel({ sessionId, turn }: { sessionId: number; turn: P
     const { judged, classroom } = checkGroups(check);
     const stale = checkIsStale(check, turn.worksheet?.version_no);
     body = (
-      <details className="siop-details">
+      <details className="siop-details" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
         <summary>{SIOP_WORDS.title}</summary>
         <p className="siop-advice">{SIOP_WORDS.advice}</p>
         {stale && check.worksheet_version_no !== null && (
