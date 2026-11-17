@@ -25,7 +25,7 @@ encoding_rs = "0.8"
 flate2 = "1"
 futures-util = "0.3"
 hex = "0.4"
-krilla = { version = "0.8", default-features = false, features = ["simple-text"] }
+krilla = { version = "0.8", default-features = false, features = ["simple-text", "raster-images"] }
 hmac = "0.12"
 # Scanned-page photos for OCR: decode, orient, downscale (no rayon, only the upload formats).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }

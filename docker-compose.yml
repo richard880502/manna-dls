@@ -50,6 +50,20 @@ services:
       OCR_TIMEOUT_SECS: ${OCR_TIMEOUT_SECS:-120}
       OCR_MAX_PAGES: ${OCR_MAX_PAGES:-40}
       OCR_CONCURRENCY: ${OCR_CONCURRENCY:-2}
+      # Pictures on worksheets (docs/API.md「學習單的圖片」): OpenAI GPT Image. OFF until the PI
+      # sets IMAGE_PROVIDER=openai and OPENAI_API_KEY in Coolify (never in this file), then
+      # redeploys. The OpenAI organization may first need API Organization Verification. A bad
+      # setting only turns pictures off (startup log warning).
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER:-none}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-https://api.openai.com/v1}
+      IMAGE_MODEL: ${IMAGE_MODEL:-gpt-image-2.5-flare}
+      IMAGE_QUALITY: ${IMAGE_QUALITY:-medium}
+      IMAGE_SIZE: ${IMAGE_SIZE:-1536x1024}
+      IMAGE_TIMEOUT_SECS: ${IMAGE_TIMEOUT_SECS:-180}
+      IMAGE_CONCURRENCY: ${IMAGE_CONCURRENCY:-2}
+      IMAGE_MAX_PER_WORKSHEET: ${IMAGE_MAX_PER_WORKSHEET:-6}
+      IMAGE_MAX_REGENERATIONS: ${IMAGE_MAX_REGENERATIONS:-10}
       DEMO_MODE: ${DEMO_MODE:-true}
       ADMIN_BOOTSTRAP_CODE: ${SERVICE_PASSWORD_ADMINCODE}
       RUST_LOG: ${RUST_LOG:-info}

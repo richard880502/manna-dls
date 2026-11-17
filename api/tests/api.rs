@@ -1223,6 +1223,7 @@ async fn admin_prompts_imports_and_permissions() {
             "core_assist_l1",
             "core_assist_l2",
             "core_assist_l3",
+            "image_style",
             "material_focuses",
             "plan_suggest",
             "prep_activity",
@@ -1234,6 +1235,7 @@ async fn admin_prompts_imports_and_permissions() {
             "worksheet_bloom_check",
             "worksheet_bloom_level",
             "worksheet_exit_ticket",
+            "worksheet_image_slots",
             "worksheet_scaffolds",
             "worksheet_tasks",
             "worksheet_template_details",
@@ -1253,8 +1255,9 @@ async fn admin_prompts_imports_and_permissions() {
         versions,
         // worksheet_tasks has v2 since Phase 2.7 (0014_bloom.sql), prep_activity v2 since
         // 0015_prep_bloom.sql and v3 since 0019_prep_activity_goals.sql,
-        // worksheet_template_details and worksheet_template_section v2 since 0016_mimic.sql.
-        vec![1, 2, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 2, 1]
+        // worksheet_template_details and worksheet_template_section v2 since 0016_mimic.sql;
+        // image_style and worksheet_image_slots since 0021_worksheet_images.sql.
+        vec![1, 2, 1, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 2, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

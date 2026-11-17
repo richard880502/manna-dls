@@ -33,6 +33,15 @@
 //! Generated items carry a Bloom level (prompt version 2): a writing item `create`, the others
 //! `remember`, `understand`, `analyze` in turn; the scaffold is an array of lines.
 //!
+//! Picture slots (only when the request asks for `image_slots`, i.e. pictures are on): the tasks
+//! step gives the first block one `scene` slot; every template block gets one, except a block
+//! that needs the teacher's material. Markers:
+//!
+//! | marker                   | effect                                                              |
+//! |--------------------------|---------------------------------------------------------------------|
+//! | `FAKE_IMG_PHOTO`         | tasks: the second block gets a slot asking for a map (the server makes it `photo_needed`) |
+//! | `FAKE_IMG_FAIL`, `FAKE_IMG_BLOCKED`, `FAKE_IMG_SLOW`, `FAKE_IMG_TIMEOUT` | copied into every slot's description, for the fake picture provider (`worksheet::images::client`) |
+//!
 //! 閱讀理解題／分層練習 (per Bloom level), see [`bloom_level`] and [`bloom_check`]:
 //!
 //! | marker                   | effect                                                              |
@@ -72,6 +81,32 @@ fn strings(v: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The picture markers present in the request, for the slot descriptions.
+fn picture_markers(has: &dyn Fn(&str) -> bool) -> String {
+    [
+        "FAKE_IMG_FAIL",
+        "FAKE_IMG_BLOCKED",
+        "FAKE_IMG_SLOW",
+        "FAKE_IMG_TIMEOUT",
+    ]
+    .into_iter()
+    .filter(|m| has(m))
+    .map(|m| format!(" {m}"))
+    .collect()
+}
+
+/// One `scene` slot about `label`.
+fn scene_slot(label: &str, sentence: &str, markers: &str) -> Value {
+    json!({
+        "kind": "scene",
+        "purpose_zh": format!("幫助學生想像{label}的情境"),
+        "prompt_en": format!("A simple classroom scene showing what happens in {label}: {}{markers}",
+                             sentence.chars().take(160).collect::<String>()),
+        "alt_en": format!("A picture of what happens in {label}."),
+        "caption": format!("Look at the picture of {label}."),
+    })
 }
 
 /// The first sentence of `text`, a verbatim piece of it, without markers.
@@ -183,6 +218,8 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let objectives = strings(&ctx["objective_ids"]);
     // A different wording for every run, the way a regeneration differs from the first sheet.
     let run_no = ctx["run_no"].as_i64().unwrap_or(1);
+    let slots = ctx["image_slots"].as_u64().unwrap_or(0) > 0;
+    let markers = picture_markers(has);
 
     // One block per paragraph; a single-block regeneration covers exactly the asked paragraphs.
     let groups: Vec<Vec<i64>> = match &only {
@@ -286,7 +323,19 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             if bad_label && bi == 0 {
                 student_tasks.push("探究".to_string());
             }
-            json!({
+            let image_slots: Vec<Value> = match (slots, bi) {
+                (false, _) => Vec::new(),
+                (true, 0) => vec![scene_slot(&label, &sentence, &markers)],
+                (true, 1) if has("FAKE_IMG_PHOTO") => vec![json!({
+                    "kind": "scene",
+                    "purpose_zh": "讓學生看出故事發生的地方",
+                    "prompt_en": format!("A map of the town in {label}."),
+                    "alt_en": "A map of the town.",
+                    "caption": "",
+                })],
+                _ => Vec::new(),
+            };
+            let mut block = json!({
                 "block_id": format!("B{}", bi + 1),
                 "paragraph_nos": nos,
                 "title_en": format!(
@@ -302,7 +351,11 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 "instructions_en": format!("Read {label} again, then answer."),
                 "items": items,
                 "design_reason_zh": format!("先確認{}的關鍵訊息，再往「{}」推進。", if nos.len() > 1 { "這幾段" } else { "這一段" }, function.1),
-            })
+            });
+            if slots {
+                block["image_slots"] = json!(image_slots);
+            }
+            block
         })
         .collect();
     json!({ "blocks": blocks })
@@ -646,12 +699,20 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
     } else {
         vec!["Look for the key words in the paragraph first."]
     };
-    json!({
+    let mut out = json!({
         "title": title.replace("[n]", &no.to_string()),
         "instructions": format!("Read {label} and answer the questions."),
         "scaffold": scaffold,
         "items": items,
-    })
+    });
+    if ctx["image_slots"].as_u64().unwrap_or(0) > 0 {
+        out["image_slots"] = if external {
+            json!([])
+        } else {
+            json!([scene_slot(&label, &sentence, &picture_markers(has))])
+        };
+    }
+    out
 }
 
 const TIER_CORE_LABEL: &str = "core";

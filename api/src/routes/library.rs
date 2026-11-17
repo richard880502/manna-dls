@@ -606,7 +606,7 @@ pub async fn file(
 const THUMBNAIL_MAX_AGE_SECS: u32 = 3600;
 
 /// Whether `If-None-Match` names this validator (or `*`).
-fn etag_matches(header: Option<&str>, etag: &str) -> bool {
+pub(crate) fn etag_matches(header: Option<&str>, etag: &str) -> bool {
     header.is_some_and(|h| {
         h.split(',').any(|t| {
             let t = t.trim();

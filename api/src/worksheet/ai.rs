@@ -377,6 +377,9 @@ struct Run {
     request: String,
     /// The last step's job: kept open until the result is saved.
     hold: Option<i64>,
+    /// The picture-slot rules appended to the steps that write blocks ("" while pictures are
+    /// off: those steps then ask for no `image_slots`, as before).
+    slot_rules: String,
 }
 
 impl Run {
@@ -427,6 +430,14 @@ impl Run {
             }
             None => Vec::new(),
         };
+        let slot_rules = if state.images.enabled() {
+            crate::prompts::latest(&state.db, super::images::SLOTS_RULES_KEY)
+                .await?
+                .map(|p| p.system_text.trim().to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         // Notes the teacher left on this worksheet for Manna (逐區修改的註記): a new generation
         // reads the open ones too, under their own heading.
         let ws_notes = super::comments::open_for_ai(
@@ -445,6 +456,7 @@ impl Run {
         .collect::<Vec<_>>()
         .join("\n\n");
         Ok(Self {
+            slot_rules,
             ai_notes,
             ai_notes_count: notes.len() + ws_notes.len(),
             objective: input
@@ -774,6 +786,10 @@ where
         .is_none_or(|n| n.is_empty())
     {
         required.push(("teacher_notes_for_ai", "參考資料"));
+    }
+    // A step that asks for picture slots carries their rules (pictures on only).
+    if !vars.get("image_slot_rules").is_none_or(|n| n.is_empty()) {
+        required.push(("image_slot_rules", "圖片位置"));
     }
     let system = prompts::render(&prompt.system_text, &vars);
     let user = prompts::render_user_with(&prompt, &vars, &required);
@@ -1110,8 +1126,20 @@ async fn step_tasks(
         ("only_block", only_note),
     ]);
     let only_nos: Option<Vec<i64>> = request.only.as_ref().map(|(nos, _, _)| nos.to_vec());
+    let mut schema = schemas::tasks_schema();
+    if !run.slot_rules.is_empty() {
+        vars.insert("image_slot_rules", run.slot_rules.clone());
+        if let Some(block) = schema["properties"]["blocks"].get_mut("items") {
+            super::images::add_slots_property(
+                block,
+                Some("items"),
+                super::images::MAX_SLOTS_PER_TASK_BLOCK,
+            );
+        }
+    }
     let fake_context = json!({
         "task": TASKS.key,
+        "image_slots": if run.slot_rules.is_empty() { 0 } else { super::images::MAX_SLOTS_PER_TASK_BLOCK },
         "paragraphs": run.paragraphs.iter().enumerate()
             .map(|(i, text)| json!({ "no": i + 1, "text": text })).collect::<Vec<_>>(),
         "item_budget": budget,
@@ -1150,7 +1178,7 @@ async fn step_tasks(
         job_id,
         StepCall {
             vars,
-            schema: schemas::tasks_schema(),
+            schema,
             fake_context,
             max_tokens: tasks_max_tokens(only_nos.as_ref().map_or(run.paragraphs.len(), Vec::len)),
         },
@@ -1759,6 +1787,8 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     })?;
     let saved = store::save_content(db, ws.id, &content, "generate").await?;
     store::set_generated(db, ws.id).await?;
+    // The blocks passed their checks and are saved: their pictures are made in the background.
+    super::images::enqueue_logged(&run.state, ws.id, ws.teacher_id, &content).await;
     log_usage(
         db,
         ws.teacher_id,
@@ -2008,6 +2038,15 @@ async fn replace_block(
     for (i, s) in block.scaffolds.iter_mut().enumerate() {
         s.id = format!("{}-r{}s{}", old.id, run.run_no, i + 1);
     }
+    // Picture slots: the new block's (new ids, so they get new pictures) when this run asked
+    // for slots; otherwise the old block's stay, with their pictures.
+    if run.slot_rules.is_empty() {
+        block.image_slots = old.image_slots.clone();
+    } else {
+        for (i, s) in block.image_slots.iter_mut().enumerate() {
+            s.id = format!("{}-r{}p{}", old.id, run.run_no, i + 1);
+        }
+    }
 
     // Replace it in the worksheet as it is now; keep what it was, for undo.
     let latest = store::latest(db, ws.id).await?;
@@ -2022,6 +2061,7 @@ async fn replace_block(
     })?;
     store::push_history(db, ws.id, &previous, Some(interaction_id)).await?;
     let saved = store::save_content(db, ws.id, &next, "regenerate").await?;
+    super::images::enqueue_logged(&run.state, ws.id, ws.teacher_id, &next).await;
     log_usage(
         db,
         ws.teacher_id,

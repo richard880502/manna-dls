@@ -23,7 +23,8 @@ use super::{
 use crate::error::{AppError, AppResult};
 use crate::routes::{log_usage, or_blank};
 use crate::worksheet::assemble::scaffold_levels;
-use crate::worksheet::checks::{evaluate_section, CleanSection, SectionCtx};
+use crate::worksheet::checks::{evaluate_section, CleanSection, Eval, SectionCtx};
+use crate::worksheet::images::{self, ImageSlot, WithSlots, MAX_SLOTS_PER_BLOCK};
 use crate::worksheet::store::{self, Worksheet};
 use crate::worksheet::template::store::{self as tpl_store, STATUS_READY};
 use crate::worksheet::template::{
@@ -58,6 +59,9 @@ pub struct TemplateUse {
     pub title: String,
     pub version_no: i32,
     pub content: WsTemplate,
+    /// Pictures OCR found on the teacher's sample (0 when it was not scanned): a hint for the
+    /// picture slots until templates record where the sample has pictures.
+    pub sample_pictures: i64,
 }
 
 /// For a whole generation: the latest version of the worksheet's template, if it has one.
@@ -76,6 +80,7 @@ pub(super) async fn for_generation(
             "這份學習單用的版型還沒有準備好；請等它讀取完成，或改成不使用版型。".to_string(),
         ));
     }
+    let sample_pictures = images::sample_pictures(db, row.source_material_id).await?;
     Ok(tpl_store::latest_version(db, id)
         .await?
         .map(|(version_no, content)| TemplateUse {
@@ -83,6 +88,7 @@ pub(super) async fn for_generation(
             title: row.title,
             version_no,
             content,
+            sample_pictures,
         }))
 }
 
@@ -114,12 +120,14 @@ pub(super) async fn for_block(
     let Some(index) = content.sections.iter().position(|s| s.id == section_id) else {
         return Ok(None);
     };
+    let sample_pictures = images::sample_pictures(db, row.source_material_id).await?;
     Ok(Some((
         TemplateUse {
             id,
             title: row.title,
             version_no,
             content,
+            sample_pictures,
         },
         index,
     )))
@@ -147,13 +155,17 @@ struct SectionRequest<'a> {
     block_no: usize,
     block_total: usize,
     finished_titles: &'a [String],
+    sample_pictures: i64,
 }
+
+/// A checked block and the picture slots the model wrote for it (cleaned, without ids).
+type SectionOut = (CleanSection, Vec<ImageSlot>);
 
 async fn section_call(
     run: &Run,
     job_id: i64,
     r: SectionRequest<'_>,
-) -> AppResult<StepResult<CleanSection>> {
+) -> AppResult<StepResult<SectionOut>> {
     let material = &run.input.worksheet.material;
     let mut target = serde_json::to_value(r.section).map_err(anyhow::Error::from)?;
     if let Some(map) = target.as_object_mut() {
@@ -172,7 +184,7 @@ async fn section_call(
         }
         (None, false) => String::new(),
     };
-    let vars: HashMap<&'static str, String> = HashMap::from([
+    let mut vars: HashMap<&'static str, String> = HashMap::from([
         ("template_head", head.to_string()),
         ("target_section", target.to_string()),
         ("block_no", r.block_no.to_string()),
@@ -199,8 +211,20 @@ async fn section_call(
         ("class_profile", or_blank(&run.input.class_profile)),
         ("teacher_notes_for_ai", run.notes_for_ai()),
     ]);
+    // Pictures on: the model decides per block whether it needs one. Templates do not record
+    // where the sample had pictures yet (a later phase); the number OCR counted on a scanned
+    // sample is the hint for now. A section that needs the teacher's own material covers the
+    // pictures she supplies herself.
+    let slots = !run.slot_rules.is_empty();
+    if slots {
+        vars.insert(
+            "image_slot_rules",
+            images::rules_with_sample_hint(&run.slot_rules, r.sample_pictures),
+        );
+    }
     let fake_context = json!({
         "task": KEY_SECTION,
+        "image_slots": if slots { MAX_SLOTS_PER_BLOCK } else { 0 },
         "section": target,
         "item_count": r.section.item_count,
         "paragraph": r.paragraph,
@@ -214,17 +238,32 @@ async fn section_call(
         item_count: r.section.item_count.clamp(1, 12) as usize,
         needs_external: r.section.needs_external_material,
     };
+    let mut schema = section_out_schema(ctx.item_count);
+    if slots {
+        // Last: the block first, then the pictures it needs.
+        images::add_slots_property(&mut schema, None, MAX_SLOTS_PER_BLOCK);
+    }
     run_step(
         run,
         &SECTION,
         job_id,
         StepCall {
             vars,
-            schema: section_out_schema(ctx.item_count),
+            schema,
             fake_context,
             max_tokens: SECTION_MAX_TOKENS,
         },
-        |raw: &RawSectionOut| evaluate_section(raw, &ctx),
+        |raw: &WithSlots<RawSectionOut>| {
+            let e = evaluate_section(&raw.inner, &ctx);
+            // Slots are cleaned, never a reason for a repair call.
+            let (slots, _) = images::clean_slots(&raw.image_slots, MAX_SLOTS_PER_BLOCK);
+            Eval {
+                output: e.output.map(|o| (o, slots)),
+                results: e.results,
+                problems: e.problems,
+                repairs: e.repairs,
+            }
+        },
     )
     .await
 }
@@ -286,7 +325,7 @@ fn section_block(
     id: &str,
     section: &WsTemplateSection,
     paragraph: Option<usize>,
-    out: &CleanSection,
+    (out, slots): &SectionOut,
     material: &Material,
     levels: &[Level],
     language: &str,
@@ -331,6 +370,7 @@ fn section_block(
             .needs_external_material
             .then(|| MSG_EXTERNAL.to_string()),
         template_section_id: Some(section.id.clone()),
+        image_slots: images::with_ids(slots.clone(), id),
         ..Block::default()
     }
 }
@@ -446,6 +486,7 @@ async fn make_block(
             block_no: j + 1,
             block_total: total,
             finished_titles: &finished,
+            sample_pictures: tpl.sample_pictures,
         },
     )
     .await?;
@@ -562,6 +603,8 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
     })?;
     let saved = store::save_content(db, ws.id, &content, "generate").await?;
     store::set_generated(db, ws.id).await?;
+    // The blocks passed their checks and are saved: their pictures are made in the background.
+    images::enqueue_logged(&run.state, ws.id, ws.teacher_id, &content).await;
     log_usage(
         db,
         ws.teacher_id,
@@ -658,6 +701,7 @@ async fn regenerate(
             block_no,
             block_total: content.blocks.len().max(block_no),
             finished_titles: &finished,
+            sample_pictures: tpl.sample_pictures,
         },
     )
     .await?;

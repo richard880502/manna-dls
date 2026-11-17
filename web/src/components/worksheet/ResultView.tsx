@@ -52,6 +52,7 @@ import {
 } from "./BlockRevise";
 import { LessonLinkControls } from "./LessonLink";
 import { ProgressPanel, RunOutcome } from "./OptionsView";
+import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
 import type { WorksheetController } from "./useWorksheet";
 
@@ -367,6 +368,38 @@ function BlockSection({
         disabled={locked}
         onChange={(instructions) => patch((b) => ({ ...b, instructions }))}
       />
+
+      {(block.image_slots ?? []).map((slot) => {
+        const live = ws.state?.images?.slots.find((s) => s.slot_id === slot.id);
+        const id = ws.state?.id;
+        if (id === undefined) return null;
+        return (
+          <SlotPicture
+            key={slot.id}
+            worksheetId={id}
+            name={name}
+            teacher
+            view={{
+              slotId: slot.id,
+              // A slot without a picture row yet: an empty box for the teacher.
+              status: live?.status ?? "skipped",
+              imageId: live?.image_id ?? null,
+              alt: slot.alt_en,
+              caption: slot.caption,
+              aiGenerated: live?.status === "done" && live.source === "generated",
+              purpose: slot.purpose_zh,
+              message: live?.message ?? null,
+              kind: slot.kind,
+            }}
+            actions={{
+              worksheetId: id,
+              images: ws.state?.images ?? null,
+              onImages: ws.setImages,
+              disabled: locked,
+            }}
+          />
+        );
+      })}
 
       {procedural.map((s) => (
         <div key={s.id} className="ws-procedure" role="group" aria-label={`程序鷹架 ${name}`}>

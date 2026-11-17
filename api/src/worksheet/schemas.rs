@@ -49,6 +49,9 @@ pub struct RawBlock {
     pub instructions_en: String,
     pub items: Vec<RawItem>,
     pub design_reason_zh: String,
+    /// Pictures the block needs (only asked for while pictures are on).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_slots: Vec<super::images::RawImageSlot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

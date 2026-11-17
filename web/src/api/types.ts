@@ -1458,6 +1458,70 @@ export interface WsBlock {
   sop_block_id: string | null;
   /** The template section this block was generated from; keep it when saving (regenerate uses it). */
   template_section_id?: string | null;
+  /** 這一區需要的圖（最多 2 個；伺服器寫的，存檔時原樣送回）。沒有時沒有這個欄位。 */
+  image_slots?: WsImageSlot[];
+}
+
+// ---- 學習單的圖片（docs/API.md「學習單的圖片」）----
+
+/** photo_needed：需要真實照片（地圖、國旗、真實人物或地標、歷史），不產圖，留給老師放 */
+export type WsImageSlotKind = "scene" | "object" | "icon" | "photo_needed";
+
+/** 區塊裡的一個圖片位置（寫區塊的模型一起寫的） */
+export interface WsImageSlot {
+  id: string;
+  kind: WsImageSlotKind;
+  /** 給老師看：這張圖在這裡做什麼 */
+  purpose_zh: string;
+  /** 給產圖模型的畫面描述 */
+  prompt_en: string;
+  alt_en: string;
+  /** 印在圖下方（"" 表示沒有） */
+  caption: string;
+}
+
+/** removed：老師拿掉了（不印）；skipped：沒有送去產圖（需要真實照片、產圖沒開、到上限） */
+export type WsImageStatus = "queued" | "running" | "done" | "failed" | "skipped" | "removed";
+export type WsImageSource = "generated" | "upload" | "none";
+
+/** 一個圖片位置目前的圖 */
+export interface WsSlotImage {
+  slot_id: string;
+  block_id: string;
+  status: WsImageStatus;
+  source: WsImageSource;
+  /** done 時：GET /api/worksheets/:id/images/:image_id */
+  image_id: number | null;
+  width: number | null;
+  height: number | null;
+  /** 為什麼沒有圖（給老師看） */
+  message: string | null;
+  updated_at: string;
+}
+
+export interface WorksheetImages {
+  /** 這個環境有沒有開 AI 產圖 */
+  enabled: boolean;
+  /** 這份學習單還能重畫幾次 */
+  regenerations_left: number;
+  slots: WsSlotImage[];
+}
+
+/** 學習單投影裡的一張圖（或空框） */
+export interface WsSheetImage {
+  slot_id: string;
+  status: Exclude<WsImageStatus, "removed">;
+  image_id: number | null;
+  width: number | null;
+  height: number | null;
+  alt: string;
+  caption: string;
+  /** AI 產生的圖（教師版標「AI 生成」） */
+  ai_generated: boolean;
+  /** 只有教師版：這張圖的用途 */
+  purpose?: string;
+  /** 只有教師版：為什麼沒有圖 */
+  message?: string | null;
 }
 
 export type WsAutoField = "material_types" | "student_tasks" | "answer_formats" | "generation" | "levels" | "minutes";
@@ -1531,6 +1595,8 @@ export interface WorksheetState extends WorksheetSummary {
   template?: WsTemplateRef | null;
   /** 給 Manna 的要求（≤2000），送給每一步的模型；舊的伺服器沒有這一欄 */
   request?: string;
+  /** 各圖片位置目前的圖；舊的伺服器沒有這一欄 */
+  images?: WorksheetImages;
 }
 
 export interface WsJobsState {
@@ -1835,6 +1901,8 @@ export interface WsSheetBlock {
     hint?: string;
   }>;
   teacher_notes?: string;
+  /** 這一區的圖（印在作答指示之後）；沒有圖時沒有這個欄位 */
+  images?: WsSheetImage[];
 }
 
 export interface WsVersionRow {

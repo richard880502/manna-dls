@@ -4,10 +4,12 @@ import type {
   SaveWorksheetMaterialRequest,
   WorksheetBrief,
   WorksheetContent,
+  WorksheetImages,
   WorksheetSettings,
   WorksheetState,
 } from "../../api/types";
 import { useAutosave } from "../../lib/useAutosave";
+import { anyOpen } from "./SlotPicture";
 
 /** How often running generation steps are asked for. Tests shorten it. */
 export const worksheetConfig = { pollMs: 2000 };
@@ -38,6 +40,8 @@ export interface WorksheetController {
   setTemplate: (templateId: number | null) => Promise<boolean>;
   /** Takes a state the server returned from another call (link, save as lesson). */
   adopt: (state: WorksheetState) => void;
+  /** Takes the pictures the server returned (a picture action); nothing to save. */
+  setImages: (images: WorksheetImages) => void;
   /** Re-reads the worksheet (after a sync, for the new difference count). */
   refresh: () => Promise<void>;
   dirty: boolean;
@@ -228,6 +232,33 @@ export function useWorksheet(id: number): WorksheetController {
     }
   }, [flush, id, put]);
 
+  const setImages = useCallback(
+    (images: WorksheetImages) => {
+      const now = stateRef.current;
+      if (now) put({ ...now, images });
+    },
+    [put],
+  );
+
+  // Pictures being made (after a generation or a 重畫): ask for them until none is open.
+  const picturesOpen = !(state?.running ?? false) && anyOpen(state?.images);
+  useEffect(() => {
+    if (!picturesOpen) return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      void api
+        .worksheetImages(id)
+        .then((images) => {
+          if (!stopped) setImages(images);
+        })
+        .catch(() => undefined);
+    }, worksheetConfig.pollMs);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [picturesOpen, id, setImages]);
+
   // Poll while steps are queued or running; when they end, take the assembled worksheet.
   const running = state?.running ?? false;
   useEffect(() => {
@@ -280,6 +311,7 @@ export function useWorksheet(id: number): WorksheetController {
     saveMaterial,
     setTemplate,
     adopt: put,
+    setImages,
     refresh,
     dirty: autosave.dirty,
     saving: autosave.saving,
