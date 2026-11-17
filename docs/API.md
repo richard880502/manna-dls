@@ -2210,7 +2210,7 @@ type TemplateBrowse = BrowsePage<TemplateCard, { categories: Facet[]; tags: Face
 
 | 變數 | 說明 |
 |---|---|
-| `OCR_PROVIDER` | `none`（預設：什麼都不變）、`openai_compatible`、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
+| `OCR_PROVIDER` | `none`（後端程式沒設時的預設：什麼都不變）、`openai_compatible`（`docker-compose.yml` 也就是正式環境的預設；要關掉就在 Coolify 設 `none` 再重新部署）、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
 | `OCR_BASE_URL`、`OCR_API_KEY` | 沒設時沿用 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY` |
 | `OCR_MODEL` | 預設 `chandra-ocr-2` |
 | `OCR_TIMEOUT_SECS` | 每一頁請求的時限，預設 120 |

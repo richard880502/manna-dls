@@ -59,11 +59,11 @@ cd web && pnpm install && pnpm dev
 
 ### 掃描檔文字辨識（OCR）
 
-掃描的 PDF、手機拍的課本頁面與文字層壞掉的 PDF，上傳後會在背景用國網中心的 `chandra-ocr-2` 逐頁辨識文字（細節見 `docs/API.md`「Phase 2.10」）。預設關閉；關閉時這些檔案照舊保存，文字狀態維持「讀不到文字」。PDF 轉圖用 `pdftoppm`（Docker 映像已安裝 `poppler-utils`；本機開發要自己裝，例如 `brew install poppler`）。
+掃描的 PDF、手機拍的課本頁面與文字層壞掉的 PDF，上傳後會在背景用國網中心的 `chandra-ocr-2` 逐頁辨識文字（細節見 `docs/API.md`「Phase 2.10」）。`docker-compose.yml`（正式環境）預設開啟，網址和金鑰沿用 embedding 那組，不用另外設定；要關掉就在 Coolify 設 `OCR_PROVIDER=none` 再重新部署。後端程式本身沒設這個變數時是關閉的（本機開發），關閉時這些檔案照舊保存，文字狀態維持「讀不到文字」。PDF 轉圖用 `pdftoppm`（Docker 映像已安裝 `poppler-utils`；本機開發要自己裝，例如 `brew install poppler`）。
 
 | 變數 | 說明 |
 |---|---|
-| `OCR_PROVIDER` | `openai_compatible`（正式環境）、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設）或 `none`（預設） |
+| `OCR_PROVIDER` | `openai_compatible`（`docker-compose.yml` 的預設）、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設）或 `none`（後端程式沒設時的預設） |
 | `OCR_BASE_URL`、`OCR_API_KEY` | 沒設時沿用 `EMBEDDING_BASE_URL`、`EMBEDDING_API_KEY`（同一個國網中心閘道；金鑰只設在 Coolify） |
 | `OCR_MODEL` | 預設 `chandra-ocr-2` |
 | `OCR_TIMEOUT_SECS` | 每一頁請求的時限，預設 `120` |

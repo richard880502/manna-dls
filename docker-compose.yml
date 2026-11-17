@@ -40,10 +40,10 @@ services:
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-embeddinggemma-2}
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-768}
       EMBEDDING_QUERY_TIMEOUT_MS: ${EMBEDDING_QUERY_TIMEOUT_MS:-2500}
-      # OCR of scanned files (docs/API.md「Phase 2.10」). Off by default; set
-      # OCR_PROVIDER=openai_compatible in Coolify. The gateway URL and key default to the
-      # EMBEDDING_* ones (same NCHC gateway).
-      OCR_PROVIDER: ${OCR_PROVIDER:-none}
+      # OCR of scanned files (docs/API.md「Phase 2.10」). On by default in this deployment: the
+      # gateway URL and key default to the EMBEDDING_* ones (same NCHC gateway), so nothing else
+      # needs setting. Set OCR_PROVIDER=none in Coolify (then redeploy) to turn it off.
+      OCR_PROVIDER: ${OCR_PROVIDER:-openai_compatible}
       OCR_BASE_URL: ${OCR_BASE_URL:-}
       OCR_API_KEY: ${OCR_API_KEY:-}
       OCR_MODEL: ${OCR_MODEL:-chandra-ocr-2}
