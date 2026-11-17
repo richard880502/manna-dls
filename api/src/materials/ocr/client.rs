@@ -4,7 +4,8 @@
 //! * `OCR_PROVIDER=openai_compatible` posts to `{OCR_BASE_URL}/chat/completions`; the base URL
 //!   and key default to `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` (the same NCHC gateway).
 //!   `fake` answers with fixed HTML per page; `none` (default) turns OCR off. When `AI_PROVIDER`
-//!   is `fake` and `OCR_PROVIDER` is not set, OCR is `fake` too.
+//!   is `fake` and `OCR_PROVIDER` is not set, OCR is `fake` too. The deployment
+//!   (`docker-compose.yml`) passes `openai_compatible` unless Coolify sets `OCR_PROVIDER`.
 //! * Like embeddings, OCR is optional: a bad setting turns it off with a warning instead of
 //!   stopping the server.
 //! * The API key never reaches logs: [`OcrConfig`]'s `Debug` leaves it out, and errors carry
