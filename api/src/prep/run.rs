@@ -459,8 +459,12 @@ where
         return Ok(Err(MSG_DISABLED.to_string()));
     }
     let prompt = prompt(db, c.key).await?;
+    // The teacher's objectives reach every version: the two fields, or one combined line for a
+    // version from before them (nothing for a call without them).
+    let mut required = c.required.clone();
+    required.extend(crate::objectives::required(&prompt));
     let system = prompts::render(&prompt.system_text, &c.vars);
-    let user = prompts::render_user_with(&prompt, &c.vars, &c.required);
+    let user = prompts::render_user_with(&prompt, &c.vars, &required);
     let mut logged = c.vars.clone();
     for (name, label) in &c.redact {
         if let Some(v) = logged.get(name).cloned() {
@@ -468,7 +472,7 @@ where
         }
     }
     let logged_system = prompts::render(&prompt.system_text, &logged);
-    let logged_user = prompts::render_user_with(&prompt, &logged, &c.required);
+    let logged_user = prompts::render_user_with(&prompt, &logged, &required);
     let meta = InteractionMeta {
         teacher_id,
         module: c.key,
@@ -606,11 +610,9 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     .await?;
     let candidates: Vec<CurriculumRef> = items.iter().map(curriculum_ref).collect();
     let codes: Vec<String> = candidates.iter().map(|c| c.code.clone()).collect();
-    let objective = session.options.0.objective.clone().unwrap_or_default();
     let request = teacher_request(db, input).await?;
-    let vars: HashMap<&'static str, String> = HashMap::from([
+    let mut vars: HashMap<&'static str, String> = HashMap::from([
         ("class_profile", or_blank(&profile)),
-        ("teacher_objective", or_none(&objective)),
         ("teacher_request", or_none(&request)),
         (
             "curriculum_items",
@@ -623,6 +625,8 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         ("paragraph_count", m.paragraphs.len().to_string()),
         ("passage_numbered", passage(&m)),
     ]);
+    // 內容目標 and 語言目標 (their headings are added by `call` for the version in use).
+    vars.extend(session.options.0.teacher_objectives().vars());
     let logged_query = logged_material_query(&query);
     let c = Call {
         key: KEY_ACTIVITY,
@@ -632,7 +636,6 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         vars,
         required: vec![
             ("class_profile", "班級特性"),
-            ("teacher_objective", "學習目標（教師寫的）"),
             ("teacher_request", "教師的要求"),
             ("curriculum_items", "可對應的課綱條目（只能從這裡選代碼）"),
         ],

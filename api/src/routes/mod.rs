@@ -11,6 +11,7 @@ pub mod lessons;
 pub mod library;
 pub mod library_admin;
 pub mod materials;
+pub mod objectives;
 pub mod preferences;
 pub mod prep;
 pub mod remote;
@@ -246,6 +247,8 @@ pub fn api_router() -> Router<AppState> {
             put(library::link_lesson).delete(library::unlink_lesson),
         )
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
+        // 內容目標與語言目標的草擬（SIOP G2、G3）
+        .route("/objective-drafts", post(objectives::draft))
         .route("/scaffold-events", post(feedback::scaffold_event))
         .route("/teacher-cases", get(feedback::teacher_cases))
         // Teach & Record (Phase 1.2)

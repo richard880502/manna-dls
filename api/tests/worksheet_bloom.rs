@@ -494,7 +494,10 @@ async fn invalid_bloom_settings_and_templates_with_other_outputs_are_400s() {
             "題數",
         ),
         (json!({ "bloom_counts": { "synthesis": 3 } }), "Bloom"),
-        (json!({ "objective": "o".repeat(301) }), "學習目標"),
+        // The single field of old clients is the 內容目標.
+        (json!({ "objective": "o".repeat(301) }), "內容目標"),
+        (json!({ "content_objective": "o".repeat(301) }), "內容目標"),
+        (json!({ "language_objective": "o".repeat(301) }), "語言目標"),
     ];
     for (settings, needle) in &bad_settings {
         let (s, v) = create(
@@ -564,7 +567,7 @@ async fn invalid_bloom_settings_and_templates_with_other_outputs_are_400s() {
         .put(
             &format!("/api/worksheets/{id}"),
             Some(&t),
-            json!({ "settings": { "question_count": 6, "objective": "  Students compare the two views.  " },
+            json!({ "settings": { "question_count": 6, "content_objective": "  Students compare the two views.  " },
                     "request": "多一點選擇題" }),
         )
         .await;
@@ -572,7 +575,7 @@ async fn invalid_bloom_settings_and_templates_with_other_outputs_are_400s() {
     assert_eq!(v["settings"]["output"], "comprehension");
     assert_eq!(v["settings"]["question_count"], 6);
     assert_eq!(
-        v["settings"]["objective"],
+        v["settings"]["content_objective"],
         "Students compare the two views."
     );
     assert_eq!(v["settings"]["material_types"], json!(["閱讀文本"]));
@@ -586,7 +589,7 @@ async fn invalid_bloom_settings_and_templates_with_other_outputs_are_400s() {
         .await;
     assert_eq!(v["settings"]["question_count"], Value::Null);
     assert_eq!(
-        v["settings"]["objective"],
+        v["settings"]["content_objective"],
         "Students compare the two views."
     );
     assert_eq!(v["request"], "");
@@ -748,28 +751,41 @@ async fn the_request_and_the_objective_reach_every_prompt() {
     let t = app.teacher("T-BLOOM-7", "general").await;
     let request = "請多用和臺灣學生生活有關的例子";
     let objective = "Students can explain why the neighbors changed their minds.";
-    // Per Bloom level: their own placeholders.
+    let language = "I can use however to show a change.";
+    // Per Bloom level: version 1 of the prompt has `{{teacher_objective}}`, which gets both
+    // fields in one line (the two variables are there for newer versions).
     let id = made(
         &app,
         &t,
         "",
         json!({ "output": "comprehension", "bloom": ["understand"], "question_count": 3,
-                "objective": objective }),
+                "content_objective": objective, "language_objective": language }),
         request,
     )
     .await;
     generate(&app, &t, id).await;
     let level = calls(&app, "worksheet_bloom_level").await;
     let user = level[0].2["prompt"]["user"].as_str().unwrap();
+    let combined = format!("內容目標：{objective}｜語言目標：{language}");
     assert!(
-        user.contains(&format!("學習目標（教師寫的）：{objective}")),
+        user.contains(&format!("學習目標（教師寫的）：{combined}")),
         "{user}"
     );
     assert!(user.contains(&format!("教師的要求：{request}")), "{user}");
-    assert_eq!(level[0].2["inputs"]["teacher_objective"], objective);
+    assert_eq!(level[0].2["inputs"]["teacher_objective"], combined.as_str());
+    assert_eq!(level[0].2["inputs"]["teacher_content_objective"], objective);
+    assert_eq!(level[0].2["inputs"]["teacher_language_objective"], language);
 
-    // The full worksheet: in the shared block appended to every step's prompt.
-    let id = made(&app, &t, "", json!({ "objective": objective }), request).await;
+    // The full worksheet: the objectives are the worksheet's (O1, O2) in every step's prompt;
+    // the request is in the shared block appended to it.
+    let id = made(
+        &app,
+        &t,
+        "",
+        json!({ "content_objective": objective, "language_objective": language }),
+        request,
+    )
+    .await;
     generate(&app, &t, id).await;
     for module in [
         "worksheet_tasks",
@@ -782,9 +798,14 @@ async fn the_request_and_the_objective_reach_every_prompt() {
         let snap = &rows.last().unwrap().2;
         let user = snap["prompt"]["user"].as_str().unwrap();
         assert!(
-            user.contains(&format!("學習目標（教師寫的）：{objective}"))
+            user.contains(&format!("O1（內容目標）：{objective}"))
+                && user.contains(&format!("O2（語言目標）：{language}"))
                 && user.contains(&format!("教師的要求：{request}")),
             "{module}: {user}"
+        );
+        assert!(
+            !user.contains("學習目標（教師寫的）"),
+            "not twice: {module}"
         );
     }
     // 「Manna 已帶入的資訊」 lists them.
@@ -911,7 +932,8 @@ async fn changing_the_material_keeps_what_to_make() {
         &app,
         &t,
         "",
-        json!({ "output": "tiered", "bloom": ["apply"], "objective": "Use the new words." }),
+        json!({ "output": "tiered", "bloom": ["apply"], "content_objective": "Use the new words.",
+                "language_objective": "I can say the new words." }),
         "多出應用題",
     )
     .await;
@@ -925,7 +947,11 @@ async fn changing_the_material_keeps_what_to_make() {
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["settings"]["output"], "tiered");
     assert_eq!(v["settings"]["bloom"], json!(["apply"]));
-    assert_eq!(v["settings"]["objective"], "Use the new words.");
+    assert_eq!(v["settings"]["content_objective"], "Use the new words.");
+    assert_eq!(
+        v["settings"]["language_objective"],
+        "I can say the new words."
+    );
     assert_eq!(v["request"], "多出應用題");
 }
 
@@ -965,9 +991,9 @@ async fn the_full_worksheet_still_works_and_labels_its_items() {
             assert_eq!(it["hint"], "");
         }
     }
-    // The tasks step uses prompt version 2, whose schema asks for a Bloom label.
+    // The tasks step uses prompt version 3 (version 2's Bloom label, and SIOP Q4's stage).
     let tasks = calls(&app, "worksheet_tasks").await;
-    assert_eq!(tasks[0].2["prompt"]["version_no"], 2);
+    assert_eq!(tasks[0].2["prompt"]["version_no"], 3);
     assert!(tasks[0].2["prompt"]["system"]
         .as_str()
         .unwrap()

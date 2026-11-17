@@ -32,8 +32,8 @@ use super::schemas::{
 use super::store::{self, Worksheet};
 use super::{
     exit_count, info_function_label, resolve, student_tasks, vocab_count, Block, BlockKind, Chosen,
-    Content, Level, Objective, ANSWER_FORMATS, GEN_OBJECTIVES, GEN_WARMUP, INSTRUCTIONAL_KINDS,
-    PROCEDURAL_KINDS, VERBAL_KINDS,
+    Content, Level, Objective, Practice, ANSWER_FORMATS, GEN_OBJECTIVES, GEN_WARMUP,
+    INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::ai::pipeline::{self, AiContextItem, ContextList, InteractionMeta};
 use crate::ai::LlmRequest;
@@ -369,11 +369,15 @@ struct Run {
     objectives: Vec<(String, Objective)>,
     candidates: Vec<Candidate>,
     hard_share: Option<f64>,
+    /// The word list, for the levels of the task words (SIOP V2).
+    lexicon: Option<vocabulary::Lexicon>,
     /// Annotations of the material the teacher marked 「提供給 AI」, as prompt text ("" if none).
     ai_notes: String,
     ai_notes_count: usize,
-    /// 「學習目標（教師寫的）」 and 「教師的要求」, trimmed ("" if none).
-    objective: String,
+    /// The worksheet's 內容目標 and 語言目標 (the two fields and a lesson's), for the prompts
+    /// that take them as text.
+    teacher: crate::objectives::TeacherObjectives,
+    /// 「教師的要求」, trimmed ("" if none).
     request: String,
     /// The last step's job: kept open until the result is saved.
     hold: Option<i64>,
@@ -403,9 +407,12 @@ impl Run {
             .iter()
             .map(|p| p.text.clone())
             .collect();
-        let objectives = input
-            .content
-            .objectives
+        // The two fields are the worksheet's objectives too (G1): a worksheet stored before they
+        // went into `content.objectives` gets them now.
+        let current =
+            crate::objectives::ensured(&input.content.objectives, &input.worksheet.settings);
+        let teacher = crate::objectives::TeacherObjectives::from_worksheet(&current);
+        let objectives = current
             .iter()
             .filter(|o| !o.text.trim().is_empty() || !o.student_facing_en.trim().is_empty())
             .enumerate()
@@ -459,14 +466,7 @@ impl Run {
             slot_rules,
             ai_notes,
             ai_notes_count: notes.len() + ws_notes.len(),
-            objective: input
-                .worksheet
-                .settings
-                .objective
-                .as_deref()
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
+            teacher,
             request: input.worksheet.request.trim().to_string(),
             state: state.clone(),
             temperature: BASE_TEMPERATURE + 0.1 * earlier.min(6) as f32,
@@ -476,6 +476,7 @@ impl Run {
             objectives,
             candidates,
             hard_share,
+            lexicon,
             hold,
         })
     }
@@ -485,15 +486,17 @@ impl Run {
     }
 
     /// The block of shared context for prompts that predate `{{teacher_objective}}` and
-    /// `{{teacher_request}}`: the shared annotations, then the teacher's objective and request,
-    /// each under its own heading ("" when there is nothing).
-    fn notes_for_ai(&self) -> String {
+    /// `{{teacher_request}}`: the shared annotations, then the teacher's objectives (when
+    /// `with_objectives`: the four steps list them in `{{objectives_summary}}` instead) and
+    /// request, each under its own heading ("" when there is nothing).
+    fn notes_for_ai(&self, with_objectives: bool) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !self.ai_notes.is_empty() {
             parts.push(self.ai_notes.clone());
         }
-        if !self.objective.is_empty() {
-            parts.push(format!("{OBJECTIVE_HEADING}：{}", self.objective));
+        let objectives = self.teacher.combined();
+        if with_objectives && !objectives.is_empty() {
+            parts.push(format!("{OBJECTIVE_HEADING}：{objectives}"));
         }
         if !self.request.is_empty() {
             parts.push(format!("{REQUEST_HEADING}：{}", self.request));
@@ -501,8 +504,40 @@ impl Run {
         parts.join("\n\n")
     }
 
+    /// The objectives a generated version keeps: what the worksheet has now, with the two
+    /// fields added when it does not have them yet.
+    fn objectives_for(&self, stored: &[Objective]) -> Vec<Objective> {
+        crate::objectives::ensured(stored, &self.input.worksheet.settings)
+    }
+
     fn objective_codes(&self) -> Vec<String> {
         self.objectives.iter().map(|(c, _)| c.clone()).collect()
+    }
+
+    /// SIOP E1: what the teacher is told when the exit ticket still leaves objectives unchecked
+    /// after the repair call (nothing when it checks them all).
+    fn uncovered_notice(&self, items: &[RawExitItem]) -> Option<String> {
+        let missing = checks::uncovered_objectives(items, &self.objective_codes());
+        if missing.is_empty() {
+            return None;
+        }
+        let names: Vec<String> = self
+            .objectives
+            .iter()
+            .filter(|(code, _)| missing.contains(code))
+            .map(|(_, o)| {
+                let line = if o.student_facing_en.trim().is_empty() {
+                    o.text.trim()
+                } else {
+                    o.student_facing_en.trim()
+                };
+                format!("{}「{}」", o.kind.label(), clip_chars(line, 40))
+            })
+            .collect();
+        Some(format!(
+            "Exit ticket 沒有檢核到{}。可以在 Exit ticket 加一題，或按它的「重新產生」。",
+            names.join("、")
+        ))
     }
 
     /// code → objective id in the worksheet
@@ -520,11 +555,12 @@ impl Run {
         self.objectives
             .iter()
             .map(|(code, o)| {
-                let both = [o.text.trim(), o.student_facing_en.trim()]
+                let mut both: Vec<&str> = [o.text.trim(), o.student_facing_en.trim()]
                     .into_iter()
                     .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("｜");
+                    .collect();
+                both.dedup();
+                let both = both.join("｜");
                 format!("{code}（{}）：{both}", o.kind.label())
             })
             .collect::<Vec<_>>()
@@ -539,7 +575,7 @@ impl Run {
             ("passage_numbered", self.input.worksheet.material.numbered()),
             ("student_task_labels", student_tasks().join("、")),
             ("answer_format_labels", ANSWER_FORMATS.join("、")),
-            ("teacher_notes_for_ai", self.notes_for_ai()),
+            ("teacher_notes_for_ai", self.notes_for_ai(false)),
         ])
     }
 
@@ -556,7 +592,7 @@ impl Run {
                 &format!("{} 則", self.ai_notes_count),
             );
         }
-        list.add(OBJECTIVE_HEADING, &clip_chars(&self.objective, 80))
+        list.add(OBJECTIVE_HEADING, &clip_chars(&self.teacher.combined(), 80))
             .add(REQUEST_HEADING, &clip_chars(&self.request, 80));
         for (label, text) in extra {
             list.add(label, text);
@@ -791,6 +827,9 @@ where
     if !vars.get("image_slot_rules").is_none_or(|n| n.is_empty()) {
         required.push(("image_slot_rules", "圖片位置"));
     }
+    // A call that has the objective variables gets them under their headings whatever its
+    // version mentions (the four steps list the objectives in `{{objectives_summary}}`).
+    required.extend(crate::objectives::required(&prompt));
     let system = prompts::render(&prompt.system_text, &vars);
     let user = prompts::render_user_with(&prompt, &vars, &required);
     // The material must stay deletable: the logged copy keeps only its length and a hash.
@@ -1033,6 +1072,8 @@ struct TasksRequest<'a> {
     /// A single-block regeneration: its paragraph numbers, its item budget, and the prompts of
     /// the other blocks (not to be repeated).
     only: Option<(&'a [i64], usize, Vec<String>)>,
+    /// A single-block regeneration: the block's Q4 stage, which it keeps.
+    practice: Option<Practice>,
 }
 
 async fn step_tasks(
@@ -1070,9 +1111,13 @@ async fn step_tasks(
     let only_note = match &request.only {
         None => String::new(),
         Some((nos, budget, others)) => format!(
-            "\n\n【只需要一個區塊】這次只重新設計涵蓋 {} 的那一個區塊：blocks 只輸出 1 筆，paragraph_nos 為 {:?}，核心題約 {budget} 題。請換一種問法，不要與下列其他區塊的題目重複：\n{}",
+            "\n\n【只需要一個區塊】這次只重新設計涵蓋 {} 的那一個區塊：blocks 只輸出 1 筆，paragraph_nos 為 {:?}，核心題約 {budget} 題。{}請換一種問法，不要與下列其他區塊的題目重複：\n{}",
             nos_label(nos),
             nos,
+            request
+                .practice
+                .map(|p| format!("這個區塊的 practice 是「{}」，作答指示照這個階段寫。", p.label()))
+                .unwrap_or_default(),
             lines_or(
                 others.iter().map(|p| format!("- {}", clip_chars(p, 200))).collect(),
                 "（沒有其他區塊）"
@@ -1615,6 +1660,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         TasksRequest {
             chosen: &chosen,
             only: None,
+            practice: None,
         },
     )
     .await?;
@@ -1721,6 +1767,10 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     )
     .await?;
 
+    if let Ok((items, _)) = &exit {
+        notices.extend(run.uncovered_notice(items));
+    }
+
     // ---- assembly, in code: warm-up first, activity blocks in paragraph order, exit ticket last
     let mut blocks: Vec<Block> = Vec::new();
     match &warmup {
@@ -1773,13 +1823,15 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     // Objectives are the teacher's: take them as they are now, not as they were at the start.
     let latest = store::latest(db, ws.id).await?;
     let mut content = Content {
-        objectives: latest.content.objectives,
+        objectives: run.objectives_for(&latest.content.objectives),
         show_objectives: chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
         levels,
         chosen: Some(chosen),
         notices,
     };
+    // V2: the words of the instructions, with Chinese hints, in the vocabulary section.
+    super::task_words::refresh(&mut content, run.lexicon.as_ref());
     content.normalise().map_err(|e| {
         AppError::Internal(anyhow::anyhow!(
             "assembled worksheet failed validation: {e}"
@@ -1940,6 +1992,7 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
                 TasksRequest {
                     chosen: &chosen,
                     only: Some((&nos, budget, other_prompts.clone())),
+                    practice: old.practice,
                 },
             )
             .await?;
@@ -1947,10 +2000,14 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
                 skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
             };
-            let Some(raw) = raw.into_iter().next() else {
+            let Some(mut raw) = raw.into_iter().next() else {
                 skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
             };
+            // Q4: the block keeps its place in 示範 → 獨立應用.
+            if let Some(p) = old.practice {
+                raw.practice = Some(p.label().to_string());
+            }
             let mut block =
                 assemble::activity_block(&old.id, &raw, material, &levels, &objective_ids);
             if old.paragraph_ids.is_empty() {
@@ -2011,7 +2068,9 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             };
             let mut block = assemble::exit_block(&items, &levels, &objective_ids);
             assemble::attach_scaffolds(&mut block, None, &levels, &ticked);
-            (block, interaction_id)
+            let notices: Vec<String> = run.uncovered_notice(&items).into_iter().collect();
+            replace_block(run, &old, block, interaction_id, notices).await?;
+            return Ok(());
         }
     };
     replace_block(run, &old, block, interaction_id, Vec::new()).await
@@ -2056,6 +2115,8 @@ async fn replace_block(
     };
     let previous = std::mem::replace(slot, block);
     next.notices.extend(notices);
+    // V2: the task words follow the instructions as they are now (the 完整學習單 only).
+    super::task_words::refresh(&mut next, run.lexicon.as_ref());
     next.normalise().map_err(|e| {
         AppError::Internal(anyhow::anyhow!("regenerated block failed validation: {e}"))
     })?;

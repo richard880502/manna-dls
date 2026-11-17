@@ -472,7 +472,7 @@ function BlockSection({
                   />
                 </td>
                 <td lang="zh-Hant" className="ws-vocab-level">
-                  {v.level === null ? "級別未知" : `第 ${v.level} 級`}
+                  {v.task_word ? "指示用語" : v.level === null ? "級別未知" : `第 ${v.level} 級`}
                 </td>
               </tr>
             ))}

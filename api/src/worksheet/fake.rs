@@ -13,6 +13,9 @@
 //! | `FAKE_WS_NO_PROCEDURAL`  | scaffolds: no procedural scaffold (the program adds its own)        |
 //! | `FAKE_WS_LEAK`           | scaffolds: call 1 puts a reference answer into a scaffold           |
 //! | `FAKE_WS_TARGET_ALIAS`   | scaffolds: targets spelled "Warm-up" / "b1", plus a "warmup" set nobody asked for |
+//! | `FAKE_WS_EXIT_PARTIAL`   | exit ticket: only the first objective is checked, in both calls (E1: a notice says which are not) |
+//! | `FAKE_WS_PRACTICE_OFF`   | tasks: every block is 獨立應用 on the first attempt (Q4: repaired by the second) |
+//! | `FAKE_WS_PRACTICE_ALWAYS`| tasks: the same in both calls (the server relabels the blocks in order) |
 //! | `FAKE_BLOCK`             | every step: output with nothing usable                              |
 //! | `FAKE_RUNAWAY`           | every step: call 1 runs to `max_tokens` in whitespace (see `ai::fake`) |
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)          |
@@ -67,7 +70,7 @@ use serde_json::{json, Value};
 
 use super::schemas::TARGET_WARMUP;
 use super::{
-    task_for_function, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
+    task_for_function, Practice, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
     FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE, INFO_FUNCTIONS, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING,
     KIND_STEPS, KIND_WORD_LIST,
 };
@@ -208,6 +211,8 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let cjk = has("FAKE_WS_CJK_ALWAYS") || (has("FAKE_WS_CJK") && attempt == 1);
     let bad_label = has("FAKE_WS_BAD_LABEL") && attempt == 1;
     let splice = has("FAKE_WS_SPLICE_ALWAYS");
+    let practice_off =
+        has("FAKE_WS_PRACTICE_ALWAYS") || (has("FAKE_WS_PRACTICE_OFF") && attempt == 1);
     let paragraphs = ctx["paragraphs"].as_array().cloned().unwrap_or_default();
     let only: Option<Vec<i64>> = ctx["only"]
         .as_array()
@@ -346,6 +351,12 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                                        "分析資訊" => "Analyze", "比較資訊" => "Compare", _ => "Create" }
                 ),
                 "info_function": function.1,
+                // Q4: in order, unless a marker writes every block as 獨立應用.
+                "practice": if practice_off {
+                    Practice::Independent.label()
+                } else {
+                    Practice::for_position(bi, n).label()
+                },
                 "student_tasks": student_tasks,
                 "objective_refs": objectives.iter().take(1).collect::<Vec<_>>(),
                 "instructions_en": format!("Read {label} again, then answer."),
@@ -507,12 +518,18 @@ pub fn exit_ticket(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
     }
     let count = ctx["exit_count"].as_u64().unwrap_or(3) as usize;
     let objectives = strings(&ctx["objective_ids"]);
+    // E1: the formative item checks every objective, unless the marker leaves some out.
+    let checked = if has("FAKE_WS_EXIT_PARTIAL") {
+        1
+    } else {
+        objectives.len()
+    };
     let mut items = vec![
         json!({
             "item_id": "E1", "purpose": "形成性評量",
             "prompt_en": "In one or two sentences, explain the most important idea of today's text in your own words.",
             "answer_format": FMT_SHORT, "options": [], "student_tasks": ["理解內容"],
-            "objective_refs": objectives.iter().take(1).collect::<Vec<_>>(),
+            "objective_refs": objectives.iter().take(checked).collect::<Vec<_>>(),
             "sample_answer_en": "A clear statement of the main idea with one detail from the text.",
         }),
         json!({

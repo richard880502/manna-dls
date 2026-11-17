@@ -364,12 +364,19 @@ describe("entries", () => {
     const fromLesson = wsState({
       lesson: { id: 7, title: "第 1 課：Not only… but also", unit_id: 1, unit_title: "倒裝句單元" },
       material: { ...wsState().material, source: { kind: "lesson_sop", lesson_id: 7, material_version_no: 1, note: "課本第三課" } },
-      settings: { ...emptySettings(), material_types: ["閱讀文本"], student_tasks: ["理解內容"] },
+      settings: {
+        ...emptySettings(),
+        material_types: ["閱讀文本"],
+        student_tasks: ["理解內容"],
+        language_objective: "I can use because.",
+      },
       suggested: { ...emptySettings(), material_types: ["閱讀文本"], student_tasks: ["理解內容"] },
       content: {
         ...emptyWorksheetContent(),
         objectives: [
           { id: "O1", type: "content", text: "學生能說明原因", student_facing_en: "I can explain why.", origin: "teacher", sop_id: "O1" },
+          // From the 語言目標 field: edited there, not among what the lesson carried over.
+          { id: "teacher-l1", type: "language", text: "I can use because.", student_facing_en: "I can use because.", origin: "teacher", sop_id: null },
         ],
       },
       brief: {
@@ -407,6 +414,8 @@ describe("entries", () => {
 
     const carried = within(screen.getByRole("region", { name: "從課例帶入的內容" }));
     expect(carried.getByRole("textbox", { name: "學習目標 1" })).toHaveValue("I can explain why.");
+    expect(carried.queryByRole("textbox", { name: "學習目標 2" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "語言目標（選填）" })).toHaveValue("I can use because.");
     expect(carried.getByRole("textbox", { name: "帶入的任務 1" })).toHaveValue("Why did she start it?");
     expect(carried.getByRole("textbox", { name: "帶入的暖身想法 1" })).toHaveValue("Talk about rainy days");
     expect(carried.getByRole("textbox", { name: "帶入的關鍵字 1" })).toHaveValue("umbrella");
@@ -421,7 +430,7 @@ describe("entries", () => {
     await settle();
     const body = api.lastBody("PUT", WS) as SaveWorksheetRequest;
     expect(body.brief?.tasks).toEqual([]);
-    expect(body.content?.objectives).toEqual([]);
+    expect(body.content?.objectives.map((o) => o.id)).toEqual(["teacher-l1"]);
     expect(body.settings?.student_tasks).toEqual([]);
 
     await user.click(carried.getByRole("button", { name: "全部不帶入" }));

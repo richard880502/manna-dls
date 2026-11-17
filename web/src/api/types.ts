@@ -1355,8 +1355,10 @@ export interface WorksheetSettings {
   question_count?: number | null;
   /** 每個層次的題數；有值時取代 bloom 與 question_count（大於 0 的層次就是要出的層次） */
   bloom_counts?: BloomCounts | null;
-  /** 教師寫的學習目標（≤300），送給每一步的模型 */
-  objective?: string | null;
+  /** 內容目標（≤300，一行一項）：教師寫的或採用 Manna 草擬的，送給每一步的模型。舊資料的 objective 讀成這一欄 */
+  content_objective?: string | null;
+  /** 語言目標（≤300，一行一項） */
+  language_objective?: string | null;
 }
 
 /** 教材接縫：產生器只認這個形狀。 */
@@ -1407,6 +1409,8 @@ export interface WsVocab {
   definition: string;
   context: string;
   paragraph_id: string | null;
+  /** 作答指示裡的功能詞（compare、support your answer…），definition 是中文提示（SIOP V2）；一般關鍵字沒有這一欄 */
+  task_word?: boolean;
 }
 
 export interface WsItem {
@@ -1458,6 +1462,8 @@ export interface WsBlock {
   sop_block_id: string | null;
   /** The template section this block was generated from; keep it when saving (regenerate uses it). */
   template_section_id?: string | null;
+  /** 完整學習單逐段任務的階段：示範 → 共同練習 → 同儕練習 → 獨立應用（SIOP Q4）；其他沒有這一欄 */
+  practice?: WsPractice;
   /** 這一區需要的圖（最多 2 個；伺服器寫的，存檔時原樣送回）。沒有時沒有這個欄位。 */
   image_slots?: WsImageSlot[];
 }
@@ -1523,6 +1529,8 @@ export interface WsSheetImage {
   /** 只有教師版：為什麼沒有圖 */
   message?: string | null;
 }
+
+export type WsPractice = "model" | "guided" | "peer" | "independent";
 
 export type WsAutoField = "material_types" | "student_tasks" | "answer_formats" | "generation" | "levels" | "minutes";
 
@@ -2122,7 +2130,10 @@ export interface PrepSessionOptions {
   question_count?: number;
   bloom_counts?: BloomCounts;
   answer_formats?: string[];
-  objective?: string;
+  /** 內容目標（一行一項）；舊的對話的 objective 讀成這一欄 */
+  content_objective?: string;
+  /** 語言目標（一行一項） */
+  language_objective?: string;
 }
 
 export interface PrepSession extends PrepSessionSummary {
@@ -2162,9 +2173,64 @@ export interface CreatePrepSessionRequest {
     bloom_counts?: Partial<Record<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create", number>>;
     /** 固定標籤（選擇題、是非題…）；省略＝自動 */
     answer_formats?: string[];
-    /** 學習目標（≤300） */
-    objective?: string;
+    /** 內容目標（≤300，一行一項） */
+    content_objective?: string;
+    /** 語言目標（≤300，一行一項） */
+    language_objective?: string;
   };
+}
+
+// =============================================================================================
+// 內容目標與語言目標的草擬（SIOP G2、G3）。docs/API.md「SIOP 目標」。
+// =============================================================================================
+
+/** 草擬目標的工具（照我的學習單做是 worksheet） */
+export type ObjectiveDraftKind = "comprehension" | "tiered" | "activity" | "kit" | "worksheet";
+
+/** POST /api/objective-drafts */
+export interface ObjectiveDraftRequest {
+  kind: ObjectiveDraftKind;
+  material_id?: number;
+  /** 貼上的文字：只用來草擬，不存進教材庫 */
+  material?: { title?: string; text: string };
+  class_id?: number;
+  request?: string;
+  /** 「換一組」：上一組的句子，不要重複 */
+  avoid?: string[];
+}
+
+export type ObjectiveCategory = "strategy" | "function" | "structure" | "vocabulary";
+
+export interface ObjectiveDraft {
+  /** 決定時的 item_index */
+  index: number;
+  kind: ObjectiveType;
+  /** C1、C2、L1、L2 */
+  code: string;
+  /** 給學生的 "I can …"：採用時放進欄位的句子 */
+  text: string;
+  /** 給老師的中文 */
+  zh: string;
+  /** 語言目標才有 */
+  category?: ObjectiveCategory;
+  /** 語言目標支持的內容目標代號 */
+  supports?: string;
+  /** 語言目標才有：「學生要用……，才能……」 */
+  relation_zh?: string;
+  /** 下課前怎麼檢核 */
+  check_zh: string;
+}
+
+export interface ObjectiveDraftResult {
+  /** 決定記在這一筆：POST /api/ai/:interaction_id/decision */
+  interaction_id: number | null;
+  status: "shown" | "blocked" | "timeout" | "error" | "disabled";
+  message: string | null;
+  /** 通過 R1 與 R3 檢查的草稿：內容目標在前 */
+  objectives: ObjectiveDraft[];
+  /** 沒有通過檢查、沒有列出的數量 */
+  hidden: number;
+  context: AiContextItem[];
 }
 
 export interface UpdatePrepSessionRequest {

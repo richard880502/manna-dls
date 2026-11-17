@@ -321,6 +321,15 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     // 教材參考／我的教材／學習單範本 and the pickers.
     "GET /api/browse/materials": materialBrowse([]),
     "GET /api/browse/templates": templateBrowse([]),
+    // SIOP G2: without AI there is nothing to draft, so 產生 goes straight on.
+    "POST /api/objective-drafts": {
+      interaction_id: null,
+      status: "disabled",
+      message: "這個環境沒有開啟 AI 協助。",
+      objectives: [],
+      hidden: 0,
+      context: [],
+    },
   };
 }
 

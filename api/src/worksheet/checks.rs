@@ -15,8 +15,9 @@ use super::schemas::{
     TARGET_WARMUP, TIER_CHALLENGE, TIER_CORE, TIER_SUPPORT,
 };
 use super::{
-    info_function_from_label, student_tasks, ANSWER_FORMATS, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE,
-    FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
+    info_function_from_label, student_tasks, Practice, ANSWER_FORMATS, EXIT_PURPOSES, FMT_BLANK,
+    FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS,
+    VERBAL_KINDS,
 };
 use crate::checks::CheckResult;
 use crate::routes::clip_chars;
@@ -194,7 +195,7 @@ const TASK_CHECKS: [&str; 9] = [
     "blocks_in_paragraph_order",
     "at_least_3_info_functions",
 ];
-const TASK_CHECKS_WITH_BUDGET: [&str; 10] = [
+const TASK_CHECKS_WITH_BUDGET: [&str; 11] = [
     "labels_from_spec_sets",
     "english_only",
     "evidence_verbatim",
@@ -205,7 +206,43 @@ const TASK_CHECKS_WITH_BUDGET: [&str; 10] = [
     "blocks_in_paragraph_order",
     "at_least_3_info_functions",
     "item_count_within_budget",
+    "practice_in_order",
 ];
+
+/// SIOP Q4 on a whole design (blocks in their final order): when the stages do not go
+/// 示範 → 共同練習 → 同儕練習 → 獨立應用 ([`Practice::in_order`]), a failure for the repair
+/// call, and the blocks relabelled by position so that the output is usable as it is.
+fn check_practice(blocks: &mut [RawBlock], t: &mut Tally) {
+    let stages: Vec<Option<Practice>> = blocks
+        .iter()
+        .map(|b| b.practice.as_deref().and_then(Practice::from_label))
+        .collect();
+    if Practice::in_order(&stages) {
+        return;
+    }
+    let written = blocks
+        .iter()
+        .map(|b| {
+            format!(
+                "{}={}",
+                b.block_id.trim(),
+                b.practice.as_deref().unwrap_or("（沒有寫）")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("、");
+    t.fail(
+        "practice_in_order",
+        format!(
+            "逐段任務的 practice 要依「示範 → 共同練習 → 同儕練習 → 獨立應用」排列：第一個區塊是示範，最後一個是獨立應用，中間不可倒退；四個以上區塊時四個階段都要有。這次是：{written}。"
+        ),
+        "依區塊順序重新標示 practice",
+    );
+    let n = blocks.len();
+    for (i, b) in blocks.iter_mut().enumerate() {
+        b.practice = Some(Practice::for_position(i, n).label().to_string());
+    }
+}
 
 static OPTION_LETTER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"^\s*(?:\(([A-Ha-h])\)|([A-Ha-h])[.)．、:])\s*(.*)$").expect("valid regex")
@@ -631,6 +668,8 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 }
             }
         }
+        // Q4, on the blocks as they will be printed (after any reordering above).
+        check_practice(&mut blocks, &mut t);
     }
 
     for (bi, b) in blocks.iter_mut().enumerate() {
@@ -1076,7 +1115,7 @@ pub struct ExitCtx<'a> {
     pub task_prompts: &'a [String],
 }
 
-const EXIT_CHECKS: [&str; 8] = [
+const EXIT_CHECKS: [&str; 9] = [
     "labels_from_spec_sets",
     "english_only",
     "items_wellformed",
@@ -1085,7 +1124,17 @@ const EXIT_CHECKS: [&str; 8] = [
     "has_formative_item",
     "has_reflection_or_question_item",
     "formative_has_sample_answer",
+    "covers_every_objective",
 ];
+
+/// SIOP E1: the codes of the objectives no exit-ticket item checks (in the order given).
+pub fn uncovered_objectives(items: &[RawExitItem], objective_ids: &[String]) -> Vec<String> {
+    objective_ids
+        .iter()
+        .filter(|code| !items.iter().any(|i| i.objective_refs.contains(code)))
+        .cloned()
+        .collect()
+}
 
 pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>> {
     let mut t = Tally::new(&EXIT_CHECKS);
@@ -1198,6 +1247,18 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
         t.fail(
             "has_reflection_or_question_item",
             "至少要有 1 題學生反思或蒐集問題。".to_string(),
+            "",
+        );
+    }
+    // E1: every 內容目標 and 語言目標 is checked by at least one item (`objective_refs`).
+    let uncovered = uncovered_objectives(&items, ctx.objective_ids);
+    if !items.is_empty() && !uncovered.is_empty() {
+        t.fail(
+            "covers_every_objective",
+            format!(
+                "Exit ticket 要檢核這一課的每一個目標，這些目標沒有任何一題檢核（objective_refs 沒有它）：{}。請讓每個目標至少有一題，一題可以同時檢核兩個目標。",
+                uncovered.join("、")
+            ),
             "",
         );
     }
@@ -2084,6 +2145,7 @@ mod tests {
             paragraph_nos: nos.to_vec(),
             title_en: "Read".into(),
             info_function: function.into(),
+            practice: None,
             student_tasks: vec!["理解內容".into()],
             objective_refs: vec![],
             instructions_en: "Answer.".into(),
@@ -2091,6 +2153,15 @@ mod tests {
             design_reason_zh: "理由".into(),
             image_slots: Vec::new(),
         }
+    }
+
+    /// The blocks with their Q4 stages written in order, as version 3 of the prompt asks.
+    fn staged(mut blocks: Vec<RawBlock>) -> Vec<RawBlock> {
+        let n = blocks.len();
+        for (i, b) in blocks.iter_mut().enumerate() {
+            b.practice = Some(Practice::for_position(i, n).label().to_string());
+        }
+        blocks
     }
 
     fn failed(e: &[CheckResult]) -> Vec<&'static str> {
@@ -2110,7 +2181,7 @@ mod tests {
     fn good_tasks_pass_and_get_sequential_ids() {
         let p = paragraphs();
         let raw = RawTasks {
-            blocks: vec![
+            blocks: staged(vec![
                 block(
                     &[1],
                     "發現資訊",
@@ -2130,13 +2201,70 @@ mod tests {
                     "創造資訊",
                     vec![item("段落寫作", "Write your own ending.", "Answers vary.")],
                 ),
-            ],
+            ]),
         };
         let e = evaluate_tasks(&raw, &tasks_ctx(&p, &[]));
         assert!(!e.needs_repair(), "{:?}", failed(&e.results));
         let blocks = e.output.unwrap();
         assert_eq!(blocks[2].block_id, "B3");
         assert_eq!(blocks[2].items[0].item_id, "B3-1");
+    }
+
+    #[test]
+    fn tasks_go_from_modelling_to_independent_work() {
+        let p = paragraphs();
+        let three = |stages: [Option<&str>; 3]| RawTasks {
+            blocks: vec![
+                (1, "發現資訊", stages[0]),
+                (2, "分析資訊", stages[1]),
+                (3, "創造資訊", stages[2]),
+            ]
+            .into_iter()
+            .map(|(no, f, s)| {
+                let mut b = block(&[no], f, vec![item("簡答題", &format!("Q{no}?"), "A.")]);
+                b.practice = s.map(str::to_string);
+                b
+            })
+            .collect(),
+        };
+        // In order: no repair.
+        let ok = three([Some("示範"), Some("同儕練習"), Some("獨立應用")]);
+        assert!(!evaluate_tasks(&ok, &tasks_ctx(&p, &[])).needs_repair());
+        // Backwards, a label outside the four, or missing: one repair call, and the blocks are
+        // relabelled in order so the output stays usable.
+        for bad in [
+            three([Some("獨立應用"), Some("同儕練習"), Some("示範")]),
+            three([Some("示範"), Some("討論"), Some("獨立應用")]),
+            three([None, None, None]),
+        ] {
+            let e = evaluate_tasks(&bad, &tasks_ctx(&p, &[]));
+            assert_eq!(failed(&e.results), ["practice_in_order"]);
+            assert!(e.problems.iter().any(|p| p.contains("示範 → 共同練習")));
+            let stages: Vec<String> = e
+                .output
+                .unwrap()
+                .into_iter()
+                .map(|b| b.practice.unwrap())
+                .collect();
+            assert_eq!(stages, ["示範", "同儕練習", "獨立應用"]);
+        }
+        // Reordered blocks are judged in their new order (the stage follows the position).
+        let mut swapped = three([Some("示範"), Some("同儕練習"), Some("獨立應用")]);
+        swapped.blocks.swap(0, 2);
+        let e = evaluate_tasks(&swapped, &tasks_ctx(&p, &[]));
+        let names = failed(&e.results);
+        assert!(names.contains(&"blocks_in_paragraph_order"), "{names:?}");
+        assert!(!names.contains(&"practice_in_order"), "{names:?}");
+        // A single-block regeneration keeps its block's stage (set by the caller).
+        let only = [2i64];
+        let ctx = TasksCtx {
+            only: Some(&only),
+            ..tasks_ctx(&p, &[])
+        };
+        let one = RawTasks {
+            blocks: vec![block(&[2], "分析資訊", vec![item("簡答題", "Q?", "A.")])],
+        };
+        assert!(!evaluate_tasks(&one, &ctx).needs_repair());
     }
 
     #[test]
@@ -2256,7 +2384,7 @@ mod tests {
                 .into(),
         );
         let raw = RawTasks {
-            blocks: vec![
+            blocks: staged(vec![
                 block(&[1], "發現資訊", vec![item("簡答題", "Where?", "Outside.")]),
                 block(&[2], "分析資訊", vec![spliced]),
                 block(
@@ -2264,7 +2392,7 @@ mod tests {
                     "創造資訊",
                     vec![item("段落寫作", "Write.", "Varies.")],
                 ),
-            ],
+            ]),
         };
         let e = evaluate_tasks(&raw, &tasks_ctx(&p, &[]));
         assert!(!e.needs_repair(), "{:?}", failed(&e.results));
@@ -2614,6 +2742,58 @@ mod tests {
             assert!(names.contains(&expected), "{expected} in {names:?}");
         }
         assert!(e.output.is_none());
+    }
+
+    #[test]
+    fn exit_ticket_checks_every_objective() {
+        let ex = |purpose: &str, prompt: &str, refs: &[&str]| RawExitItem {
+            item_id: "x".into(),
+            purpose: purpose.into(),
+            prompt_en: prompt.into(),
+            answer_format: "簡答題".into(),
+            options: vec![],
+            student_tasks: vec![],
+            objective_refs: refs.iter().map(|r| r.to_string()).collect(),
+            sample_answer_en: (purpose == "形成性評量").then(|| "A sample.".to_string()),
+        };
+        let objectives = vec!["O1".to_string(), "O2".to_string(), "O3".to_string()];
+        let ctx = ExitCtx {
+            objective_ids: &objectives,
+            task_prompts: &[],
+        };
+        let raw = RawExit {
+            estimated_minutes: 3,
+            items: vec![
+                ex("形成性評量", "Explain the main idea.", &["O1"]),
+                ex("學生反思", "Which signal word helped you most?", &["O3"]),
+            ],
+        };
+        let e = evaluate_exit(&raw, &ctx);
+        assert_eq!(failed(&e.results), ["covers_every_objective"]);
+        assert!(e.problems[0].contains("O2"), "{:?}", e.problems);
+        // Still usable: after the repair call the teacher gets it, with a notice.
+        let items = e.output.unwrap();
+        assert_eq!(uncovered_objectives(&items, &objectives), ["O2"]);
+
+        // One item may check two objectives.
+        let raw = RawExit {
+            estimated_minutes: 3,
+            items: vec![
+                ex(
+                    "形成性評量",
+                    "Explain the main idea with because.",
+                    &["O1", "O2"],
+                ),
+                ex("學生反思", "Which signal word helped you most?", &["O3"]),
+            ],
+        };
+        assert!(!evaluate_exit(&raw, &ctx).needs_repair());
+        // Without objectives there is nothing to cover.
+        let none = ExitCtx {
+            objective_ids: &[],
+            task_prompts: &[],
+        };
+        assert!(!evaluate_exit(&raw, &none).needs_repair());
     }
 
     fn bloom_item(

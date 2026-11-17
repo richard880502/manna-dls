@@ -116,7 +116,8 @@ export const emptySettings = (): WorksheetSettings => ({
   bloom: [],
   question_count: null,
   bloom_counts: null,
-  objective: null,
+  content_objective: null,
+  language_objective: null,
 });
 
 export const emptyBrief = (): WorksheetBrief => ({ tasks: [], warmup: [], vocabulary: [], exit_ticket: [] });

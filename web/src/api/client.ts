@@ -120,6 +120,8 @@ import type {
   PrepSession,
   PrepSessionList,
   CreatePrepSessionRequest,
+  ObjectiveDraftRequest,
+  ObjectiveDraftResult,
   UpdatePrepSessionRequest,
   CreatePrepTurnRequest,
 } from "./types";
@@ -501,6 +503,8 @@ export const api = {
   listPrepSessions: () => get<PrepSessionList>("/prep-sessions"),
   /** 201：第一個 turn 已開始 */
   createPrepSession: (body: CreatePrepSessionRequest) => post<PrepSession>("/prep-sessions", body),
+  /** 兩個目標都沒寫時，產生前先請 Manna 草擬（SIOP G2、G3） */
+  draftObjectives: (body: ObjectiveDraftRequest) => post<ObjectiveDraftResult>("/objective-drafts", body),
   getPrepSession: (id: number) => get<PrepSession>(`/prep-sessions/${id}`),
   updatePrepSession: (id: number, body: UpdatePrepSessionRequest) =>
     request<PrepSession>("PATCH", `/prep-sessions/${id}`, { json: body }),

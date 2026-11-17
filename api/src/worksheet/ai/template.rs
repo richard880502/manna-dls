@@ -209,7 +209,7 @@ async fn section_call(
         ("paragraph_count", material.paragraphs.len().to_string()),
         ("passage_numbered", marked_passage(material)),
         ("class_profile", or_blank(&run.input.class_profile)),
-        ("teacher_notes_for_ai", run.notes_for_ai()),
+        ("teacher_notes_for_ai", run.notes_for_ai(true)),
     ]);
     // Pictures on: the model decides per block whether it needs one. Templates do not record
     // where the sample had pictures yet (a later phase); the number OCR counted on a scanned
@@ -589,7 +589,7 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
     // Objectives are the teacher's: take them as they are now, not as they were at the start.
     let latest = store::latest(db, ws.id).await?;
     let mut content = Content {
-        objectives: latest.content.objectives,
+        objectives: run.objectives_for(&latest.content.objectives),
         show_objectives: chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
         levels: levels.clone(),
