@@ -104,6 +104,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+      WORKSHEET_CJK_FONT: /usr/share/fonts/truetype/wqy/wqy-microhei.ttc
     defaults:
       run:
         working-directory: api
@@ -122,8 +123,10 @@ jobs:
         with:
           workspaces: api
       # pdftoppm/pdfinfo: the OCR tests render PDF pages (api/tests/ocr.rs fails without them in CI).
-      - name: Install poppler-utils
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils
+      # fonts-wqy-microhei: the same Chinese font the Docker image ships, so PDFs with Chinese
+      # (teacher notes, word-list hints) export in tests as they do in production.
+      - name: Install poppler-utils and the Chinese font
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils fonts-wqy-microhei
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
