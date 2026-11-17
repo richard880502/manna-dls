@@ -200,17 +200,46 @@ pub fn level_formats(b: Bloom, selected: &[String]) -> Vec<&'static str> {
 
 // ---------------------------------------------------------------- the neutral code (T9)
 
-/// The code a version's student sheet carries: 「A」, 「B」, 「C」 by the version's place among
-/// the worksheet's versions; `None` when the worksheet has only one version (nothing to tell
-/// apart).
-pub fn version_code(levels: &[Level], level: Level) -> Option<String> {
-    if levels.len() < 2 {
+/// The code a version's student sheet carries: 「A」, 「B」, 「C」 by the version's place in the
+/// worksheet's `student_order` (when it lists exactly the worksheet's versions), else among
+/// `levels`; `None` when the worksheet has only one version (nothing to tell apart).
+pub fn version_code(levels: &[Level], student_order: &[Level], level: Level) -> Option<String> {
+    if levels.len() < 2 || !levels.contains(&level) {
         return None;
     }
-    levels
+    let order = if same_versions(levels, student_order) {
+        student_order
+    } else {
+        levels
+    };
+    order
         .iter()
         .position(|l| *l == level)
         .map(|i| ((b'A' + i as u8) as char).to_string())
+}
+
+/// Whether `order` lists each of `levels` exactly once.
+fn same_versions(levels: &[Level], order: &[Level]) -> bool {
+    order.len() == levels.len()
+        && levels
+            .iter()
+            .all(|l| order.iter().filter(|o| *o == l).count() == 1)
+}
+
+/// The students' order for a newly generated 差異化學習單: the one it already has when that still
+/// lists its versions (a regenerated worksheet keeps the codes printed before), else a random
+/// order (T9: 「A」 must not mean 「the most support」).
+pub fn student_order_for(levels: &[Level], existing: &[Level]) -> Vec<Level> {
+    if levels.len() < 2 {
+        return Vec::new();
+    }
+    if same_versions(levels, existing) {
+        return existing.to_vec();
+    }
+    use rand::seq::SliceRandom;
+    let mut order = levels.to_vec();
+    order.shuffle(&mut rand::thread_rng());
+    order
 }
 
 /// What the student sheet prints: 「Version A」. 「Version」 keeps it apart from the block letters
@@ -437,11 +466,44 @@ mod tests {
     #[test]
     fn codes_follow_the_versions() {
         let all = Level::ALL.to_vec();
-        assert_eq!(version_code(&all, Level::Basic).as_deref(), Some("A"));
-        assert_eq!(version_code(&all, Level::Advanced).as_deref(), Some("C"));
+        assert_eq!(version_code(&all, &[], Level::Basic).as_deref(), Some("A"));
+        assert_eq!(
+            version_code(&all, &[], Level::Advanced).as_deref(),
+            Some("C")
+        );
         let two = [Level::Standard, Level::Advanced];
-        assert_eq!(version_code(&two, Level::Standard).as_deref(), Some("A"));
-        assert_eq!(version_code(&[Level::Standard], Level::Standard), None);
+        assert_eq!(
+            version_code(&two, &[], Level::Standard).as_deref(),
+            Some("A")
+        );
+        assert_eq!(version_code(&[Level::Standard], &[], Level::Standard), None);
+        // A stored order decides the letters; one that doesn't list the versions is ignored.
+        let order = [Level::Advanced, Level::Basic, Level::Standard];
+        assert_eq!(
+            version_code(&all, &order, Level::Basic).as_deref(),
+            Some("B")
+        );
+        assert_eq!(
+            version_code(&all, &order, Level::Advanced).as_deref(),
+            Some("A")
+        );
+        assert_eq!(
+            version_code(&all, &order, Level::Standard).as_deref(),
+            Some("C")
+        );
+        let partial = [Level::Advanced, Level::Basic];
+        assert_eq!(
+            version_code(&all, &partial, Level::Basic).as_deref(),
+            Some("A")
+        );
+        // A new order lists every version once; an existing one is kept.
+        for _ in 0..20 {
+            let fresh = student_order_for(&all, &[]);
+            assert_eq!(fresh.len(), 3);
+            assert!(all.iter().all(|l| fresh.contains(l)));
+        }
+        assert_eq!(student_order_for(&all, &order), order.to_vec());
+        assert!(student_order_for(&[Level::Standard], &[]).is_empty());
         assert_eq!(student_version_name("B"), "Version B");
         assert_eq!(version_label("C"), "C 版");
     }

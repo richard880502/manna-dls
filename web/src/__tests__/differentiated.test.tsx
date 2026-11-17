@@ -153,6 +153,12 @@ describe("差異化學習單: neutral codes and per-version support", () => {
     expect(versionCode(["basic", "standard", "advanced"], "advanced")).toBe("C");
     expect(versionCode(["standard", "advanced"], "standard")).toBe("A");
     expect(versionCode(["standard"], "standard")).toBeNull();
+    // A stored students' order (random for a 差異化學習單) decides the letters …
+    const order = ["advanced", "basic", "standard"] as const;
+    expect(versionCode(["basic", "standard", "advanced"], "basic", order)).toBe("B");
+    expect(versionCode(["basic", "standard", "advanced"], "advanced", order)).toBe("A");
+    // … unless it doesn't list exactly the worksheet's versions.
+    expect(versionCode(["basic", "standard", "advanced"], "basic", ["advanced", "basic"])).toBe("A");
   });
 
   it("the editor names a student sheet by its code and edits the version's support and scoring", async () => {

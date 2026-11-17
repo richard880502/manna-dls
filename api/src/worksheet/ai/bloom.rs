@@ -1050,6 +1050,12 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         // T1: every version of a 差異化學習單 starts with the shared objectives.
         show_objectives: output == Output::Tiered || chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
+        // T9: the students' codes in a random order, kept when the worksheet is regenerated.
+        student_order: if output == Output::Tiered {
+            crate::worksheet::tiered::student_order_for(&levels, &latest.content.student_order)
+        } else {
+            Vec::new()
+        },
         levels: levels.clone(),
         chosen: Some(chosen),
         notices,

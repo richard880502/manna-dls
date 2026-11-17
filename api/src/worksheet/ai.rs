@@ -1826,6 +1826,8 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         objectives: run.objectives_for(&latest.content.objectives),
         show_objectives: chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
+        // T9: the students' codes of the versions in a random order (kept on regenerate).
+        student_order: super::tiered::student_order_for(&levels, &latest.content.student_order),
         levels,
         chosen: Some(chosen),
         notices,
