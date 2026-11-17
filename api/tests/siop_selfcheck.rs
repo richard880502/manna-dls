@@ -107,8 +107,11 @@ async fn an_activity_plan_is_checked_on_the_page_only() {
     let t = app.teacher("T-SIOP-1", "general").await;
     let session = create(&app, &t, "activity", "").await;
     let id = session["id"].as_i64().unwrap();
-    // While the turn runs there is no check yet.
-    assert_eq!(last(&session)["siop_check"], Value::Null);
+    // While the turn runs there is no check yet. (The fake model can finish before the response
+    // is read; the check opens with the turn's closing, so only a turn still running is asked.)
+    if last(&session)["status"] != "done" {
+        assert_eq!(last(&session)["siop_check"], Value::Null);
+    }
     let done = wait(&app, &t, id).await;
     let turn = last(&done);
     assert_eq!(turn["status"], "done", "{turn}");

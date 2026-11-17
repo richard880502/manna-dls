@@ -1569,6 +1569,8 @@ export interface WorksheetContent {
   show_objectives: boolean;
   blocks: WsBlock[];
   levels: WsLevel[];
+  /** 學生版代碼的順序（T9）：第一個印「Version A」…；差異化學習單產生時隨機排，舊學習單沒有這個鍵（依 levels） */
+  student_order?: WsLevel[];
   chosen: WsChosen | null;
   notices: string[];
 }

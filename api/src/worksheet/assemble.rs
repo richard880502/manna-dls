@@ -838,7 +838,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         title: title.trim().to_string(),
         level,
         audience,
-        version_code: tiered::version_code(&content.levels, level),
+        version_code: tiered::version_code(&content.levels, &content.student_order, level),
         tiering_note: (teacher && differentiated).then(|| tiered::TIERED_REASON.to_string()),
         objectives: if content.show_objectives {
             content

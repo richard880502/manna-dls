@@ -779,7 +779,7 @@ function BlockSection({
 }
 
 function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) {
-  const code = versionCode(ws.state?.content.levels ?? [], level);
+  const code = versionCode(ws.state?.content.levels ?? [], level, ws.state?.content.student_order);
   const ids = useId();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -893,7 +893,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
     bloomFilter === null ? 0 : bloomFilter === "none" ? bloomTally.none : bloomTally.counts[bloomFilter];
   const filter: BloomFilter = filterCount > 0 ? bloomFilter : null;
   // T9: the student sheet carries a neutral code, never the level's name.
-  const code = versionCode(levels, current);
+  const code = versionCode(levels, current, state?.content.student_order);
   const sheetName =
     audience === "student" && code ? `${versionLabel(code)} ${AUDIENCE_LABEL.student}` : `${LEVEL_LABEL[current]} ${AUDIENCE_LABEL[audience]}`;
 

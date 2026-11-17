@@ -69,12 +69,20 @@ export const TIERED_VERSIONS_NOTE =
 export const TIERED_FORMATS = ["簡答題", "表格整理", "圖像組織", "段落寫作"] as const;
 
 /**
- * The neutral code a version's student sheet prints (T9): 「A」「B」「C」 by its place among the
- * worksheet's versions; null when there is only one (the server's rule).
+ * The neutral code a version's student sheet prints (T9): 「A」「B」「C」 by its place in the
+ * worksheet's `student_order` (random for a 差異化學習單) when that lists exactly its versions,
+ * else among `levels`; null when there is only one version (the server's rule).
  */
-export function versionCode(levels: readonly WsLevel[], level: WsLevel): string | null {
-  if (levels.length < 2) return null;
-  const i = levels.indexOf(level);
+export function versionCode(
+  levels: readonly WsLevel[],
+  level: WsLevel,
+  studentOrder: readonly WsLevel[] = [],
+): string | null {
+  if (levels.length < 2 || !levels.includes(level)) return null;
+  const sameVersions =
+    studentOrder.length === levels.length && levels.every((l) => studentOrder.filter((o) => o === l).length === 1);
+  const order = sameVersions ? studentOrder : levels;
+  const i = order.indexOf(level);
   return i < 0 ? null : String.fromCharCode(65 + i);
 }
 

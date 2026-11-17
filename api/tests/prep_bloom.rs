@@ -611,6 +611,7 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
         json!(["comprehension", "tiered", "activity", "worksheet"])
     );
 
+    fix_student_order(&app, ws["id"].as_i64().unwrap()).await;
     // The download.
     let turn_id = turn["id"].as_i64().unwrap();
     let r = kit_raw(&app, &t, id, turn_id, "?format=docx").await;
@@ -948,4 +949,35 @@ async fn revise_keeps_the_tiers_of_a_tiered_worksheet() {
         )
         .await;
     assert!(sheet.to_string().contains("(added)"));
+}
+
+/// T9: a generated 差異化學習單 stores its students' codes in a random order. Checks that the order
+/// lists the three versions once, then fixes it to 基礎＝A, 一般＝B, 進階＝C so the rest of the test
+/// can name the codes.
+async fn fix_student_order(app: &common::TestApp, worksheet_id: i64) {
+    let order: serde_json::Value = sqlx::query_scalar(
+        "SELECT content->'student_order' FROM worksheet_versions
+          WHERE worksheet_id = $1 ORDER BY version_no DESC LIMIT 1",
+    )
+    .bind(worksheet_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    let mut got: Vec<String> = order
+        .as_array()
+        .expect("a 差異化學習單 has a student_order")
+        .iter()
+        .map(|l| l.as_str().unwrap().to_string())
+        .collect();
+    got.sort();
+    assert_eq!(got, ["advanced", "basic", "standard"]);
+    sqlx::query(
+        "UPDATE worksheet_versions
+            SET content = jsonb_set(content, '{student_order}', '[\"basic\", \"standard\", \"advanced\"]')
+          WHERE worksheet_id = $1",
+    )
+    .bind(worksheet_id)
+    .execute(&app.db)
+    .await
+    .unwrap();
 }

@@ -592,6 +592,11 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
         objectives: run.objectives_for(&latest.content.objectives),
         show_objectives: chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
+        // T9: the students' codes of the versions in a random order (kept on regenerate).
+        student_order: crate::worksheet::tiered::student_order_for(
+            levels,
+            &latest.content.student_order,
+        ),
         levels: levels.clone(),
         chosen: Some(chosen),
         notices,

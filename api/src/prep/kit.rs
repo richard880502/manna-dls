@@ -32,17 +32,17 @@ const LEGACY_TIERED_REASON: &str =
     "基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造";
 
 /// The heading of a level's student version: 「學生版（A 版）」 (never the level's name); 「學生版」
-/// when the worksheet has one version.
-pub fn student_heading(levels: &[Level], level: Level) -> String {
-    match version_code(levels, level) {
+/// when the worksheet has one version. `order`: the worksheet's `student_order`.
+pub fn student_heading(levels: &[Level], order: &[Level], level: Level) -> String {
+    match version_code(levels, order, level) {
         Some(code) => format!("學生版（{}）", version_label(&code)),
         None => "學生版".to_string(),
     }
 }
 
 /// The heading of a level's teacher version in a 差異化學習單 kit: 「教師版（基礎版＝A 版）」.
-pub fn teacher_heading(levels: &[Level], level: Level) -> String {
-    match version_code(levels, level) {
+pub fn teacher_heading(levels: &[Level], order: &[Level], level: Level) -> String {
+    match version_code(levels, order, level) {
         Some(code) => format!(
             "{HEADING_TEACHER}（{}＝{}）",
             level.label(),
@@ -303,6 +303,10 @@ pub fn docx(
         .as_ref()
         .map(|w| levels_of(w.content))
         .unwrap_or_default();
+    let order: Vec<Level> = worksheet
+        .as_ref()
+        .map(|w| w.content.student_order.clone())
+        .unwrap_or_default();
     let student: Vec<(Level, Sheet)> = worksheet
         .as_ref()
         .map(|w| {
@@ -336,7 +340,7 @@ pub fn docx(
     }];
     for (level, sheet) in &student {
         parts.push(Part::Sheet {
-            heading: student_heading(&levels, *level),
+            heading: student_heading(&levels, &order, *level),
             sheet,
             banner: None,
             note: Vec::new(),
@@ -345,7 +349,7 @@ pub fn docx(
     // Each teacher sheet prints the 分層說明 itself (`Sheet::tiering_note`).
     for (level, sheet) in &per_level {
         parts.push(Part::Sheet {
-            heading: teacher_heading(&levels, *level),
+            heading: teacher_heading(&levels, &order, *level),
             sheet,
             banner: None,
             note: Vec::new(),

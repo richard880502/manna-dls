@@ -795,6 +795,12 @@ pub struct Content {
     pub show_objectives: bool,
     pub blocks: Vec<Block>,
     pub levels: Vec<Level>,
+    /// The order the students' codes follow (T9): the first level here prints 「Version A」, the
+    /// next 「Version B」…. A 差異化學習單 gets a random order when it is first generated (and keeps
+    /// it), so the codes don't tell students which version has the most support. Empty (older
+    /// worksheets): the order of `levels`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub student_order: Vec<Level>,
     pub chosen: Option<Chosen>,
     pub notices: Vec<String>,
 }
@@ -806,6 +812,7 @@ impl Default for Content {
             show_objectives: true,
             blocks: Vec::new(),
             levels: Vec::new(),
+            student_order: Vec::new(),
             chosen: None,
             notices: Vec::new(),
         }
