@@ -2330,7 +2330,7 @@ interface PrepTurn {
 
 | 變數 | 說明 |
 |---|---|
-| `IMAGE_PROVIDER` | `none`（預設；`docker-compose.yml` 也傳 `none`，主持人在 Coolify 設定後才開啟）、`openai`、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
+| `IMAGE_PROVIDER` | `none`（後端程式沒設時的預設）、`openai`（`docker-compose.yml` 也就是正式環境的預設；要關掉就在 Coolify 設 `none` 再重新部署）、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
 | `OPENAI_API_KEY` | `openai` 必填；沒有時圖片關閉並警告 |
 | `IMAGE_BASE_URL` | 預設 `https://api.openai.com/v1`；必須是 http(s) |
 | `IMAGE_MODEL` | 預設 `gpt-image-2.5-flare` |
