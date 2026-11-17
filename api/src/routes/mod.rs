@@ -166,6 +166,26 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/worksheets/{id}/checks", get(worksheets::checks))
         .route("/worksheets/{id}/export", get(worksheets::export))
+        // 學習單的圖片
+        .route("/worksheets/{id}/images", get(worksheets::images_state))
+        .route(
+            "/worksheets/{id}/images/{image_id}",
+            get(worksheets::image_file),
+        )
+        .route(
+            "/worksheets/{id}/image-slots/{slot_id}/regenerate",
+            post(worksheets::regenerate_image),
+        )
+        .route(
+            "/worksheets/{id}/image-slots/{slot_id}/upload",
+            post(worksheets::upload_image).layer(DefaultBodyLimit::max(
+                (crate::materials::MAX_IMAGE_BYTES + 1024 * 1024) as usize,
+            )),
+        )
+        .route(
+            "/worksheets/{id}/image-slots/{slot_id}",
+            delete(worksheets::remove_image),
+        )
         // 我的學習單版型 (Phase 2.5)
         .route(
             "/worksheet-templates",

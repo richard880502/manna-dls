@@ -299,6 +299,11 @@ pub fn activity_block(
         items,
         teacher_notes: raw.design_reason_zh.clone(),
         origin: Origin::Ai,
+        // Cleaned here (never a reason for a repair call); none unless pictures are on.
+        image_slots: super::images::with_ids(
+            super::images::clean_slots(&raw.image_slots, super::images::MAX_SLOTS_PER_TASK_BLOCK).0,
+            id,
+        ),
         ..Block::default()
     }
 }
@@ -502,6 +507,33 @@ pub struct SheetBlock {
     /// of them has a Bloom level.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bloom_summary: Option<String>,
+    /// The block's pictures, printed after its instructions (filled in by
+    /// `images::decorate`; absent when there are none).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<SheetImage>,
+}
+
+/// One picture of a printed block: the picture, or an empty box for the teacher to fill.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SheetImage {
+    pub slot_id: String,
+    /// queued | running | done | failed | skipped (removed slots are not printed)
+    pub status: String,
+    /// With `done`: `GET /api/worksheets/:id/images/:image_id`.
+    pub image_id: Option<i64>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    pub alt: String,
+    /// Printed under the picture ("" for none).
+    pub caption: String,
+    /// Made by the picture model (the teacher version labels it).
+    pub ai_generated: bool,
+    /// Teacher version only: what the picture is for (printed in an empty box).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    /// Teacher version only: why there is no picture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -678,6 +710,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             teacher_notes: (teacher && !b.teacher_notes.trim().is_empty())
                 .then(|| b.teacher_notes.trim().to_string()),
             bloom_summary,
+            images: Vec::new(),
         });
     }
     blocks.retain(has_content);
@@ -754,6 +787,9 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
         }
         for s in &b.supports {
             push(format!("{name} · {}", s.kind), &s.content);
+        }
+        for img in &b.images {
+            push(format!("{name} · 圖說"), &img.caption);
         }
         for it in &b.items {
             push(format!("{name} · 第 {} 題", it.no), &it.prompt);

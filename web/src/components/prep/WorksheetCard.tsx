@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, errorMessage } from "../../api/client";
 import type {
   PrepTurn,
+  WorksheetImages,
   WorksheetState,
   WsAudience,
   WsExportFormat,
@@ -24,6 +25,7 @@ import { OcrProgress } from "../material/Ocr";
 import { BloomDistribution } from "../worksheet/Bloom";
 import { BlockReviseArea, LostNotes, ReviseByNotesButton, useBlockRevise } from "../worksheet/BlockRevise";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
+import { anyOpen } from "../worksheet/SlotPicture";
 import { SheetPreview, sheetBlockName } from "./SheetPreview";
 
 /** How long a block stays highlighted after 採用. */
@@ -135,6 +137,11 @@ export function WorksheetCard({
     document.addEventListener("selectionchange", follow);
     return () => document.removeEventListener("selectionchange", follow);
   }, [follow]);
+  // The pictures of the worksheet (newer than the sheet while they are being made), and a
+  // counter that reloads the sheet once they change.
+  const [images, setImages] = useState<WorksheetImages | null>(null);
+  const [sheetKey, setSheetKey] = useState(0);
+  const picturesOpen = !running && anyOpen(images);
 
   // While the worksheet's jobs run: their progress, asked for as often as the session.
   useEffect(() => {
@@ -159,7 +166,11 @@ export function WorksheetCard({
     let alive = true;
     api
       .getWorksheet(wsId)
-      .then((ws) => alive && setState(ws))
+      .then((ws) => {
+        if (!alive) return;
+        setState(ws);
+        setImages(ws.images ?? null);
+      })
       .catch((err: unknown) => alive && setError(errorMessage(err)));
     return () => {
       alive = false;
@@ -181,7 +192,27 @@ export function WorksheetCard({
     return () => {
       alive = false;
     };
-  }, [running, wsId, refreshKey, localKey, level, audience, onLabels]);
+  }, [running, wsId, refreshKey, localKey, level, audience, onLabels, sheetKey]);
+
+  // While pictures are being made: ask for them; when the last one is done, reload the sheet.
+  useEffect(() => {
+    if (!picturesOpen || wsId === null) return undefined;
+    let alive = true;
+    const timer = setInterval(() => {
+      api
+        .worksheetImages(wsId)
+        .then((next) => {
+          if (!alive) return;
+          setImages(next);
+          if (!anyOpen(next)) setSheetKey((k) => k + 1);
+        })
+        .catch(() => undefined);
+    }, prepConfig.pollMs);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [picturesOpen, wsId]);
 
   if (wsId === null) {
     if (turn.status === "running" && turn.phase === "ocr" && turn.ocr) {
@@ -373,6 +404,14 @@ export function WorksheetCard({
             highlight={flash.size > 0 ? new Set([...highlight, ...flash]) : highlight}
             interactionFor={(b) => interactionFor(state?.jobs ?? [], b, turn.interaction_id)}
             extras={extras}
+            pictures={{
+              worksheetId: wsId,
+              images,
+              onImages: (next) => {
+                setImages(next);
+                setSheetKey((k) => k + 1);
+              },
+            }}
           />
           {selection && !draft && (
             <div

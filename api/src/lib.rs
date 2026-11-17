@@ -65,6 +65,8 @@ pub struct AppState {
     pub ocr: Arc<materials::ocr::Ocr>,
     /// Bounds how many preview images (知識庫) are rendered at once.
     pub thumb_slots: Arc<tokio::sync::Semaphore>,
+    /// Pictures on worksheets: the provider and the server-wide request slots.
+    pub images: Arc<worksheet::images::Images>,
 }
 
 impl AppState {
@@ -73,6 +75,7 @@ impl AppState {
         let embedder = Arc::new(Embedder::new(config.embedding.clone()));
         let storage = config.storage.build();
         let ocr = Arc::new(materials::ocr::Ocr::new(config.ocr.clone()));
+        let images = Arc::new(worksheet::images::Images::new(config.images.clone()));
         Self {
             db,
             config: Arc::new(config),
@@ -88,6 +91,7 @@ impl AppState {
             thumb_slots: Arc::new(tokio::sync::Semaphore::new(
                 materials::thumbnail::MAX_CONCURRENT_RENDERS,
             )),
+            images,
         }
     }
 }

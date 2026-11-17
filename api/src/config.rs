@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::embedding::EmbeddingConfig;
 use crate::materials::ocr::OcrConfig;
 use crate::storage::StorageConfig;
+use crate::worksheet::images::ImageConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiProviderKind {
@@ -88,6 +89,9 @@ pub struct Config {
     /// OCR of scanned files (`OCR_*`, docs/API.md「Phase 2.10」). Never fails: a bad setting
     /// disables OCR.
     pub ocr: OcrConfig,
+    /// Pictures on worksheets (`IMAGE_*`, `OPENAI_API_KEY`, docs/API.md「學習單的圖片」). Never
+    /// fails: a bad setting turns pictures off.
+    pub images: ImageConfig,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -107,6 +111,7 @@ impl std::fmt::Debug for Config {
             .field("embedding", &self.embedding)
             .field("platform_library_bytes", &self.platform_library_bytes)
             .field("ocr", &self.ocr)
+            .field("images", &self.images)
             .finish_non_exhaustive()
     }
 }
@@ -246,12 +251,14 @@ impl Config {
             embedding: EmbeddingConfig::from_lookup(get),
             platform_library_bytes,
             ocr: OcrConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
+            images: ImageConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
         })
     }
 
     /// Config for tests: fake AI provider, no static dir, given database URL. OCR is off (as
     /// `OCR_PROVIDER=none`) so uploads in other tests keep their text as extracted; the OCR
-    /// tests turn the fake on.
+    /// tests turn the fake on. Pictures are off too (the requests to the text model are the
+    /// ones without `image_slots`); the picture tests turn the fake on.
     pub fn for_tests(database_url: impl Into<String>) -> Self {
         Self {
             database_url: database_url.into(),
@@ -271,6 +278,7 @@ impl Config {
             embedding: EmbeddingConfig::disabled(),
             platform_library_bytes: DEFAULT_PLATFORM_LIBRARY_BYTES,
             ocr: OcrConfig::disabled(),
+            images: ImageConfig::disabled(),
         }
     }
 
@@ -338,6 +346,22 @@ mod tests {
         assert!(c.demo_mode);
         let dbg = format!("{c:?}");
         assert!(!dbg.contains("\"k\""), "api key must not be printed: {dbg}");
+    }
+
+    #[test]
+    fn the_openai_key_is_never_printed() {
+        let c = cfg(&[
+            DB,
+            ("IMAGE_PROVIDER", "openai"),
+            ("OPENAI_API_KEY", "sk-very-secret"),
+        ])
+        .unwrap();
+        assert!(c.images.enabled());
+        let dbg = format!("{c:?}");
+        assert!(!dbg.contains("sk-very-secret"), "{dbg}");
+        // A bad picture setting never stops the server.
+        let c = cfg(&[DB, ("IMAGE_PROVIDER", "openai")]).unwrap();
+        assert!(!c.images.enabled() && c.images.warning.is_some());
     }
 
     #[test]

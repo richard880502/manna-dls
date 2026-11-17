@@ -4,7 +4,7 @@ use anyhow::Context;
 use manna_api::config::{AiProviderKind, Config};
 use manna_api::storage::s3::S3Storage;
 use manna_api::storage::{StorageBackend, StorageConfig};
-use manna_api::{auth, build_app, db, kb_embeddings, materials, AppState};
+use manna_api::{auth, build_app, db, kb_embeddings, materials, worksheet, AppState};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -36,6 +36,9 @@ async fn run() -> anyhow::Result<()> {
     if let Some(warning) = &config.ocr.warning {
         tracing::warn!("{warning}; scanned files keep the text they were uploaded with");
     }
+    if let Some(warning) = &config.images.warning {
+        tracing::warn!("{warning}; worksheets get no generated pictures");
+    }
     if config.ai_provider == AiProviderKind::Fake {
         tracing::warn!("AI_PROVIDER=fake: AI outputs are deterministic test fixtures");
     }
@@ -65,6 +68,15 @@ async fn run() -> anyhow::Result<()> {
             "resumed OCR runs left open by the last process"
         ),
         Err(e) => tracing::error!(error = %e, "could not resume open OCR runs"),
+    }
+    // Worksheet pictures left open, the same way.
+    match worksheet::images::recover(&state).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            resumed = n,
+            "resumed worksheet pictures left open by the last process"
+        ),
+        Err(e) => tracing::error!(error = %e, "could not resume open worksheet pictures"),
     }
     match materials::ocr::backfill_platform(&state).await {
         Ok(0) => {}

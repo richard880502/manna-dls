@@ -2089,6 +2089,7 @@ mod tests {
             instructions_en: "Answer.".into(),
             items,
             design_reason_zh: "理由".into(),
+            image_slots: Vec::new(),
         }
     }
 

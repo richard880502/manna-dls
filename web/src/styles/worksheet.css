@@ -1478,3 +1478,118 @@ button.bloom-seg:focus-visible {
   color: var(--color-accent-text);
   font-weight: var(--weight-strong);
 }
+
+/* ---------------------------------------------------------------- pictures (學習單的圖片) */
+
+.ws-picture {
+  max-width: 28rem;
+  margin: var(--space-xs) auto var(--space-sm);
+  text-align: center;
+}
+
+.ws-picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: 4px;
+  background: var(--color-sheet);
+}
+
+/* Where a picture goes: the shape of one, dashed, with what it is for (teacher only). */
+.ws-picture-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2xs);
+  min-height: 9rem;
+  padding: var(--space-sm);
+  border: 2px dashed var(--color-rule-strong);
+  border-radius: 6px;
+  background: var(--color-paper-2);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.ws-picture-purpose {
+  color: var(--color-ink-2);
+}
+
+.ws-picture-message {
+  color: var(--color-warn-ink);
+}
+
+.ws-picture figcaption {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+  font-family: var(--font-print);
+  font-size: var(--text-sm);
+  font-style: italic;
+}
+
+.ws-picture-ai {
+  margin-top: var(--space-3xs);
+  color: var(--color-manna-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+}
+
+.ws-picture.is-removed {
+  font-family: var(--font-body);
+  text-align: left;
+}
+
+.ws-picture-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-2xs) 0.875rem;
+  margin-top: var(--space-2xs);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+.ws-picture.is-removed .ws-picture-tools {
+  justify-content: flex-start;
+}
+
+.ws-picture-hint {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-xs);
+}
+
+.ws-picture-hint input {
+  width: min(18rem, 100%);
+}
+
+.ws-picture-upload.is-disabled {
+  color: var(--color-muted);
+  cursor: not-allowed;
+}
+
+.ws-picture-upload:focus-within {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.ws-picture-left {
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.ws-picture-error {
+  flex-basis: 100%;
+  color: var(--color-error);
+}
+
+@media print {
+  .ws-picture-tools,
+  .ws-picture.is-removed {
+    display: none;
+  }
+}

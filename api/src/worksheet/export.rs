@@ -12,16 +12,43 @@
 //!   文泉驛微米黑). Without one, a sheet that contains Chinese is refused with a clear message
 //!   instead of printing empty boxes.
 
+use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
-use super::assemble::{Sheet, SheetBlock, SheetItem};
+use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
 use crate::retrieval::is_cjk;
 
 pub const DOCX_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 pub const PDF_TYPE: &str = "application/pdf";
+
+/// A stored picture for an export: JPEG bytes and its size in pixels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportImage {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The pictures a sheet prints, by `image_id` (`images::bank_for`). A picture of the sheet that
+/// is not here prints as an empty box.
+pub type ImageBank = HashMap<i64, ExportImage>;
+
+/// Printed under a generated picture in the teacher version (doc §6.4). English, so a teacher
+/// PDF needs no CJK font for it.
+pub const AI_LABEL: &str = "AI-generated picture";
+
+/// What a picture without one prints in its box: the purpose in the teacher version, nothing in
+/// the student version.
+pub fn placeholder_text(img: &SheetImage) -> String {
+    match &img.purpose {
+        Some(p) if !p.trim().is_empty() => format!("請放一張圖：{}", p.trim()),
+        Some(_) => "請放一張圖".to_string(),
+        None => String::new(),
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
@@ -342,9 +369,154 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
     }
 }
 
+/// The pictures one DOCX holds: `word/media/imageN.jpeg`, each with its relationship.
+struct Media<'a> {
+    bank: &'a ImageBank,
+    /// (image id, relationship id, file name) in the order first used.
+    files: Vec<(i64, String, String)>,
+}
+
+impl<'a> Media<'a> {
+    fn new(bank: &'a ImageBank) -> Self {
+        Self {
+            bank,
+            files: Vec::new(),
+        }
+    }
+
+    /// The relationship id of a picture, adding it on first use.
+    fn rel(&mut self, id: i64) -> String {
+        if let Some((_, rel, _)) = self.files.iter().find(|(i, _, _)| *i == id) {
+            return rel.clone();
+        }
+        let n = self.files.len() + 1;
+        let rel = format!("rIdImg{n}");
+        self.files.push((id, rel.clone(), format!("image{n}.jpeg")));
+        rel
+    }
+}
+
+/// English Metric Units per inch.
+const EMU_PER_INCH: u64 = 914_400;
+/// A picture is at most this wide and tall on the page.
+const DOCX_IMAGE_MAX_W: u64 = 42 * EMU_PER_INCH / 10;
+const DOCX_IMAGE_MAX_H: u64 = 3 * EMU_PER_INCH;
+
+/// The printed size of a picture in EMU: as large as fits the box, aspect kept.
+fn docx_extent(width: u32, height: u32) -> (u64, u64) {
+    let (w, h) = (u64::from(width.max(1)), u64::from(height.max(1)));
+    let by_w = (DOCX_IMAGE_MAX_W, DOCX_IMAGE_MAX_W * h / w);
+    if by_w.1 <= DOCX_IMAGE_MAX_H {
+        by_w
+    } else {
+        (DOCX_IMAGE_MAX_H * w / h, DOCX_IMAGE_MAX_H)
+    }
+}
+
+/// A centred paragraph holding one inline picture.
+fn docx_drawing(rel: &str, n: usize, alt: &str, cx: u64, cy: u64) -> String {
+    let alt = esc(alt);
+    format!(
+        "<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"80\" w:after=\"40\"/><w:jc w:val=\"center\"/></w:pPr>\
+<w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">\
+<wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:docPr id=\"{n}\" name=\"Picture {n}\" descr=\"{alt}\"/>\
+<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>\
+<a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">\
+<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+<pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+<pic:nvPicPr><pic:cNvPr id=\"{n}\" name=\"image{n}.jpeg\" descr=\"{alt}\"/><pic:cNvPicPr/></pic:nvPicPr>\
+<pic:blipFill><a:blip r:embed=\"{rel}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>\
+<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm>\
+<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>\
+</wp:inline></w:drawing></w:r></w:p>"
+    )
+}
+
+/// Width and height of the empty box of a slot without a picture (twips: about 10 × 4.6 cm).
+const DOCX_BOX_W: u32 = 5800;
+const DOCX_BOX_H: u32 = 2600;
+
+/// A centred one-cell table with a dashed border and a fixed size: the empty box where a
+/// picture goes, with `text` (the purpose, teacher version) inside.
+fn docx_box(text: &str) -> String {
+    let border = |side: &str| {
+        format!("<w:{side} w:val=\"dashed\" w:sz=\"6\" w:space=\"0\" w:color=\"8C8C8C\"/>")
+    };
+    let borders: String = ["top", "left", "bottom", "right"]
+        .iter()
+        .map(|s| border(s))
+        .collect();
+    let inner = para(
+        &[run(
+            text,
+            RunStyle {
+                color: Some(MUTED_INK),
+                size: Some(20),
+                ..RunStyle::default()
+            },
+        )],
+        &ParaStyle::default(),
+    );
+    format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"{DOCX_BOX_W}\" w:type=\"dxa\"/><w:jc w:val=\"center\"/>\
+         <w:tblBorders>{borders}</w:tblBorders><w:tblLayout w:type=\"fixed\"/></w:tblPr>\
+         <w:tblGrid><w:gridCol w:w=\"{DOCX_BOX_W}\"/></w:tblGrid>\
+         <w:tr><w:trPr><w:trHeight w:val=\"{DOCX_BOX_H}\" w:hRule=\"exact\"/></w:trPr>\
+         <w:tc><w:tcPr><w:tcW w:w=\"{DOCX_BOX_W}\" w:type=\"dxa\"/></w:tcPr>{inner}</w:tc></w:tr></w:tbl>{}",
+        // Word needs a paragraph after a table.
+        para(&[], &ParaStyle::default())
+    )
+}
+
+/// A centred paragraph of one run.
+fn centred(text: &str, style: RunStyle) -> String {
+    format!(
+        "<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"60\"/><w:jc w:val=\"center\"/></w:pPr>{}</w:p>",
+        run(text, style)
+    )
+}
+
+/// One picture of a block: the picture (centred) or an empty box, then its caption, and in the
+/// teacher version a label under a generated picture.
+fn docx_image(out: &mut String, img: &SheetImage, teacher: bool, media: &mut Media<'_>) {
+    let picture = img
+        .image_id
+        .and_then(|id| media.bank.get(&id).map(|p| (id, p.width, p.height)));
+    match picture {
+        Some((id, w, h)) => {
+            let rel = media.rel(id);
+            let n = media.files.len();
+            let (cx, cy) = docx_extent(w, h);
+            out.push_str(&docx_drawing(&rel, n, &img.alt, cx, cy));
+        }
+        // An empty box about the size of a picture, for the teacher to fill.
+        None => out.push_str(&docx_box(&placeholder_text(img))),
+    }
+    if !img.caption.trim().is_empty() {
+        out.push_str(&centred(
+            img.caption.trim(),
+            RunStyle {
+                italic: true,
+                size: Some(20),
+                ..RunStyle::default()
+            },
+        ));
+    }
+    if teacher && img.ai_generated && picture.is_some() {
+        out.push_str(&centred(
+            AI_LABEL,
+            RunStyle {
+                color: Some(TEACHER_INK),
+                size: Some(16),
+                ..RunStyle::default()
+            },
+        ));
+    }
+}
+
 /// The paragraphs of one sheet: title, the teacher banner (`banner` replaces the usual one),
 /// the name line, objectives and blocks.
-fn sheet_body(sheet: &Sheet, banner: Option<&str>) -> String {
+fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> String {
     let teacher = sheet.audience == Audience::Teacher;
     let mut body = String::new();
     body.push_str(&para(
@@ -448,6 +620,9 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>) -> String {
                 },
             ));
         }
+        for img in &b.images {
+            docx_image(&mut body, img, teacher, media);
+        }
         for (i, s) in b.steps.iter().enumerate() {
             let text = if s.to_lowercase().starts_with("step") {
                 s.clone()
@@ -550,15 +725,12 @@ fn document(body: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
 <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
-xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><w:body>{body}\
+xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"><w:body>{body}\
 <w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>\
 <w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\" w:header=\"567\" w:footer=\"567\" w:gutter=\"0\"/>\
 </w:sectPr></w:body></w:document>"
     )
-}
-
-fn document_xml(sheet: &Sheet) -> String {
-    document(&sheet_body(sheet, None))
 }
 
 const STYLES_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
@@ -582,6 +754,7 @@ const CONTENT_TYPES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
 <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
 <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+<Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>\
 <Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
 <Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>\
 <Override PartName=\"/docProps/core.xml\" ContentType=\"application/vnd.openxmlformats-package.core-properties+xml\"/>\
@@ -593,10 +766,21 @@ const ROOT_RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"y
 <Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties\" Target=\"docProps/core.xml\"/>\
 </Relationships>";
 
-const DOCUMENT_RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+/// `word/_rels/document.xml.rels`: the styles and every picture.
+fn document_rels(media: &Media<'_>) -> String {
+    let mut rels = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
-<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>\
-</Relationships>";
+<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>",
+    );
+    for (_, rel, file) in &media.files {
+        rels.push_str(&format!(
+            "<Relationship Id=\"{rel}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{file}\"/>"
+        ));
+    }
+    rels.push_str("</Relationships>");
+    rels
+}
 
 fn core_xml(title: &str) -> String {
     format!(
@@ -607,15 +791,15 @@ xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{}</dc:title><dc:creator
     )
 }
 
-/// The DOCX package of a `word/document.xml`.
-fn package(title: &str, document_xml: &str) -> anyhow::Result<Vec<u8>> {
+/// The DOCX package of a `word/document.xml` and its pictures.
+fn package(title: &str, document_xml: &str, media: &Media<'_>) -> anyhow::Result<Vec<u8>> {
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
     let parts: [(&str, String); 5] = [
         ("[Content_Types].xml", CONTENT_TYPES.to_string()),
         ("_rels/.rels", ROOT_RELS.to_string()),
-        ("word/_rels/document.xml.rels", DOCUMENT_RELS.to_string()),
+        ("word/_rels/document.xml.rels", document_rels(media)),
         ("word/styles.xml", STYLES_XML.to_string()),
         ("docProps/core.xml", core_xml(title)),
     ];
@@ -625,11 +809,27 @@ fn package(title: &str, document_xml: &str) -> anyhow::Result<Vec<u8>> {
     }
     zip.start_file("word/document.xml", options)?;
     zip.write_all(document_xml.as_bytes())?;
+    // JPEG is compressed already.
+    let stored =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (id, _, file) in &media.files {
+        if let Some(p) = media.bank.get(id) {
+            zip.start_file(format!("word/media/{file}"), stored)?;
+            zip.write_all(&p.bytes)?;
+        }
+    }
     Ok(zip.finish()?.into_inner())
 }
 
 pub fn docx(sheet: &Sheet) -> anyhow::Result<Vec<u8>> {
-    package(&sheet.title, &document_xml(sheet))
+    docx_with_images(sheet, &ImageBank::new())
+}
+
+/// The DOCX of a sheet with its pictures (a picture missing from `images` prints as a box).
+pub fn docx_with_images(sheet: &Sheet, images: &ImageBank) -> anyhow::Result<Vec<u8>> {
+    let mut media = Media::new(images);
+    let body = sheet_body(sheet, None, &mut media);
+    package(&sheet.title, &document(&body), &media)
 }
 
 // ---------------------------------------------------------------- several parts in one DOCX
@@ -753,6 +953,9 @@ const PAGE_BREAK: &str = "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>";
 /// One DOCX of several parts (a 教學套件: the lesson plan, then the student version of each
 /// level, then the teacher version), each starting on its own page.
 pub fn combined_docx(title: &str, parts: &[Part<'_>]) -> anyhow::Result<Vec<u8>> {
+    // A 教學套件's worksheet is tiered practice, which has no picture slots.
+    let bank = ImageBank::new();
+    let mut media = Media::new(&bank);
     let mut body = String::new();
     body.push_str(&para(
         &[run(title, RunStyle::default())],
@@ -792,17 +995,17 @@ pub fn combined_docx(title: &str, parts: &[Part<'_>]) -> anyhow::Result<Vec<u8>>
                 for l in note {
                     body.push_str(&line_xml(l));
                 }
-                body.push_str(&sheet_body(sheet, banner.as_deref()));
+                body.push_str(&sheet_body(sheet, banner.as_deref(), &mut media));
             }
         }
     }
-    package(title, &document(&body))
+    package(title, &document(&body), &media)
 }
 
 // ================================================================ PDF
 
 use krilla::color::rgb;
-use krilla::geom::{PathBuilder, Point, Rect};
+use krilla::geom::{PathBuilder, Point, Rect, Size, Transform};
 use krilla::num::NormalizedF32;
 use krilla::page::PageSettings;
 use krilla::paint::{Fill, Stroke};
@@ -958,6 +1161,14 @@ enum Op {
         w: f32,
         h: f32,
     },
+    /// A stored picture (by `image_id`), its top-left corner at (x, y).
+    Image {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        id: i64,
+    },
 }
 
 const PAGE_W: f32 = 595.28;
@@ -992,15 +1203,108 @@ struct Layout<'a> {
     fonts: &'a Fonts,
     pages: Vec<Vec<Op>>,
     y: f32,
+    bank: &'a ImageBank,
 }
 
+/// A picture is at most this wide (share of the text width) and tall (points) on the page.
+const PDF_IMAGE_SHARE: f32 = 0.62;
+const PDF_IMAGE_MAX_H: f32 = 210.0;
+/// The empty box of a slot without a picture.
+const PDF_BOX_H: f32 = 110.0;
+
 impl<'a> Layout<'a> {
-    fn new(fonts: &'a Fonts) -> Self {
+    fn new(fonts: &'a Fonts, bank: &'a ImageBank) -> Self {
         Self {
             fonts,
             pages: vec![Vec::new()],
             y: MARGIN,
+            bank,
         }
+    }
+
+    /// One picture of a block, centred: the picture or an empty box (the purpose inside in the
+    /// teacher version), its caption, and in the teacher version a label under a generated one.
+    fn picture(&mut self, img: &SheetImage, teacher: bool) {
+        let max_w = CONTENT_W * PDF_IMAGE_SHARE;
+        let picture = img
+            .image_id
+            .and_then(|id| self.bank.get(&id).map(|p| (id, p.width, p.height)));
+        let caption_h = if img.caption.trim().is_empty() {
+            0.0
+        } else {
+            16.0
+        };
+        self.y += 6.0;
+        match picture {
+            Some((id, pw, ph)) => {
+                let (pw, ph) = (pw.max(1) as f32, ph.max(1) as f32);
+                let mut w = max_w;
+                let mut h = w * ph / pw;
+                if h > PDF_IMAGE_MAX_H {
+                    h = PDF_IMAGE_MAX_H;
+                    w = h * pw / ph;
+                }
+                self.ensure(h + caption_h + 8.0);
+                let x = MARGIN + (CONTENT_W - w) / 2.0;
+                let y = self.y;
+                self.ops().push(Op::Image { x, y, w, h, id });
+                self.y += h + 4.0;
+            }
+            None => {
+                self.ensure(PDF_BOX_H + caption_h + 8.0);
+                let x = MARGIN + (CONTENT_W - max_w) / 2.0;
+                let top = self.y;
+                self.ops().push(Op::Rect {
+                    x,
+                    y: top,
+                    w: max_w,
+                    h: PDF_BOX_H,
+                });
+                let text = placeholder_text(img);
+                if !text.is_empty() {
+                    let style = Style {
+                        size: 10.0,
+                        color: MUTED,
+                        ..Style::body()
+                    };
+                    self.y = top + 8.0;
+                    for line in self
+                        .wrap(&text, style.weight, style.size, max_w - 16.0)
+                        .into_iter()
+                        .take(5)
+                    {
+                        self.draw_line(&line, x + 8.0, style);
+                        self.y += Self::line_height(style.size);
+                    }
+                }
+                self.y = top + PDF_BOX_H + 4.0;
+            }
+        }
+        let centred = |l: &mut Self, text: &str, style: Style| {
+            for line in l.wrap(text, style.weight, style.size, CONTENT_W) {
+                let w = l.fonts.width(style.weight, &line, style.size);
+                l.ensure(Self::line_height(style.size));
+                l.draw_line(&line, MARGIN + (CONTENT_W - w) / 2.0, style);
+                l.y += Self::line_height(style.size);
+            }
+        };
+        if !img.caption.trim().is_empty() {
+            let style = Style {
+                weight: Weight::Italic,
+                size: 10.5,
+                ..Style::body()
+            };
+            centred(self, img.caption.trim(), style);
+        }
+        if teacher && img.ai_generated && picture.is_some() {
+            let style = Style {
+                size: 8.5,
+                color: GOLD,
+                ..Style::body()
+            };
+            centred(self, AI_LABEL, style);
+        }
+        self.y += 4.0;
     }
 
     fn ops(&mut self) -> &mut Vec<Op> {
@@ -1400,6 +1704,9 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
                 },
             );
         }
+        for img in &b.images {
+            l.picture(img, teacher);
+        }
         for (i, s) in b.steps.iter().enumerate() {
             let text = if s.to_lowercase().starts_with("step") {
                 s.clone()
@@ -1498,6 +1805,10 @@ fn printed_text(sheet: &Sheet) -> String {
         );
         out.extend(b.supports.iter().map(|s| s.content.clone()));
         out.extend(b.bloom_summary.iter().cloned());
+        for img in &b.images {
+            out.push(img.caption.clone());
+            out.push(placeholder_text(img));
+        }
         for it in &b.items {
             out.push(it.prompt.clone());
             out.extend(bloom_tag(it));
@@ -1512,6 +1823,12 @@ fn printed_text(sheet: &Sheet) -> String {
 }
 
 pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
+    pdf_with_images(sheet, &ImageBank::new())
+}
+
+/// The PDF of a sheet with its pictures (a picture missing from `images`, or one that cannot be
+/// read, prints as a box).
+pub fn pdf_with_images(sheet: &Sheet, images: &ImageBank) -> Result<Vec<u8>, ExportError> {
     let cjk = cjk_font_data();
     if cjk.is_none() && sheet_has_cjk(sheet) {
         return Err(ExportError::NoCjkFont);
@@ -1525,7 +1842,7 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
             None => None,
         },
     };
-    let mut layout = Layout::new(&fonts);
+    let mut layout = Layout::new(&fonts, images);
     layout_sheet(&mut layout, sheet);
     let total = layout.pages.len();
     let footer = Style {
@@ -1563,6 +1880,8 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
         width,
         ..Default::default()
     };
+    // Every picture is embedded once, however often it is drawn.
+    let mut embedded: HashMap<i64, Option<krilla::image::Image>> = HashMap::new();
     for ops in &layout.pages {
         let settings =
             PageSettings::from_wh(PAGE_W, PAGE_H).ok_or_else(|| anyhow::anyhow!("page size"))?;
@@ -1615,6 +1934,18 @@ pub fn pdf(sheet: &Sheet) -> Result<Vec<u8>, ExportError> {
                         surface.set_fill(None);
                         surface.set_stroke(Some(stroke(RULE, 0.6)));
                         surface.draw_path(&path);
+                    }
+                }
+                Op::Image { x, y, w, h, id } => {
+                    let image = embedded.entry(*id).or_insert_with(|| {
+                        images.get(id).and_then(|p| {
+                            krilla::image::Image::from_jpeg(p.bytes.clone().into(), true).ok()
+                        })
+                    });
+                    if let (Some(image), Some(size)) = (image.clone(), Size::from_wh(*w, *h)) {
+                        surface.push_transform(&Transform::from_translate(*x, *y));
+                        surface.draw_image(image, size);
+                        surface.pop();
                     }
                 }
             }
@@ -1688,6 +2019,7 @@ mod tests {
                     .collect(),
                 teacher_notes: teacher.then(|| "先找出關鍵句再推論。".to_string()),
                 bloom_summary: None,
+                images: Vec::new(),
             }],
         }
     }
@@ -1828,7 +2160,8 @@ mod tests {
             italic: Face::new(LIBERTINUS_ITALIC).unwrap(),
             cjk: None,
         };
-        let l = Layout::new(&fonts);
+        let bank = ImageBank::new();
+        let l = Layout::new(&fonts, &bank);
         let text = "one two three four five six seven eight nine ten eleven twelve";
         let lines = l.wrap(text, Weight::Regular, 12.0, 120.0);
         assert!(lines.len() > 1);
@@ -1844,6 +2177,128 @@ mod tests {
             zh.concat(),
             "先找出關鍵句再推論先找出關鍵句再推論先找出關鍵句再推論"
         );
+    }
+
+    /// A JPEG of `w`×`h`, as the server stores pictures.
+    fn jpeg(w: u32, h: u32) -> Vec<u8> {
+        let png = {
+            let image = image::RgbImage::from_pixel(w, h, image::Rgb([200, 120, 40]));
+            let mut out = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgb8(image)
+                .write_to(&mut out, image::ImageFormat::Png)
+                .unwrap();
+            out.into_inner()
+        };
+        crate::worksheet::images::normalize(&png).unwrap().bytes
+    }
+
+    fn picture(image_id: Option<i64>, teacher: bool) -> SheetImage {
+        SheetImage {
+            slot_id: format!("b1-p{}", image_id.unwrap_or(9)),
+            status: if image_id.is_some() { "done" } else { "failed" }.into(),
+            image_id,
+            width: image_id.map(|_| 300),
+            height: image_id.map(|_| 200),
+            alt: "A girl & an umbrella".into(),
+            caption: "Look at the umbrella.".into(),
+            ai_generated: image_id.is_some(),
+            purpose: teacher.then(|| "幫助學生想像情境".to_string()),
+            message: None,
+        }
+    }
+
+    fn with_pictures(audience: Audience) -> Sheet {
+        let teacher = audience == Audience::Teacher;
+        let mut s = sheet(audience);
+        s.blocks[0].images = vec![picture(Some(7), teacher), picture(None, teacher)];
+        s
+    }
+
+    #[test]
+    fn docx_embeds_pictures_and_prints_boxes_for_the_missing_ones() {
+        let bank = ImageBank::from([(
+            7,
+            ExportImage {
+                bytes: jpeg(300, 200),
+                width: 300,
+                height: 200,
+            },
+        )]);
+        let bytes = docx_with_images(&with_pictures(Audience::Teacher), &bank).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone())).unwrap();
+        let mut media = Vec::new();
+        std::io::Read::read_to_end(
+            &mut zip.by_name("word/media/image1.jpeg").unwrap(),
+            &mut media,
+        )
+        .unwrap();
+        assert_eq!(media, bank[&7].bytes);
+        let mut rels = String::new();
+        std::io::Read::read_to_string(
+            &mut zip.by_name("word/_rels/document.xml.rels").unwrap(),
+            &mut rels,
+        )
+        .unwrap();
+        assert!(rels.contains("Id=\"rIdImg1\"") && rels.contains("Target=\"media/image1.jpeg\""));
+        let mut types = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("[Content_Types].xml").unwrap(), &mut types)
+            .unwrap();
+        assert!(types.contains("Extension=\"jpeg\""));
+        let xml = document(bytes);
+        assert!(xml.contains("xmlns:wp="));
+        assert!(xml.contains("<a:blip r:embed=\"rIdImg1\"/>"));
+        // 4.2 in wide, aspect kept: 3:2.
+        assert!(
+            xml.contains("<wp:extent cx=\"3840480\" cy=\"2560320\"/>"),
+            "{xml}"
+        );
+        assert!(xml.contains("descr=\"A girl &amp; an umbrella\""));
+        assert!(xml.contains("Look at the umbrella."));
+        assert!(xml.contains(AI_LABEL));
+        // The picture that is not there: an empty box with the purpose (teacher version).
+        assert!(xml.contains("請放一張圖：幫助學生想像情境"));
+        assert!(xml.contains("<w:trHeight w:val=\"2600\" w:hRule=\"exact\"/>"));
+        assert!(xml.contains("w:val=\"dashed\""));
+
+        // Student version: the picture and its caption, an empty box, no purpose, no label.
+        let student = document(docx_with_images(&with_pictures(Audience::Student), &bank).unwrap());
+        assert!(student.contains("rIdImg1") && student.contains("Look at the umbrella."));
+        assert!(!student.contains("請放一張圖") && !student.contains(AI_LABEL));
+        // Without the bytes, both print as boxes and nothing is embedded.
+        let none = docx_with_images(&with_pictures(Audience::Student), &ImageBank::new()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(none)).unwrap();
+        assert!(zip.by_name("word/media/image1.jpeg").is_err());
+        // A sheet without pictures is what it was.
+        assert!(!document(docx(&sheet(Audience::Student)).unwrap()).contains("w:drawing"));
+    }
+
+    #[test]
+    fn pdf_embeds_pictures() {
+        let bank = ImageBank::from([(
+            7,
+            ExportImage {
+                bytes: jpeg(300, 200),
+                width: 300,
+                height: 200,
+            },
+        )]);
+        let student = with_pictures(Audience::Student);
+        let with = pdf_with_images(&student, &bank).unwrap();
+        let without = pdf_with_images(&student, &ImageBank::new()).unwrap();
+        assert!(with.starts_with(b"%PDF-"));
+        let has_image = |pdf: &[u8]| {
+            pdf.windows(13)
+                .any(|w| w == b"/Subtype /Ima" || w == b"/Subtype/Imag")
+        };
+        assert!(has_image(&with), "an image XObject");
+        assert!(!has_image(&without));
+        assert!(with.len() > without.len());
+        // The teacher version prints the purpose (Chinese): it needs the CJK font.
+        match pdf_with_images(&with_pictures(Audience::Teacher), &bank) {
+            Ok(b) => assert!(b.starts_with(b"%PDF-")),
+            Err(ExportError::NoCjkFont) => assert!(!pdf_supports_cjk()),
+            Err(e) => panic!("{e}"),
+        }
     }
 
     #[test]

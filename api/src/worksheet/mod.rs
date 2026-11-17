@@ -14,6 +14,7 @@ pub mod checks;
 pub mod comments;
 pub mod export;
 pub mod fake;
+pub mod images;
 pub mod material;
 pub mod revise;
 pub mod schemas;
@@ -627,6 +628,11 @@ pub struct Block {
     /// The Bloom level this block was generated for (閱讀理解題／分層練習): regenerating the
     /// block re-runs that level.
     pub bloom: Option<Bloom>,
+    /// Pictures that belong in this block (written by the model that wrote the block, at most
+    /// two; their pictures live in `worksheet_images`). Optional and kept by every edit that
+    /// copies the block; absent from the JSON when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub image_slots: Vec<images::ImageSlot>,
 }
 
 impl Default for Block {
@@ -650,6 +656,7 @@ impl Default for Block {
             sop_block_id: None,
             template_section_id: None,
             bloom: None,
+            image_slots: Vec::new(),
         }
     }
 }
@@ -736,6 +743,10 @@ impl Content {
                 .iter()
                 .flat_map(|b| b.items.iter().map(|i| i.id.as_str())),
         )?;
+        let mut slot_ids = HashSet::new();
+        for b in &self.blocks {
+            images::check_block_slots(b, &mut slot_ids)?;
+        }
         let all_tasks = student_tasks();
         for b in &mut self.blocks {
             if b.items.len() > MAX_ITEMS

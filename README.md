@@ -72,6 +72,28 @@ cd web && pnpm install && pnpm dev
 
 設定有誤（例如 `OCR_PROVIDER=openai_compatible` 卻沒有任何閘道網址）只會關掉 OCR 並在日誌警告，不會讓後端起不來。
 
+### 學習單的圖片（OpenAI GPT Image）
+
+學習單（尤其「照我的學習單做」）的區塊可以有圖：寫區塊的文字模型同時寫出「這裡需要什麼圖」，伺服器在區塊通過檢查後用 OpenAI 的 Image API 產圖，存進教材檔案儲存（MinIO），顯示在學習單、DOCX 與 PDF；老師可以逐張重畫、換成自己的圖或拿掉。細節見 `docs/API.md`「學習單的圖片」。**預設關閉**：`docker-compose.yml` 傳 `IMAGE_PROVIDER=none`，關閉時送給文字模型的請求與以前完全相同。要開啟，請主持人在 Coolify 設 `IMAGE_PROVIDER=openai` 與 `OPENAI_API_KEY` 後重新部署。
+
+- 使用 GPT Image 模型前，OpenAI 可能要求帳號先完成 **API Organization Verification**（由帳號負責人在 OpenAI 後台做證件驗證）；沒驗證時產圖會回 403，老師看到「產圖服務暫時無法使用（HTTP 403）」。
+- 開啟後，老師的教材內容衍生的畫面描述會送到境外（OpenAI）；「真實教師資料不能送國外」的限制目前由主持人決定暫不適用，正式上線前要確認同意書。
+
+| 變數 | 說明 |
+|---|---|
+| `IMAGE_PROVIDER` | `none`（預設）、`openai`、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
+| `OPENAI_API_KEY` | OpenAI 金鑰（只設在 Coolify；`openai` 沒有金鑰時圖片關閉並在日誌警告） |
+| `IMAGE_BASE_URL` | 預設 `https://api.openai.com/v1` |
+| `IMAGE_MODEL` | 預設 `gpt-image-2.5-flare`（模型汰換很快，所以做成變數） |
+| `IMAGE_QUALITY` | `low`、`medium`（預設）、`high`、`xhigh`、`max`、`auto` |
+| `IMAGE_SIZE` | 預設 `1536x1024`；`auto` 或 `寬x高`（邊長為 16 的倍數、最長 3840、長寬比不超過 3:1） |
+| `IMAGE_TIMEOUT_SECS` | 每一張的時限，預設 `180`（官方說複雜的圖最多約 2 分鐘；逾時不重試，避免重複計費） |
+| `IMAGE_CONCURRENCY` | 全站同時產圖的張數，預設 `2` |
+| `IMAGE_MAX_PER_WORKSHEET` | 每份學習單自動產生的圖最多幾張，預設 `6`（其餘留空框，老師可按「重畫」或上傳） |
+| `IMAGE_MAX_REGENERATIONS` | 每份學習單老師最多「重畫」幾次，預設 `10` |
+
+設定有誤（例如 `IMAGE_QUALITY=ultra`、`IMAGE_SIZE=1000x1000`）只會關掉產圖並在日誌警告，不會讓後端起不來。金鑰不會出現在日誌。
+
 ## 教材檔案儲存（Phase 2.2）
 
 教材原檔（PDF、DOCX、圖片、影音）存在 S3 相容的物件儲存（正式環境用 MinIO）；本機開發與測試存在本機資料夾。瀏覽器從不直接連到儲存空間，下載與預覽一律經過後端並檢查擁有者。

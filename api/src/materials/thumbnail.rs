@@ -167,7 +167,7 @@ pub fn shrink(data: &[u8]) -> image::ImageResult<Vec<u8>> {
 }
 
 /// JPEG has no transparency: transparent pixels become white, not black.
-fn on_white(image: &DynamicImage) -> DynamicImage {
+pub(crate) fn on_white(image: &DynamicImage) -> DynamicImage {
     if !image.color().has_alpha() {
         return DynamicImage::ImageRgb8(image.to_rgb8());
     }

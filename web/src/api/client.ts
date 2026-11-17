@@ -92,6 +92,7 @@ import type {
   SaveWorksheetRequest,
   SopSyncPreview,
   SopSyncResult,
+  WorksheetImages,
   WorksheetState,
   WorksheetSummary,
   WsExportQuery,
@@ -465,6 +466,28 @@ export const api = {
   /** 學生版／教師版的投影（唯讀預覽用）；不給 level 時伺服器用第一個版本 */
   worksheetSheet: (id: number, audience: WsAudience, level?: WsLevel) =>
     get<WsSheet>(`/worksheets/${id}/sheet`, { level, audience }),
+  /** 學習單的圖片：各圖片位置目前的圖 */
+  worksheetImages: (id: number) => get<WorksheetImages>(`/worksheets/${id}/images`),
+  /** 一張存好的圖（JPEG；帶老師的權杖） */
+  worksheetImage: (id: number, imageId: number) =>
+    download(`/worksheets/${id}/images/${imageId}`, {}, "picture.jpg").then((r) => r.blob),
+  /** 重畫（可附一句說明，≤200 字）→ 202 */
+  regenerateWorksheetImage: (id: number, slotId: string, hint?: string) =>
+    post<WorksheetImages>(
+      `/worksheets/${id}/image-slots/${encodeURIComponent(slotId)}/regenerate`,
+      hint?.trim() ? { hint: hint.trim() } : {},
+    ),
+  /** 換成我的圖（png、jpg、webp、gif） */
+  uploadWorksheetImage: (id: number, slotId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<WorksheetImages>("POST", `/worksheets/${id}/image-slots/${encodeURIComponent(slotId)}/upload`, {
+      form,
+    });
+  },
+  /** 拿掉這張圖 */
+  removeWorksheetImage: (id: number, slotId: string) =>
+    del<WorksheetImages>(`/worksheets/${id}/image-slots/${encodeURIComponent(slotId)}`),
   worksheetVersions: (id: number) => get<WsVersionRow[]>(`/worksheets/${id}/versions`),
   exportWorksheet: (id: number, query: WsExportQuery) =>
     download(`/worksheets/${id}/export`, { ...query }, `worksheet.${query.format}`),

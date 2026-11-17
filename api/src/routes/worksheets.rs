@@ -3,10 +3,13 @@
 //! vocabulary check and DOCX / PDF export. Every worksheet belongs to one teacher; anything else
 //! is a 404.
 
-use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
-use axum::http::StatusCode;
+use axum::body::{Body, Bytes};
+use axum::extract::{Multipart, State};
+use axum::http::header::{
+    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE,
+    ETAG, IF_NONE_MATCH, VARY, X_CONTENT_TYPE_OPTIONS,
+};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -23,6 +26,7 @@ use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::worksheet::ai::{self as ws_ai, Job, RunInput};
 use crate::worksheet::assemble::{project, Sheet};
 use crate::worksheet::export::{self, ExportError};
+use crate::worksheet::images::{self, WorksheetImages};
 use crate::worksheet::material::{SOURCE_LESSON_SOP, SOURCE_LIBRARY, SOURCE_PASTED};
 use crate::worksheet::store::{self, Summary, Worksheet};
 use crate::worksheet::sync::{self, Preview};
@@ -71,6 +75,8 @@ pub struct WorksheetState {
     pub template: Option<TemplateRef>,
     /// 「教師的要求」 ("" when none).
     pub request: String,
+    /// The pictures of the blocks' slots (docs/API.md「學習單的圖片」).
+    pub images: WorksheetImages,
 }
 
 /// Most characters of 「教師的要求」.
@@ -167,6 +173,7 @@ pub(crate) async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetSt
         suggested: ws.suggested,
         brief: ws.brief,
         request: ws.request,
+        images: images::states(state, id).await?,
     })
 }
 
@@ -835,6 +842,19 @@ fn sheet_for(ws: &Worksheet, content: &Content, q: &SheetQuery) -> AppResult<She
     Ok(project(&ws.title, content, level, audience))
 }
 
+/// The projected sheet with its pictures (or their empty boxes).
+async fn sheet_with_images(
+    state: &AppState,
+    ws: &Worksheet,
+    content: &Content,
+    q: &SheetQuery,
+) -> AppResult<Sheet> {
+    let mut sheet = sheet_for(ws, content, q)?;
+    let slots = images::states(state, ws.id).await?.slots;
+    images::decorate(&mut sheet, content, &slots);
+    Ok(sheet)
+}
+
 pub async fn sheet(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -843,7 +863,7 @@ pub async fn sheet(
 ) -> AppResult<Json<Sheet>> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
     let content = store::latest(&state.db, id).await?.content;
-    Ok(Json(sheet_for(&ws, &content, &q)?))
+    Ok(Json(sheet_with_images(&state, &ws, &content, &q).await?))
 }
 
 pub async fn versions(
@@ -864,18 +884,25 @@ pub async fn export(
     let db = &state.db;
     let ws = store::owned(db, id, teacher.id()).await?;
     let latest = store::latest(db, id).await?;
-    let sheet = sheet_for(&ws, &latest.content, &q)?;
     let format = q.format.as_deref().unwrap_or("docx");
+    if !matches!(format, "docx" | "pdf") {
+        return Err(AppError::bad_request("format 需為 docx 或 pdf。"));
+    }
+    let sheet = sheet_with_images(&state, &ws, &latest.content, &q).await?;
+    let bank = images::bank_for(&state, id, &sheet).await?;
+    let pictures = sheet.blocks.iter().map(|b| b.images.len()).sum::<usize>();
+    let embedded = bank.len();
     let (level, audience) = (sheet.level, sheet.audience);
     let (bytes, content_type, extension) = match format {
         "docx" => {
-            let bytes = tokio::task::spawn_blocking(move || export::docx(&sheet))
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
+            let bytes =
+                tokio::task::spawn_blocking(move || export::docx_with_images(&sheet, &bank))
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
             (bytes, export::DOCX_TYPE, "docx")
         }
         "pdf" => {
-            let made = tokio::task::spawn_blocking(move || export::pdf(&sheet))
+            let made = tokio::task::spawn_blocking(move || export::pdf_with_images(&sheet, &bank))
                 .await
                 .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
             match made {
@@ -907,6 +934,7 @@ pub async fn export(
         json!({
             "worksheet_id": id, "version_no": latest.version_no, "format": format,
             "level": level, "audience": audience, "bytes": bytes.len(),
+            "pictures": pictures, "pictures_embedded": embedded,
         }),
     )
     .await?;
@@ -918,6 +946,139 @@ pub async fn export(
         bytes,
     )
         .into_response())
+}
+
+// ---------------------------------------------------------------- pictures
+
+/// `GET /api/worksheets/:id/images`: the pictures of the slots (polled while some are made).
+pub async fn images_state(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<WorksheetImages>> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    Ok(Json(images::states(&state, id).await?))
+}
+
+/// How long a browser keeps a picture before asking again (`If-None-Match`). A picture never
+/// changes: a new one has a new id.
+const IMAGE_MAX_AGE_SECS: u32 = 3600;
+
+/// `GET /api/worksheets/:id/images/:image_id`: one stored picture (JPEG) of the teacher's own
+/// worksheet. ETag = its SHA-256; `Cache-Control: private`; `Vary: Authorization`.
+pub async fn image_file(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, image_id)): ApiPath<(i64, i64)>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    let (key, sha) = images::stored(&state.db, id, image_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("找不到這張圖。"))?;
+    let etag = format!("\"{sha}\"");
+    let response = Response::builder()
+        .header(
+            CACHE_CONTROL,
+            format!("private, max-age={IMAGE_MAX_AGE_SECS}"),
+        )
+        .header(ETAG, &etag)
+        .header(VARY, "Authorization");
+    let fresh = crate::routes::library::etag_matches(
+        headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()),
+        &etag,
+    );
+    if fresh {
+        return response
+            .status(StatusCode::NOT_MODIFIED)
+            .body(Body::empty())
+            .map_err(|e| AppError::Internal(e.into()));
+    }
+    let bytes = images::bytes_of(&state, &key).await?;
+    response
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, images::MIME)
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox")
+        .body(Body::from(bytes))
+        .map_err(|e| AppError::Internal(e.into()))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RegenerateImage {
+    /// The teacher's note (≤200), e.g. 「改成晴天」.
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+/// `POST /api/worksheets/:id/image-slots/:slot_id/regenerate` (「重畫」) → 202 with the pictures.
+pub async fn regenerate_image(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, slot_id)): ApiPath<(i64, String)>,
+    ApiJson(req): ApiJson<RegenerateImage>,
+) -> AppResult<(StatusCode, Json<WorksheetImages>)> {
+    let ws = store::owned(&state.db, id, teacher.id()).await?;
+    images::regenerate(&state, &ws, &slot_id, req.hint.as_deref()).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(images::states(&state, id).await?),
+    ))
+}
+
+/// `POST /api/worksheets/:id/image-slots/:slot_id/upload` (「換成我的圖」): multipart `file`, a
+/// png / jpg / webp / gif within the upload limit for pictures.
+pub async fn upload_image(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, slot_id)): ApiPath<(i64, String)>,
+    mut form: Multipart,
+) -> AppResult<Json<WorksheetImages>> {
+    let ws = store::owned(&state.db, id, teacher.id()).await?;
+    if state.storage.is_none() {
+        return Err(material_store::storage_missing());
+    }
+    // Uploads are buffered: only a few at a time (the others wait their turn).
+    let _slot = state
+        .upload_slots
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("upload slots closed: {e}")))?;
+    let bad_form = |e: axum::extract::multipart::MultipartError| {
+        AppError::bad_request(format!("上傳的內容讀不出來：{}", e.body_text()))
+    };
+    let mut file: Option<(String, Bytes)> = None;
+    while let Some(mut field) = form.next_field().await.map_err(bad_form)? {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let is_image = crate::materials::file_type_for_name(field.file_name().unwrap_or_default())
+            .is_some_and(|t| t.kind == crate::materials::Kind::Image);
+        if !is_image {
+            return Err(AppError::bad_request(
+                "只能上傳圖片（.png、.jpg、.webp、.gif）。",
+            ));
+        }
+        file = Some(crate::routes::library::read_file_field(&mut field).await?);
+    }
+    let Some((filename, data)) = file else {
+        return Err(AppError::bad_request("請選擇要上傳的圖片。"));
+    };
+    images::replace_with_upload(&state, &ws, &slot_id, &filename, data).await?;
+    Ok(Json(images::states(&state, id).await?))
+}
+
+/// `DELETE /api/worksheets/:id/image-slots/:slot_id` (「拿掉」).
+pub async fn remove_image(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, slot_id)): ApiPath<(i64, String)>,
+) -> AppResult<Json<WorksheetImages>> {
+    let ws = store::owned(&state.db, id, teacher.id()).await?;
+    images::remove(&state, &ws, &slot_id).await?;
+    Ok(Json(images::states(&state, id).await?))
 }
 
 // ---------------------------------------------------------------- lesson link and sync

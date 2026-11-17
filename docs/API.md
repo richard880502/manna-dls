@@ -2320,6 +2320,193 @@ interface PrepTurn {
 - 資料（`0018_ocr.sql`）：`materials.text_source`、`ocr_status`、`ocr_done_pages`、`ocr_total_pages`、`ocr_error`、`ocr_pages`、`ocr_started_at`，以及開放中工作的部分索引。
 - 程式進入點：`materials::ocr`（`poor_text`、`wants_auto`、`check_idle`、`start_manual`、`recover`、`backfill_platform`）、`materials::ocr::job`（背景工作）、`materials::ocr::html`（HTML → 區塊／段落）、`materials::ocr::render`（`pdftoppm`、圖片）；範本等 OCR：`worksheet::template::extract::spawn_after_ocr`。
 
+# 學習單的圖片
+
+以下為**新增**；既有端點只多了回應欄位。Migration `0021_worksheet_images.sql`。設計見 `docs/WORKSHEET_BLOCK_EDIT_RESEARCH.md` §6（本期做的是 §10 的第 2 期：圖片位置＋OpenAI 產圖；第 3 期「從範例裁圖」還沒做，見最後）。
+
+學習單（一般學習單與「照我的學習單做」）的區塊可以有圖。寫區塊的文字模型在同一次結構化輸出裡多寫 `image_slots`：這裡需要什麼圖、替代文字、圖說。區塊通過檢查並存檔後，伺服器在背景用 OpenAI 的 Image API 產圖（固定的風格前綴，圖裡不放字），存進教材檔案儲存，顯示在學習單、DOCX 與 PDF。產不出來或不該產的位置印成空框，教師版寫明這張圖的用途。老師可以逐張「重畫」（可附一句說明）、「換成我的圖」或「拿掉」。
+
+## 設定（環境變數，README「學習單的圖片」）
+
+| 變數 | 說明 |
+|---|---|
+| `IMAGE_PROVIDER` | `none`（預設；`docker-compose.yml` 也傳 `none`，主持人在 Coolify 設定後才開啟）、`openai`、`fake`（測試；`AI_PROVIDER=fake` 且沒設這個變數時的預設） |
+| `OPENAI_API_KEY` | `openai` 必填；沒有時圖片關閉並警告 |
+| `IMAGE_BASE_URL` | 預設 `https://api.openai.com/v1`；必須是 http(s) |
+| `IMAGE_MODEL` | 預設 `gpt-image-2.5-flare` |
+| `IMAGE_QUALITY` | `low`／`medium`（預設）／`high`／`xhigh`／`max`／`auto`（`xhigh`、`max` 只有 2.5／2.6 系列） |
+| `IMAGE_SIZE` | 預設 `1536x1024`；`auto` 或 `寬x高`，兩邊都是 16 的倍數、16–3840、長寬比 1:3 到 3:1 |
+| `IMAGE_TIMEOUT_SECS` | 預設 180 |
+| `IMAGE_CONCURRENCY` | 全站同時產圖的張數（全域 semaphore），預設 2 |
+| `IMAGE_MAX_PER_WORKSHEET` | 每份學習單自動產生的圖最多幾張（依學習單順序），預設 6；`0` 表示一律不自動產圖 |
+| `IMAGE_MAX_REGENERATIONS` | 每份學習單「重畫」的次數上限（所有圖合計），預設 10 |
+
+設定有誤只會關掉圖片並在啟動日誌警告。`ImageConfig` 的 `Debug` 不印金鑰；錯誤只帶 HTTP 狀態（被擋下時另帶 OpenAI 的固定錯誤碼 `moderation_blocked`），不帶回應內容或網址。
+
+**圖片關閉時什麼都不變**：送給文字模型的請求不含 `image_slots` 與圖片規則（閘道快取與以前相同），學習單沒有圖片位置。
+
+## OpenAI Image API（依官方文件，2026-11-17 查核）
+
+- 端點 `POST {IMAGE_BASE_URL}/images/generations`，`Authorization: Bearer {OPENAI_API_KEY}`。
+- 送出：`{"model","prompt","n":1,"size","quality","output_format":"jpeg","output_compression":90,"moderation":"auto","safety_identifier"}`。
+  - GPT Image 模型一律回傳 base64：`data[0].b64_json`；`response_format`、`url`、`style` 對它們不支援，所以不送。
+  - `gpt-image-2.5-flare` 接受：`background`（`transparent`／`opaque`／`auto`）、`quality` 到 `xhigh`／`max`、任意合規的 `寬x高`、`output_format` `png`／`webp`／`jpeg`（另有需另外開通的 `gif`、`svg`）、`output_compression`（jpeg／webp）、`moderation` `auto`／`low`、`n` 1–10、`stream`／`partial_images`、`safety_identifier`（≤128 字）。我們固定用 JPEG（Word 與 PDF 都能放，官方也說比 PNG 快）、`moderation: auto`（不用 `low`）。
+  - `safety_identifier` 是教師 id 的 SHA-256 雜湊（`manna-teacher:<id>`），不是姓名或研究編號。
+- 回應：`{ created, data: [{ b64_json, generation_id }], usage: { input_tokens, input_tokens_details: { image_tokens, text_tokens }, output_tokens, output_tokens_details: { image_tokens, text_tokens }, total_tokens } }`（`generation_id` 與 `usage` 的形狀依主持人以正式金鑰實測：1024x1024、low 的一張 PNG 約 1.29 MB 的 base64，usage 20／196／216 tokens；當時沒有被組織驗證擋下）。`usage` 只記數字。
+- 被安全機制擋下：`error.type = "image_generation_user_error"`、`error.code = "moderation_blocked"`（可能附 `moderation_details`）。只看 `code`，不重試，給老師一般性的說明；`moderation_details` 不記錄（錯誤內容一律不留）。
+- 重試：429、5xx、連線中斷各重試一次（間隔 2 秒）；**逾時不重試**（官方說複雜的圖最多約 2 分鐘，逾時的那張可能已經計費）。
+- 官方指南：使用 GPT Image 模型前，組織「may need to complete the API Organization Verification」；沒驗證會回 403（老師看到「產圖服務暫時無法使用（HTTP 403）」）。
+
+## 圖片位置（`image_slots`）
+
+```ts
+interface WsBlock {
+  /* …既有欄位… */
+  image_slots?: WsImageSlot[];     // 最多 2 個；沒有時 JSON 裡沒有這個欄位
+}
+
+interface WsImageSlot {
+  id: string;                      // 伺服器給的，整份學習單唯一：r1b2-p1；重新產生的區塊換新 id（r1b2-r3p1）
+  kind: "scene" | "object" | "icon" | "photo_needed";
+  purpose_zh: string;              // ≤80，給老師看：這張圖在這裡做什麼
+  prompt_en: string;               // ≤300，給產圖模型：只描述畫面
+  alt_en: string;                  // ≤120，替代文字
+  caption: string;                 // ≤80，印在圖下方（"" 表示沒有）；字放這裡，不畫在圖裡
+}
+```
+
+- **誰寫**：圖片開啟時，
+  - 一般學習單的逐段任務步驟（`worksheet_tasks`）：每個區塊最多 1 個（一次呼叫寫全部區塊，輸出預算有限），schema 放在 `items` 之後；
+  - 照版型產生（`worksheet_template_section`，「照我的學習單做」）：每個區塊最多 2 個，放在最後（先寫區塊，再寫需要的圖）。版型的來源範例是掃描檔、OCR 數到圖（`materials.ocr_pages[].pictures`）時，規則多一行告訴模型範例裡有幾張圖。需要教師自己素材的區塊（`needs_external_material`）通常不會要圖，假模型也不給；
+  - 暖身、Exit ticket、閱讀理解題／分層練習、備課對話的「改學習單」不寫圖片位置（改學習單會保留區塊原本的圖片位置）。
+- **schema**：每個字串有 `maxLength`、陣列有 `maxItems`，屬性依寫出順序（`kind` 在前，先決定是不是 `photo_needed`），`kind` 是 enum。圖片規則（prompt key `worksheet_image_slots`，可在管理頁改）以「圖片位置：…」附在 user 訊息後。
+- **伺服器清理**（`images::clean_slots`，不會因此多一次修正呼叫）：字串截到上限；寫了網址或 e-mail 的拿掉；沒有畫面描述的拿掉（`photo_needed` 除外）；重複的拿掉；超過上限的只留前面；`alt_en`／`purpose_zh` 空的由其他欄位補。**需要真實照片的改成 `photo_needed`**：提到地圖、國旗、肖像、名人、總統、國王、歷史、戰爭、地標、紀念碑、商標、品牌、照片，或出現連續兩個大寫開頭的字（`Eiffel Tower`、`Taylor Swift`；`Mrs. Lin` 這種有句點的稱謂不算）。`photo_needed` **從不產圖**，只留空框請老師放。
+- **存檔**：`PUT /api/worksheets/:id` 送回的 `image_slots` 照樣檢查：每區最多 2 個、id 1–40 字元且整份唯一、各欄位不超過上限、`kind` 只能是四個值之一，否則 400。編輯器的存檔會原樣送回；老師改區塊、搬移、逐區修改都會保留。
+- **重新產生區塊**：圖片開啟時，新區塊用模型新寫的位置（新 id，所以會產新圖；舊圖還在，按「復原上一版」就回來）；圖片關閉時保留原本的位置與圖。
+
+## 產圖
+
+1. 學習單或單一區塊產生完、存檔後（`cause = generate`／`regenerate`），伺服器依學習單順序看每個啟用區塊的圖片位置；從沒有圖片紀錄的位置各新增一筆（`images::enqueue`）：
+   - `photo_needed` → `skipped`（「這裡需要真實、準確的照片…請上傳一張。」）；
+   - 圖片關閉 → `skipped`；沒有檔案儲存 → `skipped`；
+   - 這份學習單自動產生的圖已達 `IMAGE_MAX_PER_WORKSHEET` → `skipped`（「…已經到上限；這一張可以按「重畫」，或上傳自己的圖。」）；
+   - 其他 → `queued`，開一個背景工作。
+2. 背景工作（`images::job`）：等全站的產圖名額（`IMAGE_CONCURRENCY`）→ `running`。工作開始時這個位置已不在學習單上（區塊被重新產生了）就 `skipped`，不呼叫模型。
+3. 提示 = 固定風格前綴（prompt key `image_style` 的 system_text）＋ user_template（`Picture: {{description}}{{teacher_note}}`）：
+   > Simple flat vector illustration for a Taiwanese senior-high English worksheet. Clean outlines, soft limited palette, plain white background, one clear subject, classroom-appropriate. No text, letters, numbers, labels, logos, watermarks or brand names anywhere in the picture. No real or famous people.
+
+   重畫時老師的說明附在後面（`Teacher's note: …`）。每張圖記下用的是第幾版風格。
+4. 解碼後重新編碼：轉正、最長邊縮到 1536 px、透明處變白、存成 JPEG（品質 85），去掉 EXIF 等所有中繼資料；存到 `worksheet-images/w<學習單>/<圖片 id>-<亂數>.jpg`。
+5. 失敗（逾時、HTTP 錯誤、被擋下、讀不出圖、存不進去）→ `failed`，`message` 是給老師的一句話；學習單印空框。
+
+## 型別
+
+```ts
+type WsImageStatus = "queued" | "running" | "done" | "failed" | "skipped" | "removed";
+
+interface WsSlotImage {             // 一個圖片位置目前的圖
+  slot_id: string;
+  block_id: string;
+  status: WsImageStatus;            // skipped：沒有送去產圖；removed：老師拿掉了
+  source: "generated" | "upload" | "none";
+  image_id: number | null;          // done 時才有
+  width: number | null;             // 存好的 JPEG 的像素
+  height: number | null;
+  message: string | null;           // 為什麼沒有圖（給老師看）
+  updated_at: string;
+}
+
+interface WorksheetImages {
+  enabled: boolean;                 // 這個環境有沒有開 AI 產圖
+  regenerations_left: number;
+  slots: WsSlotImage[];             // 只有有紀錄的位置；沒有紀錄的位置視為空框
+}
+
+interface WorksheetState {
+  /* …既有欄位… */
+  images: WorksheetImages;
+}
+
+interface WsSheetBlock {            // GET /sheet 的投影
+  /* …既有欄位… */
+  images?: WsSheetImage[];          // 印在作答指示之後；沒有時沒有這個欄位
+}
+
+interface WsSheetImage {
+  slot_id: string;
+  status: Exclude<WsImageStatus, "removed">;   // 拿掉的不印
+  image_id: number | null;
+  width: number | null;
+  height: number | null;
+  alt: string;
+  caption: string;
+  ai_generated: boolean;
+  purpose?: string;                 // 只有教師版
+  message?: string | null;          // 只有教師版
+}
+```
+
+## 端點（都只限學習單的擁有者；別人的 → 404，未登入 → 401）
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/worksheets/:id/images` | – | `WorksheetImages`（產圖中時前端每 2 秒問一次） |
+| GET | `/api/worksheets/:id/images/:image_id` | Bearer 權杖（`If-None-Match` 選填） | 200 `image/jpeg`；304。`ETag` 是圖的 SHA-256，`Cache-Control: private, max-age=3600`，`Vary: Authorization`，`X-Content-Type-Options: nosniff`。舊的（被換掉的）圖也讀得到 |
+| POST | `/api/worksheets/:id/image-slots/:slot_id/regenerate` | `{ hint?: string }`（≤200 字，不能有網址） | 202 `WorksheetImages`（這個位置 `queued`） |
+| POST | `/api/worksheets/:id/image-slots/:slot_id/upload` | `multipart/form-data`，欄位 `file`：png、jpg、webp、gif，≤10 MB（與教材圖片相同的檔頭檢查） | 200 `WorksheetImages`（`done`，`source = "upload"`） |
+| DELETE | `/api/worksheets/:id/image-slots/:slot_id` | – | 200 `WorksheetImages`（`removed`） |
+
+- **重畫**：圖片關閉 → 503；沒有檔案儲存 → 503；沒有這個位置 → 404；`photo_needed` → 400（「這個位置需要真實照片…」）；這張正在產生 → 409；這份學習單的重畫次數用完 → 409（「…已經重畫 10 次，到上限了；可以上傳自己的圖。」）。自動產生時因上限被略過的位置也可以重畫（算在重畫次數裡）。
+- **換成我的圖**：不是圖片 → 400；檔頭與副檔名不符或讀不出來 → 400；沒有檔案儲存 → 503。上傳的圖同樣轉成 JPEG（最長邊 1536 px，去掉中繼資料）。這張正在產生時直接取代（產圖工作在下一次寫入時停下）。
+- **拿掉**：這個位置不再印出；重畫或上傳就會回來。
+- 這三個動作都只動那一張圖，**不會產生新的學習單版本**，也不受「Manna 正在產生這份學習單」的限制。每次都新增一筆紀錄成為目前的圖，舊的保留。
+- `GET /api/worksheets/:id`、`/sheet`、`/export` 讀取時，開始超過 `IMAGE_TIMEOUT_SECS × 2 + 120` 秒、這個程序也沒有在做的產圖改成 `failed`（「產圖中斷了…」）。
+
+## 學習單與匯出
+
+- `GET /api/worksheets/:id/sheet`：每一區的 `images` 依區塊裡的圖片位置排列，`done` 的帶 `image_id`，其他是空框；拿掉的不列。
+- **DOCX**：圖放在作答指示之後，置中，最寬 4.2 吋、最高 3 吋（維持長寬比），是 Word 原生的內嵌圖片（`word/media/imageN.jpeg`，有替代文字）；下面是圖說（斜體）。沒有圖的位置是一個置中的虛線框（約 10 × 4.6 cm），教師版框裡寫「請放一張圖：用途」。教師版在 AI 產的圖下面標「AI-generated picture」（英文，所以教師版 PDF 不會因此需要中文字型）。
+- **PDF**：同樣的位置與規則（`krilla` 開啟 `raster-images`）；圖最寬為內文寬的 62%、最高 210 pt。
+- `usage_logs` 的 `worksheet_exported` 多了 `pictures`（印出的圖與框）與 `pictures_embedded`（實際放進去的圖）。
+- 教學套件（`/prep-sessions/:id/turns/:turn_id/kit`）的學習單是分層練習，沒有圖片位置，不受影響。
+
+## 前端
+
+- **編輯器**（`/worksheets/:id`）與**備課對話的學習單預覽**：圖在作答指示之後（`SlotPicture`），圖片用帶權杖的請求取得（object URL）。產圖中顯示「Manna 正在畫這張圖…」並每 2 秒問一次；沒有圖時是虛線框，寫出用途與原因。教師版在 AI 產的圖下面標「AI 生成」。
+- 每張圖的工具：「重畫」（展開一個選填的說明欄，例如「改成晴天」）、「換成我的圖」、「拿掉」，以及「還能重畫 n 次」。`photo_needed` 沒有重畫；圖片關閉時只有上傳與拿掉。拿掉後編輯器留一行「這一區的圖已經拿掉了（不會印出）」與工具，可以再放回來。
+- 這些動作不經過自動存檔。
+
+## 紀錄
+
+- **`ai_interactions`**（`module = "worksheet_image"`，`scaffold = SC-WS-IMAGE`，`prompt_version_id` = 用的 `image_style` 版本）：每一次呼叫一筆，重試是 `attempt = 2`、`retry_of`。`input_snapshot` 只有學習單、圖片、位置的 id、`kind`、是否重畫、**提示的字數與 SHA-256**、老師說明的字數與 SHA-256、風格版本、請求設定（model、size、quality、n、output_format、output_compression、moderation）；`output` 只有圖的位元組數、SHA-256 與 `usage` 的 token 數。**從不記提示文字、老師的說明或圖。** 被擋下是 `blocked`，逾時 `timeout`，其他 `error`（`error_detail` 只有狀態）。
+- **伺服器日誌**：只有 id、張數、位元組數、長寬、耗時。
+- **`usage_logs`**：`worksheet_images_queued`（`queued`、`skipped` 張數）、`worksheet_image_finished`（狀態、失敗種類、位元組數、耗時）、`worksheet_image_regenerated`（說明字數、已用次數）、`worksheet_image_uploaded`（原檔與存檔位元組數、長寬）、`worksheet_image_removed`。
+- **`worksheet_images`**：每筆嘗試的狀態、來源、說明（老師打的字，重啟後續做需要）、提示的字數與 SHA-256、模型與設定、風格版本、存檔位置、大小、長寬、SHA-256、`interaction_id`。
+
+## 重啟
+
+啟動時（應用程式只跑一個實例），上一個程序留下的 `queued`／`running` 一律接手：換一個新的 `started_at`（每一次寫入都以它為條件，所以舊容器若還在跑，下一次寫入就停）再產一次。圖片或檔案儲存現在沒有開啟時改成 `failed`（「系統更新後無法繼續產這張圖…」）。（`images::recover`）
+
+## 測試用假模型
+
+- `IMAGE_PROVIDER=fake`：回傳一張 48 × 32 的 PNG（顏色依提示而定），回應形狀與正式 API 相同（`data[0].b64_json`、`generation_id`、`usage` 20／196／216）。提示裡的標記：`FAKE_IMG_FAIL`（HTTP 503，兩次都失敗）、`FAKE_IMG_BLOCKED`（`moderation_blocked`）、`FAKE_IMG_TIMEOUT`（逾時）、`FAKE_IMG_SLOW`（2 秒）。
+- 假文字模型（請求有 `image_slots` 時）：逐段任務的第一個區塊一個 `scene` 位置；教材有 `FAKE_IMG_PHOTO` 時第二個區塊要一張地圖（伺服器改成 `photo_needed`）；版型的每個區塊一個（需要教師素材的區塊除外）。教材裡的 `FAKE_IMG_*` 標記會帶進畫面描述。
+
+## 費用與上限
+
+- 每份學習單：自動產生最多 `IMAGE_MAX_PER_WORKSHEET`（6）張，重畫最多 `IMAGE_MAX_REGENERATIONS`（10）次；以研究文件的估價（`medium`、1536x1024 約 US$0.041–0.053 一張），一份學習單最多約 16 張、US$0.85；一般情況（3 張、重畫一半）約 US$0.2。
+- 每位老師每月的上限還沒有做（研究文件 §11 第 3 點待主持人決定）。
+
+## 還沒做（之後的期）
+
+- **從老師的範例找出圖（第 3 期）**：抽版型時讀出範例裡的圖（OCR 的 `Picture` bbox 已存在 `materials.ocr_pages`；DOCX 的 `word/media` 與有文字層的 PDF 還沒讀），用視覺模型描述，對應到版型區塊的圖片位置；裝飾性的圖可以直接裁用。目前版型沒有「這一區有圖」的資訊，所以照版型產生時是由文字模型依每一區的內容判斷要不要圖；範例是掃描檔（OCR 數到圖）時，圖片規則後面多一行「這位老師的範例學習單裡有 N 張圖…」當提示（`images::sample_pictures`）。
+- 圖放在某一題旁邊（研究文件的 `position: item:<id>`）：目前一律放在區塊的作答指示之後。
+- Openverse／Wikimedia 搜圖（給 `photo_needed`）、用第一張圖當參考讓整份風格一致（`/v1/images/edits`）、每位老師每月上限、「有 N 張 AI 產生的圖還沒看過」的匯出提醒、把換掉的舊圖換回來的介面、刪除學習單時清掉圖檔（學習單目前只有軟刪除）。
+
+## 程式進入點
+
+`worksheet::images`（`client`：設定、請求與回應、假模型；`job`：背景工作；`clean_slots`、`enqueue`、`regenerate`、`replace_with_upload`、`remove`、`decorate`、`bank_for`、`recover`）、`worksheet::export::{docx_with_images, pdf_with_images}`、`routes::worksheets::{images_state, image_file, regenerate_image, upload_image, remove_image}`；前端 `web/src/components/worksheet/SlotPicture.tsx`。測試 `api/tests/worksheet_images.rs`、`web/src/__tests__/worksheetImages.test.tsx`。
+
 # 知識庫：教材牆與預覽圖
 
 以下為**新增**；沒有新的資料表或 migration。

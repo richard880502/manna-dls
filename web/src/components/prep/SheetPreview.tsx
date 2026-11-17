@@ -3,6 +3,7 @@ import type { WsSheet, WsSheetBlock } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL } from "../../lib/worksheet";
 import { BloomChip } from "../worksheet/Bloom";
+import { SlotPicture, viewOfSheetImage, type PictureActions } from "../worksheet/SlotPicture";
 import { SectionTools } from "./SectionTools";
 
 /** A block's name in the teacher's words: 「A 暖身」, 「Exit ticket」. */
@@ -15,6 +16,9 @@ export function sheetBlockText(b: WsSheetBlock): string {
   if (b.instructions.trim()) lines.push(b.instructions);
   b.steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
   b.vocabulary.forEach((v) => lines.push(`${v.word}: ${v.definition}`));
+  b.images?.forEach((img) => {
+    if (img.caption.trim()) lines.push(`（圖）${img.caption}`);
+  });
   b.supports.forEach((s) => lines.push(`${s.heading ?? s.kind}: ${s.content}`));
   b.items.forEach((it) => {
     const tag = isBloom(it.bloom) ? ` 〔Bloom：${BLOOM_LABEL[it.bloom]} ${BLOOM_EN[it.bloom]}〕` : "";
@@ -46,11 +50,14 @@ export function SheetPreview({
   highlight,
   interactionFor,
   extras,
+  pictures = null,
 }: {
   sheet: WsSheet;
   highlight: ReadonlySet<string>;
   interactionFor: (block: WsSheetBlock) => number | null;
   extras?: (block: WsSheetBlock) => SheetBlockExtras;
+  /** The worksheet's pictures and what the teacher can do with them; null: none shown. */
+  pictures?: PictureActions | null;
 }) {
   const teacher = sheet.audience === "teacher";
   return (
@@ -97,6 +104,20 @@ export function SheetPreview({
                 {b.instructions}
               </p>
             )}
+            {pictures &&
+              (b.images ?? []).map((img) => (
+                <SlotPicture
+                  key={img.slot_id}
+                  worksheetId={pictures.worksheetId}
+                  name={name}
+                  teacher={teacher}
+                  view={viewOfSheetImage(
+                    img,
+                    pictures.images?.slots.find((s) => s.slot_id === img.slot_id),
+                  )}
+                  actions={pictures}
+                />
+              ))}
             {b.steps.length > 0 && (
               <div className="ws-procedure">
                 <ol>
