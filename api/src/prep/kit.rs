@@ -9,7 +9,7 @@
 //! ([`export::combined_docx`]). A part that the kit could not make is replaced by a line that
 //! says so.
 
-use super::{ActivityPlan, Goal, GoalKind, Step};
+use super::{ActivityPlan, Goal, GoalKind, Step, OPTION_NAMES_ZH};
 use crate::worksheet::assemble::{project, Sheet};
 use crate::worksheet::bloom::{Bloom, TIERED_REASON};
 use crate::worksheet::export::{self, Line, Part};
@@ -40,20 +40,49 @@ fn bloom_line(levels: &[Bloom]) -> String {
     )
 }
 
+/// 「分組：小組｜技能：讀、說」 (version 4 of the plan; empty before).
+fn grouping_line(s: &Step) -> Option<String> {
+    let mut parts = Vec::new();
+    if !s.grouping.trim().is_empty() {
+        parts.push(format!("分組：{}", s.grouping.trim()));
+    }
+    if !s.skills.is_empty() {
+        parts.push(format!("語言技能：{}", s.skills.join("、")));
+    }
+    (!parts.is_empty()).then(|| parts.join("｜"))
+}
+
+fn labelled(out: &mut Vec<Line>, label: &str, text: &str) {
+    if !text.trim().is_empty() {
+        out.push(Line::Labelled(label.into(), text.trim().to_string()));
+    }
+}
+
 fn step_lines(no: usize, s: &Step, out: &mut Vec<Line>) {
     out.push(Line::Heading(format!(
         "{no}. {}｜{}（{} 分鐘）",
         s.phase, s.title, s.minutes
     )));
+    if let Some(line) = grouping_line(s) {
+        out.push(Line::Teacher(line));
+    }
     if !s.bloom.is_empty() {
         out.push(Line::Teacher(bloom_line(&s.bloom)));
     }
-    if !s.idea.trim().is_empty() {
-        out.push(Line::Labelled("教學思路".into(), s.idea.clone()));
+    labelled(out, "教學思路", &s.idea);
+    if !s.roles.is_empty() {
+        let roles: Vec<String> = s
+            .roles
+            .iter()
+            .map(|r| format!("{}：{}", r.role, r.task))
+            .collect();
+        out.push(Line::Labelled("分工".into(), roles.join("；")));
     }
+    labelled(out, "教師巡視", &s.monitoring);
+    labelled(out, "鷹架", &s.scaffolding);
     for (k, o) in s.options.iter().enumerate() {
         let name = if o.title.trim().is_empty() {
-            format!("選項{}", ["一", "二", "三"].get(k).unwrap_or(&""))
+            OPTION_NAMES_ZH.get(k).unwrap_or(&"選項").to_string()
         } else {
             o.title.trim().to_string()
         };
@@ -72,8 +101,9 @@ fn step_lines(no: usize, s: &Step, out: &mut Vec<Line>) {
     }
 }
 
-/// Goals numbered from 1: the Chinese line with the curriculum codes it cites, the English line
-/// (if any) under it.
+/// Goals numbered from 1: the Chinese line (a 語言目標 led by its kind, 「〔學習策略〕」; a
+/// teacher's goal marked 「（教師提供）」) with the curriculum codes it cites, the English line (if
+/// any) under it, then how a 語言目標 serves its 內容目標.
 fn goal_lines<'a>(goals: impl Iterator<Item = &'a Goal>, out: &mut Vec<Line>) {
     for (i, g) in goals.enumerate() {
         let codes = if g.curriculum_codes.is_empty() {
@@ -81,16 +111,38 @@ fn goal_lines<'a>(goals: impl Iterator<Item = &'a Goal>, out: &mut Vec<Line>) {
         } else {
             format!("（課綱：{}）", g.curriculum_codes.join("、"))
         };
-        out.push(Line::Numbered(i + 1, format!("{}{codes}", g.zh)));
-        if !g.en.trim().is_empty() {
+        let category = g
+            .category
+            .map(|c| format!("〔{}〕", c.label()))
+            .unwrap_or_default();
+        let teacher = if g.from_teacher {
+            "（教師提供）"
+        } else {
+            ""
+        };
+        let zh = if g.zh.trim().is_empty() { &g.en } else { &g.zh };
+        out.push(Line::Numbered(
+            i + 1,
+            format!("{category}{zh}{teacher}{codes}"),
+        ));
+        if !g.en.trim().is_empty() && !g.zh.trim().is_empty() {
             out.push(Line::Script(g.en.clone()));
+        }
+        if !g.relation.trim().is_empty() {
+            let serves = g
+                .supports
+                .map(|n| format!("支持內容目標 {n}："))
+                .unwrap_or_default();
+            out.push(Line::Teacher(format!("{serves}{}", g.relation.trim())));
         }
     }
 }
 
 /// 教學流程: the plan's title, its goals (內容目標 and 語言目標, each in Chinese and English, with
-/// the curriculum codes they cite; a plan made before has one list in Chinese), every step with
-/// its Bloom levels, and the curriculum items cited.
+/// the curriculum codes they cite, and each 語言目標's kind and relation; a plan made before has
+/// one list in Chinese), 關鍵字彙, 教材與教具, 高層次問題, 背景連結, every step (its 分組,
+/// 語言技能, Bloom levels, 分工, 教師巡視, 鷹架), 複習與評量, and the curriculum items cited.
+/// What a plan made before version 4 does not have is left out.
 pub fn plan_lines(plan: &ActivityPlan) -> Vec<Line> {
     let mut out = Vec::new();
     if !plan.title.trim().is_empty() {
@@ -116,8 +168,37 @@ pub fn plan_lines(plan: &ActivityPlan) -> Vec<Line> {
             }
         }
     }
+    if !plan.key_vocabulary.is_empty() {
+        out.push(Line::Heading("關鍵字彙".into()));
+        out.extend(
+            plan.key_vocabulary
+                .iter()
+                .map(|w| Line::Labelled(w.word.clone(), w.zh.clone())),
+        );
+    }
+    if !plan.materials.is_empty() {
+        out.push(Line::Labelled(
+            "教材與教具".into(),
+            plan.materials.join("、"),
+        ));
+    }
+    if !plan.higher_order_questions.is_empty() {
+        out.push(Line::Heading("高層次問題".into()));
+        for (i, q) in plan.higher_order_questions.iter().enumerate() {
+            out.push(Line::Numbered(
+                i + 1,
+                format!("{}（{}）", q.question, q.bloom.label()),
+            ));
+        }
+    }
+    labelled(&mut out, "背景連結", &plan.background);
     for (i, s) in plan.steps.iter().enumerate() {
         step_lines(i + 1, s, &mut out);
+    }
+    if !plan.review.trim().is_empty() || !plan.assessment.trim().is_empty() {
+        out.push(Line::Heading("複習與評量".into()));
+        labelled(&mut out, "複習", &plan.review);
+        labelled(&mut out, "評量", &plan.assessment);
     }
     if !plan.curriculum.is_empty() {
         out.push(Line::Heading("對應的課綱條目".into()));
@@ -223,26 +304,32 @@ pub fn docx(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prep::{CurriculumRef, StepOption, PHASE_WARMUP};
+    use crate::prep::{
+        CurriculumRef, HigherQuestion, KeyWord, LanguageCategory, Role, StepOption, PHASE_WARMUP,
+    };
     use crate::worksheet::{Block, Item};
 
     fn plan() -> ActivityPlan {
         ActivityPlan {
             title: "信任的雨傘".into(),
             goals: vec![
-                Goal {
-                    kind: Some(GoalKind::Content),
-                    zh: "學生能說出主旨".into(),
-                    en: "Students will be able to tell the main idea.".into(),
-                    curriculum_codes: vec!["A-1".into()],
-                },
-                Goal {
-                    kind: Some(GoalKind::Language),
-                    zh: "學生能用 because 說明原因".into(),
-                    en: "Students will be able to use because to give a reason.".into(),
-                    curriculum_codes: vec![],
-                },
+                Goal::new(
+                    GoalKind::Content,
+                    "學生能說出主旨",
+                    "Students will be able to tell the main idea.",
+                    vec!["A-1".into()],
+                ),
+                Goal::new(
+                    GoalKind::Language,
+                    "學生能用 because 說明原因",
+                    "Students will be able to use because to give a reason.",
+                    vec![],
+                ),
             ],
+            key_vocabulary: vec![],
+            materials: vec![],
+            higher_order_questions: vec![],
+            background: String::new(),
             steps: vec![Step {
                 phase: PHASE_WARMUP.into(),
                 title: "看圖".into(),
@@ -257,11 +344,117 @@ mod tests {
                 script: vec!["Good morning.".into()],
                 stuck_tip: "給兩個選項".into(),
                 bloom: vec![Bloom::Remember, Bloom::Understand],
+                grouping: String::new(),
+                roles: vec![],
+                monitoring: String::new(),
+                skills: vec![],
+                scaffolding: String::new(),
             }],
+            review: String::new(),
+            assessment: String::new(),
             curriculum: vec![CurriculumRef {
                 code: "A-1".into(),
                 text: "條文".into(),
             }],
+        }
+    }
+
+    /// The same plan with what version 4 adds.
+    fn plan_v4() -> ActivityPlan {
+        let mut p = plan();
+        p.goals[1] = Goal {
+            category: Some(LanguageCategory::Strategy),
+            supports: Some(1),
+            relation: "學生要用 because 說明原因，才能說出主旨".into(),
+            from_teacher: true,
+            ..p.goals[1].clone()
+        };
+        p.key_vocabulary = vec![KeyWord {
+            word: "trust".into(),
+            zh: "信任".into(),
+        }];
+        p.materials = vec!["課文".into(), "圖片".into()];
+        p.higher_order_questions = vec![HigherQuestion {
+            question: "Why did it work?".into(),
+            bloom: Bloom::Evaluate,
+        }];
+        p.background = "借東西的經驗".into();
+        let s = &mut p.steps[0];
+        s.grouping = "小組".into();
+        s.skills = vec!["聽".into(), "說".into()];
+        s.roles = vec![
+            Role {
+                role: "主持".into(),
+                task: "帶討論".into(),
+            },
+            Role {
+                role: "記錄".into(),
+                task: "寫重點".into(),
+            },
+        ];
+        s.monitoring = "巡視各組".into();
+        s.scaffolding = "教師示範".into();
+        p.review = "字卡".into();
+        p.assessment = "exit ticket".into();
+        p
+    }
+
+    #[test]
+    fn the_plan_prints_the_siop_fields_of_version_4() {
+        let lines = plan_lines(&plan_v4());
+        let at = |l: Line| {
+            lines
+                .iter()
+                .position(|x| *x == l)
+                .unwrap_or_else(|| panic!("{l:?} missing from {lines:#?}"))
+        };
+        let language = at(Line::Labelled("語言目標".into(), String::new()));
+        assert_eq!(
+            lines[language + 1],
+            Line::Numbered(
+                1,
+                "〔學習策略〕學生能用 because 說明原因（教師提供）".into()
+            )
+        );
+        assert_eq!(
+            lines[language + 3],
+            Line::Teacher("支持內容目標 1：學生要用 because 說明原因，才能說出主旨".into())
+        );
+        let words = at(Line::Heading("關鍵字彙".into()));
+        assert_eq!(
+            lines[words + 1],
+            Line::Labelled("trust".into(), "信任".into())
+        );
+        let materials = at(Line::Labelled("教材與教具".into(), "課文、圖片".into()));
+        let questions = at(Line::Numbered(1, "Why did it work?（評鑑）".into()));
+        let background = at(Line::Labelled("背景連結".into(), "借東西的經驗".into()));
+        let step = at(Line::Heading("1. 引起動機｜看圖（5 分鐘）".into()));
+        assert!(words < materials && materials < questions && questions < background);
+        assert!(background < step);
+        assert_eq!(
+            lines[step + 1],
+            Line::Teacher("分組：小組｜語言技能：聽、說".into())
+        );
+        at(Line::Labelled(
+            "分工".into(),
+            "主持：帶討論；記錄：寫重點".into(),
+        ));
+        at(Line::Labelled("教師巡視".into(), "巡視各組".into()));
+        at(Line::Labelled("鷹架".into(), "教師示範".into()));
+        let review = at(Line::Heading("複習與評量".into()));
+        assert!(step < review);
+        assert_eq!(
+            lines[review + 1],
+            Line::Labelled("複習".into(), "字卡".into())
+        );
+        assert_eq!(
+            lines[review + 2],
+            Line::Labelled("評量".into(), "exit ticket".into())
+        );
+        // A plan without them prints none of these headings.
+        let old = plan_lines(&plan());
+        for heading in ["關鍵字彙", "高層次問題", "複習與評量"] {
+            assert!(!old.contains(&Line::Heading(heading.into())), "{heading}");
         }
     }
 

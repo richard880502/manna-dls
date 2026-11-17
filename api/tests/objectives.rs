@@ -197,14 +197,16 @@ async fn the_two_objectives_reach_the_worksheet_and_every_prompt() {
 async fn a_new_prompt_version_gets_the_two_fields_under_their_headings() {
     let app = test_app!();
     let t = app.teacher("R-OBJ-2", "general").await;
-    // A version written for the two fields (what `prep_activity` 4 will be) that mentions only
-    // one of them: the other is added under its heading, the combined line is not.
+    // A version that mentions only one of the two fields (version 3's template with its single
+    // objective variable renamed): the other is added under its heading, the combined line is not.
+    // (`prep_activity` 4 names both fields itself, so it can't show this.)
     sqlx::query(
         "INSERT INTO prompt_versions (prompt_key, version_no, system_text, user_template)
-         SELECT prompt_key, version_no + 1, system_text,
+         SELECT prompt_key,
+                (SELECT MAX(version_no) + 1 FROM prompt_versions WHERE prompt_key = 'prep_activity'),
+                system_text,
                 replace(user_template, '{{teacher_objective}}', '{{teacher_content_objective}}')
-           FROM prompt_versions WHERE prompt_key = 'prep_activity'
-          ORDER BY version_no DESC LIMIT 1",
+           FROM prompt_versions WHERE prompt_key = 'prep_activity' AND version_no = 3",
     )
     .execute(&app.db)
     .await

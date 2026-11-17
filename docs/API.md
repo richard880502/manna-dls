@@ -1633,13 +1633,18 @@ prompt key：`worksheet_template_outline`、`worksheet_template_details`、`work
 
 **課堂活動的學習目標分成內容目標與語言目標、中英文並陳**（Migration `0019_prep_activity_goals.sql`，以下各節已併入）：`prep_activity` 第 3 版依 SIOP 分成內容目標（`content`）與語言目標（`language`），各 1–3 個，每個目標有中文（`zh`，給教師）與英文（`en`，給學生）；`ActivityPlan.goals` 每一項多了 `kind`、`zh`、`en`，取代 `text`。已存的舊規劃不改寫：它們的目標仍是 `{ text, curriculum_codes }`，照舊顯示成一張清單。
 
+**課堂活動依 SIOP 設計規則**（Migration `0023_prep_activity_siop.sql`，以下各節已併入；規則見 `docs/SIOP_DESIGN_RULES.md` 第一、六節）：`prep_activity` 第 4 版。目標各 1–2 個（R1），先寫內容目標、再由它推出語言目標；語言目標以學習策略優先（R2），每個都寫出它支持哪個內容目標與「學生要用［語言目標］，才能［內容目標］」的關係，說不出關係或用 learn／know／understand 這類動詞的目標不採用；教師給的內容目標、語言目標一字不改。`ActivityPlan` 多了關鍵字彙、教材與教具、高層次問題、背景連結（A1）、複習、評量，每一步多了分組與分工（A2）、語言技能（A3）、教師巡視與鷹架（A6）。舊規劃（第 1–3 版）沒有這些欄位，照舊顯示。
+
+**SIOP 自我檢核**（Migration `0024_siop_selfcheck.sql`，見下面「SIOP 自我檢核」一節）：`/create` 的產出做好後自動檢核，`PrepTurn` 多了 `siop_check`，新增 `GET`／`POST /api/prep-sessions/:id/turns/:turn_id/siop-check`。
+
 ## 資料
 
 - `prep_sessions`：`id`、`teacher_id`（只有擁有者能存取，其他人的 id 回 404）、`title`（≤200；預設為教材標題，沒有教材時為主題，再沒有就是第一個請求的前 40 字）、`material_id`（教材庫教材；教材刪除時變成 null）、`topic`（≤200，沒有教材時用）、`class_id`、`template_id`（刪除時都變成 null）、`options`（JSONB，出題選項，預設 `{}`）、`created_at`、`updated_at`。
 - `prep_turns`：`id`、`session_id`（刪除對話時一起刪除）、`seq`（對話內從 1 起編號）、`kind`、`request`（≤2000：老師打的字，或按鈕的名稱）、`status`（`running`｜`done`｜`failed`）、`error`（失敗原因，中文）、`worksheet_id`（這一輪做出的學習單）、`result`（JSONB）、`interaction_id`（產生結果的 `ai_interactions`）、`created_at`、`finished_at`。同一個對話同時只會有一輪在跑（部分唯一索引）。
 - **刪除對話是真的刪除**：對話與所有輪次都刪掉。在對話裡做的學習單完整保留（仍在 /worksheets），只是 `prep_session_id` 變成 null。
 - `worksheets` 新增 `prep_session_id`（做出這份學習單的對話）。`worksheet_versions.cause` 新增 `revise`。
-- `prompt_versions` 新增 `prep_activity`（第 1、2、3 版）、`prep_ask`、`prep_revise`。`scaffolds` 新增 `SC-PREP-ACTIVITY`、`SC-PREP-ASK`、`SC-PREP-REVISE`。
+- `prompt_versions` 新增 `prep_activity`（第 1、2、3、4 版）、`prep_ask`、`prep_revise`、`siop_selfcheck`。`scaffolds` 新增 `SC-PREP-ACTIVITY`（第 4 版的 prompt 起用 scaffold 第 2 版）、`SC-PREP-ASK`、`SC-PREP-REVISE`、`SC-SIOP-SELFCHECK`。
+- `siop_checks`：每一輪的 SIOP 自我檢核，每檢核一次一列（見「SIOP 自我檢核」）；刪除對話時一起刪除。
 - `prep_turns.kind` 多了 `comprehension`、`tiered`、`kit`（`0015_prep_bloom.sql`）。
 - 每次模型呼叫一列 `ai_interactions`（`module` = prompt key）；輸入快照裡的教材（以及由教材衍生的學習單內容、先前的對話摘要）只記字數與雜湊。檢索記在 `retrieval_logs`（查詢文字含教材時同樣只記字數與雜湊）。
 
@@ -1671,6 +1676,8 @@ interface PrepTurn {
         | { reply: string; changed_block_ids: string[]; version_no: number | null } | null;
   interaction_id: number | null;   // 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs: "up"|"down" }
   created_at: string; finished_at: string | null;
+  siop_check?: SiopCheck | null;   // worksheet／comprehension／tiered／activity／kit 才有這一欄：最新一次的 SIOP 自我檢核；
+                                   // 還沒有（這一輪還在跑、失敗了，或是在檢核功能之前做的）是 null。其他種類沒有這一欄
 }
 interface PrepSession extends PrepSessionSummary {
   turns: PrepTurn[];               // 依 seq
@@ -1682,14 +1689,25 @@ interface PrepSession extends PrepSessionSummary {
 type ActivityGoal =
   // prep_activity 第 3 版起（0019_prep_activity_goals.sql）：SIOP 的兩組，中英文並陳
   | { kind: "content" | "language";   // 內容目標｜語言目標
-      zh: string;                     // ≤150，給教師的繁體中文，一句（「學生能……」）
-      en: string;                     // ≤200，給學生的英文，一句（"Students will be able to …"）
-      curriculum_codes: string[] }    // ≤3，只會是這次提供的候選代碼
+      zh: string;                     // ≤150，給教師的繁體中文，一句（「學生能……」）；教師給的英文目標沒有中文時可為 ""
+      en: string;                     // ≤200，給學生的英文，一句（"Students will be able to …"）；可省略（""）
+      curriculum_codes: string[];     // ≤3，只會是這次提供的候選代碼
+      // 第 4 版起（0023_prep_activity_siop.sql），只有語言目標有前三項；沒有的鍵不出現
+      category?: "strategy" | "function" | "structure" | "vocabulary";  // 學習策略｜語言功能｜句型文法｜學術字彙
+      supports?: number;              // 支持第幾個內容目標（從 1 起，依 goals 裡內容目標的順序）
+      relation?: string;              // ≤200，「學生要用［語言目標］，才能［內容目標］」
+      from_teacher?: true }           // 教師給的目標，一字不改（≤300）
   // 第 1、2 版做的規劃（資料庫裡原樣保留）：一行中文、沒有 kind
   | { text: string; curriculum_codes: string[] };
 interface ActivityPlan {
   title: string;                                                    // ≤100
-  goals: ActivityGoal[];             // 第 3 版：先內容目標、再語言目標，各 1–3 個（重試後仍缺一組時，只有另一組）；舊規劃：1–4 個 { text }
+  goals: ActivityGoal[];             // 第 4 版：先內容目標、再語言目標，各 1–2 個（重試後仍缺一組時，只有另一組）；
+                                     // 第 3 版各 1–3 個；舊規劃：1–4 個 { text }
+  // 以下到 assessment（除了 steps）是第 4 版（SIOP A6）新增；舊規劃讀出來是 [] 或 ""（API 原樣回傳資料庫的 JSON，舊規劃沒有這些鍵）
+  key_vocabulary: Array<{ word: string; zh: string }>;              // ≤8，關鍵字彙：word ≤40（英文，不重複），zh ≤80
+  materials: string[];                                              // ≤5、每項 ≤60，教材與教具
+  higher_order_questions: Array<{ question: string; bloom: "analyze" | "evaluate" | "create" }>;  // ≤4，question ≤200（英文）
+  background: string;                                               // ≤200，背景連結：引起動機要連結的學生經驗或舊知（A1）
   steps: Array<{
     phase: "引起動機" | "發展活動" | "統整與評量";
     title: string;                                                  // ≤60
@@ -1699,7 +1717,15 @@ interface ActivityPlan {
     script: string[];                                               // ≤6 行、每行 ≤200，英文課堂用語
     stuck_tip: string;                                              // ≤200，卡住了怎麼辦；可為 ""
     bloom: Bloom[];                                                 // 這一步練到的 Bloom 層次，≤3，依 Bloom 順序（第 1 版 prompt 做的規劃讀出來是 []）
+    // 第 4 版起（舊規劃是 "" 或 []）
+    grouping: "全班" | "兩人一組" | "小組" | "個人" | "";            // 分組方式（A2）
+    roles: Array<{ role: string; task: string }>;                   // 兩人一組 2 項（兩人各做什麼）；小組 ≤6 項（成員角色與責任）；全班、個人是 []。role ≤20、task ≤100
+    monitoring: string;                                             // ≤150，教師巡視；可為 ""
+    skills: Array<"聽" | "說" | "讀" | "寫">;                       // 語言技能（A3），依這個順序、不重複
+    scaffolding: string;                                            // ≤150，鷹架方式；可為 ""
   }>;                                                               // 3–6
+  review: string;                                                   // ≤200，複習；可為 ""
+  assessment: string;                                               // ≤200，評量；可為 ""
   curriculum: Array<{ code: string; text: string }>;                // 實際引用的條目，條文由知識庫帶出
 }
 interface Resources {
@@ -1723,6 +1749,8 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | DELETE | `/api/prep-sessions/:id` | – | `{ ok: true }`（真的刪除；學習單保留） |
 | POST | `/api/prep-sessions/:id/turns` | `{ kind?, request }` | 202 `PrepSession` |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/kit?format=docx` | – | 教學套件的 DOCX（見 `kit`） |
+| GET | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | – | 這一輪最新的 `SiopCheck`（檢核中時輪詢）；還沒有 → 404（見「SIOP 自我檢核」） |
+| POST | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | `{}` | 202 `SiopCheck`（新的一次，`running`）：再試一次或重新檢核 |
 
 **建立對話**
 
@@ -1761,7 +1789,17 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ### `activity`（規劃教學活動）
 
-一次呼叫（`prep_activity` 第 3 版，`max_tokens` 6000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、學習目標（`options.objective`，變數 `{{teacher_objective}}`）與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`；沒有時都是「（沒有）」）。模型的輸出依序是 `title`、`content_goals`（內容目標）、`language_goals`（語言目標）、`steps`：兩組目標是兩個陣列（schema 各要求 1–3 個，所以兩組都一定會寫），每個目標依序是 `zh`（≤150）、`en`（≤200）、`curriculum_codes`，伺服器再把它們合成 `goals`（`kind` 依所在的陣列）。schema 裡每個字串與陣列都有 `maxLength`／`maxItems`，`curriculum_codes` 是候選代碼的 enum，每一步的 `bloom` 是六個 id 的 enum（1–3 個，寫在 `idea` 之後）；需要分行的內容（`script`）是陣列，目標的 `zh`、`en` 各只寫一句（gemma 想換行時會提早結束字串）。伺服器檢查：`zh` 沒有中文字或 `en` 不是英文（含中文字、或沒有英文字母）的目標拿掉，每組最多留 3 個；不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；`bloom` 去掉重複、留模型寫的前 3 個、再依 Bloom 順序排；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。兩組目標都沒有可用的目標或可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。只缺一組（例如語言目標全被拿掉）時也重試一次並附上問題（`blocked`），但規劃本身可以用：重試補齊就用重試的，重試還是缺就照樣給教師看重試的規劃（只有另一組目標，`ai_interactions` 的檢查結果記下沒有通過）。
+一次呼叫（`prep_activity` 第 4 版，`max_tokens` 8000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、教師的目標與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`）。沒有時都是「（沒有）」。
+
+**教師的目標**有三個變數：`{{teacher_content_objective}}`（內容目標）、`{{teacher_language_objective}}`（語言目標）、`{{teacher_objective}}`（合併的一行，目前就是 `options.objective`）。前兩個由 `prep::TeacherObjectives::of` 從對話的選項取得；選項還沒有分開的內容目標、語言目標欄位時是「（沒有）」，模型自己草擬。教師給了哪一組，schema 那一組就只要 1 個目標，伺服器把教師的原文一字不改放進去（有中文的放 `zh`，否則放 `en`；另一種語言的那一行與課綱代碼用模型寫的），標上 `from_teacher`；教師給的目標不會因為下面的檢查被拿掉。只給了內容目標時，語言目標由模型從它推出。
+
+模型的輸出依序是 `title`、`content_goals`、`language_goals`、`key_vocabulary`、`materials`、`higher_order_questions`、`background`、`steps`、`review`、`assessment`（schema 的順序就是寫的順序：先內容目標，再由它推出語言目標）。內容目標依序是 `zh`（≤150）、`en`（≤200）、`curriculum_codes`；語言目標依序是 `supports`（`C1`／`C2`，enum）、`category`（「學習策略」「語言功能」「句型文法」「學術字彙」，enum，學習策略排第一）、`zh`、`en`、`relation`（≤200）、`curriculum_codes`；兩組各 1–2 個。每一步依序是 `phase`、`title`、`minutes`、`idea`、`grouping`（四個標籤的 enum）、`roles`（≤6，`role` ≤20、`task` ≤100）、`monitoring`（≤150）、`skills`（聽說讀寫的 enum，1–4 個）、`scaffolding`（≤150）、`bloom`、`options`、`script`、`stuck_tip`。schema 裡每個字串與陣列都有 `maxLength`／`maxItems`；需要分行的內容（`script`、`roles`、`materials`）是陣列，其他文字各只寫一句（gemma 想換行時會提早結束字串）。
+
+伺服器檢查：
+
+- **目標**：`zh` 沒有中文字或 `en` 不是英文的目標拿掉；開頭的動詞看不到表現的（中文「學生能」後面是了解、瞭解、理解、認識、知道、學會、學習、明白、熟悉、體會、欣賞、懂；英文 learn、know、understand、appreciate、realize、comprehend、grasp、be aware、be familiar）拿掉；每組最多留 2 個。語言目標的 `supports` 指向的內容目標被拿掉了，或 `relation` 不成立（不是「學生要用……，才能……」、任一半太短，或「才能」後面那一半和它支持的內容目標沒有共同的中文雙字詞或四個字母以上的英文字），這個語言目標就拿掉——說不出關係的語言目標，寫得再好也不採用。留下的語言目標學習策略排前面，`supports` 改成在 `goals` 裡內容目標的序號（從 1 起）。
+- **其他**：不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；`bloom` 去掉重複、留模型寫的前 3 個、再依 Bloom 順序排；`roles` 兩人一組最多 2 個、小組最多 6 個、全班與個人一律清空，沒有 `task` 的拿掉；`skills` 只留四個標籤、不重複、依聽說讀寫排；`key_vocabulary` 的 `word` 要有英文字母、不重複（不分大小寫），最多 8 個；`higher_order_questions` 只留 analyze／evaluate／create、題目有英文字母的，最多 4 個；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。
+- **重試**：兩組目標都沒有可用的目標、可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。下列情形也重試一次並附上問題（第一次記成 `blocked`），但規劃本身可以用——重試的規劃比較好就用重試的，重試還是有問題就照樣給教師看重試的規劃（`ai_interactions` 的檢查結果記下沒有通過）：只缺一組目標；教師沒有給語言目標，而語言目標裡沒有學習策略（R2）；教師給的語言目標說不出關係；`background` 是空的（A1）；整節課的分組方式少於兩種、兩人一組沒有寫出兩人各做什麼、小組的角色少於 3 個或沒有寫教師巡視（A2）；整節課沒有用到聽說讀寫四種技能（A3）。
 
 ### `kit`（教學套件）
 
@@ -1773,7 +1811,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 **下載**：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`（`format` 省略也是 DOCX；其他值 → 400「format 需為 docx。」）。一份 DOCX，每部分從新的一頁開始：
 
-1. **教學流程**：規劃的標題、學習目標（分成「內容目標」「語言目標」兩組，各自編號；每個目標是中文一行、附課綱代碼，英文斜體在下一行；舊規劃照舊是一張中文清單）、每一步（階段｜標題（分鐘）、`Bloom：理解、應用`、教學思路、引起動機的選項、課堂用語、卡住了怎麼辦）、對應的課綱條目。
+1. **教學流程**：規劃的標題、學習目標（分成「內容目標」「語言目標」兩組，各自編號；每個目標是中文一行、附課綱代碼，英文斜體在下一行；語言目標前面標類別「〔學習策略〕」，下一行是「支持內容目標 1：學生要用……，才能……」；教師給的目標標「（教師提供）」；舊規劃照舊是一張中文清單）、關鍵字彙、教材與教具、高層次問題、背景連結、每一步（階段｜標題（分鐘）、`分組：小組｜語言技能：說、讀`、`Bloom：理解、應用`、教學思路、分工、教師巡視、鷹架、引起動機的選項、課堂用語、卡住了怎麼辦）、複習與評量、對應的課綱條目。舊規劃沒有的部分不印。
 2. **學生版（基礎版）**、**學生版（一般版）**、**學生版（進階版）**（學習單的每個版本）：和 `GET /api/worksheets/:id/export?audience=student` 印的一樣（基礎版有 Hint，沒有 Bloom 標記）。
 3. **教師版**：所有版本的題目各一次、依序編號，附答案、依據與 Bloom 標記（〔Bloom：分析 Analyze〕）與區塊的 Bloom 摘要；分層練習另印版本與層次的對應（「基礎版：記憶＋理解＋應用（附提示）；…」）。
 
@@ -1808,17 +1846,68 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | `FAKE_PREP_NO_PLAN` | activity／kit：活動規劃兩次都不能用（不影響學習單的呼叫）→ `activity` 是 `failed`；`kit` 是 `failed`、學習單保留 |
 | `FAKE_PREP_ONE_GROUP` | activity：兩次都沒有語言目標 → 重試後仍照樣 `done`，規劃只有內容目標 |
 | `FAKE_PREP_ONE_GROUP_ONCE` | activity：第一次沒有語言目標，重試兩組都有 |
+| `FAKE_PREP_FLAT` | activity：兩次都是每一步全班、沒有分工、只有「讀」→ 重試後仍照樣 `done` |
+| `FAKE_PREP_FLAT_ONCE` | activity：第一次如上，重試有三種分組與聽說讀寫 |
 | `FAKE_PREP_REVISE_ADD` | revise：改的是**最後一個**有題目的區塊，並在最後加一題 |
+| `FAKE_SIOP_BLOCK` | SIOP 自我檢核：兩次都不能用 → 檢核 `failed`（產出不受影響） |
+| `FAKE_SIOP_PARTIAL_ONCE` | SIOP 自我檢核：第一次漏了最後一項，重試補齊 |
+| `FAKE_SIOP_FAIL_FIRST` | SIOP 自我檢核：這一輪的第一次檢核逾時；之後再檢核（再試一次）就成功 |
 
-假模型的活動規劃有 2 個內容目標與 3 個語言目標（中英文各一句），第 3 個語言目標的 `en` 寫成中文（伺服器拿掉）；第一個內容目標引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）；每一步的 `bloom` 順序打亂、有重複，發展活動寫了 4 個（伺服器留前 3 個並排序）。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
+假模型的活動規劃（第 4 版）有 3 個內容目標，第 2 個用「了解」開頭（伺服器拿掉）；5 個語言目標中伺服器留 2 個、學習策略排第一：一個支持被拿掉的內容目標、一個 `en` 寫成中文、一個的 `relation` 不是「學生要用……，才能……」，都拿掉。第一個內容目標引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）；三步依序是兩人一組（兩人各做什麼）、小組（4 個角色與教師巡視）、個人（帶了一個角色，伺服器拿掉），合起來聽說讀寫都有；每一步的 `bloom` 順序打亂、有重複，發展活動寫了 4 個（伺服器留前 3 個並排序）；關鍵字彙有一個大小寫不同的重複字與一個中文字（伺服器拿掉），高層次問題有一題 remember（伺服器拿掉）。`fake_context` 帶了教師的內容目標或語言目標時，那一組只寫 1 個、文字前面加「（模型改寫）」（伺服器換回教師的原文）。假模型的自我檢核依序判斷每一項：第 3 項「部分符合」、第 17 項「未見」、其餘「符合」，理由提到產出種類。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊（寫在教材裡的標記也會出現在自我檢核的訊息裡）。
 
 ## usage_logs 新事件
 
-`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+
+## SIOP 自我檢核
+
+規則見 `docs/SIOP_DESIGN_RULES.md` 第八節。`/create` 的產出做好後，Manna 依 SIOP 觀察量表檢核**產出上看得到的項目**，每項「符合／部分符合／未見」加一句理由，**不產生總分**；結果是給教師參考的建議。
+
+**哪些產出**：`worksheet`（完整學習單、照我的學習單做）、`comprehension`、`tiered`、`activity`、`kit` 的輪次。輪次變成 `done` 的同一個交易裡開一筆檢核（`running`），在背景跑；所以 `PrepTurn` 一變成 `done` 就帶著 `siop_check`。`failed` 的輪次不檢核。教學套件是一筆檢核，看活動規劃加分層學習單。
+
+**項目**（伺服器的 `prep::selfcheck::ITEMS`，依量表題號；合併的照規格合併）：
+
+| 範圍 `scope` | 項目 |
+|---|---|
+| `page`：從產出判斷 | 1–2 內容目標與語言目標、3 概念適切、4 補充教材、5 依程度調整、6 有意義的活動、7–8 連結經驗與舊知、9 關鍵字彙、11 任務說明、13 學習策略、14 鷹架、15 高層次思考、16 互動、17 分組、19 母語支持、20 動手操作、21 應用、22 聽說讀寫、27–28 複習、30 評量 |
+| `partial`：只看書面的那一部分（`note` 說明） | 12 讓概念清楚的技巧（只看得到書面的視覺輔助）、23–24 教學流程支持目標（只看得到教學流程是否對應目標）、29 回饋（只看得到是否設計回饋的時機） |
+| `classroom`：需課堂觀察，AI 不評 | 10 教師語速與用語、18 等待時間、25 學生投入、26 節奏 |
+
+`classroom` 的四項**不送給模型**（不在 prompt、不在 schema 的 enum），`rating` 永遠是 `null`。
+
+**一次呼叫**（`siop_selfcheck` 第 1 版，`max_tokens` 3000），照 `worksheet_bloom_check` 的做法：schema 要求剛好 22 筆，每筆依序是 `id`（22 個題號的 enum，依項目順序）、`reason`（≤100，先寫看到了什麼）、`rating`（「符合」「部分符合」「未見」的 enum）。輸入：產出種類、班級特性、教材（學習單用它自己的教材快照，活動規劃用對話的教材；加段落標記）、**產出的文字版**（不是 JSON：活動規劃逐項列出目標與關係、關鍵字彙、教材、高層次問題、背景連結、每一步的分組／技能／Bloom／思路／分工／巡視／鷹架／選項／課堂用語，與複習評量；學習單列出教師寫的目標、版本、目標、每個啟用的區塊與它的作答指示、字彙、鷹架、每一題（作答方式、Bloom、在哪些版本、選項、答案、依據、基礎版提示）；學習單裡這裡不認得的欄位以「欄位名：值」照印，學習單之後加的欄位也會被看到；最多 16000 字）與 22 個項目。教材與產出在 `ai_interactions` 只記字數與雜湊。伺服器檢查：不是要檢核的題號、`rating` 不是三個之一的拿掉；同一題寫兩次留第一次；有漏的或沒寫理由的 → **重試一次**（temperature +0.4，附上問題）。重試還有漏的，漏的那幾項 `rating` 是 `null`（頁面寫「這次沒有判斷」）。一項都不能用、逾時或錯誤 → 這次檢核 `failed`，`error` 是中文原因；**產出完全不受影響**。
+
+**儲存**：`siop_checks` 一次檢核一列：`turn_id`、`run_no`（這一輪的第幾次，從 1 起）、`status`（`running`｜`done`｜`failed`）、`items`（只存判斷過的 `[{ id, rating: "met"|"partial"|"not_seen", reason }]`）、`error`、`worksheet_id` 與 `worksheet_version_no`（檢核的是哪一版學習單）、`interaction_id`、`created_at`、`finished_at`。同一輪同時只有一次在跑（部分唯一索引）。每次都保留。`running` 超過 `3 × AI_TIMEOUT_SECS + 60` 秒（伺服器重啟中斷）在下次讀取時改成 `failed`（「這次檢核中斷了…請按「再試一次」」）。
+
+```ts
+interface SiopCheck {
+  id: number; run_no: number;
+  status: "running" | "done" | "failed";
+  error: string | null;
+  worksheet_version_no: number | null;   // 學習單與教學套件：檢核的版本；比 PrepTurn.worksheet.version_no 舊 → 學習單之後改過了
+  items: Array<{                         // 量表全部 26 項（含 classroom），依題號順序
+    id: string;                          // "1-2"、"3"…"30"
+    name: string; question: string;      // classroom 的 question 是 ""
+    scope: "page" | "partial" | "classroom";
+    note: string;                        // partial：看得到的部分；classroom：為什麼要在課堂上看；page：""
+    rating: "met" | "partial" | "not_seen" | null;   // null：classroom，或這次沒有判斷（running／failed 時全部是 null）
+    reason: string;                      // ≤100，一句
+  }>;
+  interaction_id: number | null;
+  created_at: string; finished_at: string | null;
+}
+```
+
+**端點**（只能存取自己的對話；別人的、或這一輪不在這個對話 → 404）
+
+- `GET /api/prep-sessions/:id/turns/:turn_id/siop-check` → 最新一次的 `SiopCheck`；這一輪沒有檢核 → 404「這一輪還沒有 SIOP 自我檢核。」。頁面在 `running` 時每 2 秒問一次。
+- `POST /api/prep-sessions/:id/turns/:turn_id/siop-check`（body `{}`）→ 202，新的一次（`run_no` +1，`running`）。用於失敗後的「再試一次」、學習單改過之後的「重新檢核」，以及檢核功能之前做的輪次（`siop_check` 是 `null`）的「開始檢核」。新的一次的 temperature 比上一次高 0.1（最多 +0.4），閘道不會回快取的同一個答案。400：這一輪的種類沒有檢核（「這種產出沒有 SIOP 自我檢核。」）；409：這一輪不是 `done`（「這一輪還沒有完成，沒有可以檢核的產出。」）、這一輪的檢核還在跑（「SIOP 自我檢核還在進行，好了之後再試。」）。
+
+**前端**：每個學習單、課堂活動、教學套件的結果下方有一個「SIOP 自我檢核」區塊。檢核中顯示「Manna 正在做 SIOP 自我檢核…」；完成後是收合的面板，打開是一句說明（這是建議、不是評分，由教師判斷）、每一項的題號、名稱、結果與理由（只能部分判斷的項目標「只能部分判斷：只看得到……」）、最後列出需課堂觀察的四項。失敗時說「這次的 SIOP 自我檢核沒有完成，產出不受影響。」與原因，附「再試一次」；學習單改過之後附「重新檢核」；沒有檢核的舊輪次附「開始檢核」。
 
 ## 試用真模型
 
-prompt key：`prep_activity`（第 3 版）、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`；教學套件的 DOCX 在 `prep::kit`（用 `worksheet::export::combined_docx`）。
+prompt key：`prep_activity`（第 4 版）、`prep_ask`、`prep_revise`、`siop_selfcheck`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）、`prep::selfcheck::spawn`（自我檢核）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`、`prep::selfcheck::schema`；教學套件的 DOCX 在 `prep::kit`（用 `worksheet::export::combined_docx`）。
 
 ---
 

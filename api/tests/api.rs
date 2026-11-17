@@ -1231,6 +1231,7 @@ async fn admin_prompts_imports_and_permissions() {
             "prep_activity",
             "prep_ask",
             "prep_revise",
+            "siop_selfcheck",
             "sop_objectives",
             "sop_passage_analysis",
             "worksheet_block_revise",
@@ -1256,13 +1257,13 @@ async fn admin_prompts_imports_and_permissions() {
     assert_eq!(
         versions,
         // worksheet_tasks has v2 since Phase 2.7 (0014_bloom.sql), prep_activity v2 since
-        // 0015_prep_bloom.sql and v3 since 0019_prep_activity_goals.sql,
-        // worksheet_template_details and worksheet_template_section v2 since 0016_mimic.sql,
-        // worksheet_block_revise v1 since 0020_worksheet_block_revise.sql, image_style and
-        // worksheet_image_slots since 0021_worksheet_images.sql, objective_check and
-        // objective_draft v1, worksheet_exit_ticket v2 and worksheet_tasks v3 since
-        // 0022_siop_objectives.sql.
-        vec![1, 2, 1, 1, 1, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 3, 2, 1, 2, 1]
+        // 0015_prep_bloom.sql, v3 since 0019_prep_activity_goals.sql and v4 since
+        // 0023_prep_activity_siop.sql, worksheet_template_details and worksheet_template_section
+        // v2 since 0016_mimic.sql, worksheet_block_revise v1 since 0020_worksheet_block_revise.sql,
+        // image_style and worksheet_image_slots since 0021_worksheet_images.sql, objective_check
+        // and objective_draft v1, worksheet_exit_ticket v2 and worksheet_tasks v3 since
+        // 0022_siop_objectives.sql, siop_selfcheck v1 since 0024_siop_selfcheck.sql.
+        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 3, 2, 1, 2, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

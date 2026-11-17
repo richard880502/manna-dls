@@ -510,12 +510,13 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
             json!(["evaluate", "create"]),
         ]
     );
-    // The latest version of the prompt (3: the goal groups), with the objective and the request.
+    // The latest version of the prompt (4: SIOP), with the objective and the request. The teacher
+    // gave a 內容目標 only: it is passed as is; the 語言目標 is left for the model to draft.
     let rows = calls(&app, "prep_activity").await;
     assert_eq!(rows.len(), 1);
     let snapshot = &rows[0].2;
-    assert_eq!(snapshot["prompt"]["version_no"], 3);
-    // Version 3 has only `{{teacher_objective}}`: the 內容目標 in the combined line.
+    assert_eq!(snapshot["prompt"]["version_no"], 4);
+    // Version 4 names the two fields; the combined line still carries the 內容目標.
     assert_eq!(
         snapshot["inputs"]["teacher_objective"],
         format!("內容目標：{objective}").as_str()
@@ -525,6 +526,12 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
     let user = snapshot["prompt"]["user"].as_str().unwrap();
     assert!(
         user.contains(&format!("學習目標（教師寫的）：內容目標：{objective}")),
+        "{user}"
+    );
+    assert!(
+        user.contains(&format!(
+            "教師的內容目標：{objective}\n教師的語言目標：（沒有）"
+        )),
         "{user}"
     );
     assert!(user.contains(&format!("教師的要求：{request}")), "{user}");

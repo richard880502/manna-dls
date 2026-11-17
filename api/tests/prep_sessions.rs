@@ -246,9 +246,11 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     assert!(turn["interaction_id"].is_i64());
     let plan = &turn["result"];
     assert_eq!(plan["title"], "The Umbrella Stand 教學活動規劃（測試）");
-    // 內容目標 then 語言目標, each goal in Chinese and English; the 語言目標 whose English is
-    // Chinese is dropped. Codes only from the candidates; the invented one is gone; text from
-    // the knowledge base.
+    // 內容目標 then 語言目標, at most two each, each goal in Chinese and English. Dropped: the
+    // 內容目標 with a vague verb (了解) and the 語言目標 that serves it, the 語言目標 whose English
+    // is Chinese, the one whose relation is not 「學生要用……，才能……」. The 學習策略 goal comes
+    // first. Codes only from the candidates; the invented one is gone; text from the knowledge
+    // base.
     assert_eq!(
         goal_kinds(&turn),
         ["content", "content", "language", "language"]
@@ -262,11 +264,53 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
             "curriculum_codes": ["T-G-3-V-2"],
         })
     );
+    assert_eq!(
+        plan["goals"][1]["zh"],
+        "學生能根據課文說明主角做決定的原因。"
+    );
     assert_eq!(plan["goals"][1]["curriculum_codes"], json!([]));
     assert_eq!(
-        plan["goals"][2]["en"],
+        plan["goals"][2],
+        json!({
+            "kind": "language",
+            "zh": "學生能在讀不懂時重讀並畫出每段的關鍵句。",
+            "en": "Students will be able to reread and underline the key sentence of each paragraph when they are lost.",
+            "curriculum_codes": [],
+            "category": "strategy",
+            "supports": 1,
+            "relation": "學生要用重讀並畫出關鍵句的策略，才能說出各段的重點。",
+        })
+    );
+    assert_eq!(
+        plan["goals"][3]["en"],
         "Students will be able to use because and so to explain causes and results."
     );
+    assert_eq!(plan["goals"][3]["category"], "function");
+    assert_eq!(plan["goals"][3]["supports"], 2, "the second kept 內容目標");
+    // The A6 fields: words (no repeat, English only), materials, higher-order questions
+    // (analyze / evaluate / create only), the background the warm-up connects to, the review
+    // and the assessment.
+    assert_eq!(
+        plan["key_vocabulary"],
+        json!([
+            { "word": "trust", "zh": "信任；課文的核心概念。" },
+            { "word": "neighbor", "zh": "鄰居。" },
+        ])
+    );
+    assert_eq!(
+        plan["materials"],
+        json!(["課文第 1–4 段", "老師準備的圖片"])
+    );
+    assert_eq!(
+        plan["higher_order_questions"],
+        json!([
+            { "question": "Why do you think the plan worked in the end?", "bloom": "evaluate" },
+            { "question": "What would you do if you were the main character?", "bloom": "create" },
+        ])
+    );
+    assert!(plan["background"].as_str().unwrap().contains("借東西"));
+    assert!(plan["review"].as_str().unwrap().contains("trust"));
+    assert!(plan["assessment"].as_str().unwrap().contains("exit ticket"));
     assert_eq!(
         plan["curriculum"],
         json!([{ "code": "T-G-3-V-2", "text": "能讀懂 umbrella 測試用的短文並找出主旨。" }])
@@ -278,6 +322,24 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     assert_eq!(steps[1]["minutes"], 50, "clamped");
     assert_eq!(steps[1]["options"], json!([]), "options only for 引起動機");
     assert_eq!(steps[2]["phase"], "統整與評量");
+    // A2 / A3: three groupings; the pair says what each partner does, the group lists its roles
+    // and how the teacher monitors; individual work keeps no role; all four skills.
+    let groupings: Vec<&str> = steps
+        .iter()
+        .map(|s| s["grouping"].as_str().unwrap())
+        .collect();
+    assert_eq!(groupings, ["兩人一組", "小組", "個人"]);
+    assert_eq!(steps[0]["roles"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        steps[1]["roles"][0],
+        json!({ "role": "主持", "task": "帶大家逐段討論，確定每個人都發言。" })
+    );
+    assert_eq!(steps[1]["roles"].as_array().unwrap().len(), 4);
+    assert!(steps[1]["monitoring"].as_str().unwrap().contains("巡視"));
+    assert_eq!(steps[2]["roles"], json!([]));
+    assert_eq!(steps[0]["skills"], json!(["聽", "說"]));
+    assert_eq!(steps[1]["skills"], json!(["說", "讀"]));
+    assert!(steps[0]["scaffolding"].as_str().unwrap().contains("示範"));
     assert_eq!(
         done["next"],
         json!(["comprehension", "tiered", "kit", "worksheet"])
@@ -291,7 +353,7 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     let logged = snapshot.to_string();
     assert!(!logged.contains("umbrella stand outside"), "{logged}");
     assert!(logged.contains("sha256"));
-    assert_eq!(snapshot["request"]["max_tokens"], 6000);
+    assert_eq!(snapshot["request"]["max_tokens"], 8000);
     let retrieval: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM retrieval_logs WHERE ai_interaction_id = $1")
             .bind(turn["interaction_id"].as_i64().unwrap())
@@ -398,6 +460,44 @@ async fn a_missing_goal_group_is_asked_for_again() {
     let rows = interactions(&app, "prep_activity").await;
     assert_eq!(rows.len(), 4);
     assert_eq!((rows[2].0, rows[2].1.as_str()), (1, "blocked"));
+    assert_eq!((rows[3].0, rows[3].1.as_str()), (2, "shown"));
+}
+
+#[tokio::test]
+async fn a_lesson_without_groupings_or_skills_is_asked_for_again() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-5F", "general").await;
+    // The first call has the whole class only, and reading only: the retry is asked for at
+    // least two groupings and all four skills, and has them.
+    let once = pasted(&app, &t, "activity", "FAKE_PREP_FLAT_ONCE").await;
+    let turn = last(&wait(&app, &t, sid(&once)).await);
+    assert_eq!(turn["status"], "done", "{turn}");
+    let groupings: Vec<&str> = turn["result"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["grouping"].as_str().unwrap())
+        .collect();
+    assert_eq!(groupings, ["兩人一組", "小組", "個人"]);
+    let rows = interactions(&app, "prep_activity").await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[0].0, rows[0].1.as_str()), (1, "blocked"));
+    assert_eq!((rows[1].0, rows[1].1.as_str()), (2, "shown"));
+    let user = rows[1].2["prompt"]["user"].as_str().unwrap();
+    assert!(user.contains("至少要用兩種分組方式"), "{user}");
+    assert!(user.contains("這次沒有用到：聽、說、寫"), "{user}");
+
+    // Never: the retry's plan is still shown as it is.
+    let always = pasted(&app, &t, "activity", "FAKE_PREP_FLAT").await;
+    let turn = last(&wait(&app, &t, sid(&always)).await);
+    assert_eq!(turn["status"], "done", "{turn}");
+    assert!(turn["result"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["grouping"] == "全班" && s["roles"] == json!([])));
+    let rows = interactions(&app, "prep_activity").await;
+    assert_eq!(rows.len(), 4);
     assert_eq!((rows[3].0, rows[3].1.as_str()), (2, "shown"));
 }
 

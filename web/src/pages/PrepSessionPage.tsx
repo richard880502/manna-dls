@@ -12,6 +12,7 @@ import { ErrorText, Loading } from "../components/common";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
+import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
 import { ActivityCard, AskCard, ResourcesCard, ReviseCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
@@ -293,6 +294,7 @@ function PrepSessionView({ id }: { id: number }) {
           )}
           {(turn.worksheet || turn.status === "running") && worksheetCard(turn)}
           {turn.status === "failed" && failed(turn)}
+          <SiopCheckPanel sessionId={id} turn={turn} />
         </div>
       );
     }
@@ -301,6 +303,7 @@ function PrepSessionView({ id }: { id: number }) {
         <>
           {worksheetCard(turn)}
           {turn.status === "failed" && failed(turn)}
+          <SiopCheckPanel sessionId={id} turn={turn} />
         </>
       );
     }
@@ -314,7 +317,14 @@ function PrepSessionView({ id }: { id: number }) {
       );
     }
     const plan = activityOf(turn);
-    if (plan) return <ActivityCard plan={plan} interactionId={turn.interaction_id} />;
+    if (plan) {
+      return (
+        <>
+          <ActivityCard plan={plan} interactionId={turn.interaction_id} />
+          <SiopCheckPanel sessionId={id} turn={turn} />
+        </>
+      );
+    }
     const resources = resourcesOf(turn);
     if (resources) return <ResourcesCard resources={resources} onOpenMaterial={setViewing} />;
     const answer = answerOf(turn);

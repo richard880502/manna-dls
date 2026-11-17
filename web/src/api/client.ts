@@ -124,6 +124,7 @@ import type {
   ObjectiveDraftResult,
   UpdatePrepSessionRequest,
   CreatePrepTurnRequest,
+  SiopCheck,
 } from "./types";
 
 export class ApiError extends Error {
@@ -518,6 +519,11 @@ export const api = {
   /** 409 while the kit is still being made; 400 for a turn that is not a kit. */
   exportPrepKit: (id: number, turnId: number) =>
     download(`/prep-sessions/${id}/turns/${turnId}/kit`, { format: "docx" }, "教學套件.docx"),
+  /** 這一輪最新的 SIOP 自我檢核（檢核中時輪詢）；還沒有 → 404 */
+  getSiopCheck: (id: number, turnId: number) => get<SiopCheck>(`/prep-sessions/${id}/turns/${turnId}/siop-check`),
+  /** 202：再檢核一次；這一輪沒有完成或檢核還在跑 → 409 */
+  rerunSiopCheck: (id: number, turnId: number) =>
+    post<SiopCheck>(`/prep-sessions/${id}/turns/${turnId}/siop-check`, {}),
 
   listWorksheetTemplates: () => get<WsTemplateList>("/worksheet-templates"),
   /** 202：在背景讀這份學習單的設計（status=extracting），之後輪詢 */
