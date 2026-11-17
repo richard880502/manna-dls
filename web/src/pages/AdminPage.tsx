@@ -1,10 +1,10 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { ImportResult, PromptVersion, Role, SchoolTrack } from "../api/types";
+import type { Account, ImportResult, PromptVersion, Role, SchoolTrack } from "../api/types";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { useApp } from "../context/AppContext";
-import { ROLE_LABELS, SCHOOL_TRACK_LABELS, formatDateTime } from "../lib/labels";
+import { ROLE_LABELS, SCHOOL_TRACK_LABELS, formatDate, formatDateTime } from "../lib/labels";
 import { can } from "../lib/permissions";
 
 const ROLES: Role[] = ["teacher", "pi", "kb_manager", "ra", "rater", "engineer"];
@@ -19,7 +19,7 @@ export function AdminPage() {
       <div className="page-intro">
         <h1>後台管理</h1>
         <p>
-          建立邀請碼、維護提示詞版本、匯入教師備課經驗。每次修改提示詞都會產生新版本。課綱條目與詞彙表在
+          建立邀請碼、變更帳號的角色、維護提示詞版本、匯入教師備課經驗。每次修改提示詞都會產生新版本。課綱條目與詞彙表在
           <Link to="/knowledge?tab=curriculum">知識庫</Link>。
         </p>
       </div>
@@ -33,7 +33,164 @@ export function AdminPage() {
           upload={api.admin.importTeacherCases}
         />
       </div>
+      <AccountRoles />
       <PromptsEditor />
+    </section>
+  );
+}
+
+/** What a 知識庫管理員 may and may not do (docs/API.md「角色與權限」), said wherever the role is given. */
+const KB_MANAGER_NOTE =
+  "「知識庫管理員」可以管理知識庫的教材、學習單範本、課綱條目與詞彙，但不能建立邀請碼或變更平台設定，也看不到其他教師的資料。";
+
+/** One line on what the new role means for the account, shown before the change is confirmed. */
+function roleChangeNote(from: Role, to: Role): string {
+  if (to === "pi") return "主持人可以使用全部後台功能，包括建立邀請碼與變更其他帳號的角色。";
+  if (from === "pi") return "對方將不能再使用後台。";
+  if (to === "kb_manager") return KB_MANAGER_NOTE;
+  if (from === "kb_manager") return "對方將不能再管理知識庫。";
+  return "對方的備課資料不受影響。";
+}
+
+type RowResult = { id: number; tone: "success" | "error"; text: string };
+
+function AccountRoles() {
+  const [accounts, setAccounts] = useState<Account[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** The change waiting for confirmation: the select already shows the new role. */
+  const [pending, setPending] = useState<{ id: number; role: Role } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<RowResult | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.admin
+      .listAccounts()
+      .then((list) => alive && setAccounts(list))
+      .catch((err: unknown) => alive && setError(errorMessage(err)));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function choose(account: Account, role: Role) {
+    setResult(null);
+    setPending(role === account.role ? null : { id: account.id, role });
+  }
+
+  async function confirm(account: Account, role: Role) {
+    setBusy(true);
+    try {
+      const saved = await api.admin.updateAccountRole(account.id, role);
+      setAccounts((prev) => (prev ?? []).map((a) => (a.id === saved.id ? saved : a)));
+      setResult({
+        id: saved.id,
+        tone: "success",
+        text: `已將 ${saved.research_id} 的角色改為「${ROLE_LABELS[saved.role]}」。對方不必重新登入，重新整理網頁後畫面就會更新。`,
+      });
+    } catch (err) {
+      setResult({ id: account.id, tone: "error", text: errorMessage(err) });
+    } finally {
+      setPending(null);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel-card admin-accounts" aria-labelledby="accounts-heading">
+      <div className="card-heading">
+        <h2 id="accounts-heading">帳號與角色</h2>
+        {accounts && <span className="soft-tag">{accounts.length} 個帳號</span>}
+      </div>
+      <p className="field-hint">{KB_MANAGER_NOTE}</p>
+      <p className="field-hint">
+        帳號在第一次用邀請碼登入後才會出現在這裡。角色變更立即生效，對方不必重新登入。你不能變更自己的角色。
+      </p>
+      <ErrorText message={error} />
+      {!accounts && !error && <Loading />}
+      {accounts && accounts.length > 0 && (
+        <ul className="rows is-compact" aria-label="帳號">
+          {accounts.map((account) => {
+            const chosen = pending?.id === account.id ? pending.role : account.role;
+            const rowResult = result?.id === account.id ? result : null;
+            return (
+              <li key={account.id} className="row">
+                <div>
+                  <h3>
+                    {account.research_id}
+                    {account.is_self && <span className="soft-tag admin-self-tag">你</span>}
+                  </h3>
+                  <p className="meta">
+                    {SCHOOL_TRACK_LABELS[account.school_track] ?? account.school_track} ·{" "}
+                    {formatDate(account.created_at)} 加入
+                  </p>
+                </div>
+                <div className="side">
+                  {account.is_self ? (
+                    <span>{ROLE_LABELS[account.role] ?? account.role}</span>
+                  ) : (
+                    <select
+                      className="admin-role-select"
+                      aria-label={`${account.research_id} 的角色`}
+                      value={chosen}
+                      disabled={busy}
+                      onChange={(e) => choose(account, e.target.value as Role)}
+                    >
+                      {ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {ROLE_LABELS[r]}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                {pending?.id === account.id && (
+                  <div
+                    className="row-more admin-role-confirm"
+                    role="alertdialog"
+                    aria-label={`確認變更 ${account.research_id} 的角色`}
+                  >
+                    <p>
+                      <strong>
+                        把 {account.research_id} 的角色從「{ROLE_LABELS[account.role]}」改為「
+                        {ROLE_LABELS[pending.role]}」？
+                      </strong>
+                    </p>
+                    <p>{roleChangeNote(account.role, pending.role)}</p>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={busy}
+                        onClick={() => void confirm(account, pending.role)}
+                      >
+                        {busy ? "變更中…" : "確定變更"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-link is-plain"
+                        disabled={busy}
+                        onClick={() => setPending(null)}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {rowResult && (
+                  <div className="row-more">
+                    {rowResult.tone === "success" ? (
+                      <Notice tone="success">{rowResult.text}</Notice>
+                    ) : (
+                      <ErrorText message={rowResult.text} />
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }
@@ -143,9 +300,7 @@ function InviteForm() {
         onChange={(e) => setResearchId(e.target.value)}
         placeholder="例如：T-2026-001"
       />
-      <p className="field-hint">
-        只填研究編號，不要填教師姓名或 Email。「知識庫管理員」只能管理課綱條目與詞彙表，看不到其他後台功能與其他教師的資料。
-      </p>
+      <p className="field-hint">只填研究編號，不要填教師姓名或 Email。{KB_MANAGER_NOTE}</p>
       <div className="two-fields">
         <div>
           <label className="field-label" htmlFor="invite-track">

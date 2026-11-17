@@ -111,6 +111,16 @@ pub fn role_can(role: &str, capability: Capability) -> bool {
     }
 }
 
+/// 403 unless `role` holds `capability`. For a role read again inside a transaction; requests
+/// normally use [`AuthTeacher::require`].
+pub fn require_role(role: &str, capability: Capability) -> AppResult<()> {
+    if role_can(role, capability) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(capability.denied().into()))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Teacher {
     pub id: i64,
@@ -135,11 +145,7 @@ impl AuthTeacher {
     }
     /// 403 unless this account's role holds `capability`.
     pub fn require(&self, capability: Capability) -> AppResult<()> {
-        if self.can(capability) {
-            Ok(())
-        } else {
-            Err(AppError::Forbidden(capability.denied().into()))
-        }
+        require_role(&self.0.role, capability)
     }
     pub fn require_pi(&self) -> AppResult<()> {
         self.require(Capability::Administer)

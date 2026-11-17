@@ -287,6 +287,17 @@ impl TestApp {
         .await
     }
 
+    pub async fn patch(&self, path: &str, token: Option<&str>, body: Value) -> (StatusCode, Value) {
+        self.send(
+            Method::PATCH,
+            path,
+            token,
+            Some("application/json"),
+            body.to_string().into_bytes(),
+        )
+        .await
+    }
+
     pub async fn post_csv(
         &self,
         path: &str,
