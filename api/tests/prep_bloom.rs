@@ -507,11 +507,11 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
             json!(["evaluate", "create"]),
         ]
     );
-    // Version 2 of the prompt, with the objective and the request.
+    // The latest version of the prompt (3: the goal groups), with the objective and the request.
     let rows = calls(&app, "prep_activity").await;
     assert_eq!(rows.len(), 1);
     let snapshot = &rows[0].2;
-    assert_eq!(snapshot["prompt"]["version_no"], 2);
+    assert_eq!(snapshot["prompt"]["version_no"], 3);
     assert_eq!(snapshot["inputs"]["teacher_objective"], objective);
     assert_eq!(snapshot["inputs"]["teacher_request"], request);
     let user = snapshot["prompt"]["user"].as_str().unwrap();
@@ -617,6 +617,16 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
     assert!(at("〔Bloom：") > teacher);
     assert!(at("Answer: ") > teacher);
     assert!(xml.contains("〔Bloom：創造 Create〕"));
+    // The goals: 內容目標 then 語言目標, each goal in Chinese with its English under it.
+    assert!(at("學習目標") < at("內容目標"));
+    assert!(at("內容目標") < at("學生能說出「The Umbrella Stand」各段的重點。"));
+    assert!(
+        at("學生能說出「The Umbrella Stand」各段的重點。")
+            < at("Students will be able to tell the main point of each paragraph of the text.")
+    );
+    assert!(at("Students will be able to tell the main point") < at("語言目標"));
+    assert!(at("語言目標") < at("Students will be able to use because and so"));
+    assert!(at("語言目標") < at("1. 引起動機｜"));
     // Without a format it is a DOCX too.
     assert_eq!(
         kit_raw(&app, &t, id, turn_id, "").await.status,
@@ -648,6 +658,29 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
         .await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
 
+    // A plan stored before the goal groups (one Chinese line per goal) is still exported.
+    sqlx::query(
+        "UPDATE prep_turns SET result = jsonb_set(result, '{goals}', $2::jsonb) WHERE id = $1",
+    )
+    .bind(turn_id)
+    .bind(json!([
+        { "text": "學生能說出林太太設置傘架的原因。", "curriculum_codes": [] },
+        { "text": "學生能用課文句型寫出兩句話。", "curriculum_codes": [] },
+    ]))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let r = kit_raw(&app, &t, id, turn_id, "?format=docx").await;
+    assert_eq!(r.status, StatusCode::OK);
+    let xml = document_xml(r.body);
+    let at = |s: &str| {
+        xml.find(s)
+            .unwrap_or_else(|| panic!("{s} is not in the kit"))
+    };
+    assert!(at("學習目標") < at("學生能說出林太太設置傘架的原因。"));
+    assert!(at("學生能說出林太太設置傘架的原因。") < at("學生能用課文句型寫出兩句話。"));
+    assert!(!xml.contains("內容目標") && !xml.contains("語言目標"));
+
     // The bottom bar revises the kit's worksheet.
     let ws_id = ws["id"].as_i64().unwrap();
     let (s, v) = post_turn(&app, &t, id, json!({ "request": "第一題改難一點" })).await;
@@ -678,7 +711,7 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
             .fetch_one(&app.db)
             .await
             .unwrap();
-    assert_eq!(exported, 2);
+    assert_eq!(exported, 3);
 }
 
 #[tokio::test]

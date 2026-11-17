@@ -18,7 +18,7 @@ import type {
   WsSheet,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
-import { prepConfig } from "../lib/prep";
+import { goalGroups, goalsText, prepConfig } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import {
   baseRoutes,
@@ -118,7 +118,20 @@ const session = (turns: PrepTurn[], overrides: Partial<PrepSession> = {}): PrepS
 
 const plan: ActivityPlan = {
   title: "The Umbrella Stand：一節課的活動",
-  goals: [{ text: "學生能說出林太太設置傘架的原因", curriculum_codes: ["5-IV-2"] }],
+  goals: [
+    {
+      kind: "content",
+      zh: "學生能說出林太太設置傘架的原因",
+      en: "Students will be able to explain why Mrs. Lin set up the umbrella stand.",
+      curriculum_codes: ["5-IV-2"],
+    },
+    {
+      kind: "language",
+      zh: "學生能用 because 說明原因",
+      en: "Students will be able to use because to give a reason.",
+      curriculum_codes: [],
+    },
+  ],
   steps: [
     {
       phase: "引起動機",
@@ -235,6 +248,13 @@ const sheet = (audience: WsAudience): WsSheet => {
     ],
   };
 };
+
+/** The activity card's 學習目標 (the worksheet preview has a 學習目標 region of its own). */
+function activityGoals() {
+  const region = screen.getAllByRole("region", { name: "學習目標" }).find((r) => r.querySelector("table.prep-goals"));
+  if (!region) throw new Error("the activity card has no 學習目標");
+  return within(region);
+}
 
 const sheetRoute = (call: MockCall) => sheet(new URL(call.url, "http://x").searchParams.get("audience") as WsAudience);
 
@@ -593,7 +613,26 @@ describe("備課對話 (session page)", () => {
     // activity: goals table with code chips, step cards, options, the two collapsibles, ratings.
     expect(screen.getByRole("columnheader", { name: "目標" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "對應課綱" })).toBeInTheDocument();
-    expect(screen.getByText("學生能說出林太太設置傘架的原因")).toBeInTheDocument();
+    // The goals in two labelled groups, each goal in Chinese with its English under it.
+    const goals = activityGoals();
+    const content = within(goals.getByRole("rowgroup", { name: "內容目標" }));
+    expect(content.getByText("學生要理解或完成什麼")).toBeInTheDocument();
+    expect(content.getByText("學生能說出林太太設置傘架的原因")).toBeInTheDocument();
+    expect(content.getByText("Students will be able to explain why Mrs. Lin set up the umbrella stand.")).toHaveAttribute(
+      "lang",
+      "en",
+    );
+    expect(content.getByText("5-IV-2")).toHaveAttribute("title", "能讀懂簡易故事的主要內容");
+    const language = within(goals.getByRole("rowgroup", { name: "語言目標" }));
+    expect(language.getByText("為了做到，需要用什麼語言")).toBeInTheDocument();
+    expect(language.getByText("學生能用 because 說明原因")).toBeInTheDocument();
+    expect(language.getByText("Students will be able to use because to give a reason.")).toBeInTheDocument();
+    expect(language.queryByText("5-IV-2")).toBeNull();
+    // 複製 copies both groups in both languages.
+    const copy = goals.getByRole("button", { name: "複製學習目標" });
+    await user.click(copy);
+    expect(await navigator.clipboard.readText()).toBe(goalsText(plan));
+    expect(copy).toHaveTextContent("已複製");
     const warm = within(screen.getByRole("region", { name: "引起動機：雨天經驗" }));
     expect(warm.getByText("5 分鐘")).toBeInTheDocument();
     expect(warm.getByText("教學思路")).toBeInTheDocument();
@@ -624,6 +663,32 @@ describe("備課對話 (session page)", () => {
     await user.click(screen.getByRole("button", { name: "再試一次" }));
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "activity", request: "規劃教學活動" });
+  });
+
+  it("an activity plan made before the goal groups shows its goals as one list, as before", async () => {
+    signIn();
+    // As stored by version 1 or 2 of prep_activity: one Chinese line per goal, no kind.
+    const old = {
+      ...plan,
+      goals: [
+        { text: "學生能說出林太太設置傘架的原因", curriculum_codes: ["5-IV-2"] },
+        { text: "學生能用課文句型寫出兩句話", curriculum_codes: [] },
+      ],
+    } satisfies ActivityPlan;
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: old, interaction_id: 77 })]) });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await screen.findByText("學生能用課文句型寫出兩句話");
+    const goals = activityGoals();
+    expect(goals.getByRole("columnheader", { name: "目標" })).toBeInTheDocument();
+    expect(goals.getByText("學生能說出林太太設置傘架的原因")).toBeInTheDocument();
+    expect(goals.getByText("學生能用課文句型寫出兩句話")).toBeInTheDocument();
+    expect(goals.getByText("5-IV-2")).toBeInTheDocument();
+    expect(goals.queryByText("內容目標")).toBeNull();
+    expect(goals.queryByText("語言目標")).toBeNull();
+    expect(goals.queryByRole("rowgroup", { name: "內容目標" })).toBeNull();
+    await user.click(goals.getByRole("button", { name: "複製學習目標" }));
+    expect(await navigator.clipboard.readText()).toBe("1. 學生能說出林太太設置傘架的原因（5-IV-2）\n2. 學生能用課文句型寫出兩句話");
   });
 
   it("a follow-up chip asks again, and the next-step chips send their kind", async () => {
@@ -822,5 +887,59 @@ describe("我的備課", () => {
     });
     renderApp("/worksheets/11");
     expect(await screen.findByRole("link", { name: "← 回到備課對話" })).toHaveAttribute("href", "/prep/7");
+  });
+});
+
+// ---------------------------------------------------------------- 學習目標 (lib)
+
+describe("學習目標：內容目標與語言目標", () => {
+  it("groups the goals, 內容目標 first, and copies each group under its label in both languages", () => {
+    const mixed: ActivityPlan = {
+      ...plan,
+      goals: [
+        { kind: "language", zh: "學生能用 because 說明原因", en: "Students will be able to use because.", curriculum_codes: [] },
+        { kind: "content", zh: "學生能說出主旨", en: "Students will be able to tell the main idea.", curriculum_codes: ["5-IV-2", "3-V-1"] },
+        { kind: "content", zh: "學生能比較兩個角色", en: "Students will be able to compare two characters.", curriculum_codes: [] },
+      ],
+    };
+    expect(goalGroups(mixed).map((g) => [g.label, g.goals.length])).toEqual([
+      ["內容目標", 2],
+      ["語言目標", 1],
+    ]);
+    expect(goalsText(mixed)).toBe(
+      [
+        "【內容目標】",
+        "1. 學生能說出主旨（5-IV-2、3-V-1）",
+        "   Students will be able to tell the main idea.",
+        "2. 學生能比較兩個角色",
+        "   Students will be able to compare two characters.",
+        "【語言目標】",
+        "1. 學生能用 because 說明原因",
+        "   Students will be able to use because.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps the goals of a plan made before the groups as one list without a label", () => {
+    const old: ActivityPlan = {
+      ...plan,
+      goals: [
+        { text: "學生能說出主旨", curriculum_codes: ["5-IV-2"] },
+        { text: "學生能寫出兩句", curriculum_codes: [] },
+      ],
+    };
+    expect(goalGroups(old)).toEqual([
+      {
+        kind: null,
+        label: null,
+        hint: null,
+        goals: [
+          { zh: "學生能說出主旨", en: "", curriculum_codes: ["5-IV-2"] },
+          { zh: "學生能寫出兩句", en: "", curriculum_codes: [] },
+        ],
+      },
+    ]);
+    expect(goalsText(old)).toBe("1. 學生能說出主旨（5-IV-2）\n2. 學生能寫出兩句");
+    expect(goalGroups({ ...plan, goals: [] })).toEqual([]);
   });
 });

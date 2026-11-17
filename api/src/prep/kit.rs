@@ -9,7 +9,7 @@
 //! ([`export::combined_docx`]). A part that the kit could not make is replaced by a line that
 //! says so.
 
-use super::{ActivityPlan, Step};
+use super::{ActivityPlan, Goal, GoalKind, Step};
 use crate::worksheet::assemble::{project, Sheet};
 use crate::worksheet::bloom::{Bloom, TIERED_REASON};
 use crate::worksheet::export::{self, Line, Part};
@@ -72,7 +72,24 @@ fn step_lines(no: usize, s: &Step, out: &mut Vec<Line>) {
     }
 }
 
-/// 教學流程: the plan's title, its goals (with the curriculum codes they cite), every step with
+/// Goals numbered from 1: the Chinese line with the curriculum codes it cites, the English line
+/// (if any) under it.
+fn goal_lines<'a>(goals: impl Iterator<Item = &'a Goal>, out: &mut Vec<Line>) {
+    for (i, g) in goals.enumerate() {
+        let codes = if g.curriculum_codes.is_empty() {
+            String::new()
+        } else {
+            format!("（課綱：{}）", g.curriculum_codes.join("、"))
+        };
+        out.push(Line::Numbered(i + 1, format!("{}{codes}", g.zh)));
+        if !g.en.trim().is_empty() {
+            out.push(Line::Script(g.en.clone()));
+        }
+    }
+}
+
+/// 教學流程: the plan's title, its goals (內容目標 and 語言目標, each in Chinese and English, with
+/// the curriculum codes they cite; a plan made before has one list in Chinese), every step with
 /// its Bloom levels, and the curriculum items cited.
 pub fn plan_lines(plan: &ActivityPlan) -> Vec<Line> {
     let mut out = Vec::new();
@@ -86,13 +103,17 @@ pub fn plan_lines(plan: &ActivityPlan) -> Vec<Line> {
     )));
     if !plan.goals.is_empty() {
         out.push(Line::Heading("學習目標".into()));
-        for (i, g) in plan.goals.iter().enumerate() {
-            let codes = if g.curriculum_codes.is_empty() {
-                String::new()
-            } else {
-                format!("（課綱：{}）", g.curriculum_codes.join("、"))
-            };
-            out.push(Line::Numbered(i + 1, format!("{}{codes}", g.text)));
+        goal_lines(plan.goals.iter().filter(|g| g.kind.is_none()), &mut out);
+        for kind in GoalKind::ALL {
+            let mut group = plan
+                .goals
+                .iter()
+                .filter(|g| g.kind == Some(kind))
+                .peekable();
+            if group.peek().is_some() {
+                out.push(Line::Labelled(kind.label().into(), String::new()));
+                goal_lines(group, &mut out);
+            }
         }
     }
     for (i, s) in plan.steps.iter().enumerate() {
@@ -202,16 +223,26 @@ pub fn docx(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prep::{CurriculumRef, Goal, StepOption, PHASE_WARMUP};
+    use crate::prep::{CurriculumRef, StepOption, PHASE_WARMUP};
     use crate::worksheet::{Block, Item};
 
     fn plan() -> ActivityPlan {
         ActivityPlan {
             title: "信任的雨傘".into(),
-            goals: vec![Goal {
-                text: "學生能說出主旨".into(),
-                curriculum_codes: vec!["A-1".into()],
-            }],
+            goals: vec![
+                Goal {
+                    kind: Some(GoalKind::Content),
+                    zh: "學生能說出主旨".into(),
+                    en: "Students will be able to tell the main idea.".into(),
+                    curriculum_codes: vec!["A-1".into()],
+                },
+                Goal {
+                    kind: Some(GoalKind::Language),
+                    zh: "學生能用 because 說明原因".into(),
+                    en: "Students will be able to use because to give a reason.".into(),
+                    curriculum_codes: vec![],
+                },
+            ],
             steps: vec![Step {
                 phase: PHASE_WARMUP.into(),
                 title: "看圖".into(),
@@ -275,12 +306,67 @@ mod tests {
         let lines = plan_lines(&plan());
         assert!(lines.contains(&Line::Heading("1. 引起動機｜看圖（5 分鐘）".into())));
         assert!(lines.contains(&Line::Teacher("Bloom：記憶、理解".into())));
-        assert!(lines.contains(&Line::Numbered(1, "學生能說出主旨（課綱：A-1）".into())));
         assert!(lines.contains(&Line::Labelled(
             "選項一：圖片（5 分鐘）".into(),
             "展示圖片".into()
         )));
         assert!(lines.contains(&Line::Labelled("A-1".into(), "條文".into())));
+    }
+
+    #[test]
+    fn the_goals_are_printed_in_their_groups_in_both_languages() {
+        let lines = plan_lines(&plan());
+        let at = |l: Line| {
+            lines
+                .iter()
+                .position(|x| *x == l)
+                .unwrap_or_else(|| panic!("{l:?} missing from {lines:#?}"))
+        };
+        let heading = at(Line::Heading("學習目標".into()));
+        let content = at(Line::Labelled("內容目標".into(), String::new()));
+        let language = at(Line::Labelled("語言目標".into(), String::new()));
+        let zh = at(Line::Numbered(1, "學生能說出主旨（課綱：A-1）".into()));
+        let en = at(Line::Script(
+            "Students will be able to tell the main idea.".into(),
+        ));
+        assert!(heading < content && content < zh && zh + 1 == en && en < language);
+        // Each group is numbered from 1; a goal without codes has no 課綱 note.
+        assert_eq!(
+            lines[language + 1],
+            Line::Numbered(1, "學生能用 because 說明原因".into())
+        );
+        assert_eq!(
+            lines[language + 2],
+            Line::Script("Students will be able to use because to give a reason.".into())
+        );
+    }
+
+    #[test]
+    fn a_plan_made_before_the_goal_groups_prints_one_list() {
+        // As stored by version 1 or 2 of `prep_activity`.
+        let old: ActivityPlan = serde_json::from_value(serde_json::json!({
+            "title": "舊的規劃",
+            "goals": [
+                { "text": "學生能說出主旨", "curriculum_codes": ["A-1"] },
+                { "text": "學生能寫出兩句", "curriculum_codes": [] },
+            ],
+            "steps": [],
+            "curriculum": [],
+        }))
+        .unwrap();
+        let lines = plan_lines(&old);
+        let goals: Vec<&Line> = lines
+            .iter()
+            .skip_while(|l| **l != Line::Heading("學習目標".into()))
+            .skip(1)
+            .collect();
+        assert_eq!(
+            goals,
+            [
+                &Line::Numbered(1, "學生能說出主旨（課綱：A-1）".into()),
+                &Line::Numbered(2, "學生能寫出兩句".into()),
+            ]
+        );
     }
 
     #[test]

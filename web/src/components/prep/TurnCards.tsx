@@ -1,15 +1,20 @@
 import type { ActivityPlan, PrepAskResult, PrepResources, PrepReviseResult } from "../../api/types";
-import { OPTION_NAMES, changedBlocksLine, goalsText, stepText } from "../../lib/prep";
+import { OPTION_NAMES, changedBlocksLine, goalGroups, goalsText, stepText } from "../../lib/prep";
 import { BloomChips } from "../worksheet/Bloom";
 import { SectionTools } from "./SectionTools";
 
-/** 規劃教學活動: the goals as a table, then each step as a card, as on 築學網. */
+/**
+ * 規劃教學活動: the goals as a table, then each step as a card, as on 築學網. The goals come in
+ * two labelled groups, 內容目標 and 語言目標, each goal in Chinese with its English under it; a
+ * plan made before the groups shows its goals as one list, as before.
+ */
 export function ActivityCard({ plan, interactionId }: { plan: ActivityPlan; interactionId: number | null }) {
   const cited = new Map(plan.curriculum.map((c) => [c.code, c.text]));
+  const groups = goalGroups(plan);
   return (
     <div className="prep-activity">
       {plan.title.trim() && <h3 className="prep-result-title">{plan.title}</h3>}
-      {plan.goals.length > 0 && (
+      {groups.length > 0 && (
         <section className="prep-section" aria-label="學習目標">
           <table className="prep-goals">
             <thead>
@@ -18,22 +23,40 @@ export function ActivityCard({ plan, interactionId }: { plan: ActivityPlan; inte
                 <th scope="col">對應課綱</th>
               </tr>
             </thead>
-            <tbody>
-              {plan.goals.map((g) => (
-                <tr key={g.text}>
-                  <td>{g.text}</td>
-                  <td>
-                    <span className="prep-codes">
-                      {g.curriculum_codes.map((code) => (
-                        <code key={code} className="prep-code" title={cited.get(code)}>
-                          {code}
-                        </code>
-                      ))}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
+            {groups.map((group) => (
+              <tbody key={group.kind ?? "goals"} aria-label={group.label ?? undefined}>
+                {group.label && (
+                  <tr className="prep-goal-group">
+                    <th scope="rowgroup" colSpan={2}>
+                      {group.label}
+                      <span className="prep-goal-hint">{group.hint}</span>
+                    </th>
+                  </tr>
+                )}
+                {group.goals.map((g, i) => (
+                  // oxlint-disable-next-line react/no-array-index-key -- goals have no id; order is the identity
+                  <tr key={i}>
+                    <td>
+                      <span className="prep-goal-zh">{g.zh}</span>
+                      {g.en.trim() && (
+                        <span className="prep-goal-en" lang="en">
+                          {g.en}
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <span className="prep-codes">
+                        {g.curriculum_codes.map((code) => (
+                          <code key={code} className="prep-code" title={cited.get(code)}>
+                            {code}
+                          </code>
+                        ))}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            ))}
           </table>
           <SectionTools name="學習目標" text={goalsText(plan)} interactionId={interactionId} />
         </section>

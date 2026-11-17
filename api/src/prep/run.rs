@@ -649,10 +649,11 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         state,
         session.teacher_id,
         c,
+        // A goal group without a usable goal is retried, but the plan stays usable.
         |raw: &RawPlan| match clean_plan(raw, &candidates) {
-            Ok(plan) => Checked {
+            Ok((plan, problems)) => Checked {
                 output: Some(plan),
-                problems: Vec::new(),
+                problems,
             },
             Err(problem) => Checked {
                 output: None,

@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
+use crate::checks::contains_cjk;
 use crate::sop::checks::clean_markup;
 use crate::worksheet::bloom::{Bloom, Output};
 use crate::worksheet::template::{enum_of, obj, s_max, strings_max};
@@ -231,8 +232,13 @@ pub fn kit_error(activity: Option<&str>, worksheet: Option<&str>) -> Option<Stri
 // ---------------------------------------------------------------- caps
 
 pub const PLAN_TITLE_CHARS: usize = 100;
-pub const GOALS_MAX: usize = 4;
-pub const GOAL_TEXT_CHARS: usize = 150;
+/// Goals of each group (內容目標, 語言目標): 1–3 each (`prep_activity` version 3).
+pub const GOAL_GROUP_MIN: usize = 1;
+pub const GOAL_GROUP_MAX: usize = 3;
+/// A goal in Chinese, for the teacher: one sentence.
+pub const GOAL_ZH_CHARS: usize = 150;
+/// The same goal in English, for the students: one sentence.
+pub const GOAL_EN_CHARS: usize = 200;
 pub const GOAL_CODES_MAX: usize = 3;
 pub const CODE_CHARS: usize = 60;
 pub const STEPS_MIN: usize = 3;
@@ -275,9 +281,41 @@ pub struct CurriculumRef {
     pub text: String,
 }
 
+/// The two groups of an activity plan's goals, as SIOP separates them (the SOP's
+/// `sop_objectives` uses the same split).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GoalKind {
+    /// 內容目標: what students will learn or do with the content.
+    Content,
+    /// 語言目標: the English functions, structures or vocabulary they use to do it.
+    Language,
+}
+
+impl GoalKind {
+    /// In the order they are written and shown.
+    pub const ALL: [GoalKind; 2] = [GoalKind::Content, GoalKind::Language];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GoalKind::Content => "內容目標",
+            GoalKind::Language => "語言目標",
+        }
+    }
+}
+
+/// A goal of an activity plan. Since version 3 of `prep_activity` every goal has a `kind` and
+/// is written twice: `zh` for the teacher, `en` for the students. A plan made with an earlier
+/// version has one Chinese line per goal, stored as `text`: it is read into `zh`, without a
+/// `kind` and with an empty `en` (the stored JSON itself is never rewritten).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Goal {
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<GoalKind>,
+    #[serde(alias = "text")]
+    pub zh: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub en: String,
     pub curriculum_codes: Vec<String>,
 }
 
@@ -308,6 +346,7 @@ pub struct Step {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActivityPlan {
     pub title: String,
+    /// The 內容目標 first, then the 語言目標 (version 3); one list without kinds before.
     pub goals: Vec<Goal>,
     pub steps: Vec<Step>,
     /// The candidates actually cited, text from the knowledge base.
@@ -362,9 +401,11 @@ pub struct Revision {
 
 // ---------------------------------------------------------------- what the model writes
 
+/// A goal as the model writes it; its group is the array it is in.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawGoal {
-    pub text: String,
+    pub zh: String,
+    pub en: String,
     pub curriculum_codes: Vec<String>,
 }
 
@@ -390,11 +431,32 @@ pub struct RawStep {
     pub stuck_tip: String,
 }
 
+/// What the model writes for `prep_activity` (version 3): the two goal groups are two arrays,
+/// so the schema itself asks for both (1–3 each); the server puts them into `goals` with their
+/// `kind`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RawPlan {
     pub title: String,
-    pub goals: Vec<RawGoal>,
+    pub content_goals: Vec<RawGoal>,
+    pub language_goals: Vec<RawGoal>,
     pub steps: Vec<RawStep>,
+}
+
+impl RawPlan {
+    fn goals_of(&self, kind: GoalKind) -> &[RawGoal] {
+        match kind {
+            GoalKind::Content => &self.content_goals,
+            GoalKind::Language => &self.language_goals,
+        }
+    }
+}
+
+/// The schema key of a goal group.
+fn goals_key(kind: GoalKind) -> &'static str {
+    match kind {
+        GoalKind::Content => "content_goals",
+        GoalKind::Language => "language_goals",
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -435,8 +497,10 @@ fn bloom_ids() -> Vec<&'static str> {
     Bloom::ALL.iter().map(|b| b.as_str()).collect()
 }
 
-/// `prep_activity`: curriculum codes only from `candidates` (enum), Bloom levels only from the
-/// six ids (enum, 1–3 per step), every string and array capped.
+/// `prep_activity`: the title, the 內容目標 (`content_goals`) and 語言目標 (`language_goals`),
+/// 1–3 each, every goal in Chinese (`zh`) then English (`en`), then the steps. Curriculum codes
+/// only from `candidates` (enum), Bloom levels only from the six ids (enum, 1–3 per step), every
+/// string and array capped.
 pub fn activity_schema(candidates: &[String]) -> Value {
     let option = obj(vec![
         ("title", s_max(STEP_TITLE_CHARS)),
@@ -469,15 +533,20 @@ pub fn activity_schema(candidates: &[String]) -> Value {
         ("stuck_tip", s_max(STUCK_TIP_CHARS)),
     ]);
     let goal = obj(vec![
-        ("text", s_max(GOAL_TEXT_CHARS)),
+        ("zh", s_max(GOAL_ZH_CHARS)),
+        ("en", s_max(GOAL_EN_CHARS)),
         ("curriculum_codes", codes_schema(candidates, GOAL_CODES_MAX)),
     ]);
+    let goals = json!({
+        "type": "array",
+        "items": goal,
+        "minItems": GOAL_GROUP_MIN,
+        "maxItems": GOAL_GROUP_MAX,
+    });
     obj(vec![
         ("title", s_max(PLAN_TITLE_CHARS)),
-        (
-            "goals",
-            json!({ "type": "array", "items": goal, "minItems": 1, "maxItems": GOALS_MAX }),
-        ),
+        (goals_key(GoalKind::Content), goals.clone()),
+        (goals_key(GoalKind::Language), goals),
         (
             "steps",
             json!({ "type": "array", "items": step, "minItems": STEPS_MIN, "maxItems": STEPS_MAX }),
@@ -582,20 +651,27 @@ pub fn step_bloom(raw: &[String]) -> Vec<Bloom> {
     out
 }
 
-/// The checked plan, or what is wrong with it (for the retry). Codes outside `candidates` are
-/// dropped, a step whose phase is not one of the three labels is dropped, minutes are clamped
-/// to 1–50, options are kept for 引起動機 only, a step keeps at most three Bloom levels (in
-/// Bloom order), and every text is cleaned and capped. The curriculum list is filled from
-/// `candidates` (text from the knowledge base), in their order.
-pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<ActivityPlan, String> {
-    let allowed: HashSet<&str> = candidates.iter().map(|c| c.code.as_str()).collect();
-    let goals: Vec<Goal> = raw
-        .goals
-        .iter()
-        .map(|g| {
+/// English for a student-facing goal: some Latin letters and no Chinese characters.
+fn is_english(s: &str) -> bool {
+    s.chars().any(|c| c.is_ascii_alphabetic()) && !contains_cjk(s)
+}
+
+/// The usable goals of one group, at most three: text cleaned and capped; a goal whose `zh` has
+/// no Chinese or whose `en` is not English is dropped; codes outside `allowed` (and repeats)
+/// dropped, at most three.
+fn clean_goals(raw: &[RawGoal], kind: GoalKind, allowed: &HashSet<&str>) -> Vec<Goal> {
+    raw.iter()
+        .filter_map(|g| {
+            let zh = clean_text(&g.zh, GOAL_ZH_CHARS);
+            let en = clean_text(&g.en, GOAL_EN_CHARS);
+            if !contains_cjk(&zh) || !is_english(&en) {
+                return None;
+            }
             let mut seen = HashSet::new();
-            Goal {
-                text: clean_text(&g.text, GOAL_TEXT_CHARS),
+            Some(Goal {
+                kind: Some(kind),
+                zh,
+                en,
                 curriculum_codes: g
                     .curriculum_codes
                     .iter()
@@ -603,11 +679,41 @@ pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<Activit
                     .filter(|c| allowed.contains(c.as_str()) && seen.insert(c.clone()))
                     .take(GOAL_CODES_MAX)
                     .collect(),
-            }
+            })
         })
-        .filter(|g| !g.text.is_empty())
-        .take(GOALS_MAX)
-        .collect();
+        .take(GOAL_GROUP_MAX)
+        .collect()
+}
+
+/// The checked plan and what the retry should still fix, or (`Err`) why the plan cannot be used
+/// at all.
+///
+/// The goals are the 內容目標 then the 語言目標 ([`clean_goals`]). A group left without a usable
+/// goal is a problem for the retry, but the plan stays usable: when the retry does no better,
+/// the teacher still gets it. No usable goal at all, or fewer than three usable steps, makes the
+/// plan unusable. Codes outside `candidates` are dropped, a step whose phase is not one of the
+/// three labels is dropped, minutes are clamped to 1–50, options are kept for 引起動機 only, a
+/// step keeps at most three Bloom levels (in Bloom order), and every text is cleaned and capped.
+/// The curriculum list is filled from `candidates` (text from the knowledge base), in their
+/// order.
+pub fn clean_plan(
+    raw: &RawPlan,
+    candidates: &[CurriculumRef],
+) -> Result<(ActivityPlan, Vec<String>), String> {
+    let allowed: HashSet<&str> = candidates.iter().map(|c| c.code.as_str()).collect();
+    let mut goals: Vec<Goal> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    for kind in GoalKind::ALL {
+        let group = clean_goals(raw.goals_of(kind), kind, &allowed);
+        if group.is_empty() {
+            missing.push(format!(
+                "{} 沒有可用的{}：要有 {GOAL_GROUP_MIN}–{GOAL_GROUP_MAX} 個，每個的 zh 用繁體中文、en 用英文，各寫一句。",
+                goals_key(kind),
+                kind.label()
+            ));
+        }
+        goals.extend(group);
+    }
     let steps: Vec<Step> = raw
         .steps
         .iter()
@@ -645,7 +751,7 @@ pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<Activit
         .collect();
     let mut problems = Vec::new();
     if goals.is_empty() {
-        problems.push("goals 至少要有 1 個學習目標。".to_string());
+        problems.extend(missing.iter().cloned());
     }
     if steps.len() < STEPS_MIN {
         problems.push(format!(
@@ -665,12 +771,13 @@ pub fn clean_plan(raw: &RawPlan, candidates: &[CurriculumRef]) -> Result<Activit
         .filter(|c| cited.contains(c.code.as_str()))
         .cloned()
         .collect();
-    Ok(ActivityPlan {
+    let plan = ActivityPlan {
         title: clean_text(&raw.title, PLAN_TITLE_CHARS),
         goals,
         steps,
         curriculum,
-    })
+    };
+    Ok((plan, missing))
 }
 
 /// The checked answer: the paragraphs joined one per line, plain text, capped; follow-ups
@@ -779,14 +886,36 @@ mod tests {
         ]
     }
 
+    fn raw_goal(zh: &str, en: &str, codes: &[&str]) -> RawGoal {
+        RawGoal {
+            zh: zh.into(),
+            en: en.into(),
+            curriculum_codes: codes.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    fn steps() -> Vec<RawStep> {
+        vec![
+            raw_step(PHASE_WARMUP, 5, 0),
+            raw_step(PHASE_DEVELOP, 30, 0),
+            raw_step(PHASE_WRAP_UP, 10, 0),
+        ]
+    }
+
     #[test]
     fn plan_is_cleaned_and_codes_come_from_the_candidates() {
         let raw = RawPlan {
             title: "計畫".into(),
-            goals: vec![RawGoal {
-                text: "學生能說出主旨".into(),
-                curriculum_codes: vec!["B-2".into(), "MADE-UP".into(), "B-2".into()],
-            }],
+            content_goals: vec![raw_goal(
+                "學生能說出主旨",
+                "Students will be able to tell the main idea.",
+                &["B-2", "MADE-UP", "B-2"],
+            )],
+            language_goals: vec![raw_goal(
+                "學生能用 because 說明原因",
+                "Students will be able to use because.",
+                &[],
+            )],
             steps: vec![
                 raw_step(PHASE_WARMUP, 0, 5),
                 raw_step("暖身", 5, 0),
@@ -794,7 +923,8 @@ mod tests {
                 raw_step(PHASE_WRAP_UP, 10, 0),
             ],
         };
-        let plan = clean_plan(&raw, &candidates()).unwrap();
+        let (plan, problems) = clean_plan(&raw, &candidates()).unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(plan.goals[0].curriculum_codes, ["B-2"]);
         assert_eq!(
             plan.curriculum,
@@ -827,11 +957,182 @@ mod tests {
     fn a_plan_without_enough_steps_is_retried() {
         let raw = RawPlan {
             title: "t".into(),
-            goals: vec![],
+            content_goals: vec![],
+            language_goals: vec![],
             steps: vec![raw_step(PHASE_WARMUP, 5, 0)],
         };
         let err = clean_plan(&raw, &candidates()).unwrap_err();
-        assert!(err.contains("goals") && err.contains("steps"), "{err}");
+        assert!(
+            err.contains("content_goals")
+                && err.contains("language_goals")
+                && err.contains("steps"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn goals_come_in_two_groups_in_both_languages() {
+        let raw = RawPlan {
+            title: "t".into(),
+            content_goals: vec![
+                raw_goal(
+                    "學生能說出**主旨**",
+                    "Students will be able to tell the main idea.",
+                    &["A-1"],
+                ),
+                // Not Chinese / not English: dropped.
+                raw_goal("Students can retell.", "Students can retell.", &[]),
+                raw_goal("學生能說出原因", "學生能說出原因", &[]),
+                raw_goal("學生能說出原因", "", &[]),
+                raw_goal("學生能比較", "Students will be able to compare.", &[]),
+                raw_goal("學生能評論", "Students will be able to comment.", &[]),
+                raw_goal("學生能多寫一個", "One too many.", &[]),
+            ],
+            language_goals: vec![raw_goal(
+                &"學".repeat(200),
+                &"a".repeat(300),
+                &["B-2", "A-1", "MADE-UP", "B-2"],
+            )],
+            steps: steps(),
+        };
+        let (plan, problems) = clean_plan(&raw, &candidates()).unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
+        let kinds: Vec<Option<GoalKind>> = plan.goals.iter().map(|g| g.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                Some(GoalKind::Content),
+                Some(GoalKind::Content),
+                Some(GoalKind::Content),
+                Some(GoalKind::Language),
+            ],
+            "at most three per group, the content goals first"
+        );
+        assert_eq!(plan.goals[0].zh, "學生能說出主旨");
+        assert_eq!(
+            plan.goals[0].en,
+            "Students will be able to tell the main idea."
+        );
+        assert_eq!(plan.goals[1].zh, "學生能比較");
+        let language = &plan.goals[3];
+        assert_eq!(language.zh.chars().count(), GOAL_ZH_CHARS);
+        assert_eq!(language.en.chars().count(), GOAL_EN_CHARS);
+        assert_eq!(language.curriculum_codes, ["B-2", "A-1"]);
+        // Every cited code is listed, in the candidates' order.
+        let listed: Vec<&str> = plan.curriculum.iter().map(|c| c.code.as_str()).collect();
+        assert_eq!(listed, ["A-1", "B-2"]);
+        // Stored with the kind, in Chinese and English; no `text`.
+        assert_eq!(
+            json!(plan.goals[0]),
+            json!({
+                "kind": "content",
+                "zh": "學生能說出主旨",
+                "en": "Students will be able to tell the main idea.",
+                "curriculum_codes": ["A-1"],
+            })
+        );
+    }
+
+    #[test]
+    fn a_missing_goal_group_is_retried_but_the_plan_stays_usable() {
+        let raw = RawPlan {
+            title: "t".into(),
+            content_goals: vec![raw_goal(
+                "學生能說出主旨",
+                "Students will be able to tell the main idea.",
+                &[],
+            )],
+            // Only English: no usable 語言目標.
+            language_goals: vec![raw_goal("Use because.", "Use because.", &[])],
+            steps: steps(),
+        };
+        let (plan, problems) = clean_plan(&raw, &candidates()).unwrap();
+        assert_eq!(plan.goals.len(), 1);
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].contains("language_goals") && problems[0].contains("語言目標"),
+            "{problems:?}"
+        );
+        // No usable goal in either group: nothing to show.
+        let raw = RawPlan {
+            content_goals: vec![],
+            ..raw
+        };
+        assert!(clean_plan(&raw, &candidates()).is_err());
+    }
+
+    #[test]
+    fn a_stored_plan_of_any_version_is_read() {
+        // Version 1 of the prompt: goals with one Chinese `text`, steps without Bloom levels.
+        let v1: ActivityPlan = serde_json::from_value(json!({
+            "title": "舊的規劃",
+            "goals": [{ "text": "學生能說出主旨", "curriculum_codes": ["A-1"] }],
+            "steps": [{
+                "phase": PHASE_WARMUP, "title": "看圖", "minutes": 5, "idea": "看圖猜主題",
+                "options": [], "script": [], "stuck_tip": "",
+            }],
+            "curriculum": [{ "code": "A-1", "text": "條文一" }],
+        }))
+        .unwrap();
+        assert_eq!(
+            v1.goals,
+            [Goal {
+                kind: None,
+                zh: "學生能說出主旨".into(),
+                en: String::new(),
+                curriculum_codes: vec!["A-1".into()],
+            }]
+        );
+        assert!(v1.steps[0].bloom.is_empty());
+        // Version 3: both groups, in Chinese and English.
+        let v3: ActivityPlan = serde_json::from_value(json!({
+            "title": "新的規劃",
+            "goals": [
+                { "kind": "content", "zh": "學生能說出主旨",
+                  "en": "Students will be able to tell the main idea.", "curriculum_codes": [] },
+                { "kind": "language", "zh": "學生能用 because",
+                  "en": "Students will be able to use because.", "curriculum_codes": ["A-1"] },
+            ],
+            "steps": [],
+            "curriculum": [],
+        }))
+        .unwrap();
+        assert_eq!(v3.goals[1].kind, Some(GoalKind::Language));
+        assert_eq!(v3.goals[1].en, "Students will be able to use because.");
+        // A kind outside the two is not a plan.
+        assert!(serde_json::from_value::<ActivityPlan>(json!({
+            "title": "t",
+            "goals": [{ "kind": "skill", "zh": "學生能", "curriculum_codes": [] }],
+            "steps": [],
+            "curriculum": [],
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn the_activity_schema_asks_for_both_goal_groups_in_order() {
+        let schema = activity_schema(&["A-1".into()]);
+        let props: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
+        assert_eq!(
+            props,
+            ["title", "content_goals", "language_goals", "steps"],
+            "the gateway writes the fields in this order"
+        );
+        for key in ["content_goals", "language_goals"] {
+            let group = &schema["properties"][key];
+            assert_eq!(group["minItems"], 1, "{key}");
+            assert_eq!(group["maxItems"], 3, "{key}");
+            let goal = &group["items"];
+            let fields: Vec<&String> = goal["properties"].as_object().unwrap().keys().collect();
+            assert_eq!(fields, ["zh", "en", "curriculum_codes"], "{key}");
+            assert_eq!(goal["required"], json!(["zh", "en", "curriculum_codes"]));
+            assert_eq!(goal["properties"]["zh"]["maxLength"], GOAL_ZH_CHARS);
+            assert_eq!(goal["properties"]["en"]["maxLength"], GOAL_EN_CHARS);
+            assert_eq!(
+                goal["properties"]["curriculum_codes"]["items"]["enum"],
+                json!(["A-1"])
+            );
+        }
     }
 
     #[test]

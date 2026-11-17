@@ -1,6 +1,8 @@
 // 備課對話 (prep sessions): the words the home page and the session page use, and small helpers
 // that read a turn's result. The chip labels are the spec's, word for word.
 import type {
+  ActivityGoal,
+  ActivityGoalKind,
   ActivityPlan,
   PrepAskResult,
   PrepKind,
@@ -122,8 +124,61 @@ export function stepText(step: ActivityPlan["steps"][number]): string {
   return lines.filter((l) => l.trim() !== "").join("\n");
 }
 
+/** 學習目標的兩組（SIOP），依顯示順序；說明沿用課例 SOP 第 3 步的字眼。 */
+export const GOAL_GROUPS: ReadonlyArray<{ kind: ActivityGoalKind; label: string; hint: string }> = [
+  { kind: "content", label: "內容目標", hint: "學生要理解或完成什麼" },
+  { kind: "language", label: "語言目標", hint: "為了做到，需要用什麼語言" },
+];
+
+/** A goal as shown: the Chinese line, the English line ("" for a plan made before), its codes. */
+export interface ShownGoal {
+  zh: string;
+  en: string;
+  curriculum_codes: string[];
+}
+
+/** One group of goals as shown; `kind`, `label` and `hint` are null for the goals of a plan made before the groups. */
+export interface GoalGroup {
+  kind: ActivityGoalKind | null;
+  label: string | null;
+  hint: string | null;
+  goals: ShownGoal[];
+}
+
+const shownGoal = (g: ActivityGoal): ShownGoal => ({
+  zh: "zh" in g && typeof g.zh === "string" ? g.zh : "text" in g && typeof g.text === "string" ? g.text : "",
+  en: "en" in g && typeof g.en === "string" ? g.en : "",
+  curriculum_codes: Array.isArray(g.curriculum_codes) ? g.curriculum_codes : [],
+});
+
+/**
+ * A plan's goals in the groups they are shown in: first the goals without a group (a plan made
+ * before 內容目標／語言目標, one Chinese line each, shown as one list as before), then 內容目標 and
+ * 語言目標. Empty groups are left out.
+ */
+export function goalGroups(plan: ActivityPlan): GoalGroup[] {
+  const known = (g: ActivityGoal) => GOAL_GROUPS.some((group) => group.kind === g.kind);
+  const groups: GoalGroup[] = [
+    { kind: null, label: null, hint: null, goals: plan.goals.filter((g) => !known(g)).map(shownGoal) },
+    ...GOAL_GROUPS.map((group) => ({
+      ...group,
+      goals: plan.goals.filter((g) => g.kind === group.kind).map(shownGoal),
+    })),
+  ];
+  return groups.filter((group) => group.goals.length > 0);
+}
+
+/** The goals as plain text, for 複製: each group under its label, every goal in Chinese with its English under it. */
 export function goalsText(plan: ActivityPlan): string {
-  return plan.goals
-    .map((g, i) => `${i + 1}. ${g.text}${g.curriculum_codes.length ? `（${g.curriculum_codes.join("、")}）` : ""}`)
+  return goalGroups(plan)
+    .flatMap((group) => {
+      const lines = group.label ? [`【${group.label}】`] : [];
+      group.goals.forEach((g, i) => {
+        const codes = g.curriculum_codes.length ? `（${g.curriculum_codes.join("、")}）` : "";
+        lines.push(`${i + 1}. ${g.zh}${codes}`);
+        if (g.en.trim()) lines.push(`   ${g.en}`);
+      });
+      return lines;
+    })
     .join("\n");
 }

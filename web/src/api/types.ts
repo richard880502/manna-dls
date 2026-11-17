@@ -1843,9 +1843,22 @@ export type PrepKind =
   | "kit";
 export type PrepPhase = "引起動機" | "發展活動" | "統整與評量";
 
+/** 學習目標的兩組（SIOP）：content＝內容目標、language＝語言目標 */
+export type ActivityGoalKind = "content" | "language";
+
+/**
+ * 課堂活動的一個學習目標。prep_activity 第 3 版起分成內容目標與語言目標，中英文並陳：
+ * zh 給教師（「學生能……」），en 給學生（"Students will be able to …"）。
+ * 之前做的規劃每個目標只有一行中文 text、沒有 kind，照舊顯示成一張清單。
+ */
+export type ActivityGoal =
+  | { kind: ActivityGoalKind; zh: string; en: string; curriculum_codes: string[] }
+  | { kind?: undefined; text: string; curriculum_codes: string[] };
+
 export interface ActivityPlan {
   title: string;
-  goals: Array<{ text: string; curriculum_codes: string[] }>;
+  /** 先內容目標、再語言目標（第 3 版）；舊的規劃是一張沒有 kind 的清單 */
+  goals: ActivityGoal[];
   steps: Array<{
     phase: PrepPhase;
     title: string;
