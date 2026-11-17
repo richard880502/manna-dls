@@ -1086,7 +1086,7 @@ interface WsSheet {
 | GET | `/api/worksheets` | `?lesson_id=` | `WorksheetSummary[]`，新到舊 |
 | POST | `/api/worksheets` | `{ lesson_id?, class_id?, material?: { title?, text, source_note? } }` | 201 `WorksheetState`。有 `lesson_id`：從課例 SOP 帶入教材、目標、任務、暖身、Exit ticket 與建議選項（沒有 SOP 內容也可以）。沒有：直接使用，`material.text` 可以先空著 |
 | GET | `/api/worksheets/:id` | – | `WorksheetState` |
-| PUT | `/api/worksheets/:id` | `{ title?, filename?, settings?, brief?, content? }` | `WorksheetState`。`content` 與最新版本不同才新增一個版本（只增不改）。標籤不在規格集合內 → 400；產生中送 `content` → 409（產生完會整份取代） |
+| PUT | `/api/worksheets/:id` | `{ title?, filename?, settings?, brief?, content?, base_version_no? }` | `WorksheetState`。`content` 與最新版本不同才新增一個版本（只增不改）。標籤不在規格集合內 → 400；產生中送 `content` → 409（產生完會整份取代）；`base_version_no`（編輯器上次看到的版本）不是最新版本、而 `content` 又和最新版本不同 → 409，什麼都不存（見「學習單：逐區修改與註記」） |
 | PUT | `/api/worksheets/:id/material` | `{ title?, text, source_note? }` | `WorksheetState`。換教材：重新分段（文字相同的段落沿用 id），`source.kind` 變成 `pasted`，重新計算 `suggested` |
 | DELETE | `/api/worksheets/:id` | – | `{ ok: true }`（軟刪除） |
 | POST | `/api/worksheets/:id/generate` | `{}` | 202 `WorksheetState`：建立四個步驟的背景工作並立刻回來。已在執行時回傳同一批 |
@@ -1094,7 +1094,7 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/blocks/:block_id/regenerate` | `{}` | 202 `WorksheetState`：只重新產生這一個區塊 |
 | POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生之前的那一版；沒有上一版 → 409 |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
-| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo` |
+| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」） |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
 | POST | `/api/worksheets/:id/sop-sync` | `{ confirm: true, keys: string[], sop_version_no }` | `{ sop_version_no, applied }`。沒有 `confirm: true` → 400；課例在預覽之後改過 → 409 |
 | PUT | `/api/worksheets/:id/link` | `{ lesson_id: number \| null }` | `WorksheetState`：連結既有課例或取消連結（不改課例內容） |
@@ -2393,3 +2393,122 @@ interface Account {
 ## 程式進入點
 
 `routes::admin`（`list_accounts`、`update_account_role`、`role_change_conflict`）、`auth::require_role`；測試 `api/tests/accounts.rs`、`web/src/__tests__/admin.test.tsx`。
+
+---
+
+# 學習單：逐區修改與註記
+
+設計見 [WORKSHEET_BLOCK_EDIT_RESEARCH.md](WORKSHEET_BLOCK_EDIT_RESEARCH.md) §4–§5。Migration `0020_worksheet_block_revise.sql`（兩張新表、prompt `worksheet_block_revise` 第 1 版、鷹架 `SC-WS-BLOCK-REVISE`）。既有端點只多了選填欄位；舊的學習單照常讀寫。
+
+教師在產生好的學習單上指定**一個區塊**（或選取區塊裡的一段文字），寫下註記或一句話，Manna 只改那一區。結果是一個**修改建議**（proposal）：學習單在教師按「採用」之前完全不變；採用後寫成一個新版本（`cause = "revise"`），被取代的區塊放進 `worksheet_block_history`，所以「復原上一版」照常可用。
+
+## 資料
+
+- `worksheet_comments`：教師的註記。錨點 = `block_id` + `field`（`block`／`title`／`instructions`／`item`）+ `item_id`（`field = item`）+ 欄位文字中的 UTF-16 位移（選字時才有）+ `quote`／`prefix`／`suffix`。`share_with_ai`（「提供給 AI」）預設 `true`；`status` = `open`（待處理）／`applied`（已依此修改）／`dismissed`（已略過）；`proposal_id` = 套用它的那次修改。註記**不是學習單的一部分**：投影（`/sheet`）、DOCX、PDF 都沒有它。
+- `worksheet_block_proposals`：一個區塊的修改建議。`base_block` 是送給模型時的區塊原樣；`round` 是這一區第幾次請 Manna 改；`status` = `running`／`proposed`／`accepted`／`rejected`／`stale`／`failed`；`decided_at` 在採用、放棄（或關掉失敗的那一個）時寫入。一份學習單同時只有一個 `running`（partial unique index）：同一份學習單的不同部分同時呼叫會互相重複（`docs/WORKSHEET_BLOCK_EDIT_RESEARCH.md` §5.4）。
+- 修改**不是**學習單的背景工作（`worksheet_jobs`）：它在採用前什麼都不寫，所以不鎖編輯器、不讓預覽變成進度條。
+
+## 型別
+
+```ts
+type WsCommentField = "block" | "title" | "instructions" | "item";
+interface WorksheetComment {
+  id: number; worksheet_id: number;
+  block_id: string; field: WsCommentField; item_id: string | null;   // 建立時的位置
+  quote: string; note: string; share_with_ai: boolean;
+  status: "open" | "applied" | "dismissed"; proposal_id: number | null;
+  anchor: {                                  // 每次讀取時重新定位
+    status: "ok" | "moved" | "lost";         // lost：區塊或題目已經不在了
+    block_id: string | null;                 // null：區塊不在了（例如重新產生了整份）
+    item_id: string | null; start: number | null; end: number | null;
+  };
+  created_at: string; updated_at: string;
+}
+interface WsProposal {
+  id: number; worksheet_id: number; block_id: string;
+  status: "running" | "proposed" | "accepted" | "rejected" | "stale" | "failed";
+  instruction: string; comment_ids: number[]; whole_block: boolean; round: number;
+  reply: string;              // Manna 說它改了什麼（≤200，含沒有通過檢查而維持原樣的說明）
+  error: string | null;       // failed／stale 的原因
+  base_version_no: number;
+  before: WsBlock;            // 送給 Manna 時的區塊
+  block: WsBlock | null;      // 改好的區塊（proposed 之後）
+  changes: { title: boolean; instructions: boolean;
+             items: Array<{ id: string; change: "kept" | "modified" | "new" | "removed" }> } | null;
+  interaction_id: number | null; accepted_version_no: number | null;
+  created_at: string; finished_at: string | null; decided_at: string | null;
+}
+```
+
+`WsSheet` 的每一題多了 `id`（題目在學習單裡的 id，註記錨在它上面）。
+
+## 端點（皆需登入；只能存取自己的學習單、註記與修改，其他人的回 404）
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| GET | `/api/worksheets/:id/comments` | – | `WorksheetComment[]`，依區塊、題目、位置排序（區塊不在了的排最後） |
+| POST | `/api/worksheets/:id/comments` | `{ block_id, field?, item_id?, start?, end?, quote?, note?, share_with_ai? }` | `WorksheetComment`。`field` 省略時有 `item_id` 是 `item`，否則 `block`。`start`／`end` 是欄位文字（學生版印出的、去掉頭尾空白的標題／作答指示／題幹）中的 UTF-16 位移；引文與前後文由伺服器從學習單取。位移對不上而有 `quote` 時，伺服器在欄位裡找那段文字；找不到就照存 `quote`、標在整個欄位（例如分層練習印出的標題是「Part B · …」，存的是「Part A · …」）。區塊或題目不在最新版本 → 400；`note` > 2000、`quote` > 500 字 → 400；一份學習單最多 500 則 |
+| PATCH | `/api/worksheets/:id/comments/:cid` | `{ note?, share_with_ai?, status?: "open" \| "dismissed" }` | `WorksheetComment`。`applied` 只由「採用」設定（400） |
+| DELETE | `/api/worksheets/:id/comments/:cid` | – | `{ deleted: true }`（只刪註記） |
+| POST | `/api/worksheets/:id/blocks/:block_id/revise` | `{ instruction?, comment_ids?, whole_block? }` | 202 `WsProposal`（`running`）。要有 `instruction`（≤2000）或註記：`comment_ids` 的每一則都要在這一區、`open`、`share_with_ai`（否則 400）；兩者都沒給時用這一區所有待處理、提供給 AI 的註記，一則都沒有 → 400。區塊不在 → 404；學習單正在產生 → 409；已有修改在跑 → 409（「Manna 正在改另一區…」）。這一區還在等決定的建議先放到一旁（`proposed` 記為 `rejected`，並寫一筆 `teacher_decisions` reject），所以「再改一次」就是再送一次 |
+| GET | `/api/worksheets/:id/proposals` | – | `WsProposal[]`：每一區最新的那一個，只列還在等教師的（`running`、`proposed`，以及還沒關掉的 `failed`、`stale`） |
+| GET | `/api/worksheets/:id/proposals/:pid` | – | `WsProposal`（輪詢用） |
+| POST | `/api/worksheets/:id/proposals/:pid/accept` | `{}` | `{ proposal, worksheet: WorksheetState }`。在一個交易裡：確認最新版本裡這一區**和 `before` 完全相同**（之後被改過 → 這個建議變成 `stale`，回 409，什麼都不寫）→ 舊區塊進 `worksheet_block_history` → 新版本（`cause = "revise"`）→ 這次用到的註記標成 `applied` → `teacher_decisions` 記 `adopt`。其他區塊之間改過不影響。不是 `proposed` → 409；學習單正在產生 → 409 |
+| POST | `/api/worksheets/:id/proposals/:pid/reject` | `{}` | `WsProposal`。`proposed` → `rejected`（記 `teacher_decisions` reject），註記維持待處理；`failed`／`stale` 只是關掉（「知道了」）。`running` 或已經決定過 → 409 |
+
+## 一次修改（`worksheet_block_revise`）
+
+背景一次呼叫（重試一次），經過與備課對話相同的呼叫與紀錄（`prep::run::call`：每次嘗試一列 `ai_interactions`、`max_tokens` 一定設、重試時溫度 +0.4 並列出沒通過的檢查、教材只記字數與雜湊）。`max_tokens` = 1000 + 220 × 可寫的題數（2500–6000）。第 n 次修改同一區（`round`）溫度從 0.2 起每次 +0.1，訊息裡也寫明「這是第 n 次、上一次的改法教師沒有採用」，所以請求一定不同（閘道會快取相同的請求）。
+
+**輸入**：這一區的標題、作答指示和每一題（代號 `Q1`、`Q2`…，附學生版題號、作答方式、Bloom 層次、選項、參考答案）；這一區的註記（`[Q2]「引文」→ 註記`、`[作答指示]`、`[整區]`；只有這次用到的）；可以修改的範圍；其他區塊的標題與題幹（唯讀，避免重複）；學習單的學習目標（不得修改）；照版型做的區塊附上版型的指示語言、指示語寫法、題型樣式與設計習慣；依 Bloom 層次產生的區塊註明固定層次；需要教師提供素材的區塊註明不得編造；班級特性、教師寫的學習目標與要求、勾了「提供給 AI」的教材註記；教材（段落標記）。不送學生資料。
+
+**輸出 schema（依寫出順序）**：`{ title ≤150, instructions ≤500, items ≤max(n+6, 12): [{ source: enum("Q1"…, "new"), keep: boolean, answer_format: enum, prompt ≤600, options ≤6×150, answer ≤400, bloom: enum }], reply ≤200 }`。`title`／`instructions` 寫空字串表示不改；`keep` 為 true 的題目只寫代號與標籤，內容寫空字串。
+
+**伺服器怎麼組回去**（`worksheet::revise::merge`，從存著的區塊出發，只換模型改的地方）：
+
+- `keep: true` 的題目**原封不動**沿用存著的那一題（id、教師改過的字、`levels`、`hint`、`purpose`、`origin` 都不變），不採用模型抄回的文字。
+- 修改的題目保留 id、`levels`、`hint`、`purpose`，換掉作答方式、題幹、選項與 Bloom 層次；參考答案變了才換答案與依據。內容和原本一樣的不算修改。`origin` 改成 `ai`。新題目有新 id（`<block>-p<proposal>n<k>`），出現在學習單的所有版本（分層練習依 Bloom 層次對應的版本）。依 Bloom 層次產生的區塊，每一題都用那個層次。
+- 模型看不到的欄位（字詞表、鷹架、教師備註、`template_section_id`，以及之後加的欄位，例如圖片）全部沿用。
+- **範圍由程式決定**：有一句話、整區的註記或 `whole_block: true` → 整區都可以改（可以新增、刪除、調整順序；模型沒列出的題目就是刪除）。只有標在題目／標題／作答指示上的註記 → 只有那幾處可以改，其他題、標題、作答指示不論模型寫了什麼都沿用原樣，模型沒列出的題目放回原位，題目順序維持；新題目可以加，排在它在模型輸出裡跟著的那一題後面。
+- 修改與新題目用照版型產生時的同一套檢查（`evaluate_section` 的每一題檢查：固定標籤、選擇題答案在選項內、題幹不含答案、需要教師素材時不得寫出網址或影片、音節依字典）。沒通過 → 重試一次；重試後還是沒通過的那一題維持原樣（新題目不加入），`reply` 後面註明「（第 5 題的修改沒有通過學習單的檢查，維持原樣。）」。
+- 結果和原本完全一樣 → 沒有建議，`failed`：模型的 `reply` 是澄清問題時照實轉告（「Manna 沒有改動這一區：…」）；所有修改都沒通過檢查時說明。逾時、供應商錯誤同樣是 `failed` 並附原因。
+- 伺服器重啟會中斷：`running` 超過 `2 × AI_TIMEOUT_SECS + 60` 秒的在下次讀取時結束為 `failed`。
+
+## 註記給模型
+
+- 逐區修改：只有這次用到的註記（見上）。
+- **重新產生整份學習單**：所有待處理、提供給 AI 的註記，接在教材註記之後，標題寫明是「教師在上一版學習單上的註記…不是教材原文…不得寫進學生版」，每則寫出它的區塊標題與題號。Job 的「Manna 已帶入的資訊」把它算進「教師註記（提供給 AI）」。重新產生後原本的區塊不在了，註記的 `anchor.block_id` 變成 `null`，前端列在「找不到位置的註記」。
+- 備課對話底部「改學習單」（`prep_revise`，整份）沒有變，不讀學習單註記。
+
+## 編輯器存檔的版本檢查
+
+編輯器的自動儲存一律帶 `base_version_no`（它上次看到的 `version_no`）。伺服器在鎖住學習單後比對：最新版本不是那一版、而且這次的 `content` 和最新版本不同 → 409「這份學習單在你編輯的同時有了新的版本（例如在備課對話採用了 Manna 的逐區修改），所以你最近的修改沒有存進去。請重新載入，再改一次。」，**標題、設定等其他欄位也不存**。送的內容和最新版本相同不算衝突。沒有 `base_version_no` 的請求照舊（後存的蓋掉先存的）。編輯器在送出修改與採用之前先存檔（`flush`）。
+
+## 測試用假模型（`AI_PROVIDER=fake`）
+
+假模型修改註記指到的第一題（沒有指定就是第一題）：題幹後面加 " (easier r<round>)"、Bloom 層次 `remember`；其他題 `keep: true`。標記寫在註記或指示裡：
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_REVISE_TOUCH_ALL` | 每一題和標題都改（" (touched)"）：範圍限定時由程式還原 |
+| `FAKE_REVISE_ADD` | 在最後加一題 |
+| `FAKE_REVISE_DROP` | 少列最後一題：範圍允許時刪除，否則放回 |
+| `FAKE_REVISE_BAD` | 兩次的修改都用了固定標籤以外的作答方式 → 維持原樣，`failed` |
+| `FAKE_REVISE_BAD_ONCE` | 只有第一次如此，重試成功 |
+| `FAKE_REVISE_NOTHING` | 全部 `keep`，`reply` 是一個問題 → `failed` 並轉告 |
+
+既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
+
+## usage_logs 新事件
+
+`worksheet_comment_created`（`worksheet_id`、`comment_id`、`field`、`selection`、`share_with_ai`）、`worksheet_block_revise_started`（`worksheet_id`、`block_id`、`proposal_id`、`round`、`comments`、`instruction`（布林）、`whole_block`）、`worksheet_block_revise_accepted`（加 `version_no`）、`worksheet_block_revise_rejected`（加 `status`）。不含內容。
+
+## 前端
+
+- **備課對話的學習單預覽**：每一區的工具多了「改這一區」「加註記」，有待處理的 AI 註記時「依註記修改（n 則）」，採用過的區塊「復原上一版」。按「改這一區」，底部文字框前出現「針對 B 區 ✕」，送出就是這一區的修改（不是新的對話輪次）；拿掉標籤或切到「問 Manna」回到整份修改。選取學習單上的文字（標題、作答指示、題幹，或一題的選項）時，選取處下方浮出「已選取第 4 題的「…」 加註記」；選字會對齊整個英文字。新增註記可以「儲存註記」或「儲存並請 Manna 改」。修改進行中那一區顯示「Manna 正在改這一區…」，其他區照常；建議出現在那一區下方：修改的題目附原本的題幹（刪除線）、新增與刪除的題目有標示，下面「採用」「放棄」「再改一次」。採用後那一區重新載入並閃一下。註記列在所屬區塊下方，可以改內容、切換提供給 AI、略過或刪除。
+- **編輯器（`/worksheets/:id`）**：區塊工具多了「改這一區」（區塊裡出現一個文字框）、「加註記」和「依註記修改」；每一題多了「註記」。建議與註記顯示在區塊上方；建議還在跑或等決定時，這一區不能編輯。自動儲存遇到 409 時，儲存狀態旁出現「重新載入」。
+- 進入點：`web/src/components/worksheet/BlockRevise.tsx`（`useBlockRevise`、`ProposalPanel`、`NoteDraft`…）、`web/src/lib/blockRevise.ts`（`selectionOnSheet`）。
+
+## 程式進入點
+
+`routes::worksheet_revise`；`worksheet::comments`（錨點與註記）、`worksheet::revise`（schema、範圍、`merge`、建議的存取與 `accept`）、`worksheet::ai::revise`（背景呼叫與 prompt 內容）、`worksheet::checks::evaluate_revision`；`store::save_content_over`（存檔的版本檢查）。測試 `api/tests/worksheet_revise.rs`、`web/src/__tests__/blockRevise.test.tsx`。

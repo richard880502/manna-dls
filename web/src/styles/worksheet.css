@@ -1334,3 +1334,147 @@ button.bloom-seg:focus-visible {
 .prep-kit-head > .quiet-note {
   flex-basis: 100%;
 }
+
+/* ---------- 逐區修改與註記 ---------- */
+.ws-revise-area {
+  display: grid;
+  gap: var(--space-xs);
+  margin: var(--space-xs) 0;
+  font-family: var(--font-body);
+}
+
+.ws-revise-area .anno-note {
+  margin: 0;
+}
+
+.ws-note.is-done {
+  background: var(--color-paper-2);
+  color: var(--color-ink-2);
+}
+
+.ws-revise-form {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: var(--space-xs) 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: 3px solid var(--color-manna-rule);
+  background: var(--color-manna-wash);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+.ws-revise-form textarea {
+  width: 100%;
+  font-size: var(--text-md);
+}
+
+.ws-proposal {
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-manna-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-manna-wash);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.ws-proposal.is-failed {
+  border-color: var(--color-warn-rule);
+  background: var(--color-warn-wash);
+}
+
+.ws-proposal-reply {
+  margin-top: var(--space-2xs);
+  font-weight: var(--weight-strong);
+}
+
+.ws-proposal-field {
+  margin-top: var(--space-2xs);
+  overflow-wrap: anywhere;
+}
+
+.ws-proposal ins {
+  text-decoration: none;
+  background: var(--color-success-wash);
+}
+
+.ws-proposal del {
+  color: var(--color-muted);
+}
+
+.ws-proposal-items {
+  display: grid;
+  gap: var(--space-2xs);
+  margin-top: var(--space-xs);
+  padding-left: 0;
+  list-style: none;
+  font-family: var(--font-print);
+}
+
+.ws-proposal-items li {
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-control);
+  overflow-wrap: anywhere;
+}
+
+.ws-proposal-items li.is-modified,
+.ws-proposal-items li.is-new {
+  background: var(--color-success-wash);
+}
+
+.ws-proposal-items li.is-removed {
+  color: var(--color-muted);
+}
+
+.ws-proposal-kept {
+  color: var(--color-ink-2);
+}
+
+.ws-proposal-old,
+.ws-proposal-answer {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+}
+
+.prep-sheet-block.is-targeted {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.prep-sheet-wrap {
+  position: relative;
+}
+
+/* 「加註記」 floats just under the selected text (placed by the card). */
+.prep-sheet-wrap .anno-bar.is-floating {
+  position: absolute;
+  bottom: auto;
+  max-width: min(28rem, 100%);
+  margin: 0;
+}
+
+.prep-sheet-hint {
+  margin-top: var(--space-xs);
+}
+
+.prep-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-sm);
+  margin-bottom: var(--space-xs);
+  font-size: var(--text-sm);
+}
+
+.prep-target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding: 0 var(--space-xs);
+  border: var(--rule-hair) solid var(--color-accent-rule);
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-text);
+  font-weight: var(--weight-strong);
+}

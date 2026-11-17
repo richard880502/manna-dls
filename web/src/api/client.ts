@@ -110,6 +110,12 @@ import type {
   WsSheet,
   WsVersionRow,
   WsAudience,
+  WorksheetComment,
+  CreateWorksheetCommentRequest,
+  UpdateWorksheetCommentRequest,
+  WsProposal,
+  WsProposalAccepted,
+  ReviseWorksheetBlockRequest,
   PrepSession,
   PrepSessionList,
   CreatePrepSessionRequest,
@@ -420,6 +426,27 @@ export const api = {
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/regenerate`),
   undoWorksheetBlock: (id: number, blockId: string) =>
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/undo`),
+  // 逐區修改與註記
+  listWorksheetComments: (id: number) => get<WorksheetComment[]>(`/worksheets/${id}/comments`),
+  createWorksheetComment: (id: number, body: CreateWorksheetCommentRequest) =>
+    post<WorksheetComment>(`/worksheets/${id}/comments`, body),
+  updateWorksheetComment: (id: number, commentId: number, body: UpdateWorksheetCommentRequest) =>
+    request<WorksheetComment>("PATCH", `/worksheets/${id}/comments/${commentId}`, { json: body }),
+  deleteWorksheetComment: (id: number, commentId: number) =>
+    del<{ deleted: boolean }>(`/worksheets/${id}/comments/${commentId}`),
+  /** 202：在背景改這一區（status running），之後輪詢 getWorksheetProposal */
+  reviseWorksheetBlock: (id: number, blockId: string, body: ReviseWorksheetBlockRequest) =>
+    post<WsProposal>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/revise`, body),
+  /** 每一區還在等教師決定的那一個（running、proposed、failed、stale） */
+  listWorksheetProposals: (id: number) => get<WsProposal[]>(`/worksheets/${id}/proposals`),
+  getWorksheetProposal: (id: number, proposalId: number) =>
+    get<WsProposal>(`/worksheets/${id}/proposals/${proposalId}`),
+  /** 採用：寫成新版本；區塊之後被改過 → 409 */
+  acceptWorksheetProposal: (id: number, proposalId: number) =>
+    post<WsProposalAccepted>(`/worksheets/${id}/proposals/${proposalId}/accept`),
+  /** 放棄（failed／stale 時是「知道了」） */
+  rejectWorksheetProposal: (id: number, proposalId: number) =>
+    post<WsProposal>(`/worksheets/${id}/proposals/${proposalId}/reject`),
   worksheetSopSyncPreview: (id: number) => get<SopSyncPreview>(`/worksheets/${id}/sop-sync`),
   /** 只有教師按了確認才呼叫 */
   applyWorksheetSopSync: (id: number, keys: string[], sopVersionNo: number | null) =>

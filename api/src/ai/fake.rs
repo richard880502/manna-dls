@@ -119,6 +119,10 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("worksheet_bloom_check") => {
             crate::worksheet::fake::bloom_check(ctx, req.attempt, &|m| has(req, m))
         }
+        // 逐區修改 (see `worksheet::fake`).
+        Some("worksheet_block_revise") => {
+            crate::worksheet::fake::block_revise(ctx, req.attempt, &|m| has(req, m))
+        }
         // 備課對話 (see `prep::fake`).
         Some("prep_activity") => crate::prep::fake::activity(ctx, req.attempt, &|m| has(req, m)),
         Some("prep_ask") => crate::prep::fake::ask(ctx, req.attempt, &|m| has(req, m)),

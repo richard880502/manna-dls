@@ -73,6 +73,10 @@ function PrepSessionView({ id }: { id: number }) {
   const [viewing, setViewing] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<number, Record<string, string>>>({});
   const [flash, setFlash] = useState<{ worksheetId: number; ids: ReadonlySet<string> } | null>(null);
+  // 「改這一區」: the bottom bar revises one block of one worksheet instead of the whole worksheet.
+  const [target, setTarget] = useState<{ worksheetId: number; blockId: string; name: string } | null>(null);
+  const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const previous = useRef<PrepSession | null>(null);
   // A turn that appeared after the page loaded is scrolled into view, so the teacher sees it start.
   const [arrived, setArrived] = useState<number | null>(null);
@@ -170,10 +174,30 @@ function PrepSessionView({ id }: { id: number }) {
     }
   }
 
+  async function reviseTarget(t: NonNullable<typeof target>, instruction: string) {
+    setSending(true);
+    setSendError(null);
+    try {
+      await api.reviseWorksheetBlock(t.worksheetId, t.blockId, { instruction });
+      setProposalsKey((prev) => ({ ...prev, [t.worksheetId]: (prev[t.worksheetId] ?? 0) + 1 }));
+      setTarget(null);
+      setDraft("");
+      document.getElementById(`sheet-block-${t.blockId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    } catch (err) {
+      setSendError(errorMessage(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function sendDraft(event?: FormEvent) {
     event?.preventDefault();
     const text = draft.trim();
     if (!text || locked) return;
+    if (target) {
+      await reviseTarget(target, text);
+      return;
+    }
     // No kind: the server revises the worksheet if there is one, otherwise answers.
     const body: CreatePrepTurnRequest =
       session && hasWorksheet(session) && barMode === "ask" ? { kind: "ask", request: text } : { request: text };
@@ -237,6 +261,13 @@ function PrepSessionView({ id }: { id: number }) {
         refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}`}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
+        target={target && target.worksheetId === wsId ? target.blockId : null}
+        onTarget={(worksheetId, blockId, name) => {
+          setTarget({ worksheetId, blockId, name });
+          setBarMode("revise");
+          draftRef.current?.focus();
+        }}
+        proposalsKey={wsId ? proposalsKey[wsId] : undefined}
       />
     );
   }
@@ -467,12 +498,31 @@ function PrepSessionView({ id }: { id: number }) {
                   type="radio"
                   name={`${ids}-mode`}
                   checked={barMode === mode}
-                  onChange={() => setBarMode(mode)}
+                  onChange={() => {
+                    setBarMode(mode);
+                    if (mode === "ask") setTarget(null);
+                  }}
                 />
                 <span>{label}</span>
               </label>
             ))}
           </div>
+        )}
+        {target && (
+          <p className="prep-target" role="status">
+            <span className="prep-target-chip">
+              針對 {target.name}
+              <button
+                type="button"
+                className="text-link is-plain"
+                aria-label={`不要只改 ${target.name}`}
+                onClick={() => setTarget(null)}
+              >
+                ✕
+              </button>
+            </span>
+            <span className="field-hint">只改這一區；Manna 改好後先給你看，按「採用」才會寫入學習單。</span>
+          </p>
         )}
         <div className="prep-bottom-row">
           <label className="sr-only" htmlFor={`${ids}-draft`}>
@@ -480,6 +530,7 @@ function PrepSessionView({ id }: { id: number }) {
           </label>
           <textarea
             id={`${ids}-draft`}
+            ref={draftRef}
             rows={2}
             maxLength={2000}
             value={draft}
@@ -487,9 +538,11 @@ function PrepSessionView({ id }: { id: number }) {
             placeholder={
               running
                 ? WORKING_LINE
-                : hasWorksheet(session) && barMode === "revise"
-                  ? REVISE_PLACEHOLDER
-                  : FOLLOW_PLACEHOLDER
+                : target
+                  ? `想怎麼改 ${target.name}？例如：第 2 題太難，改簡單一點`
+                  : hasWorksheet(session) && barMode === "revise"
+                    ? REVISE_PLACEHOLDER
+                    : FOLLOW_PLACEHOLDER
             }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}

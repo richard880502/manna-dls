@@ -19,6 +19,7 @@ pub mod sop;
 pub mod suggestions;
 pub mod templates;
 pub mod units;
+pub mod worksheet_revise;
 pub mod worksheets;
 
 use axum::extract::{DefaultBodyLimit, State};
@@ -118,6 +119,35 @@ pub fn api_router() -> Router<AppState> {
         .route(
             "/worksheets/{id}/blocks/{block_id}/undo",
             post(worksheets::undo_block),
+        )
+        // 逐區修改與註記
+        .route(
+            "/worksheets/{id}/blocks/{block_id}/revise",
+            post(worksheet_revise::revise_block),
+        )
+        .route(
+            "/worksheets/{id}/comments",
+            get(worksheet_revise::list_comments).post(worksheet_revise::create_comment),
+        )
+        .route(
+            "/worksheets/{id}/comments/{comment_id}",
+            patch(worksheet_revise::update_comment).delete(worksheet_revise::delete_comment),
+        )
+        .route(
+            "/worksheets/{id}/proposals",
+            get(worksheet_revise::list_proposals),
+        )
+        .route(
+            "/worksheets/{id}/proposals/{proposal_id}",
+            get(worksheet_revise::get_proposal),
+        )
+        .route(
+            "/worksheets/{id}/proposals/{proposal_id}/accept",
+            post(worksheet_revise::accept_proposal),
+        )
+        .route(
+            "/worksheets/{id}/proposals/{proposal_id}/reject",
+            post(worksheet_revise::reject_proposal),
         )
         .route("/worksheets/{id}/sheet", get(worksheets::sheet))
         .route("/worksheets/{id}/versions", get(worksheets::versions))

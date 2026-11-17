@@ -40,6 +40,19 @@
 //! | `FAKE_BLOOM_MISMATCH`    | judge: the first evaluate / create question is rated `understand`, in both rounds (it is relabelled with a notice) |
 //! | `FAKE_BLOOM_NO_EVIDENCE` | level call: the first remember question's evidence is not in the text, on the first attempt only (it is repaired) |
 //! | `FAKE_BLOCK`             | level call: only labels outside the level's formats (the level fails) |
+//!
+//! 逐區修改 (`worksheet_block_revise`), see [`block_revise`]: the first question a note points at
+//! (or the block's first) gets " (easier r<round>)" after its prompt and Bloom level `remember`;
+//! every other question is `keep: true` with empty text. Markers, in a note or the instruction:
+//!
+//! | marker                   | effect                                                              |
+//! |--------------------------|---------------------------------------------------------------------|
+//! | `FAKE_REVISE_TOUCH_ALL`  | every question is changed (" (touched)"), the title too (the code keeps what the notes do not cover) |
+//! | `FAKE_REVISE_ADD`        | a new question is added at the end                                  |
+//! | `FAKE_REVISE_DROP`       | the last question is left out (removed when the scope allows it, otherwise kept) |
+//! | `FAKE_REVISE_BAD`        | the change uses an answer format outside the fixed labels in both calls (the question stays as it was) |
+//! | `FAKE_REVISE_BAD_ONCE`   | the same on the first call only (the retry is fine)                 |
+//! | `FAKE_REVISE_NOTHING`    | every question kept; the reply asks a question (nothing to propose) |
 
 use serde_json::{json, Value};
 
@@ -729,4 +742,83 @@ pub fn bloom_check(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
         })
         .collect();
     json!({ "items": items })
+}
+
+/// `worksheet_block_revise` (see the module documentation for the markers).
+pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    let items = ctx["items"].as_array().cloned().unwrap_or_default();
+    let round = ctx["round"].as_i64().unwrap_or(1);
+    let target = ctx["targets"][0].as_str().map(str::to_string).or_else(|| {
+        items
+            .first()
+            .and_then(|i| i["code"].as_str())
+            .map(str::to_string)
+    });
+    if has("FAKE_REVISE_NOTHING") || target.is_none() && !has("FAKE_REVISE_ADD") {
+        let kept: Vec<Value> = items.iter().map(kept_item).collect();
+        return json!({
+            "title": "", "instructions": "", "items": kept,
+            "reply": "你想把這一區改成哪一種題型？（測試）",
+        });
+    }
+    let bad = has("FAKE_REVISE_BAD_ONCE") && attempt == 1
+        || has("FAKE_REVISE_BAD") && !has("FAKE_REVISE_BAD_ONCE");
+    let all = has("FAKE_REVISE_TOUCH_ALL");
+    let mut out: Vec<Value> = Vec::new();
+    let last = items.len().saturating_sub(1);
+    for (k, it) in items.iter().enumerate() {
+        if has("FAKE_REVISE_DROP") && k == last {
+            continue;
+        }
+        let code = it["code"].as_str().unwrap_or_default();
+        let is_target = target.as_deref() == Some(code);
+        if !(is_target || all) {
+            out.push(kept_item(it));
+            continue;
+        }
+        let tag = if is_target {
+            format!(" (easier r{round})")
+        } else {
+            " (touched)".to_string()
+        };
+        out.push(json!({
+            "source": code,
+            "keep": false,
+            "answer_format": if bad && is_target { "連連看" } else { it["answer_format"].as_str().unwrap_or(FMT_SHORT) },
+            "prompt": format!("{}{tag}", it["prompt"].as_str().unwrap_or_default().trim()),
+            "options": it["options"].clone(),
+            "answer": it["answer"].clone(),
+            "bloom": "remember",
+        }));
+    }
+    if has("FAKE_REVISE_ADD") {
+        out.push(json!({
+            "source": "new",
+            "keep": false,
+            "answer_format": FMT_SHORT,
+            "prompt": "Which part of the story would you tell a friend? (added)",
+            "options": [],
+            "answer": "Answers will vary.",
+            "bloom": "apply",
+        }));
+    }
+    json!({
+        "title": if all { format!("{} (touched)", ctx["title"].as_str().unwrap_or_default()) } else { String::new() },
+        "instructions": "",
+        "items": out,
+        "reply": format!("已把 {} 改簡單一點。（測試）", target.unwrap_or_default()),
+    })
+}
+
+/// A question kept as it is: only its code, the flag and the labels.
+fn kept_item(it: &Value) -> Value {
+    json!({
+        "source": it["code"],
+        "keep": true,
+        "answer_format": it["answer_format"].as_str().unwrap_or(FMT_SHORT),
+        "prompt": "",
+        "options": [],
+        "answer": "",
+        "bloom": it["bloom"].as_str().unwrap_or("understand"),
+    })
 }

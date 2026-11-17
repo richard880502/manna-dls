@@ -463,6 +463,8 @@ pub struct SheetSupport {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SheetItem {
+    /// The question's id in the worksheet (notes on a question are anchored to it).
+    pub id: String,
     pub no: usize,
     pub answer_format: Option<String>,
     pub prompt: String,
@@ -603,6 +605,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             .map(|i| {
                 no += 1;
                 SheetItem {
+                    id: i.id.clone(),
                     no,
                     answer_format: i.answer_format.clone(),
                     prompt: i.prompt.trim().to_string(),

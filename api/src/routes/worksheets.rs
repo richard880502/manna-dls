@@ -120,7 +120,7 @@ async fn lesson_sop_diff(
     Ok(Some((lesson_id, sop_version, changes)))
 }
 
-async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetState> {
+pub(crate) async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetState> {
     let db = &state.db;
     let ws = store::by_id(db, id)
         .await?
@@ -549,6 +549,11 @@ pub struct SaveWorksheet {
     /// `null` to stop using one (the settings stay).
     #[serde(default, deserialize_with = "double_option")]
     pub template_id: Option<Option<i64>>,
+    /// The version the editor last saw. With `content`: when a newer version exists and the
+    /// content differs from it, nothing is saved (409, 「請重新載入」). Leaving it out saves as
+    /// before (the last save wins).
+    #[serde(default)]
+    pub base_version_no: Option<i32>,
 }
 
 pub async fn save(
@@ -621,15 +626,16 @@ pub async fn save(
         let lexicon = vocab::lexicon(db).await?;
         vocab::relookup_levels(c, lexicon.as_ref());
     }
+    // The content first: a save over a newer version changes nothing at all.
+    if let Some(c) = content {
+        store::save_content_over(db, id, &c, "edit", req.base_version_no).await?;
+    }
     store::update_fields(db, id, &title, &filename, &settings, &brief).await?;
     if let Some(r) = &request {
         store::set_request(db, id, r).await?;
     }
     if let Some(t) = template {
         store::set_template(db, id, t).await?;
-    }
-    if let Some(c) = content {
-        store::save_content(db, id, &c, "edit").await?;
     }
     Ok(Json(state_of(&state, id).await?))
 }

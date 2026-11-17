@@ -416,33 +416,35 @@ fn logged_material_query(query: &str) -> String {
 
 // ---------------------------------------------------------------- one model call, retried once
 
-struct Call {
-    key: &'static str,
-    scaffold: &'static str,
-    schema_name: &'static str,
-    schema: Value,
-    vars: HashMap<&'static str, String>,
+pub(crate) struct Call {
+    pub(crate) key: &'static str,
+    pub(crate) scaffold: &'static str,
+    pub(crate) schema_name: &'static str,
+    pub(crate) schema: Value,
+    pub(crate) vars: HashMap<&'static str, String>,
     /// Placeholders that must reach the model even with a prompt version that lacks them.
-    required: Vec<(&'static str, &'static str)>,
+    pub(crate) required: Vec<(&'static str, &'static str)>,
     /// Variables logged only as their length and a hash.
-    redact: Vec<(&'static str, &'static str)>,
-    fake_context: Value,
-    max_tokens: u32,
+    pub(crate) redact: Vec<(&'static str, &'static str)>,
+    pub(crate) fake_context: Value,
+    pub(crate) max_tokens: u32,
+    /// The first attempt's temperature (the retry adds 0.4).
+    pub(crate) temperature: f32,
     /// Logged with every attempt (ids, never text).
-    trace: Value,
+    pub(crate) trace: Value,
 }
 
 /// The output of an attempt after the server's checks: what can be used, and what to tell the
 /// model in the retry.
-struct Checked<T> {
-    output: Option<T>,
-    problems: Vec<String>,
+pub(crate) struct Checked<T> {
+    pub(crate) output: Option<T>,
+    pub(crate) problems: Vec<String>,
 }
 
 /// One call and, when the output ran away, could not be read or has problems, one retry with
 /// a higher temperature and the problems listed. The retry's usable output wins; when it has
 /// none, the first attempt's usable output (if any) is used. `Ok(Err(message))`: nothing usable.
-async fn call<R, T>(
+pub(crate) async fn call<R, T>(
     state: &AppState,
     teacher_id: i64,
     c: Call,
@@ -480,7 +482,7 @@ where
     let mut first: Option<(T, i64, Value)> = None;
     let mut on_first = Some(on_first);
     for attempt_no in 1..=2 {
-        let temperature = BASE_TEMPERATURE + RETRY_TEMPERATURE_STEP * (attempt_no - 1) as f32;
+        let temperature = c.temperature + RETRY_TEMPERATURE_STEP * (attempt_no - 1) as f32;
         let snapshot = json!({
             "inputs": logged,
             "prep": c.trace,
@@ -579,7 +581,7 @@ where
     Ok(Err(MSG_UNREADABLE.to_string()))
 }
 
-async fn nothing(_: i64) -> AppResult<()> {
+pub(crate) async fn nothing(_: i64) -> AppResult<()> {
     Ok(())
 }
 
@@ -642,6 +644,7 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
             "candidates": codes,
         }),
         max_tokens: ACTIVITY_MAX_TOKENS,
+        temperature: BASE_TEMPERATURE,
         trace: trace_of(input, Some(&class_snapshot), Some(&codes)),
     };
     let track = input.track.clone();
@@ -1022,6 +1025,7 @@ async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
             "candidates": codes,
         }),
         max_tokens: ASK_MAX_TOKENS,
+        temperature: BASE_TEMPERATURE,
         trace: trace_of(input, Some(&class_snapshot), Some(&codes)),
     };
     let track = input.track.clone();
@@ -1346,6 +1350,7 @@ async fn revise(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
             "blocks": blocks,
         }),
         max_tokens: REVISE_MAX_TOKENS,
+        temperature: BASE_TEMPERATURE,
         trace: trace_of(input, None, None),
     };
     let result = call(

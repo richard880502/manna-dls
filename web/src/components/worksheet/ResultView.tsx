@@ -37,10 +37,19 @@ import {
   tally,
   type BloomFilter,
 } from "../../lib/bloom";
+import { NOTES_HINT, holdsBlock, type SheetSelection } from "../../lib/blockRevise";
 import { saveBlob } from "../../lib/download";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { BloomDistribution, BloomSelect } from "./Bloom";
+import {
+  BlockReviseArea,
+  LostNotes,
+  ReviseByNotesButton,
+  ReviseForm,
+  useBlockRevise,
+  type BlockRevise,
+} from "./BlockRevise";
 import { LessonLinkControls } from "./LessonLink";
 import { ProgressPanel, RunOutcome } from "./OptionsView";
 import { SopSyncNotice } from "./SopSync";
@@ -129,10 +138,29 @@ interface BlockProps {
   setDragging: (id: string | null) => void;
   /** Show only the items at this Bloom level (the distribution bar); null shows all. */
   filter: BloomFilter;
+  /** 逐區修改與註記 */
+  revise: BlockRevise;
 }
 
-function BlockSection({ ws, view, index, count, audience, locked, dragging, setDragging, filter }: BlockProps) {
+function BlockSection({
+  ws,
+  view,
+  index,
+  count,
+  audience,
+  locked: editorLocked,
+  dragging,
+  setDragging,
+  filter,
+  revise,
+}: BlockProps) {
   const { block, label } = view;
+  // While Manna revises this block, or its proposal waits for 採用／放棄, the block stays as it is.
+  const held = holdsBlock(revise.proposalOf(block.id));
+  const locked = editorLocked || held;
+  const [reviseOpen, setReviseOpen] = useState(false);
+  const [draft, setDraft] = useState<SheetSelection | null>(null);
+  const numbers = new Map(view.items.map(({ item, no }) => [item.id, no]));
   const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
   const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -229,6 +257,26 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
             復原上一版
           </button>
         )}
+        <button
+          type="button"
+          className="text-link is-plain is-gold"
+          aria-expanded={reviseOpen}
+          aria-label={`改這一區（區塊 ${name}）`}
+          disabled={locked || revise.running}
+          onClick={() => setReviseOpen((o) => !o)}
+        >
+          改這一區
+        </button>
+        <button
+          type="button"
+          className="text-link is-plain"
+          aria-label={`加註記（區塊 ${name}）`}
+          disabled={editorLocked}
+          onClick={() => setDraft({ block_id: block.id, field: "block", quote: "" })}
+        >
+          加註記
+        </button>
+        <ReviseByNotesButton blockId={block.id} ctl={revise} disabled={locked} />
         {toggleName && (
           <button
             type="button"
@@ -259,6 +307,17 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
           </button>
         )}
       </div>
+
+      {reviseOpen && !held && (
+        <ReviseForm name={`區塊 ${name}`} blockId={block.id} ctl={revise} onDone={() => setReviseOpen(false)} />
+      )}
+      <BlockReviseArea
+        blockId={block.id}
+        ctl={revise}
+        numberOf={(id) => numbers.get(id)}
+        draft={draft}
+        onDraftDone={() => setDraft(null)}
+      />
 
       <h3 className="ws-block-head">
         {label && <span className="ws-letter">{label}.</span>}
@@ -514,6 +573,15 @@ function BlockSection({ ws, view, index, count, audience, locked, dragging, setD
                 <button
                   type="button"
                   className="text-link is-plain"
+                  aria-label={`註記題目 ${no}`}
+                  disabled={editorLocked}
+                  onClick={() => setDraft({ block_id: block.id, field: "item", item_id: item.id, quote: "" })}
+                >
+                  註記
+                </button>
+                <button
+                  type="button"
+                  className="text-link is-plain"
                   aria-label={`刪除題目 ${no}`}
                   disabled={locked}
                   onClick={() => patch((b) => ({ ...b, items: b.items.filter((it) => it.id !== item.id) }))}
@@ -647,13 +715,18 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [bloomFilter, setBloomFilter] = useState<BloomFilter>(null);
   const radioName = useId();
+  // 逐區修改與註記: saved first; 採用 hands back the worksheet with the new version.
+  const revise = useBlockRevise(state && !state.running ? state.id : null, {
+    beforeAction: ws.flush,
+    onApplied: (done) => ws.adopt(done.worksheet),
+  });
 
   // The selected tab must be one of this worksheet's versions (they can change after a new run).
   const current: WsLevel = levels.includes(level) ? level : (levels[0] ?? "standard");
 
   if (!state) return null;
   const { content } = state;
-  const locked = state.running || ws.busy;
+  const locked = state.running || ws.busy || revise.busy;
   const sheet = projectSheet(content, current, audience);
   const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
   const chosen = chosenLine(content);
@@ -716,9 +789,11 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
 
       <p className="manna-label ws-draft-note">
         <span className="star" aria-hidden="true" />
-        Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除。
+        Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除，也可以按「改這一區」或加註記，請 Manna 只改那一區。
         {audience === "teacher" ? "參考答案只在教師參考版。" : ""}
       </p>
+      <p className="field-hint">{NOTES_HINT}</p>
+      <LostNotes ctl={revise} />
       {chosen && <p className="quiet-note ws-chosen">{chosen}</p>}
       {content.chosen?.reasons.map((r) => (
         <p key={r} className="quiet-note">
@@ -861,6 +936,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
               dragging={dragging}
               setDragging={setDragging}
               filter={filter}
+              revise={revise}
             />
           );
         })}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorMessage } from "../../api/client";
+import { ApiError, api, errorMessage } from "../../api/client";
 import type {
   SaveWorksheetMaterialRequest,
   WorksheetBrief,
@@ -45,6 +45,11 @@ export interface WorksheetController {
   saveError: string | null;
   savedAt: string | null;
   flush: () => Promise<string | null>;
+  /**
+   * The last save was refused because the worksheet has a newer version (a block revision was
+   * accepted elsewhere): what the teacher typed since was not stored; 重新載入 is the way on.
+   */
+  conflict: boolean;
 }
 
 /**
@@ -59,6 +64,7 @@ export function useWorksheet(id: number): WorksheetController {
   const [state, setState] = useState<WorksheetState | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const stateRef = useRef<WorksheetState | null>(null);
   const alive = useRef(true);
 
@@ -104,9 +110,17 @@ export function useWorksheet(id: number): WorksheetController {
       // Only once there is something to say: an older server does not know the field.
       ...(now.request !== undefined ? { request: now.request } : {}),
     };
-    // While steps run the blocks belong to the server: the content is not sent.
-    const body = now.running ? sent : { ...sent, content: now.content };
-    const saved = await api.saveWorksheet(id, body);
+    // While steps run the blocks belong to the server: the content is not sent. With it goes the
+    // version it was edited from, so a newer one (a block revision accepted elsewhere) is never
+    // overwritten: the server answers 409 instead.
+    const body = now.running ? sent : { ...sent, content: now.content, base_version_no: now.version_no };
+    let saved: WorksheetState;
+    try {
+      saved = await api.saveWorksheet(id, body);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && !now.running && alive.current) setConflict(true);
+      throw err;
+    }
     const latest = stateRef.current;
     if (alive.current && latest) {
       // Keep what the teacher typed meanwhile; take what only the server knows.
@@ -248,6 +262,7 @@ export function useWorksheet(id: number): WorksheetController {
     reload: () => {
       setStatus("loading");
       setLoadError(null);
+      setConflict(false);
       setLoadSeq((n) => n + 1);
     },
     state,
@@ -271,5 +286,6 @@ export function useWorksheet(id: number): WorksheetController {
     saveError: autosave.error,
     savedAt: autosave.savedAt,
     flush,
+    conflict,
   };
 }

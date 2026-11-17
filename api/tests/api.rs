@@ -1230,6 +1230,7 @@ async fn admin_prompts_imports_and_permissions() {
             "prep_revise",
             "sop_objectives",
             "sop_passage_analysis",
+            "worksheet_block_revise",
             "worksheet_bloom_check",
             "worksheet_bloom_level",
             "worksheet_exit_ticket",
@@ -1253,7 +1254,7 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_tasks has v2 since Phase 2.7 (0014_bloom.sql), prep_activity v2 since
         // 0015_prep_bloom.sql and v3 since 0019_prep_activity_goals.sql,
         // worksheet_template_details and worksheet_template_section v2 since 0016_mimic.sql.
-        vec![1, 2, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 2, 1]
+        vec![1, 2, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 2, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

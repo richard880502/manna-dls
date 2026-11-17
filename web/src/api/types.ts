@@ -1563,6 +1563,11 @@ export interface SaveWorksheetRequest {
   template_id?: number | null;
   /** 給 Manna 的要求（≤2000） */
   request?: string;
+  /**
+   * 編輯器上次看到的版本。和 content 一起送：伺服器已有更新的版本、而 content 又和它不同時不存，
+   * 回 409（例如在備課對話採用了逐區修改）。省略時照舊（後存的蓋掉先存的）。
+   */
+  base_version_no?: number;
 }
 
 export interface SaveWorksheetMaterialRequest {
@@ -1815,6 +1820,8 @@ export interface WsSheetBlock {
   vocabulary: Array<{ word: string; level: number | null; definition: string }>;
   supports: Array<{ type: WsScaffoldType; kind: string; heading?: string; content: string }>;
   items: Array<{
+    /** 題目在學習單裡的 id（註記錨在題目上）；舊的伺服器沒有這一欄 */
+    id?: string;
     no: number;
     answer_format: string | null;
     prompt: string;
@@ -1897,6 +1904,108 @@ export interface PrepResources {
 export interface PrepAskResult {
   answer: string;
   follow_ups: string[];
+}
+
+// ---- 學習單：逐區修改與註記（docs/WORKSHEET_BLOCK_EDIT_RESEARCH.md §4–§5）----
+
+/** 註記標在哪裡：整區、標題、作答指示或一題 */
+export type WsCommentField = "block" | "title" | "instructions" | "item";
+/** 待處理｜已依此修改｜已略過 */
+export type WsCommentStatus = "open" | "applied" | "dismissed";
+
+/** 註記現在在學習單的哪裡；lost＝它的區塊或題目已經不在了 */
+export interface WsCommentAnchor {
+  status: AnchorStatus;
+  block_id: string | null;
+  item_id: string | null;
+  /** 欄位文字中的位置（UTF-16，與瀏覽器選取相同）；整個欄位時是 null */
+  start: number | null;
+  end: number | null;
+}
+
+/** 教師在學習單上的註記：不改學習單，不印、不匯出 */
+export interface WorksheetComment {
+  id: number;
+  worksheet_id: number;
+  block_id: string;
+  field: WsCommentField;
+  item_id: string | null;
+  quote: string;
+  note: string;
+  /** 提供給 AI：逐區修改與重新產生整份時讀得到（預設勾選） */
+  share_with_ai: boolean;
+  status: WsCommentStatus;
+  /** 套用它的那次修改 */
+  proposal_id: number | null;
+  anchor: WsCommentAnchor;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorksheetCommentRequest {
+  block_id: string;
+  /** 省略：有 item_id 是 item，否則 block */
+  field?: WsCommentField;
+  item_id?: string;
+  start?: number;
+  end?: number;
+  /** 選取的文字（找不到確切位置時照存，標在整個欄位） */
+  quote?: string;
+  note?: string;
+  share_with_ai?: boolean;
+}
+
+export interface UpdateWorksheetCommentRequest {
+  note?: string;
+  share_with_ai?: boolean;
+  status?: "open" | "dismissed";
+}
+
+export type WsProposalStatus = "running" | "proposed" | "accepted" | "rejected" | "stale" | "failed";
+
+export interface WsProposalChange {
+  id: string;
+  /** removed 的題目在 before 裡 */
+  change: "kept" | "modified" | "new" | "removed";
+}
+
+/** Manna 對一個區塊的修改建議：教師按「採用」才寫入學習單 */
+export interface WsProposal {
+  id: number;
+  worksheet_id: number;
+  block_id: string;
+  status: WsProposalStatus;
+  instruction: string;
+  comment_ids: number[];
+  whole_block: boolean;
+  /** 這一區第幾次請 Manna 改 */
+  round: number;
+  reply: string;
+  /** failed／stale 的原因 */
+  error: string | null;
+  base_version_no: number;
+  /** 送給 Manna 時的區塊 */
+  before: WsBlock;
+  /** 改好的區塊（proposed 之後才有） */
+  block: WsBlock | null;
+  changes: { title: boolean; instructions: boolean; items: WsProposalChange[] } | null;
+  interaction_id: number | null;
+  accepted_version_no: number | null;
+  created_at: string;
+  finished_at: string | null;
+  decided_at: string | null;
+}
+
+export interface ReviseWorksheetBlockRequest {
+  instruction?: string;
+  comment_ids?: number[];
+  /** 可以動到這一區的其他題 */
+  whole_block?: boolean;
+}
+
+export interface WsProposalAccepted {
+  proposal: WsProposal;
+  worksheet: WorksheetState;
 }
 
 export interface PrepReviseResult {
