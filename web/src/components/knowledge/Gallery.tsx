@@ -64,7 +64,7 @@ function useThumbnail(id: number, wanted: boolean) {
   return { ref, url, failed };
 }
 
-/** The top of a text card: its first lines (up to ~280 characters), so cards differ in height. */
+/** The top of a text card: its first lines (up to ~280 characters), faded where the window ends. */
 function Excerpt({ card }: { card: MaterialCardData }) {
   if (card.excerpt) return <p className="kb-excerpt">{card.excerpt}</p>;
   return (
@@ -84,9 +84,10 @@ interface Opened {
 }
 
 /**
- * One material on the wall: its first page (or image), or its first lines; the file type and an
- * OCR state in the corners; the title (the button that opens the preview: the whole card is
- * its target), category and meta, tags.
+ * One material on the wall, the same size as every other: the top of its first page (or image),
+ * or its first lines; the file type and an OCR state in the corners; the title in two lines at
+ * most (the button that opens the preview: the whole card is its target), category and meta on
+ * one line, one row of tags.
  */
 function GalleryCard({ card, onOpen }: { card: MaterialCardData; onOpen: (opened: Opened) => void }) {
   const ids = useId();
@@ -116,11 +117,13 @@ function GalleryCard({ card, onOpen }: { card: MaterialCardData; onOpen: (opened
               aria-haspopup="dialog"
               onClick={(e) => onOpen({ card, thumb: url, from: e.currentTarget })}
             >
-              {cardTitle(card)}
+              <span className="kb-card-title-text">{cardTitle(card)}</span>
             </button>
           </h3>
           <p className="lib-card-meta">{[card.category, materialCardMeta(card)].filter(Boolean).join(" · ")}</p>
-          <TagList tags={card.tags} />
+          <div className="kb-card-tags">
+            <TagList tags={card.tags} />
+          </div>
         </div>
       </article>
     </li>
@@ -177,7 +180,7 @@ export function KnowledgeGallery() {
     <>
       <MaterialBrowser
         area="reference"
-        layout="masonry"
+        layout="wall"
         labels={{
           search: "搜尋知識庫",
           placeholder: "搜尋標題、內容或標籤，例如：114 學測、參考答案",
