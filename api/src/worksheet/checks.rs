@@ -14,10 +14,11 @@ use super::schemas::{
     RawBlock, RawExit, RawExitItem, RawItem, RawScaffoldSet, RawScaffolds, RawTasks, RawWarmup,
     TARGET_WARMUP, TIER_CHALLENGE, TIER_CORE, TIER_SUPPORT,
 };
+use super::tiered::{RawLinkingWords, RawTieredLevel, RawVersion};
 use super::{
-    info_function_from_label, student_tasks, Practice, ANSWER_FORMATS, EXIT_PURPOSES, FMT_BLANK,
-    FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS,
-    VERBAL_KINDS,
+    info_function_from_label, student_tasks, ItemTier, Level, Practice, ANSWER_FORMATS,
+    EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE,
+    INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::checks::CheckResult;
 use crate::routes::clip_chars;
@@ -1666,8 +1667,8 @@ pub fn evaluate_revision(draft: &RevisionDraft<'_>, ctx: &SectionCtx<'_>) -> Eva
 
 // ---------------------------------------------------------------- questions of one Bloom level
 
-/// One call of `worksheet_bloom_level`: the level, the formats it may use, the material and how
-/// many questions were asked for.
+/// One call of `worksheet_bloom_level` (or `worksheet_tiered_level`): the level, the formats it
+/// may use, the material and how many questions were asked for.
 pub struct BloomCtx<'a> {
     pub bloom: Bloom,
     pub formats: &'a [&'static str],
@@ -1680,20 +1681,52 @@ pub struct BloomCtx<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CleanBloomItem {
-    /// Format, prompt, options, answer and the verbatim evidence (if any).
+    /// Format, prompt, options, answer and the verbatim evidence (if any). For a 差異化學習單
+    /// question the answer is 進階版's (the full one).
     pub item: CleanSectionItem,
     /// 1-based paragraph numbers the question is about.
     pub paragraph_nos: Vec<usize>,
     pub hint: String,
+    /// 差異化學習單: the three versions, in level order; empty otherwise.
+    pub tiers: Vec<ItemTier>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// Linking words for one language function, cumulative per version (T5).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CleanLinking {
+    pub function: String,
+    pub basic: Vec<String>,
+    /// 基礎版's words and the ones 一般版 adds.
+    pub standard: Vec<String>,
+    /// 一般版's words and the more formal ones 進階版 adds.
+    pub advanced: Vec<String>,
+}
+
+impl CleanLinking {
+    pub fn words(&self, level: Level) -> &[String] {
+        match level {
+            Level::Basic => &self.basic,
+            Level::Standard => &self.standard,
+            Level::Advanced => &self.advanced,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct CleanBloomLevel {
+    /// The one sentence of prompt version 1 (kept for a prompt edited back to it).
     pub instructions: String,
+    /// The written steps, in the order students work (R5); empty when the model gave fewer than
+    /// two usable ones (the program writes its own).
+    pub steps: Vec<String>,
+    /// A worked or partly worked example on a question that is not on the sheet ("" for none).
+    pub example: String,
+    /// 差異化學習單 only.
+    pub linking: Option<CleanLinking>,
     pub items: Vec<CleanBloomItem>,
 }
 
-const BLOOM_CHECKS: [&str; 7] = [
+const BLOOM_CHECKS: [&str; 8] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "answer_not_in_prompt",
@@ -1701,127 +1734,246 @@ const BLOOM_CHECKS: [&str; 7] = [
     "item_count_within_plan",
     "has_items",
     "syllables_match_dictionary",
+    "steps_written",
 ];
 
-/// Checks the questions of one level the way a template block is checked (fixed labels, the
-/// level's formats only, well-formed closed items, no answer in the stem, the dictionary's
-/// syllables), plus: a fill-in item has a blank, and a remember / understand question quotes
-/// the text word for word as its evidence (cut down to its longest verbatim piece of five
-/// words or more; with none the question fails). Other levels need no evidence: one that is
-/// not verbatim is cleared. More questions than asked for are cut.
+const TIERED_CHECKS: [&str; 13] = [
+    "labels_from_spec_sets",
+    "items_wellformed",
+    "answer_not_in_prompt",
+    "evidence_verbatim",
+    "item_count_within_plan",
+    "has_items",
+    "syllables_match_dictionary",
+    "steps_written",
+    "support_forms_by_version",
+    "support_wellformed",
+    "no_answer_location",
+    "answers_per_version",
+    "linking_words_graded",
+];
+
+/// The parts of a question that every version shares, as the model wrote them.
+struct SharedRaw<'a> {
+    answer_format: &'a str,
+    prompt: &'a str,
+    options: &'a [String],
+    answer: &'a str,
+    evidence: &'a str,
+    paragraph_ids: &'a [String],
+}
+
+/// The checks of a question's shared part, the way a template block is checked (the level's
+/// formats only, well-formed closed items, no answer in the stem, the dictionary's syllables),
+/// plus: a fill-in item has a blank, and a remember / understand question quotes the text word
+/// for word as its evidence (cut down to its longest verbatim piece of five words or more; with
+/// none the question fails). Other levels need no evidence: one that is not verbatim is cleared.
+/// Returns the cleaned item and its paragraph numbers, or `None` when it is dropped.
+fn shared_item(
+    raw: SharedRaw<'_>,
+    iname: &str,
+    ctx: &BloomCtx<'_>,
+    t: &mut Tally,
+) -> Option<(CleanSectionItem, Vec<usize>)> {
+    let format = raw.answer_format.trim().to_string();
+    if !ctx.formats.contains(&format.as_str()) {
+        t.fail(
+            "labels_from_spec_sets",
+            format!(
+                "{iname} 的 answer_format「{}」不能用在這個層次；只能用：{}。",
+                raw.answer_format,
+                ctx.formats.join("、")
+            ),
+            "拿掉這一題",
+        );
+        return None;
+    }
+    let mut item = CleanSectionItem {
+        answer_format: format,
+        prompt: clean(raw.prompt),
+        options: clean_all(raw.options),
+        answer: clean(raw.answer),
+        evidence: None,
+        // The level is the call's, not the item's (see `CleanBloomItem`).
+        bloom: None,
+    };
+    if item.answer_format == FMT_TRUE_FALSE && item.options.is_empty() {
+        item.options = vec!["True".to_string(), "False".to_string()];
+    }
+    if !item_checks(&mut item, iname, t) {
+        return None;
+    }
+    if item.answer_format == FMT_BLANK && !item.prompt.contains("___") {
+        t.fail(
+            "items_wellformed",
+            format!("{iname}（填空題）的 prompt 要用 ______ 表示空格。"),
+            "拿掉這一題",
+        );
+        return None;
+    }
+    let evidence = clean(raw.evidence);
+    item.evidence = if evidence.is_empty() {
+        None
+    } else if let Some(span) = locate_verbatim(&evidence, ctx.passage) {
+        Some(span)
+    } else {
+        verbatim_piece(&evidence, ctx.passage)
+    };
+    if ctx.bloom.needs_evidence() {
+        match &item.evidence {
+            None => {
+                t.fail(
+                    "evidence_verbatim",
+                    if evidence.is_empty() {
+                        format!("{iname} 沒有 evidence；這個層次的每一題都要從教材逐字複製一段連續文字當作依據。")
+                    } else {
+                        format!(
+                            "{iname} 的 evidence「{}」不是教材的連續片段。請逐字複製一段連續文字（至少 5 個英文字），不可改寫，不可用「...」省略或拼接。",
+                            clip_chars(&evidence, 120)
+                        )
+                    },
+                    "拿掉這一題",
+                );
+                return None;
+            }
+            Some(piece) if *piece != evidence => t.fixed(
+                "evidence_verbatim",
+                format!(
+                    "{iname} 的 evidence「{}」不完全是教材的連續片段。",
+                    clip_chars(&evidence, 120)
+                ),
+                "只留下其中逐字的一段",
+            ),
+            Some(_) => {}
+        }
+    } else if !evidence.is_empty() && item.evidence.as_deref() != Some(evidence.as_str()) {
+        t.fixed(
+            "evidence_verbatim",
+            format!(
+                "{iname} 的 evidence「{}」不是教材的連續片段。",
+                clip_chars(&evidence, 120)
+            ),
+            if item.evidence.is_some() {
+                "只留下其中逐字的一段"
+            } else {
+                "清空這一題的依據"
+            },
+        );
+    }
+    if syllables::mentions_syllables(&item.prompt)
+        && !syllable_answer_from_dictionary(&mut item, iname, t)
+    {
+        return None;
+    }
+    let mut paragraph_nos: Vec<usize> = raw
+        .paragraph_ids
+        .iter()
+        .filter_map(|code| ctx.paragraph_codes.iter().position(|c| c == code.trim()))
+        .map(|i| i + 1)
+        .collect();
+    paragraph_nos.sort_unstable();
+    paragraph_nos.dedup();
+    Some((item, paragraph_nos))
+}
+
+/// The written steps (R5): trimmed, empty ones and ones that give an answer away dropped, at
+/// most five. Fewer than two usable steps is a failed check (the program then writes its own).
+fn clean_steps(raw: &[String], answers: &[&str], t: &mut Tally) -> Vec<String> {
+    let mut steps: Vec<String> = Vec::new();
+    for s in raw {
+        let s = clean(s);
+        if s.is_empty() {
+            continue;
+        }
+        if answers.iter().any(|a| contains_answer(&s, a)) {
+            t.fixed(
+                "steps_written",
+                format!("步驟「{}」寫出了題目的答案。", clip_chars(&s, 80)),
+                "拿掉這一步",
+            );
+            continue;
+        }
+        steps.push(s);
+    }
+    steps.truncate(super::tiered::MAX_STEPS);
+    if steps.len() < super::tiered::MIN_STEPS {
+        t.fail(
+            "steps_written",
+            format!(
+                "steps 要依學生實際作答的順序寫 {} 到 {} 個步驟（每個步驟一個陣列元素）。",
+                super::tiered::MIN_STEPS,
+                super::tiered::MAX_STEPS
+            ),
+            "",
+        );
+        return Vec::new();
+    }
+    steps
+}
+
+/// A worked example must not be one of the sheet's answers.
+fn clean_example(raw: &str, answers: &[&str], t: &mut Tally) -> String {
+    let example = clean(raw);
+    if !example.is_empty() && answers.iter().any(|a| contains_answer(&example, a)) {
+        t.fixed(
+            "steps_written",
+            format!("example「{}」寫出了題目的答案。", clip_chars(&example, 80)),
+            "拿掉範例",
+        );
+        return String::new();
+    }
+    example
+}
+
+/// Checks the questions of one level (閱讀理解題): every question's shared checks
+/// ([`shared_item`]), its hint, the written steps and the example. More questions than asked
+/// for are cut.
 pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<CleanBloomLevel> {
     let mut t = Tally::new(&BLOOM_CHECKS);
     let mut out = CleanBloomLevel {
         instructions: clean(&raw.instructions),
-        items: Vec::new(),
+        ..CleanBloomLevel::default()
     };
-    let needs_evidence = ctx.bloom.needs_evidence();
     for (ii, it) in raw.items.iter().enumerate() {
         let iname = format!("第 {} 題", ii + 1);
-        let format = it.answer_format.trim().to_string();
-        if !ctx.formats.contains(&format.as_str()) {
-            t.fail(
-                "labels_from_spec_sets",
-                format!(
-                    "{iname} 的 answer_format「{}」不能用在這個層次；只能用：{}。",
-                    it.answer_format,
-                    ctx.formats.join("、")
-                ),
-                "拿掉這一題",
-            );
-            continue;
-        }
-        let mut item = CleanSectionItem {
-            answer_format: format,
-            prompt: clean(&it.prompt),
-            options: clean_all(&it.options),
-            answer: clean(&it.answer),
-            evidence: None,
-            // The level is the call's, not the item's (see `CleanBloomItem`).
-            bloom: None,
+        let shared = SharedRaw {
+            answer_format: &it.answer_format,
+            prompt: &it.prompt,
+            options: &it.options,
+            answer: &it.answer,
+            evidence: &it.evidence,
+            paragraph_ids: &it.paragraph_ids,
         };
-        if item.answer_format == FMT_TRUE_FALSE && item.options.is_empty() {
-            item.options = vec!["True".to_string(), "False".to_string()];
-        }
-        if !item_checks(&mut item, &iname, &mut t) {
+        let Some((item, paragraph_nos)) = shared_item(shared, &iname, ctx, &mut t) else {
             continue;
-        }
-        if item.answer_format == FMT_BLANK && !item.prompt.contains("___") {
-            t.fail(
-                "items_wellformed",
-                format!("{iname}（填空題）的 prompt 要用 ______ 表示空格。"),
-                "拿掉這一題",
-            );
-            continue;
-        }
-        let evidence = clean(&it.evidence);
-        item.evidence = if evidence.is_empty() {
-            None
-        } else if let Some(span) = locate_verbatim(&evidence, ctx.passage) {
-            Some(span)
-        } else {
-            verbatim_piece(&evidence, ctx.passage)
         };
-        if needs_evidence {
-            match &item.evidence {
-                None => {
-                    t.fail(
-                        "evidence_verbatim",
-                        if evidence.is_empty() {
-                            format!("{iname} 沒有 evidence；這個層次的每一題都要從教材逐字複製一段連續文字當作依據。")
-                        } else {
-                            format!(
-                                "{iname} 的 evidence「{}」不是教材的連續片段。請逐字複製一段連續文字（至少 5 個英文字），不可改寫，不可用「...」省略或拼接。",
-                                clip_chars(&evidence, 120)
-                            )
-                        },
-                        "拿掉這一題",
-                    );
-                    continue;
-                }
-                Some(piece) if *piece != evidence => t.fixed(
-                    "evidence_verbatim",
-                    format!(
-                        "{iname} 的 evidence「{}」不完全是教材的連續片段。",
-                        clip_chars(&evidence, 120)
-                    ),
-                    "只留下其中逐字的一段",
-                ),
-                Some(_) => {}
-            }
-        } else if !evidence.is_empty() && item.evidence.as_deref() != Some(evidence.as_str()) {
-            t.fixed(
-                "evidence_verbatim",
-                format!(
-                    "{iname} 的 evidence「{}」不是教材的連續片段。",
-                    clip_chars(&evidence, 120)
-                ),
-                if item.evidence.is_some() {
-                    "只留下其中逐字的一段"
-                } else {
-                    "清空這一題的依據"
-                },
-            );
-        }
-        if syllables::mentions_syllables(&item.prompt)
-            && !syllable_answer_from_dictionary(&mut item, &iname, &mut t)
-        {
-            continue;
-        }
-        let mut paragraph_nos: Vec<usize> = it
-            .paragraph_ids
-            .iter()
-            .filter_map(|code| ctx.paragraph_codes.iter().position(|c| c == code.trim()))
-            .map(|i| i + 1)
-            .collect();
-        paragraph_nos.sort_unstable();
-        paragraph_nos.dedup();
         out.items.push(CleanBloomItem {
             item,
             paragraph_nos,
             hint: clean(&it.hint).chars().take(HINT_CHARS).collect(),
+            tiers: Vec::new(),
         });
     }
+    cut_to_count(&mut out, ctx, &mut t);
+    let answers: Vec<String> = out.items.iter().map(|i| i.item.answer.clone()).collect();
+    let answers: Vec<&str> = answers.iter().map(String::as_str).collect();
+    // Version 1 wrote one sentence of instructions and no steps: that is not a failure.
+    if !(raw.steps.is_empty() && !out.instructions.is_empty()) {
+        out.steps = clean_steps(&raw.steps, &answers, &mut t);
+    }
+    out.example = clean_example(&raw.example, &answers, &mut t);
+    if out.items.is_empty() {
+        t.fail(
+            "has_items",
+            "沒有交出可以用的題目；至少要有 1 題。".to_string(),
+            "",
+        );
+        return t.finish(None);
+    }
+    t.finish(Some(out))
+}
+
+fn cut_to_count(out: &mut CleanBloomLevel, ctx: &BloomCtx<'_>, t: &mut Tally) {
     if out.items.len() > ctx.count {
         t.fixed(
             "item_count_within_plan",
@@ -1830,6 +1982,317 @@ pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<Cle
         );
         out.items.truncate(ctx.count);
     }
+}
+
+// ---------------------------------------------------------------- 差異化學習單 (T1–T6)
+
+/// The blanks of a cloze or frame line: three underscores or more (「___」).
+fn has_blank(s: &str) -> bool {
+    s.contains("___") || s.contains("＿＿＿")
+}
+
+/// One or two full sentences: four words or more, ending like a sentence (T6).
+fn is_full_sentence(s: &str) -> bool {
+    let s = s.trim();
+    word_count(s) >= 4
+        && s.trim_end_matches(['"', '\'', '”', '’', ')'])
+            .ends_with(['.', '!', '?'])
+}
+
+/// Words of a list: cleaned, empty ones and repeats (any case) dropped, at most `max`.
+fn clean_words(list: &[String], max: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for w in list {
+        let w = clean(w);
+        if !w.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(&w)) {
+            out.push(w);
+        }
+    }
+    out.truncate(max);
+    out
+}
+
+/// Checks one version of a question (T3–T6). Returns `None` when the version is unusable, which
+/// drops the question: a question without its three versions is not differentiated.
+fn tier_of(
+    level: Level,
+    raw: &RawVersion,
+    format: &str,
+    iname: &str,
+    t: &mut Tally,
+) -> Option<ItemTier> {
+    use super::tiered::{
+        allowed_kinds, points_to_answer_location, SupportKind, MAX_SUPPORT_LINES, MAX_WORD_BANK,
+    };
+    let vname = format!("{iname}的{}", level.label());
+    let Some(kind) = SupportKind::parse(&raw.support_kind) else {
+        t.fail(
+            "support_forms_by_version",
+            format!(
+                "{vname} support_kind「{}」不是固定的支持形式。",
+                clip_chars(&raw.support_kind, 30)
+            ),
+            "拿掉這一題",
+        );
+        return None;
+    };
+    if !allowed_kinds(level).contains(&kind) {
+        t.fail(
+            "support_forms_by_version",
+            format!(
+                "{vname}不能用「{}」；只能用：{}。",
+                kind.label(),
+                allowed_kinds(level)
+                    .iter()
+                    .map(|k| k.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ),
+            "拿掉這一題",
+        );
+        return None;
+    }
+    let mut support: Vec<String> = Vec::new();
+    for line in raw
+        .support
+        .iter()
+        .map(|l| clean(l))
+        .filter(|l| !l.is_empty())
+    {
+        if points_to_answer_location(&line) {
+            t.fail(
+                "no_answer_location",
+                format!(
+                    "{vname}的支持「{}」是在指出答案的位置；不可以這樣給提示，請改用克漏字、字庫、句型框架或句首。",
+                    clip_chars(&line, 80)
+                ),
+                "拿掉這一行",
+            );
+            continue;
+        }
+        support.push(line);
+    }
+    support.truncate(MAX_SUPPORT_LINES);
+    let mut word_bank = clean_words(&raw.word_bank, MAX_WORD_BANK);
+    let mut model_sentence = clean(&raw.model_sentence);
+    let malformed = |t: &mut Tally, why: &str| {
+        t.fail(
+            "support_wellformed",
+            format!("{vname}（{}）{why}", kind.label()),
+            "拿掉這一題",
+        );
+    };
+    match kind {
+        SupportKind::None => {
+            if !support.is_empty() || !word_bank.is_empty() {
+                t.fixed(
+                    "support_wellformed",
+                    format!("{vname}選了不給支持，卻寫了支持的內容。"),
+                    "清空支持",
+                );
+            }
+            support.clear();
+            word_bank.clear();
+            model_sentence.clear();
+        }
+        SupportKind::SentenceStarter => {
+            if support.is_empty() {
+                malformed(t, "沒有寫出句首。");
+                return None;
+            }
+            if !word_bank.is_empty() {
+                t.fixed(
+                    "support_wellformed",
+                    format!("{vname}只給句首，字庫比句首的支持多。"),
+                    "拿掉字庫",
+                );
+                word_bank.clear();
+            }
+        }
+        SupportKind::WordBank => {
+            if word_bank.len() < 2 {
+                malformed(t, "word_bank 至少要 2 個字詞。");
+                return None;
+            }
+        }
+        SupportKind::SentenceFrame | SupportKind::Cloze => {
+            if !support.iter().any(|l| has_blank(l)) {
+                malformed(t, "support 要有用 ___ 表示的空格。");
+                return None;
+            }
+            if model_sentence.is_empty() {
+                malformed(t, "要先寫出完整的範句（model_sentence），再挖空。");
+                return None;
+            }
+            // T4: the word bank is the words taken out of the model sentence.
+            let sentence = model_sentence.to_lowercase();
+            let before = word_bank.len();
+            word_bank.retain(|w| sentence.contains(&w.to_lowercase()));
+            if word_bank.len() < before {
+                t.fixed(
+                    "support_wellformed",
+                    format!("{vname}的字庫有不在範句裡的字詞。"),
+                    "只留範句裡的字詞",
+                );
+            }
+            if word_bank.is_empty() {
+                malformed(t, "word_bank 要列出從範句挖掉的字詞。");
+                return None;
+            }
+        }
+    }
+    let answer = clean(&raw.answer);
+    if answer.is_empty() {
+        t.fail(
+            "answers_per_version",
+            format!("{vname}沒有參考答案；每個版本都要寫這個版本預期的答案。"),
+            "拿掉這一題",
+        );
+        return None;
+    }
+    // T6: 一般版 and 進階版 want one or two full sentences (a table or organizer is filled in).
+    let open_writing = format != FMT_TABLE && format != super::FMT_ORGANIZER;
+    if level != Level::Basic && open_writing && !is_full_sentence(&answer) {
+        t.fail(
+            "answers_per_version",
+            format!(
+                "{vname}的參考答案「{}」要是 1–2 個完整的英文句子。",
+                clip_chars(&answer, 80)
+            ),
+            "",
+        );
+    }
+    let scoring = clean(&raw.scoring_zh);
+    if scoring.is_empty() {
+        t.fail(
+            "answers_per_version",
+            format!("{vname}沒有評分說明（scoring_zh）。"),
+            "",
+        );
+    }
+    Some(ItemTier {
+        level,
+        support_kind: kind,
+        model_sentence,
+        support,
+        word_bank,
+        answer,
+        scoring,
+    })
+}
+
+/// Linking words, cumulative per version (T5): each version keeps the words of the one below
+/// and adds its own; a word given twice stays at the lower version.
+fn linking_of(raw: &RawLinkingWords, t: &mut Tally) -> Option<CleanLinking> {
+    use super::tiered::{FUNCTION_CHARS, MAX_LINKING_WORDS};
+    let basic = clean_words(&raw.basic, MAX_LINKING_WORDS);
+    let fresh = |list: &[String], have: &[String]| -> Vec<String> {
+        clean_words(list, MAX_LINKING_WORDS)
+            .into_iter()
+            .filter(|w| !have.iter().any(|h| h.eq_ignore_ascii_case(w)))
+            .collect()
+    };
+    let mut standard = basic.clone();
+    standard.extend(fresh(&raw.standard_more, &basic));
+    let mut advanced = standard.clone();
+    advanced.extend(fresh(&raw.advanced_more, &standard));
+    if advanced.is_empty() {
+        return None;
+    }
+    if basic.is_empty() {
+        t.fail(
+            "linking_words_graded",
+            "linking_words.basic 要先給基礎版最基本的幾個轉折詞，一般版與進階版再往上加。"
+                .to_string(),
+            "",
+        );
+    }
+    Some(CleanLinking {
+        function: clean(&raw.function).chars().take(FUNCTION_CHARS).collect(),
+        basic,
+        standard,
+        advanced,
+    })
+}
+
+/// Checks the questions of one level of a 差異化學習單: each question's shared part as for 閱讀理解
+/// 題 ([`shared_item`], with 進階版's answer as the one the stem must not give away), then its
+/// three versions ([`tier_of`]): a support form each version may use, strictly less support from
+/// 基礎版 to 進階版, no hint that points to where the answer is, a cloze or frame cut from a
+/// model sentence with its word bank (T4), an answer and a scoring note per version, full
+/// sentences above 基礎版 (T6). Then the steps (R5), the example and the linking words (T5).
+pub fn evaluate_tiered_level(raw: &RawTieredLevel, ctx: &BloomCtx<'_>) -> Eval<CleanBloomLevel> {
+    let mut t = Tally::new(&TIERED_CHECKS);
+    let mut out = CleanBloomLevel::default();
+    let no_options: Vec<String> = Vec::new();
+    'items: for (ii, it) in raw.items.iter().enumerate() {
+        let iname = format!("第 {} 題", ii + 1);
+        let shared = SharedRaw {
+            answer_format: &it.answer_format,
+            prompt: &it.prompt,
+            options: &no_options,
+            answer: &it.advanced.answer,
+            evidence: &it.evidence,
+            paragraph_ids: &it.paragraph_ids,
+        };
+        let Some((item, paragraph_nos)) = shared_item(shared, &iname, ctx, &mut t) else {
+            continue;
+        };
+        let mut tiers: Vec<ItemTier> = Vec::new();
+        for level in Level::ALL {
+            match tier_of(
+                level,
+                it.version(level),
+                &item.answer_format,
+                &iname,
+                &mut t,
+            ) {
+                Some(tier) => tiers.push(tier),
+                None => continue 'items,
+            }
+        }
+        let kinds: Vec<_> = tiers.iter().map(|x| x.support_kind).collect();
+        if !(kinds[0] > kinds[1] && kinds[1] > kinds[2]) {
+            t.fail(
+                "support_forms_by_version",
+                format!(
+                    "{iname}的支持沒有由多到少：基礎版「{}」、一般版「{}」、進階版「{}」。基礎版要最多，進階版最少。",
+                    kinds[0].label(),
+                    kinds[1].label(),
+                    kinds[2].label()
+                ),
+                "拿掉這一題",
+            );
+            continue;
+        }
+        // 一般版 and 進階版 print less support: neither may print the full answer as it.
+        for tier in tiers.iter().filter(|x| x.level != Level::Basic) {
+            if contains_answer(&tier.support.join(" "), &item.answer) {
+                t.fail(
+                    "support_wellformed",
+                    format!("{iname}的{}支持直接寫出了答案。", tier.level.label()),
+                    "拿掉這一題",
+                );
+                continue 'items;
+            }
+        }
+        out.items.push(CleanBloomItem {
+            item,
+            paragraph_nos,
+            hint: String::new(),
+            tiers,
+        });
+    }
+    cut_to_count(&mut out, ctx, &mut t);
+    let answers: Vec<String> = out
+        .items
+        .iter()
+        .flat_map(|i| i.tiers.iter().map(|x| x.answer.clone()))
+        .collect();
+    let answers: Vec<&str> = answers.iter().map(String::as_str).collect();
+    out.steps = clean_steps(&raw.steps, &answers, &mut t);
+    out.example = clean_example(&raw.example, &answers, &mut t);
+    out.linking = linking_of(&raw.linking_words, &mut t);
     if out.items.is_empty() {
         t.fail(
             "has_items",
@@ -2828,8 +3291,11 @@ mod tests {
         fn bloom_formats(b: Bloom) -> &'static [&'static str] {
             b.formats()
         }
+        // Prompt version 1: one sentence of instructions, no steps (not a failure).
         let raw = RawBloomLevel {
             instructions: "Answer the questions.".into(),
+            steps: vec![],
+            example: String::new(),
             items: vec![
                 // verbatim
                 bloom_item(
@@ -2896,6 +3362,11 @@ mod tests {
         // Analyze needs no evidence: one that is not verbatim is cleared without a repair.
         let raw = RawBloomLevel {
             instructions: String::new(),
+            steps: vec![
+                "Read the question and think about why the writer says it.".into(),
+                "Write your answer in one or two sentences.".into(),
+            ],
+            example: String::new(),
             items: vec![
                 bloom_item(
                     FMT_SHORT,
@@ -2928,11 +3399,227 @@ mod tests {
         // Nothing usable: no output.
         let raw = RawBloomLevel {
             instructions: String::new(),
+            steps: vec![],
+            example: String::new(),
             items: vec![bloom_item("探究", "x", &[], "y", "")],
         };
         assert!(evaluate_bloom_level(&raw, &ctx(Bloom::Create, 1))
             .output
             .is_none());
+    }
+
+    // ------------------------------------------------------------ 差異化學習單
+
+    fn version(
+        kind: &str,
+        model: &str,
+        support: &[&str],
+        bank: &[&str],
+        answer: &str,
+    ) -> RawVersion {
+        RawVersion {
+            support_kind: kind.into(),
+            model_sentence: model.into(),
+            support: support.iter().map(|s| s.to_string()).collect(),
+            word_bank: bank.iter().map(|s| s.to_string()).collect(),
+            answer: answer.into(),
+            scoring_zh: "內容正確即給分".into(),
+        }
+    }
+
+    /// A well-formed 差異化學習單 question: a frame for 基礎版, a starter for 一般版, nothing for
+    /// 進階版.
+    fn tiered_item(prompt: &str) -> crate::worksheet::tiered::RawTieredItem {
+        crate::worksheet::tiered::RawTieredItem {
+            answer_format: FMT_SHORT.into(),
+            prompt: prompt.into(),
+            evidence: P2.into(),
+            paragraph_ids: vec!["P2".into()],
+            advanced: version(
+                "none",
+                "",
+                &[],
+                &[],
+                "They were sure that every umbrella would be gone within a week.",
+            ),
+            standard: version(
+                "sentence_starter",
+                "",
+                &["The neighbors thought that …"],
+                &[],
+                "They thought every umbrella would be gone.",
+            ),
+            basic: version(
+                "sentence_frame",
+                "The neighbors thought the umbrellas would be gone.",
+                &["The neighbors thought the ___ would be ___."],
+                &["umbrellas", "gone"],
+                "umbrellas, gone",
+            ),
+        }
+    }
+
+    fn tiered_raw(items: Vec<crate::worksheet::tiered::RawTieredItem>) -> RawTieredLevel {
+        RawTieredLevel {
+            items,
+            steps: vec![
+                "Read the question first.".into(),
+                "Underline the words in the text that help you.".into(),
+                "Write your answer with the help under the question.".into(),
+            ],
+            example: "Q: Who is the story about? A: It is about a shop owner.".into(),
+            linking_words: RawLinkingWords {
+                function: "giving reasons".into(),
+                basic: vec!["because".into(), "so".into()],
+                standard_more: vec!["since".into(), "because".into()],
+                advanced_more: vec!["consequently".into()],
+            },
+        }
+    }
+
+    fn tiered_ctx<'a>(passage: &'a str, codes: &'a [String], count: usize) -> BloomCtx<'a> {
+        BloomCtx {
+            bloom: Bloom::Understand,
+            formats: &[FMT_SHORT],
+            passage,
+            paragraph_codes: codes,
+            count,
+        }
+    }
+
+    #[test]
+    fn a_differentiated_question_is_written_once_with_three_versions() {
+        let passage = [P1, P2, P3].join("\n");
+        let codes = crate::worksheet::bloom::paragraph_codes(3);
+        let e = evaluate_tiered_level(
+            &tiered_raw(vec![tiered_item(
+                "What did the neighbors think would happen?",
+            )]),
+            &tiered_ctx(&passage, &codes, 1),
+        );
+        assert!(!e.needs_repair(), "{:?}", e.problems);
+        let out = e.output.unwrap();
+        let q = &out.items[0];
+        assert_eq!(q.item.prompt, "What did the neighbors think would happen?");
+        let levels: Vec<Level> = q.tiers.iter().map(|t| t.level).collect();
+        assert_eq!(levels, Level::ALL, "one part per version, in level order");
+        use crate::worksheet::SupportKind::*;
+        let kinds: Vec<_> = q.tiers.iter().map(|t| t.support_kind).collect();
+        assert_eq!(kinds, [SentenceFrame, SentenceStarter, None]);
+        // T6: per-version answers; the shared answer is 進階版's full one.
+        assert_eq!(
+            q.tiers[0].answer, "umbrellas, gone",
+            "基礎版 accepts a phrase"
+        );
+        assert_eq!(q.item.answer, q.tiers[2].answer);
+        assert!(q.tiers.iter().all(|t| !t.scoring.is_empty()));
+        // R5 steps, the example, and the linking words, cumulative per version (T5).
+        assert_eq!(out.steps.len(), 3);
+        assert!(!out.example.is_empty());
+        let l = out.linking.unwrap();
+        assert_eq!(l.basic, ["because", "so"]);
+        assert_eq!(l.standard, ["because", "so", "since"], "repeats stay lower");
+        assert_eq!(l.advanced, ["because", "so", "since", "consequently"]);
+    }
+
+    #[test]
+    fn support_must_go_down_and_never_point_to_the_answer() {
+        let passage = [P1, P2, P3].join("\n");
+        let codes = crate::worksheet::bloom::paragraph_codes(3);
+        let ctx = tiered_ctx(&passage, &codes, 5);
+        // 1. As much support in 一般版 as in 基礎版: dropped, repair.
+        let mut flat = tiered_item("Question one?");
+        flat.standard = flat.basic.clone();
+        // 2. A form 進階版 may not use: dropped.
+        let mut rich = tiered_item("Question two?");
+        rich.advanced = rich.basic.clone();
+        // 3. A hint that gives the answer's location: the line goes, the question stays.
+        let mut located = tiered_item("Question three?");
+        located.basic.support.push("Look at paragraph 2.".into());
+        // 4. A frame without its model sentence: dropped.
+        let mut no_model = tiered_item("Question four?");
+        no_model.basic.model_sentence = String::new();
+        // 5. 一般版 answer that is not a sentence: kept, but a repair is asked for.
+        let mut phrase = tiered_item("Question five?");
+        phrase.standard.answer = "gone".into();
+        let e = evaluate_tiered_level(
+            &tiered_raw(vec![flat, rich, located, no_model, phrase]),
+            &ctx,
+        );
+        assert!(e.needs_repair());
+        let failed: Vec<&str> = e
+            .results
+            .iter()
+            .filter(|r| !r.passed)
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(
+            failed,
+            [
+                "support_forms_by_version",
+                "support_wellformed",
+                "no_answer_location",
+                "answers_per_version"
+            ]
+        );
+        let out = e.output.unwrap();
+        let prompts: Vec<&str> = out.items.iter().map(|i| i.item.prompt.as_str()).collect();
+        assert_eq!(prompts, ["Question three?", "Question five?"]);
+        let kept = &out.items[0].tiers[0];
+        assert_eq!(
+            kept.support,
+            ["The neighbors thought the ___ would be ___."]
+        );
+        assert!(out
+            .items
+            .iter()
+            .flat_map(|i| &i.tiers)
+            .flat_map(|t| &t.support)
+            .all(|l| !crate::worksheet::tiered::points_to_answer_location(l)));
+    }
+
+    #[test]
+    fn a_frame_is_cut_from_its_model_sentence() {
+        let passage = [P1, P2, P3].join("\n");
+        let codes = crate::worksheet::bloom::paragraph_codes(3);
+        let ctx = tiered_ctx(&passage, &codes, 2);
+        // A word bank word that is not in the model sentence goes (T4).
+        let mut extra = tiered_item("Question one?");
+        extra.basic.word_bank.push("laughed".into());
+        // No blanks in the frame: dropped.
+        let mut no_blank = tiered_item("Question two?");
+        no_blank.basic.support = vec!["The neighbors thought the umbrellas would be gone.".into()];
+        let e = evaluate_tiered_level(&tiered_raw(vec![extra, no_blank]), &ctx);
+        let out = e.output.unwrap();
+        assert_eq!(out.items.len(), 1);
+        assert_eq!(out.items[0].tiers[0].word_bank, ["umbrellas", "gone"]);
+        assert!(e.repairs.iter().any(|r| r.contains("只留範句裡的字詞")));
+        // A starter that carries a word bank loses it; `none` keeps nothing.
+        let mut item = tiered_item("Question three?");
+        item.standard.word_bank = vec!["gone".into()];
+        item.advanced.support = vec!["Think about it.".into()];
+        let e = evaluate_tiered_level(&tiered_raw(vec![item]), &ctx);
+        let out = e.output.unwrap();
+        assert!(out.items[0].tiers[1].word_bank.is_empty());
+        assert!(out.items[0].tiers[2].support.is_empty());
+    }
+
+    #[test]
+    fn steps_are_required_and_must_not_give_answers_away() {
+        let passage = [P1, P2, P3].join("\n");
+        let codes = crate::worksheet::bloom::paragraph_codes(3);
+        let ctx = tiered_ctx(&passage, &codes, 1);
+        let mut raw = tiered_raw(vec![tiered_item("What did they think?")]);
+        raw.steps = vec!["Read the question.".into()];
+        raw.example = "Example: They thought every umbrella would be gone.".into();
+        let e = evaluate_tiered_level(&raw, &ctx);
+        assert!(e.needs_repair());
+        let out = e.output.unwrap();
+        assert!(
+            out.steps.is_empty(),
+            "one step is not enough: the program writes them"
+        );
+        assert_eq!(out.example, "", "an example that gives an answer goes");
     }
 
     #[test]

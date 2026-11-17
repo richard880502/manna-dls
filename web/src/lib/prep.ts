@@ -43,7 +43,7 @@ export const KIND_LABEL: Record<PrepKind, string> = {
   ask: "問 AI",
   revise: "修改學習單",
   comprehension: "閱讀理解題",
-  tiered: "分層練習",
+  tiered: "差異化學習單",
   kit: "教學套件",
 };
 
@@ -54,7 +54,7 @@ export const KIND_LABEL: Record<PrepKind, string> = {
  */
 export const NEXT_LABEL: Record<"comprehension" | "tiered" | "activity" | "kit" | "worksheet" | "assessment" | "resources", string> = {
   comprehension: "閱讀理解題",
-  tiered: "分層練習",
+  tiered: "差異化學習單",
   activity: "課堂活動",
   kit: "教學套件",
   worksheet: "學習單",

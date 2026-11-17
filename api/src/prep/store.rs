@@ -22,9 +22,9 @@ use crate::AppState;
 pub const MSG_NOT_FOUND: &str = "找不到這個備課對話。";
 pub const MSG_BUSY: &str = "Manna 還在處理上一個請求，好了之後再送出。";
 pub const MSG_STALE: &str = "這次處理中斷了（可能是系統剛更新）。請按「再試一次」。";
-const MSG_KIT_NO_WORKSHEET: &str = "分層學習單沒有建立起來。請按「再試一次」。";
+const MSG_KIT_NO_WORKSHEET: &str = "差異化學習單沒有建立起來。請按「再試一次」。";
 const MSG_KIT_NO_ITEMS: &str =
-    "分層學習單沒有產生任何題目。可以打開學習單按「產生」再試一次，或按「再試一次」。";
+    "差異化學習單沒有產生任何題目。可以打開學習單按「產生」再試一次，或按「再試一次」。";
 
 /// Kinds whose turn is `running` exactly while its worksheet generates.
 const WORKSHEET_ONLY_KINDS: &str = "('worksheet', 'assessment', 'comprehension', 'tiered')";

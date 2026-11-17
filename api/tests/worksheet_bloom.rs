@@ -1,6 +1,7 @@
-//! Phase 2.7 (docs/API.md「Bloom 認知層次與閱讀理解題／分層練習」), with the fake provider:
-//! reading-comprehension questions and tiered practice end to end (one call per Bloom level, the
-//! judge, assembly, sheet and export), the judge's relabel notice, the evidence repair,
+//! Phase 2.7 (docs/API.md「Bloom 認知層次與閱讀理解題／分層練習」) and 差異化學習單, with the fake
+//! provider: reading-comprehension questions and 差異化學習單 end to end (one call per Bloom
+//! level, the judge, assembly, sheet and export; the three versions, the neutral codes, a
+//! worksheet stored before the redesign), the judge's relabel notice, the evidence repair,
 //! validation, regenerate / undo of one level's block, the teacher's request and objective in
 //! the prompts, explicit per-level counts, the teacher's answer formats, and the full worksheet
 //! (which now labels its items with a Bloom level).
@@ -213,9 +214,16 @@ async fn comprehension_end_to_end() {
         assert_eq!(b["kind"], "activity");
         assert_eq!(b["bloom"], level);
         assert_eq!(b["origin"], "ai");
-        assert_eq!(b["scaffolds"], json!([]), "no scaffolds step");
+        // R5: no one-line instruction; the model's written steps (a procedural scaffold) and
+        // its worked example.
+        let scaffolds = b["scaffolds"].as_array().unwrap();
+        assert_eq!(scaffolds[0]["type"], "procedural");
+        assert_eq!(scaffolds[0]["auto"], false);
+        assert_eq!(scaffolds[0]["steps"][0], "Read the questions first.");
+        assert_eq!(scaffolds[0]["levels"], json!(["standard"]));
+        assert_eq!(scaffolds[1]["kind"], "作答示例");
         assert_eq!(b["message"], Value::Null);
-        assert!(!b["instructions"].as_str().unwrap().is_empty());
+        assert_eq!(b["instructions"], "");
         assert!(!b["paragraph_ids"].as_array().unwrap().is_empty());
         for it in items(b) {
             assert_eq!(it["bloom"], level);
@@ -277,6 +285,13 @@ async fn comprehension_end_to_end() {
     let student = sheet(&app, &t, id, "standard", "student").await;
     let s = student.to_string();
     assert!(!s.contains("\"bloom\"") && !s.contains("bloom_summary") && !s.contains("\"hint\""));
+    // The steps print in the order students work; one version: no code to tell apart.
+    assert_eq!(student["blocks"][0]["steps"].as_array().unwrap().len(), 3);
+    assert_eq!(student["version_code"], Value::Null);
+    assert!(student["blocks"][0]["supports"][0]["content"]
+        .as_str()
+        .unwrap()
+        .starts_with("Q: "));
     let xml = docx(&app, &t, id, "standard", "teacher").await;
     assert!(xml.contains("〔Bloom：記憶 Remember〕") && xml.contains("〔Bloom：創造 Create〕"));
     assert!(xml.contains("Bloom：理解 2"));
@@ -284,92 +299,398 @@ async fn comprehension_end_to_end() {
     assert!(!xml.contains("Bloom"));
 }
 
+/// The raw response of an export (for its file name).
+async fn export_raw(
+    app: &common::TestApp,
+    t: &str,
+    id: i64,
+    format: &str,
+    level: &str,
+    audience: &str,
+) -> common::RawResponse {
+    let auth = format!("Bearer {t}");
+    let r = app
+        .send_raw(
+            Method::GET,
+            &format!(
+                "/api/worksheets/{id}/export?format={format}&level={level}&audience={audience}"
+            ),
+            &[("authorization", auth.as_str())],
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    r
+}
+
+/// The UTF-8 file name of a download.
+fn file_name(r: &common::RawResponse) -> String {
+    let cd = r.header("content-disposition");
+    let encoded = cd.split("filename*=UTF-8''").nth(1).unwrap_or_default();
+    let bytes: Vec<u8> = {
+        let mut out = Vec::new();
+        let b = encoded.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'%' && i + 2 < b.len() {
+                out.push(u8::from_str_radix(&encoded[i + 1..i + 3], 16).unwrap());
+                i += 3;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        out
+    };
+    String::from_utf8(bytes).unwrap()
+}
+
+/// Every question of a sheet: (prompt, support kind or "", answer or "", scoring or "").
+fn sheet_items(s: &Value) -> Vec<(String, String, String, String)> {
+    s["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|b| b["items"].as_array().unwrap().clone())
+        .map(|it| {
+            let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+            (
+                text(&it["prompt"]),
+                text(&it["support"]["kind"]),
+                text(&it["answer"]),
+                text(&it["scoring"]),
+            )
+        })
+        .collect()
+}
+
+const LEVEL_NAMES: [&str; 9] = [
+    "基礎",
+    "一般版",
+    "進階",
+    "Basic",
+    "Standard",
+    "Advanced",
+    "basic",
+    "standard",
+    "advanced",
+];
+
 #[tokio::test]
-async fn tiered_practice_end_to_end() {
+async fn differentiated_worksheet_end_to_end() {
     let app = test_app!();
     let t = app.teacher("T-BLOOM-2", "general").await;
-    // Levels are forced to all three whatever was selected.
+    // Versions are always all three; only open formats are used (選擇題 is ignored); the first
+    // question's 基礎版 also tries to say where the answer is (FAKE_TIER_LOCATION).
     let id = made(
         &app,
         &t,
-        "",
-        json!({ "output": "tiered", "levels": ["standard"] }),
+        "FAKE_TIER_LOCATION",
+        json!({ "output": "tiered", "levels": ["standard"], "answer_formats": ["選擇題", "簡答題"] }),
         "",
     )
     .await;
+    // The objectives the worksheet holds print at the top of every version (T1).
+    let (_, state) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
+    let mut content = state["content"].clone();
+    content["objectives"] = json!([
+        { "id": "o1", "type": "content", "text": "學生能說明鄰居想法的改變", "student_facing_en": "I can explain how the neighbors changed their minds.", "origin": "teacher" },
+        { "id": "o2", "type": "language", "text": "學生能用 because 說明原因", "student_facing_en": "I can use because to give a reason.", "origin": "teacher" }
+    ]);
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
     let state = generate(&app, &t, id).await;
     assert_eq!(
         state["content"]["levels"],
         json!(["basic", "standard", "advanced"])
     );
+    assert_eq!(state["content"]["show_objectives"], true);
     let bs = blocks(&state);
     let counts: Vec<usize> = bs.iter().map(|b| items(b).len()).collect();
-    assert_eq!(counts, [2; 6], "12 questions by default");
-    let expected = [
-        json!(["basic"]),
-        json!(["basic", "standard", "advanced"]),
-        json!(["basic", "standard", "advanced"]),
-        json!(["standard", "advanced"]),
-        json!(["advanced"]),
-        json!(["advanced"]),
-    ];
-    for (b, levels) in bs.iter().zip(&expected) {
+    assert_eq!(counts, [1; 6], "6 questions by default, one per level");
+    for b in &bs {
+        // R5: the model's written steps, for every version; linking words per version (T5).
+        let scaffolds = b["scaffolds"].as_array().unwrap();
+        assert_eq!(scaffolds[0]["type"], "procedural");
+        assert_eq!(
+            scaffolds[0]["levels"],
+            json!(["basic", "standard", "advanced"])
+        );
+        assert!(scaffolds[0]["steps"].as_array().unwrap().len() >= 2);
+        let example = scaffolds.iter().find(|s| s["kind"] == "作答示例").unwrap();
+        assert_eq!(example["levels"], json!(["basic", "standard"]));
         for it in items(b) {
-            assert_eq!(&it["levels"], levels, "{}", b["bloom"]);
+            assert_eq!(it["levels"], json!(["basic", "standard", "advanced"]), "T2");
+            assert_eq!(it["answer_format"], "簡答題");
+            assert_eq!(it["hint"], "");
+            let tiers = it["tiers"].as_array().unwrap();
+            let levels: Vec<&str> = tiers.iter().map(|x| x["level"].as_str().unwrap()).collect();
+            assert_eq!(levels, ["basic", "standard", "advanced"]);
+            for x in tiers {
+                assert!(!x["answer"].as_str().unwrap().is_empty());
+                assert!(!x["scoring"].as_str().unwrap().is_empty());
+            }
         }
     }
+    let linking = |level: &str| -> usize {
+        bs[3]["scaffolds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["kind"] == "字詞表" && s["levels"] == json!([level]))
+            .map(|s| s["content"].as_str().unwrap().matches(", ").count() + 1)
+            .sum()
+    };
+    assert!(linking("basic") < linking("standard") && linking("standard") < linking("advanced"));
     let reasons = strs(&state["content"]["chosen"]["reasons"]);
     assert_eq!(
         reasons[0],
-        "Bloom：記憶 2、理解 2、應用 2、分析 2、評鑑 2、創造 2"
+        "Bloom：記憶 1、理解 1、應用 1、分析 1、評鑑 1、創造 1"
     );
-    assert!(reasons.iter().any(|r| {
-        r
-        == "基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造"
-    }));
-
-    // Each version shows its levels; hints only in 基礎版.
-    let titles = |s: &Value| -> Vec<String> {
-        s["blocks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|b| b["title"].as_str().unwrap().to_string())
-            .collect()
-    };
-    let basic = sheet(&app, &t, id, "basic", "student").await;
+    assert!(reasons
+        .iter()
+        .any(|r| r.starts_with("差異化學習單：三個版本")));
+    // One call per level; the answer-location line (in every call) costs each a repair call,
+    // and is then taken out by the server.
+    let level_calls = calls(&app, "worksheet_tiered_level").await;
+    assert_eq!(level_calls.len(), 12);
+    let repairs = level_calls.iter().filter(|(a, _, _)| *a == 2).count();
+    assert_eq!(repairs, 6);
+    assert_eq!(level_calls[0].2["schema"], "worksheet_tiered_level");
+    assert!(level_calls[0].2["prompt"]["user"]
+        .as_str()
+        .unwrap()
+        .contains("I can explain how the neighbors changed their minds."));
+    assert!(calls(&app, "worksheet_bloom_level").await.is_empty());
+    let judge = calls(&app, "worksheet_bloom_check").await;
+    assert_eq!(judge.len(), 1);
     assert_eq!(
-        titles(&basic),
-        ["Find the Facts", "Understand the Text", "Use It"]
+        judge[0].2["inputs"]["question_count"], "6",
+        "each question judged once"
     );
-    for b in basic["blocks"].as_array().unwrap() {
-        for it in b["items"].as_array().unwrap() {
-            assert!(it["hint"].as_str().unwrap().starts_with("Look at"), "{it}");
-            assert!(it.get("bloom").is_none());
+
+    // The three versions: the same objectives, questions and Bloom distribution (T1, T2) …
+    let student: Vec<Value> = {
+        let mut v = Vec::new();
+        for level in ["basic", "standard", "advanced"] {
+            v.push(sheet(&app, &t, id, level, "student").await);
+        }
+        v
+    };
+    for s in &student {
+        assert_eq!(s["objectives"], student[0]["objectives"]);
+        assert_eq!(s["objectives"].as_array().unwrap().len(), 2);
+        let prompts: Vec<String> = sheet_items(s).into_iter().map(|x| x.0).collect();
+        let first: Vec<String> = sheet_items(&student[0]).into_iter().map(|x| x.0).collect();
+        assert_eq!(prompts, first);
+    }
+    let teacher: Vec<Value> = {
+        let mut v = Vec::new();
+        for level in ["basic", "standard", "advanced"] {
+            v.push(sheet(&app, &t, id, level, "teacher").await);
+        }
+        v
+    };
+    let summaries: Vec<Vec<Value>> = teacher
+        .iter()
+        .map(|s| {
+            s["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["bloom_summary"].clone())
+                .collect()
+        })
+        .collect();
+    assert!(summaries.iter().all(|x| *x == summaries[0]));
+    // … differing only in support (T3): less and less, from fixed forms, never the answer's
+    // location (the fake's 「Look at paragraph 1 again.」 is gone).
+    let rank = |k: &str| match k {
+        "cloze" => 4,
+        "word_bank" => 3,
+        "sentence_frame" => 2,
+        "sentence_starter" => 1,
+        _ => 0,
+    };
+    let kinds: Vec<Vec<String>> = student
+        .iter()
+        .map(|s| sheet_items(s).into_iter().map(|x| x.1).collect())
+        .collect();
+    for q in 0..kinds[0].len() {
+        assert!(["cloze", "word_bank", "sentence_frame"].contains(&kinds[0][q].as_str()));
+        assert!(rank(&kinds[0][q]) > rank(&kinds[1][q]) && rank(&kinds[1][q]) > rank(&kinds[2][q]));
+        assert!(["", "sentence_starter"].contains(&kinds[2][q].as_str()));
+    }
+    for s in &student {
+        let text = s.to_string();
+        assert!(!text.contains("Look at paragraph"), "no answer location");
+        assert!(!text.contains("\"answer\"") && !text.contains("\"scoring\""));
+    }
+    // T6: answers and scoring notes per version, only in the teacher's.
+    let answers: Vec<Vec<String>> = teacher
+        .iter()
+        .map(|s| sheet_items(s).into_iter().map(|x| x.2).collect())
+        .collect();
+    for q in 0..answers[0].len() {
+        assert_ne!(answers[0][q], answers[1][q]);
+        assert_ne!(answers[1][q], answers[2][q]);
+        assert!(answers[1][q].ends_with('.') && answers[2][q].ends_with('.'));
+    }
+    assert!(sheet_items(&teacher[0]).iter().all(|x| !x.3.is_empty()));
+
+    // T9: students see A／B／C, never a level's name — preview, DOCX, PDF and file names.
+    let codes: Vec<&str> = student
+        .iter()
+        .map(|s| s["version_code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["A", "B", "C"]);
+    for (level, code) in [("basic", "A"), ("standard", "B"), ("advanced", "C")] {
+        let xml = docx(&app, &t, id, level, "student").await;
+        assert!(xml.contains(&format!("Version {code}")), "{level}");
+        assert!(xml.contains("I can explain how the neighbors changed their minds."));
+        for name in LEVEL_NAMES {
+            assert!(!xml.contains(name), "{name} in the {level} student DOCX");
+        }
+        for format in ["docx", "pdf"] {
+            let r = export_raw(&app, &t, id, format, level, "student").await;
+            let name = file_name(&r);
+            assert!(
+                name.contains(&format!("_{code}版_學生版.{format}")),
+                "{name}"
+            );
+            for level_name in LEVEL_NAMES {
+                assert!(!name.contains(level_name), "{name}");
+            }
         }
     }
-    let standard = sheet(&app, &t, id, "standard", "student").await;
+    // Teachers keep the level names, with the code their students see.
+    let xml = docx(&app, &t, id, "basic", "teacher").await;
+    assert!(xml.contains("Basic version (students' sheet: Version A)"));
+    assert!(xml.contains("Scoring: ") && xml.contains("差異化學習單：三個版本"));
+    let r = export_raw(&app, &t, id, "docx", "advanced", "teacher").await;
+    assert!(file_name(&r).ends_with("_進階版_教師參考版.docx"));
+}
+
+#[tokio::test]
+async fn support_that_does_not_go_down_is_repaired() {
+    let app = test_app!();
+    let t = app.teacher("T-BLOOM-2B", "general").await;
+    let id = made(
+        &app,
+        &t,
+        "FAKE_TIER_FLAT",
+        json!({ "output": "tiered", "bloom": ["understand"], "question_count": 3 }),
+        "",
+    )
+    .await;
+    let state = generate(&app, &t, id).await;
+    let level_calls = calls(&app, "worksheet_tiered_level").await;
+    let attempts: Vec<(i32, &str)> = level_calls
+        .iter()
+        .map(|(a, s, _)| (*a, s.as_str()))
+        .collect();
+    assert_eq!(attempts, [(1, "blocked"), (2, "shown")]);
     assert_eq!(
-        titles(&standard),
-        ["Understand the Text", "Use It", "Look Closer"],
-        "the letters follow what is printed"
+        items(&blocks(&state)[0]).len(),
+        3,
+        "the repair restored the question"
     );
-    assert!(!standard.to_string().contains("\"hint\""));
+}
+
+#[tokio::test]
+async fn a_tiered_worksheet_made_before_the_redesign_still_opens_and_exports() {
+    let app = test_app!();
+    let t = app.teacher("T-BLOOM-OLD", "general").await;
+    let id = made(&app, &t, "", json!({ "output": "tiered" }), "").await;
+    // As stored by 分層練習: questions split over the versions by Bloom level, a hint for
+    // 基礎版, no `tiers`, the old reason.
+    let item = |id: &str, bloom: &str, levels: Value| {
+        json!({ "id": id, "answer_format": "簡答題", "prompt": format!("Old {bloom} question?"),
+                "options": [], "answer": "Old answer.", "evidence": "", "purpose": null,
+                "levels": levels, "origin": "ai", "bloom": bloom, "hint": "Look at paragraph 2." })
+    };
+    let content = json!({
+        "objectives": [], "show_objectives": false, "levels": ["basic", "standard", "advanced"],
+        "notices": [],
+        "chosen": { "settings": { "output": "tiered" }, "auto": [], "item_budget": 3,
+                    "reasons": ["基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造"] },
+        "blocks": [
+            { "id": "r1b1", "kind": "activity", "title": "Part A · Find the Facts", "bloom": "remember",
+              "instructions": "Read the text again and answer the questions.",
+              "items": [item("r1b1-i1", "remember", json!(["basic"]))] },
+            { "id": "r1b2", "kind": "activity", "title": "Part B · Understand the Text", "bloom": "understand",
+              "items": [item("r1b2-i1", "understand", json!(["basic", "standard", "advanced"]))] },
+            { "id": "r1b3", "kind": "activity", "title": "Part C · Make Something New", "bloom": "create",
+              "items": [item("r1b3-i1", "create", json!(["advanced"]))] },
+        ],
+    });
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, state) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(items(&blocks(&state)[0])[0]["tiers"], json!([]));
+    // Each version as before: its own questions, the hint in 基礎版 only.
+    let basic = sheet(&app, &t, id, "basic", "student").await;
+    let prompts: Vec<String> = sheet_items(&basic).into_iter().map(|x| x.0).collect();
+    assert_eq!(
+        prompts,
+        ["Old remember question?", "Old understand question?"]
+    );
+    assert_eq!(
+        basic["blocks"][0]["items"][0]["hint"],
+        "Look at paragraph 2."
+    );
+    assert_eq!(basic["version_code"], "A");
     let advanced = sheet(&app, &t, id, "advanced", "teacher").await;
-    assert_eq!(advanced["blocks"].as_array().unwrap().len(), 5);
+    let prompts: Vec<String> = sheet_items(&advanced).into_iter().map(|x| x.0).collect();
     assert_eq!(
-        advanced["blocks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|b| b["items"].as_array().unwrap().len())
-            .sum::<usize>(),
-        10
+        prompts,
+        ["Old understand question?", "Old create question?"]
     );
+    assert_eq!(advanced["blocks"][0]["items"][0]["answer"], "Old answer.");
+    assert!(
+        advanced.get("tiering_note").is_none(),
+        "no 差異化 note on old questions"
+    );
+    // Every export still works, with the neutral code for students.
+    for level in ["basic", "standard", "advanced"] {
+        for audience in ["student", "teacher"] {
+            for format in ["docx", "pdf"] {
+                let auth = format!("Bearer {t}");
+                let r = app
+                    .send_raw(
+                        Method::GET,
+                        &format!("/api/worksheets/{id}/export?format={format}&level={level}&audience={audience}"),
+                        &[("authorization", auth.as_str())],
+                        Vec::new(),
+                    )
+                    .await;
+                // The teacher PDF needs a CJK font for the Bloom tags (409 without one).
+                assert!(
+                    r.status == StatusCode::OK
+                        || (format == "pdf"
+                            && audience == "teacher"
+                            && r.status == StatusCode::CONFLICT),
+                    "{level} {audience} {format}: {}",
+                    r.status
+                );
+            }
+        }
+    }
     let xml = docx(&app, &t, id, "basic", "student").await;
-    assert!(xml.contains("Hint: ") && !xml.contains("Bloom"));
-    let xml = docx(&app, &t, id, "advanced", "student").await;
-    assert!(!xml.contains("Hint: "));
+    assert!(xml.contains("Version A") && xml.contains("Hint: ") && !xml.contains("Basic"));
 }
 
 #[tokio::test]

@@ -24,7 +24,7 @@ use crate::routes::{
 };
 use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::worksheet::ai::{self as ws_ai, Job, RunInput};
-use crate::worksheet::assemble::{project, Sheet};
+use crate::worksheet::assemble::{keep_original_text, project, Sheet};
 use crate::worksheet::export::{self, ExportError};
 use crate::worksheet::images::{self, WorksheetImages};
 use crate::worksheet::material::{SOURCE_LESSON_SOP, SOURCE_LIBRARY, SOURCE_PASTED};
@@ -878,7 +878,9 @@ fn sheet_for(ws: &Worksheet, content: &Content, q: &SheetQuery) -> AppResult<She
             .ok_or_else(|| AppError::bad_request("audience 需為 student 或 teacher。"))?,
         None => Audience::Student,
     };
-    Ok(project(&ws.title, content, level, audience))
+    let mut sheet = project(&ws.title, content, level, audience);
+    keep_original_text(&mut sheet, content, &ws.material);
+    Ok(sheet)
 }
 
 /// The projected sheet with its pictures (or their empty boxes).
@@ -932,6 +934,15 @@ pub async fn export(
     let pictures = sheet.blocks.iter().map(|b| b.images.len()).sum::<usize>();
     let embedded = bank.len();
     let (level, audience) = (sheet.level, sheet.audience);
+    // A student's file names the neutral code, never the level (T9): 「…_A版_學生版」.
+    let version = match audience {
+        Audience::Student => sheet
+            .version_code
+            .as_deref()
+            .map(|code| format!("_{code}版"))
+            .unwrap_or_default(),
+        Audience::Teacher => format!("_{}", level.label()),
+    };
     let (bytes, content_type, extension) = match format {
         "docx" => {
             let bytes =
@@ -957,13 +968,12 @@ pub async fn export(
         _ => return Err(AppError::bad_request("format 需為 docx 或 pdf。")),
     };
     let name = format!(
-        "{}_{}_{}.{extension}",
+        "{}{version}_{}.{extension}",
         if ws.filename.trim().is_empty() {
             "學習單"
         } else {
             ws.filename.trim()
         },
-        level.label(),
         audience.label()
     );
     log_usage(

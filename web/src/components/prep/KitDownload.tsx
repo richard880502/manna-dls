@@ -28,7 +28,7 @@ export function KitDownload({ sessionId, turnId, ready }: { sessionId: number; t
 
   return (
     <div className="prep-kit-head">
-      <p>活動流程＋分層學習單＋教師版答案，一次下載</p>
+      <p>活動流程＋差異化學習單＋教師版答案，一次下載</p>
       <button type="button" className="secondary-button" disabled={!ready || busy} onClick={() => void download()}>
         {busy ? "下載中…" : KIT_DOWNLOAD_LABEL}
       </button>

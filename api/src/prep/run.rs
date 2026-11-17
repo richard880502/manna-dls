@@ -43,7 +43,7 @@ use crate::sop::store as sop_store;
 use crate::worksheet::ai::template::marked_passage;
 use crate::worksheet::ai::{self as ws_ai};
 use crate::worksheet::assemble::project;
-use crate::worksheet::bloom::{self as bl, Bloom, Output};
+use crate::worksheet::bloom::Output;
 use crate::worksheet::checks::{evaluate_section, CleanSection, SectionCtx};
 use crate::worksheet::material::SOURCE_LIBRARY;
 use crate::worksheet::store::{self as ws_store, Worksheet};
@@ -1216,21 +1216,15 @@ fn item_id(block_id: &str, turn_id: i64, block_no: usize, k: usize) -> String {
 }
 
 /// The versions a revised item appears in: those of the item it replaces (same position);
-/// for a new item of a tiered worksheet, those its Bloom level maps to; otherwise all of the
-/// worksheet's. Always some of the worksheet's versions (all of them when nothing is left).
-fn revised_levels(
-    replaced: Option<&Item>,
-    bloom: Option<Bloom>,
-    levels: &[Level],
-    tiered: bool,
-) -> Vec<Level> {
-    let wanted: Option<Vec<Level>> = match (replaced, bloom) {
-        (Some(old), _) => Some(old.levels.clone()),
-        (None, Some(b)) if tiered => Some(bl::tier_levels(b)),
-        _ => None,
-    };
-    let kept: Vec<Level> = match wanted {
-        Some(w) => levels.iter().copied().filter(|l| w.contains(l)).collect(),
+/// otherwise all of the worksheet's (a 差異化學習單 has every question in all three). Always
+/// some of the worksheet's versions (all of them when nothing is left).
+fn revised_levels(replaced: Option<&Item>, levels: &[Level]) -> Vec<Level> {
+    let kept: Vec<Level> = match replaced {
+        Some(old) => levels
+            .iter()
+            .copied()
+            .filter(|l| old.levels.contains(l))
+            .collect(),
         None => Vec::new(),
     };
     if kept.is_empty() {
@@ -1242,12 +1236,11 @@ fn revised_levels(
 
 /// `old` with the change applied. Like the exit ticket's purpose, an item's Bloom label, hint
 /// and versions stay with its position; a new item takes the block's Bloom level (blocks made
-/// per Bloom level have one) and, in a tiered worksheet, that level's versions.
+/// per Bloom level have one) and every version.
 fn revised_block(
     old: &Block,
     out: &CleanSection,
     levels: &[Level],
-    tiered: bool,
     turn_id: i64,
     no: usize,
 ) -> Block {
@@ -1274,10 +1267,16 @@ fn revised_block(
                 answer: it.answer.clone(),
                 evidence: it.evidence.clone().unwrap_or_default(),
                 purpose: replaced.and_then(|i| i.purpose),
-                levels: revised_levels(replaced, bloom, levels, tiered),
+                levels: revised_levels(replaced, levels),
                 origin: Origin::Ai,
                 bloom,
                 hint: replaced.map(|i| i.hint.clone()).unwrap_or_default(),
+                // A 差異化學習單 question keeps its versions' support only while the question
+                // itself is unchanged: a cloze cut from the old answer would not fit a new one.
+                tiers: replaced
+                    .filter(|i| i.prompt.trim() == it.prompt.trim())
+                    .map(|i| i.tiers.clone())
+                    .unwrap_or_default(),
             }
         })
         .collect();
@@ -1420,7 +1419,7 @@ async fn apply_revision(
                 dropped.push(format!("「{}」", a.block_id));
                 continue;
             };
-            let block = revised_block(slot, &a.section, &levels, tiered, input.turn.id, no + 1);
+            let block = revised_block(slot, &a.section, &levels, input.turn.id, no + 1);
             if same_content(slot, &block) {
                 continue;
             }
@@ -1504,7 +1503,7 @@ async fn plan_warmup(db: &sqlx::PgPool, session_id: i64) -> AppResult<Vec<String
 }
 
 /// Creates the worksheet of a turn that makes one and starts its generation. The session's
-/// options and 「教師的要求」 go into its settings and request; a 閱讀理解題／分層練習／教學套件
+/// options and 「教師的要求」 go into its settings and request; a 閱讀理解題／差異化學習單／教學套件
 /// worksheet is made per Bloom level, without the session's template (templates only make the
 /// full worksheet) and without warm-up ideas (it has no warm-up).
 async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
@@ -1573,6 +1572,7 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
 mod tests {
     use super::*;
     use crate::worksheet::template::RawOutItem;
+    use crate::worksheet::Bloom;
 
     fn content() -> Content {
         Content {
@@ -1633,14 +1633,7 @@ mod tests {
             .output
             .unwrap();
         let levels = [Level::Basic, Level::Standard];
-        let b = revised_block(
-            &c.blocks[0],
-            &plan.accepted[0].section,
-            &levels,
-            false,
-            7,
-            1,
-        );
+        let b = revised_block(&c.blocks[0], &plan.accepted[0].section, &levels, 7, 1);
         assert_eq!(b.items[0].id, "b1-v7i1");
         assert_eq!(b.items[0].levels, [Level::Standard], "by position");
         assert_eq!(b.items[0].origin, Origin::Ai);
@@ -1649,7 +1642,7 @@ mod tests {
     }
 
     #[test]
-    fn revised_items_of_a_tiered_worksheet_keep_their_tiers() {
+    fn revised_items_keep_their_versions_by_position() {
         let all = Level::ALL;
         let old = Block {
             id: "b4".into(),
@@ -1679,21 +1672,18 @@ mod tests {
                 .collect(),
             scaffold: String::new(),
         };
-        let b = revised_block(&old, &section(2), &all, true, 9, 1);
-        // The replaced item keeps its versions, label and hint; the new one maps from the
-        // block's level (analyze: 一般版、進階版).
+        let b = revised_block(&old, &section(2), &all, 9, 1);
+        // The replaced item keeps its versions, label and hint; a new one is in every version
+        // (a 差異化學習單 has every question in all three) with the block's level.
         assert_eq!(b.items[0].levels, [Level::Advanced]);
         assert_eq!(b.items[0].bloom, Some(Bloom::Analyze));
         assert_eq!(b.items[0].hint, "Look at paragraph 2.");
-        assert_eq!(b.items[1].levels, [Level::Standard, Level::Advanced]);
+        assert_eq!(b.items[1].levels, all);
         assert_eq!(b.items[1].bloom, Some(Bloom::Analyze));
         assert_eq!(b.items[1].hint, "");
-        // Not tiered: a new item is in every version.
-        let b = revised_block(&old, &section(2), &all, false, 9, 1);
-        assert_eq!(b.items[1].levels, all);
         // Versions the worksheet no longer has are left out; none left → all of them.
         let only = [Level::Basic];
-        let b = revised_block(&old, &section(2), &only, true, 9, 1);
+        let b = revised_block(&old, &section(2), &only, 9, 1);
         assert_eq!(b.items[0].levels, only);
         assert_eq!(b.items[1].levels, only);
         // A new item without a level: every version.
@@ -1702,8 +1692,65 @@ mod tests {
             items: vec![],
             ..old.clone()
         };
-        let b = revised_block(&plain, &section(1), &all, true, 9, 1);
+        let b = revised_block(&plain, &section(1), &all, 9, 1);
         assert_eq!(b.items[0].levels, all);
         assert_eq!(b.items[0].bloom, None);
+    }
+
+    #[test]
+    fn a_revised_differentiated_question_keeps_its_versions_only_while_unchanged() {
+        let tier = |level| crate::worksheet::ItemTier {
+            level,
+            support_kind: crate::worksheet::SupportKind::None,
+            model_sentence: String::new(),
+            support: vec![],
+            word_bank: vec![],
+            answer: "Because.".into(),
+            scoring: "完整句".into(),
+        };
+        let old = Block {
+            id: "b1".into(),
+            bloom: Some(Bloom::Analyze),
+            items: vec![
+                Item {
+                    id: "b1-i1".into(),
+                    prompt: "Why? 0".into(),
+                    levels: Level::ALL.to_vec(),
+                    tiers: Level::ALL.into_iter().map(tier).collect(),
+                    ..Item::default()
+                },
+                Item {
+                    id: "b1-i2".into(),
+                    prompt: "Old question".into(),
+                    levels: Level::ALL.to_vec(),
+                    tiers: Level::ALL.into_iter().map(tier).collect(),
+                    ..Item::default()
+                },
+            ],
+            ..Block::default()
+        };
+        let section = CleanSection {
+            title: String::new(),
+            instructions: String::new(),
+            items: ["Why? 0", "A new question?"]
+                .iter()
+                .map(|p| crate::worksheet::checks::CleanSectionItem {
+                    answer_format: FMT_SHORT.into(),
+                    prompt: p.to_string(),
+                    options: vec![],
+                    answer: "Because.".into(),
+                    evidence: None,
+                    bloom: None,
+                })
+                .collect(),
+            scaffold: String::new(),
+        };
+        let b = revised_block(&old, &section, &Level::ALL, 9, 1);
+        assert_eq!(
+            b.items[0].tiers.len(),
+            3,
+            "same question: its versions stay"
+        );
+        assert!(b.items[1].tiers.is_empty(), "a changed question loses them");
     }
 }

@@ -16,7 +16,8 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
-use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem};
+use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport};
+use super::tiered::{student_version_name, SupportKind};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
 use crate::retrieval::is_cjk;
 
@@ -84,12 +85,61 @@ fn boxed(item: &SheetItem) -> Option<&'static str> {
 }
 
 const META_LINE: &str = "Class ________   No. ________   Name ____________________";
+/// Printed above the original paragraphs of a block that also has a simplified text (T8).
+const ORIGINAL_TEXT: &str = "Original text (read this first; the simplified text below is a help)";
+
+/// The name line, with the version's neutral code when the worksheet has several: students see
+/// 「Version A」, never the level's name (T9).
+fn meta_line(sheet: &Sheet) -> String {
+    match &sheet.version_code {
+        Some(code) => format!("{META_LINE}   {}", student_version_name(code)),
+        None => META_LINE.to_string(),
+    }
+}
 
 fn teacher_banner(sheet: &Sheet) -> String {
+    let code = sheet
+        .version_code
+        .as_deref()
+        .map(|c| format!(" (students' sheet: {})", student_version_name(c)))
+        .unwrap_or_default();
     format!(
-        "Teacher reference · {} version · answers and notes are not on the student sheet",
+        "Teacher reference · {} version{code} · answers and notes are not on the student sheet",
         sheet.level.english()
     )
+}
+
+/// The PDF footer's label: the student's sheet carries the neutral code only (T9); the teacher's
+/// keeps the level's name.
+fn footer_label(sheet: &Sheet) -> Option<String> {
+    let code = sheet.version_code.as_deref().map(student_version_name);
+    match (sheet.audience, code) {
+        (Audience::Student, code) => code,
+        (Audience::Teacher, Some(code)) => Some(format!("{} ({code})", sheet.level.english())),
+        (Audience::Teacher, None) => Some(sheet.level.english().to_string()),
+    }
+}
+
+/// What a version's support prints under a question of a 差異化學習單, as (bold label, text)
+/// lines: the form's heading with its first line, the other lines, then the word bank.
+fn support_lines(s: &SheetItemSupport) -> Vec<(String, String)> {
+    let words = s.word_bank.join("  /  ");
+    let mut out: Vec<(String, String)> = Vec::new();
+    if s.kind == SupportKind::WordBank {
+        out.push((format!("{}: ", s.heading), words));
+        out.extend(s.lines.iter().map(|l| (String::new(), l.clone())));
+    } else {
+        let mut lines = s.lines.iter();
+        out.push((
+            format!("{}: ", s.heading),
+            lines.next().cloned().unwrap_or_default(),
+        ));
+        out.extend(lines.map(|l| (String::new(), l.clone())));
+        if !words.is_empty() {
+            out.push(("Word bank: ".to_string(), words));
+        }
+    }
+    out
 }
 
 // ================================================================ DOCX
@@ -274,6 +324,25 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
             },
         ));
     }
+    for (label, text) in it.support.iter().flat_map(support_lines) {
+        out.push_str(&para(
+            &[
+                run(
+                    &label,
+                    RunStyle {
+                        bold: true,
+                        ..RunStyle::default()
+                    },
+                ),
+                run(&text, RunStyle::default()),
+            ],
+            &ParaStyle {
+                indent: if label.is_empty() { 700 } else { 400 },
+                before: 40,
+                ..ParaStyle::default()
+            },
+        ));
+    }
     if let Some(h) = &it.hint {
         out.push_str(&para(
             &[
@@ -344,6 +413,15 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
                 &ParaStyle {
                     indent: 400,
                     before: 60,
+                    ..ParaStyle::default()
+                },
+            ));
+        }
+        if let Some(sc) = &it.scoring {
+            out.push_str(&para(
+                &[run("Scoring: ", gold_bold), run(sc, gold)],
+                &ParaStyle {
+                    indent: 400,
                     ..ParaStyle::default()
                 },
             ));
@@ -542,10 +620,26 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
                 ..ParaStyle::default()
             },
         ));
+        if let Some(note) = &sheet.tiering_note {
+            body.push_str(&para(
+                &[run(
+                    note,
+                    RunStyle {
+                        color: Some(TEACHER_INK),
+                        size: Some(18),
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    after: 60,
+                    ..ParaStyle::default()
+                },
+            ));
+        }
     }
     body.push_str(&para(
         &[run(
-            META_LINE,
+            &meta_line(sheet),
             RunStyle {
                 color: Some(MUTED_INK),
                 size: Some(20),
@@ -668,6 +762,32 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
                 rows.push(vec![word, v.definition.clone()]);
             }
             body.push_str(&table(&[2600, DOCX_WIDTH - 2600], &rows, None, true));
+        }
+        if !b.original_text.is_empty() {
+            body.push_str(&para(
+                &[run(
+                    ORIGINAL_TEXT,
+                    RunStyle {
+                        bold: true,
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    before: 120,
+                    keep_next: true,
+                    ..ParaStyle::default()
+                },
+            ));
+            for p in &b.original_text {
+                body.push_str(&para(
+                    &[run(p, RunStyle::default())],
+                    &ParaStyle {
+                        indent: 200,
+                        after: 60,
+                        ..ParaStyle::default()
+                    },
+                ));
+            }
         }
         for s in &b.supports {
             body.push_str(&para(
@@ -1576,6 +1696,24 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
             },
         );
     }
+    for (label, text) in it.support.iter().flat_map(support_lines) {
+        l.labelled(
+            &label,
+            &text,
+            Style {
+                size: 10.5,
+                indent: if label.is_empty() {
+                    indent + 14.0
+                } else {
+                    indent
+                },
+                before: 2.0,
+                after: 1.0,
+                ..body
+            },
+            Weight::Bold,
+        );
+    }
     if let Some(h) = &it.hint {
         l.labelled(
             "Hint: ",
@@ -1607,6 +1745,9 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
         };
         if let Some(a) = &it.answer {
             l.labelled("Answer: ", a, gold, Weight::Bold);
+        }
+        if let Some(sc) = &it.scoring {
+            l.labelled("Scoring: ", sc, gold, Weight::Bold);
         }
         if let Some(e) = &it.evidence {
             l.labelled(
@@ -1644,9 +1785,20 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
                 ..body
             },
         );
+        if let Some(note) = &sheet.tiering_note {
+            l.paragraph(
+                note,
+                Style {
+                    size: 9.0,
+                    color: GOLD,
+                    after: 2.0,
+                    ..body
+                },
+            );
+        }
     }
     l.paragraph(
-        META_LINE,
+        &meta_line(sheet),
         Style {
             size: 10.0,
             color: MUTED,
@@ -1752,6 +1904,27 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
                 );
             }
         }
+        if !b.original_text.is_empty() {
+            l.paragraph(
+                ORIGINAL_TEXT,
+                Style {
+                    weight: Weight::Bold,
+                    before: 6.0,
+                    after: 2.0,
+                    ..body
+                },
+            );
+            for p in &b.original_text {
+                l.paragraph(
+                    p,
+                    Style {
+                        indent: 8.0,
+                        after: 3.0,
+                        ..body
+                    },
+                );
+            }
+        }
         for s in &b.supports {
             l.labelled(
                 &format!("{}: ", s.heading),
@@ -1793,7 +1966,8 @@ fn sheet_has_cjk(sheet: &Sheet) -> bool {
 }
 
 fn printed_text(sheet: &Sheet) -> String {
-    let mut out = vec![sheet.title.clone()];
+    let mut out = vec![sheet.title.clone(), meta_line(sheet)];
+    out.extend(sheet.tiering_note.iter().cloned());
     out.extend(sheet.objectives.iter().cloned());
     for b in &sheet.blocks {
         out.extend([b.title.clone(), b.instructions.clone()]);
@@ -1803,6 +1977,7 @@ fn printed_text(sheet: &Sheet) -> String {
                 .iter()
                 .flat_map(|v| [v.word.clone(), v.definition.clone()]),
         );
+        out.extend(b.original_text.iter().cloned());
         out.extend(b.supports.iter().map(|s| s.content.clone()));
         out.extend(b.bloom_summary.iter().cloned());
         for img in &b.images {
@@ -1813,6 +1988,11 @@ fn printed_text(sheet: &Sheet) -> String {
             out.push(it.prompt.clone());
             out.extend(bloom_tag(it));
             out.extend(it.hint.iter().cloned());
+            if let Some(s) = &it.support {
+                out.extend(s.lines.iter().cloned());
+                out.extend(s.word_bank.iter().cloned());
+            }
+            out.extend(it.scoring.iter().cloned());
             out.extend(it.options.iter().cloned());
             out.extend(it.answer.iter().cloned());
             out.extend(it.evidence.iter().cloned());
@@ -1851,7 +2031,10 @@ pub fn pdf_with_images(sheet: &Sheet, images: &ImageBank) -> Result<Vec<u8>, Exp
         ..Style::body()
     };
     for (i, page) in layout.pages.iter_mut().enumerate() {
-        let text = format!("{} · {}/{}", sheet.level.english(), i + 1, total);
+        let text = match footer_label(sheet) {
+            Some(label) => format!("{label} · {}/{}", i + 1, total),
+            None => format!("{}/{}", i + 1, total),
+        };
         let w = fonts.width(Weight::Regular, &text, footer.size);
         page.push(Op::Text {
             x: PAGE_W - MARGIN - w,
@@ -1985,7 +2168,7 @@ pub fn content_disposition(filename: &str) -> String {
 mod tests {
     use super::*;
     use crate::worksheet::assemble::{SheetSupport, SheetWord};
-    use crate::worksheet::{Level, ScaffoldType};
+    use crate::worksheet::{Level, ScaffoldType, SupportKind};
 
     fn sheet(audience: Audience) -> Sheet {
         let teacher = audience == Audience::Teacher;
@@ -1993,6 +2176,8 @@ mod tests {
             title: "The Umbrella Stand: Worksheet".into(),
             level: Level::Standard,
             audience,
+            version_code: None,
+            tiering_note: None,
             objectives: vec!["I can explain why Mrs. Lin started the stand.".into()],
             blocks: vec![SheetBlock {
                 id: "b1".into(),
@@ -2015,11 +2200,14 @@ mod tests {
                         evidence: teacher.then(|| "They were sure every umbrella would be gone.".to_string()),
                         bloom: None,
                         hint: None,
+                        support: None,
+                        scoring: None,
                     })
                     .collect(),
                 teacher_notes: teacher.then(|| "先找出關鍵句再推論。".to_string()),
                 bloom_summary: None,
                 images: Vec::new(),
+                original_text: vec![],
             }],
         }
     }
@@ -2100,6 +2288,122 @@ mod tests {
         assert!(pdf_bytes.starts_with(b"%PDF-"));
         assert!(sheet_has_cjk(&sheet(Level::Standard, Audience::Teacher)));
         assert!(!sheet_has_cjk(&sheet(Level::Basic, Audience::Student)));
+    }
+
+    #[test]
+    fn student_sheets_carry_a_neutral_code_and_teacher_sheets_the_level() {
+        use crate::worksheet::{Block, Bloom, Content, Item, ItemTier};
+        let tier = |level, kind, support: &[&str], bank: &[&str], answer: &str| ItemTier {
+            level,
+            support_kind: kind,
+            model_sentence: "The neighbors thought the umbrellas would be gone.".into(),
+            support: support.iter().map(|s| s.to_string()).collect(),
+            word_bank: bank.iter().map(|s| s.to_string()).collect(),
+            answer: answer.into(),
+            scoring: "片語即可".into(),
+        };
+        let content = Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                title: "Understand the Text".into(),
+                bloom: Some(Bloom::Understand),
+                items: vec![Item {
+                    id: "i1".into(),
+                    answer_format: Some("簡答題".into()),
+                    prompt: "What did the neighbors think?".into(),
+                    levels: Level::ALL.to_vec(),
+                    tiers: vec![
+                        tier(
+                            Level::Basic,
+                            SupportKind::SentenceFrame,
+                            &["The neighbors thought the ___ would be ___."],
+                            &["umbrellas", "gone"],
+                            "umbrellas, gone",
+                        ),
+                        tier(
+                            Level::Standard,
+                            SupportKind::WordBank,
+                            &[],
+                            &["think", "gone"],
+                            "They thought the umbrellas would be gone.",
+                        ),
+                        tier(
+                            Level::Advanced,
+                            SupportKind::None,
+                            &[],
+                            &[],
+                            "They were sure every umbrella would be gone.",
+                        ),
+                    ],
+                    ..Item::default()
+                }],
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        };
+        let sheet =
+            |level, audience| crate::worksheet::assemble::project("T", &content, level, audience);
+        for (level, code) in [
+            (Level::Basic, "A"),
+            (Level::Standard, "B"),
+            (Level::Advanced, "C"),
+        ] {
+            let s = sheet(level, Audience::Student);
+            assert_eq!(
+                footer_label(&s).as_deref(),
+                Some(format!("Version {code}").as_str())
+            );
+            let xml = document(docx(&s).unwrap());
+            assert!(xml.contains(&format!("Version {code}")), "{level:?}");
+            for name in [
+                "Basic", "Standard", "Advanced", "基礎", "一般", "進階", "Scoring",
+            ] {
+                assert!(!xml.contains(name), "{name} on the {level:?} student sheet");
+            }
+            assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
+        }
+        let basic = document(docx(&sheet(Level::Basic, Audience::Student)).unwrap());
+        assert!(basic.contains(">Sentence frame: <") && basic.contains("would be ___."));
+        assert!(
+            basic.contains(">gone  /  umbrellas<"),
+            "word bank, alphabetical"
+        );
+        let standard = document(docx(&sheet(Level::Standard, Audience::Student)).unwrap());
+        assert!(standard.contains(">Word bank: <") && standard.contains(">gone  /  think<"));
+        let advanced = document(docx(&sheet(Level::Advanced, Audience::Student)).unwrap());
+        assert!(!advanced.contains("Word bank") && !advanced.contains("Sentence frame"));
+        // The teacher keeps the level's name, with the code its students see.
+        let t = sheet(Level::Basic, Audience::Teacher);
+        assert_eq!(footer_label(&t).as_deref(), Some("Basic (Version A)"));
+        let xml = document(docx(&t).unwrap());
+        assert!(xml.contains("Basic version (students' sheet: Version A)"));
+        assert!(xml.contains(">Answer: <") && xml.contains(">umbrellas, gone<"));
+        assert!(xml.contains(">Scoring: <") && xml.contains("片語即可"));
+        assert!(xml.contains("差異化學習單：三個版本"), "分層說明");
+        // One version: nothing to tell apart, and still no level name for students.
+        let mut single = content.clone();
+        single.levels = vec![Level::Standard];
+        let s =
+            crate::worksheet::assemble::project("T", &single, Level::Standard, Audience::Student);
+        assert_eq!(footer_label(&s), None);
+        assert!(!document(docx(&s).unwrap()).contains("Version"));
+    }
+
+    #[test]
+    fn the_original_text_prints_before_a_simplified_one() {
+        let mut s = sheet(Audience::Student);
+        s.blocks[0].original_text = vec!["Mrs. Lin put an umbrella stand outside her shop.".into()];
+        let xml = document(docx(&s).unwrap());
+        let original = xml.find(ORIGINAL_TEXT).unwrap();
+        assert!(
+            original
+                < xml
+                    .find("Mrs. Lin put an umbrella stand outside her shop.")
+                    .unwrap()
+        );
+        assert!(original < xml.find("Sentence frames").unwrap());
+        assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
     }
 
     #[test]

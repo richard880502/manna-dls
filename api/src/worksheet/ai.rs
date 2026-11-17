@@ -54,7 +54,7 @@ pub const STEP_SCAFFOLDS: &str = "scaffolds";
 pub const STEP_EXIT: &str = "exit_ticket";
 /// A generation from a template: one job, one model call per block.
 pub const STEP_TEMPLATE: &str = "template";
-/// 閱讀理解題／分層練習: one job for the calls of all Bloom levels …
+/// 閱讀理解題／差異化學習單: one job for the calls of all Bloom levels …
 pub const STEP_BLOOM: &str = "bloom";
 /// … and one for the judge (and the regeneration of mismatched questions).
 pub const STEP_BLOOM_CHECK: &str = "bloom_check";

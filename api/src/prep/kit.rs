@@ -1,8 +1,12 @@
 //! 教學套件 export (`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`): one DOCX with
 //! 1. 教學流程, the kit's activity plan;
-//! 2. the student version of each of the worksheet's levels (基礎版、一般版、進階版 for a tiered
-//!    worksheet), exactly as the worksheet's own export prints them;
-//! 3. 教師版: every question once, numbered through, with its answer, evidence and Bloom tag.
+//! 2. the student version of each of the worksheet's levels, exactly as the worksheet's own
+//!    export prints them, headed by the neutral code (「學生版（A 版）」: T9, the level's name is
+//!    never on a student page);
+//! 3. 教師版: for a 差異化學習單, the teacher version of each level (its support, answers and
+//!    scoring notes differ per version, T6), headed 「教師版（基礎版＝A 版）」, with the 分層說明;
+//!    for one made before the redesign, every question once, numbered through, with its answer,
+//!    evidence and Bloom tag.
 //!
 //! The sheets come from the same projection as the editor and the worksheet export
 //! ([`project`]); the document is written by the worksheet's DOCX writer
@@ -10,22 +14,51 @@
 //! says so.
 
 use super::{ActivityPlan, Goal, GoalKind, Step, OPTION_NAMES_ZH};
-use crate::worksheet::assemble::{project, Sheet};
-use crate::worksheet::bloom::{Bloom, TIERED_REASON};
+use crate::worksheet::assemble::{keep_original_text, project, Sheet};
+use crate::worksheet::bloom::Bloom;
 use crate::worksheet::export::{self, Line, Part};
-use crate::worksheet::{Audience, Content, Level};
+use crate::worksheet::tiered::{version_code, version_label};
+use crate::worksheet::{Audience, Content, Level, Material};
 
 pub const HEADING_PLAN: &str = "教學流程";
 pub const HEADING_TEACHER: &str = "教師版";
-const HEADING_WORKSHEET: &str = "分層學習單";
+const HEADING_WORKSHEET: &str = "差異化學習單";
 const NO_PLAN: &str = "這個教學套件的課堂活動沒有完成，所以沒有教學流程。";
-const NO_WORKSHEET: &str = "這個教學套件的分層學習單沒有完成（或已經刪除），所以沒有學習單。";
+const NO_WORKSHEET: &str = "這個教學套件的差異化學習單沒有完成（或已經刪除），所以沒有學習單。";
 const TEACHER_BANNER: &str =
     "Teacher reference · all versions · answers, evidence and Bloom levels are not on the student sheets";
+/// How a kit made before the 差異化學習單 redesign split its questions (its questions still do).
+const LEGACY_TIERED_REASON: &str =
+    "基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造";
 
-/// The heading of a level's student version: 「學生版（基礎版）」.
-pub fn student_heading(level: Level) -> String {
-    format!("學生版（{}）", level.label())
+/// The heading of a level's student version: 「學生版（A 版）」 (never the level's name); 「學生版」
+/// when the worksheet has one version.
+pub fn student_heading(levels: &[Level], level: Level) -> String {
+    match version_code(levels, level) {
+        Some(code) => format!("學生版（{}）", version_label(&code)),
+        None => "學生版".to_string(),
+    }
+}
+
+/// The heading of a level's teacher version in a 差異化學習單 kit: 「教師版（基礎版＝A 版）」.
+pub fn teacher_heading(levels: &[Level], level: Level) -> String {
+    match version_code(levels, level) {
+        Some(code) => format!(
+            "{HEADING_TEACHER}（{}＝{}）",
+            level.label(),
+            version_label(&code)
+        ),
+        None => format!("{HEADING_TEACHER}（{}）", level.label()),
+    }
+}
+
+/// Whether the worksheet's questions carry their own versions (a 差異化學習單 made after the
+/// redesign).
+fn differentiated(content: &Content) -> bool {
+    content
+        .blocks
+        .iter()
+        .any(|b| b.items.iter().any(|i| !i.tiers.is_empty()))
 }
 
 /// 「Bloom：理解、應用」
@@ -242,11 +275,22 @@ pub fn teacher_sheet(title: &str, content: &Content) -> Sheet {
     project(title, &all, shown, Audience::Teacher)
 }
 
-/// The kit's worksheet: its title, its latest content, and whether it is tiered practice.
+/// The kit's worksheet: its title, its latest content, its material (a simplified text prints
+/// with the original paragraphs, T8) and whether it is a 差異化學習單.
 pub struct KitWorksheet<'a> {
     pub title: &'a str,
     pub content: &'a Content,
+    pub material: Option<&'a Material>,
     pub tiered: bool,
+}
+
+/// A sheet of the kit, with the original paragraphs beside any simplified text.
+fn kit_sheet(w: &KitWorksheet<'_>, level: Level, audience: Audience) -> Sheet {
+    let mut sheet = project(w.title, w.content, level, audience);
+    if let Some(material) = w.material {
+        keep_original_text(&mut sheet, w.content, material);
+    }
+    sheet
 }
 
 /// The whole kit as one DOCX.
@@ -255,17 +299,33 @@ pub fn docx(
     plan: Option<&ActivityPlan>,
     worksheet: Option<KitWorksheet<'_>>,
 ) -> anyhow::Result<Vec<u8>> {
+    let levels: Vec<Level> = worksheet
+        .as_ref()
+        .map(|w| levels_of(w.content))
+        .unwrap_or_default();
     let student: Vec<(Level, Sheet)> = worksheet
         .as_ref()
         .map(|w| {
-            levels_of(w.content)
-                .into_iter()
-                .map(|l| (l, project(w.title, w.content, l, Audience::Student)))
+            levels
+                .iter()
+                .map(|l| (*l, kit_sheet(w, *l, Audience::Student)))
+                .collect()
+        })
+        .unwrap_or_default();
+    // A 差異化學習單: one teacher version per level, matching its student version page for page.
+    let per_level: Vec<(Level, Sheet)> = worksheet
+        .as_ref()
+        .filter(|w| differentiated(w.content))
+        .map(|w| {
+            levels
+                .iter()
+                .map(|l| (*l, kit_sheet(w, *l, Audience::Teacher)))
                 .collect()
         })
         .unwrap_or_default();
     let teacher = worksheet
         .as_ref()
+        .filter(|_| per_level.is_empty())
         .map(|w| (teacher_sheet(w.title, w.content), w.tiered));
     let mut parts = vec![Part::Lines {
         heading: HEADING_PLAN.to_string(),
@@ -276,7 +336,16 @@ pub fn docx(
     }];
     for (level, sheet) in &student {
         parts.push(Part::Sheet {
-            heading: student_heading(*level),
+            heading: student_heading(&levels, *level),
+            sheet,
+            banner: None,
+            note: Vec::new(),
+        });
+    }
+    // Each teacher sheet prints the 分層說明 itself (`Sheet::tiering_note`).
+    for (level, sheet) in &per_level {
+        parts.push(Part::Sheet {
+            heading: teacher_heading(&levels, *level),
             sheet,
             banner: None,
             note: Vec::new(),
@@ -288,15 +357,16 @@ pub fn docx(
             sheet,
             banner: Some(TEACHER_BANNER.to_string()),
             note: if *tiered {
-                vec![Line::Teacher(TIERED_REASON.to_string())]
+                vec![Line::Teacher(LEGACY_TIERED_REASON.to_string())]
             } else {
                 Vec::new()
             },
         }),
-        None => parts.push(Part::Lines {
+        None if per_level.is_empty() => parts.push(Part::Lines {
             heading: HEADING_WORKSHEET.to_string(),
             lines: vec![Line::Muted(NO_WORKSHEET.to_string())],
         }),
+        None => {}
     }
     export::combined_docx(&format!("{}：教學套件", title.trim()), &parts)
 }
@@ -307,6 +377,7 @@ mod tests {
     use crate::prep::{
         CurriculumRef, HigherQuestion, KeyWord, LanguageCategory, Role, StepOption, PHASE_WARMUP,
     };
+    use crate::worksheet::tiered::TIERED_REASON;
     use crate::worksheet::{Block, Item};
 
     fn plan() -> ActivityPlan {
@@ -579,7 +650,8 @@ mod tests {
     }
 
     #[test]
-    fn the_kit_is_one_docx_with_all_parts() {
+    fn a_kit_made_before_the_redesign_still_exports() {
+        // Tiered practice as stored before 差異化學習單: questions split over the versions.
         let c = content();
         let bytes = docx(
             "The Umbrella Stand",
@@ -587,6 +659,7 @@ mod tests {
             Some(KitWorksheet {
                 title: "The Umbrella Stand",
                 content: &c,
+                material: None,
                 tiered: true,
             }),
         )
@@ -596,16 +669,19 @@ mod tests {
         std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
             .unwrap();
         let at = |s: &str| xml.find(s).unwrap_or_else(|| panic!("{s} missing"));
-        assert!(at(HEADING_PLAN) < at("學生版（基礎版）"));
-        assert!(at("學生版（基礎版）") < at("學生版（一般版）"));
-        assert!(at("學生版（進階版）") < at(HEADING_TEACHER));
+        // Student pages carry the neutral code, never the level's name (T9).
+        assert!(at(HEADING_PLAN) < at("學生版（A 版）"));
+        assert!(at("學生版（A 版）") < at("學生版（B 版）"));
+        assert!(at("學生版（C 版）") < at(HEADING_TEACHER));
+        assert!(!xml.contains("學生版（基礎版）"));
         let teacher = at(HEADING_TEACHER);
         assert!(
             xml.find("〔Bloom：").unwrap() > teacher,
             "tags only for the teacher"
         );
         assert!(xml.find("Answer: ").unwrap() > teacher);
-        assert!(xml.contains(TIERED_REASON));
+        assert!(xml.contains(LEGACY_TIERED_REASON));
+        assert!(!xml.contains(TIERED_REASON));
         assert!(xml.contains("Hint: "), "the 基礎版 prints hints");
 
         // Without the parts.
@@ -615,5 +691,108 @@ mod tests {
         std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
             .unwrap();
         assert!(xml.contains(NO_PLAN) && xml.contains(NO_WORKSHEET));
+    }
+
+    /// A 差異化學習單: every question in all three versions, each with its own support, answer
+    /// and scoring note.
+    fn differentiated() -> Content {
+        use crate::worksheet::{ItemTier, SupportKind};
+        let tier = |level: Level, kind: SupportKind, support: &str, answer: &str| ItemTier {
+            level,
+            support_kind: kind,
+            model_sentence: String::new(),
+            support: if support.is_empty() {
+                vec![]
+            } else {
+                vec![support.into()]
+            },
+            word_bank: vec![],
+            answer: answer.into(),
+            scoring: format!("{}評分", level.label()),
+        };
+        Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                title: "Look Closer".into(),
+                bloom: Some(Bloom::Analyze),
+                items: vec![Item {
+                    id: "b1-i1".into(),
+                    answer_format: Some("簡答題".into()),
+                    prompt: "Why did the neighbors laugh?".into(),
+                    answer: "They thought the umbrellas would be gone.".into(),
+                    levels: Level::ALL.to_vec(),
+                    bloom: Some(Bloom::Analyze),
+                    tiers: vec![
+                        tier(
+                            Level::Basic,
+                            SupportKind::SentenceStarter,
+                            "BASIC SUPPORT ___",
+                            "gone",
+                        ),
+                        tier(
+                            Level::Standard,
+                            SupportKind::SentenceStarter,
+                            "They laughed because …",
+                            "They thought the umbrellas would be gone.",
+                        ),
+                        tier(
+                            Level::Advanced,
+                            SupportKind::None,
+                            "",
+                            "They were sure that every umbrella would be taken.",
+                        ),
+                    ],
+                    ..Item::default()
+                }],
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        }
+    }
+
+    #[test]
+    fn a_differentiated_kit_has_a_teacher_version_per_level() {
+        let c = differentiated();
+        let bytes = docx(
+            "The Umbrella Stand",
+            None,
+            Some(KitWorksheet {
+                title: "The Umbrella Stand",
+                content: &c,
+                material: None,
+                tiered: true,
+            }),
+        )
+        .unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+            .unwrap();
+        let at = |s: &str| xml.find(s).unwrap_or_else(|| panic!("{s} missing"));
+        let first_teacher = at("教師版（基礎版＝A 版）");
+        assert!(at("學生版（C 版）") < first_teacher);
+        assert!(first_teacher < at("教師版（一般版＝B 版）"));
+        assert!(at("教師版（一般版＝B 版）") < at("教師版（進階版＝C 版）"));
+        // The student pages never name a level (T9) and have no answers or scoring notes.
+        let students = &xml[..first_teacher];
+        for name in [
+            "基礎",
+            "一般版",
+            "進階",
+            "Basic",
+            "Standard",
+            "Advanced",
+            "評分",
+        ] {
+            assert!(!students.contains(name), "{name} on a student page");
+        }
+        assert!(students.contains("Version A") && students.contains("BASIC SUPPORT ___"));
+        // Each teacher version: its own answer and scoring note, and the 分層說明.
+        let teachers = &xml[first_teacher..];
+        assert!(teachers.contains("基礎版評分") && teachers.contains("進階版評分"));
+        assert!(teachers.contains("every umbrella would be taken."));
+        assert_eq!(teachers.matches(TIERED_REASON).count(), 3);
+        assert!(!xml.contains(LEGACY_TIERED_REASON));
     }
 }

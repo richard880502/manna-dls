@@ -1,7 +1,7 @@
 // Bloom 認知層次 (contract: "Bloom UI and session cards", Addendum 1): the preset arithmetic, the
 // editor's chip and select, the distribution bar and its filter, the hint field, the settings view
 // (要做什麼, presets, 題數, 自訂, 學習目標, 給 Manna 的要求), the new job steps, and the session
-// cards for 閱讀理解題, 分層練習 and 教學套件 (with its download).
+// cards for 閱讀理解題, 差異化學習單 (formerly 分層練習) and 教學套件 (with its download).
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -257,7 +257,7 @@ describe("lib/bloom: presets and counts", () => {
   it("reads a plan from the settings and says it in one line", () => {
     const settings = (extra: Partial<WorksheetSettings>): WorksheetSettings => ({ ...emptySettings(), ...extra });
     expect(planFromSettings(settings({ output: "comprehension" }))).toMatchObject({ preset: "balanced", total: 8 });
-    expect(planFromSettings(settings({ output: "tiered" }))).toMatchObject({ preset: "balanced", total: 12 });
+    expect(planFromSettings(settings({ output: "tiered" }))).toMatchObject({ preset: "balanced", total: 6 });
     expect(planFromSettings(settings({ output: "comprehension", bloom_counts: { analyze: 2, create: 3 } }))).toMatchObject({
       preset: "custom",
       total: 5,
@@ -379,7 +379,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     expect(within(what).getAllByRole("radio").map((r) => (r as HTMLInputElement).labels?.[0]?.textContent)).toEqual([
       "學習單",
       "閱讀理解題",
-      "分層練習",
+      "差異化學習單",
     ]);
     expect(whatToMake().getByRole("radio", { name: "學習單" })).toBeChecked();
     expect(screen.getByRole("region", { name: "素材類型" })).toBeInTheDocument();
@@ -477,14 +477,21 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     );
     const user = userEvent.setup();
     renderApp("/worksheets/5");
-    expect(await screen.findByText("分層練習固定做基礎版、一般版、進階版三個版本；提示只印在基礎版。")).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "這次會出" })).toHaveTextContent(/^12 題 · /);
-    await user.click(screen.getByRole("button", { name: "產生分層練習" }));
+    expect(
+      await screen.findByText(
+        "差異化學習單固定做基礎版、一般版、進階版三個版本：三個版本目標與題目相同，差在提示與支持的多寡。學生版只印 A、B、C 版，不印程度名稱。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "這次會出" })).toHaveTextContent(/^6 題 · /);
+    // Only the open answer formats.
+    expect(screen.queryByRole("checkbox", { name: "選擇題" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "簡答題" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "產生差異化學習單" }));
     await waitFor(() => expect(api.callsTo("POST", `${WS}/generate`)).toHaveLength(1));
     expect(lastSave(api).settings).toMatchObject({
       output: "tiered",
-      bloom_counts: countsFor("balanced", 12),
-      question_count: 12,
+      bloom_counts: countsFor("balanced", 6),
+      question_count: 6,
     });
 
     // The new steps have their own names in the progress list.
@@ -530,7 +537,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     const what = within(await screen.findByRole("radiogroup", { name: "要做什麼" }));
     expect(what.getByRole("radio", { name: "學習單" })).toBeEnabled();
     expect(what.getByRole("radio", { name: "閱讀理解題" })).toBeDisabled();
-    expect(what.getByRole("radio", { name: "分層練習" })).toBeDisabled();
+    expect(what.getByRole("radio", { name: "差異化學習單" })).toBeDisabled();
     expect(screen.getByText(/版型只適用於完整學習單/)).toBeInTheDocument();
   });
 });
@@ -637,7 +644,7 @@ const sheetFor = (first: WsLevel) => (call: MockCall): WsSheet => {
   };
 };
 
-describe("session page: 閱讀理解題, 分層練習, 教學套件", () => {
+describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () => {
   it("a 閱讀理解題 turn is a worksheet card; the teacher version shows Bloom tags and every card a read-only bar", async () => {
     const api = mockApi({
       ...baseRoutes(),
@@ -667,7 +674,7 @@ describe("session page: 閱讀理解題, 分層練習, 教學套件", () => {
     expect(api.callsTo("GET", "/api/worksheets/11/sheet").some((c) => c.url.includes("audience=teacher"))).toBe(true);
   });
 
-  it("a 分層練習 turn has the three version tabs, and 基礎版 prints the hints", async () => {
+  it("a tiered turn made before the redesign has the three version tabs, and 基礎版 prints the hints", async () => {
     mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: session([turn("tiered", { request: "分層練習" })]),
@@ -676,7 +683,7 @@ describe("session page: 閱讀理解題, 分層練習, 教學套件", () => {
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
-    const result = await screen.findByRole("region", { name: "分層練習（第 1 則）" });
+    const result = await screen.findByRole("region", { name: "差異化學習單（第 1 則）" });
     const tabs = within(await within(result).findByRole("tablist", { name: "版本程度" }));
     expect(tabs.getAllByRole("tab").map((t) => t.textContent)).toEqual(["基礎版", "一般版", "進階版"]);
     expect(await within(result).findByText("Hint: Hint for 1")).toBeInTheDocument();

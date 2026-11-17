@@ -23,6 +23,8 @@ import {
   STEP_LABEL,
   STUDENT_TASKS,
   STUDENT_TASK_GROUPS,
+  TIERED_FORMATS,
+  TIERED_VERSIONS_NOTE,
   VERSIONS_HEADING,
   briefIsEmpty,
   emptyBrief,
@@ -42,13 +44,13 @@ type ListField = "material_types" | "student_tasks" | "answer_formats" | "genera
 const OUTPUT_HINT: Record<WsOutput, string> = {
   worksheet: "完整學習單，可以照你的版型",
   comprehension: "依 Bloom 六個層次出題，附答案與文本依據",
-  tiered: "同一篇文章，基礎／一般／進階三個版本",
+  tiered: "同一篇文章做成基礎／一般／進階三個版本。三個版本目標相同，差在提示與支持的多寡。",
 };
 
 const GENERATE_LABEL: Record<WsOutput, string> = {
   worksheet: "產生學習單",
   comprehension: "產生閱讀理解題",
-  tiered: "產生分層練習",
+  tiered: "產生差異化學習單",
 };
 
 export const REQUEST_MAX = 2000;
@@ -257,7 +259,7 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
           </div>
           <p className="field-hint">{OUTPUT_HINT[output]}</p>
           {state.template && fullWorksheet && (
-            <p className="field-hint">版型只適用於完整學習單；要做閱讀理解題或分層練習，先把下面的版型改成「不使用版型」。</p>
+            <p className="field-hint">版型只適用於完整學習單；要做閱讀理解題或差異化學習單，先把下面的版型改成「不使用版型」。</p>
           )}
         </div>
       </section>
@@ -283,14 +285,18 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
           <section className="ws-opt" aria-labelledby={`${ids}-fmt`}>
             <h2 id={`${ids}-fmt`}>作答方式</h2>
             <div>
-              {chips("answer_formats", ANSWER_FORMATS, ANSWER_FORMATS)}
-              <p className="field-hint">不選：每個層次用適合它的作答方式。有選：只用選了的，而且適合那個層次的。</p>
+              {chips("answer_formats", output === "tiered" ? TIERED_FORMATS : ANSWER_FORMATS, ANSWER_FORMATS)}
+              <p className="field-hint">
+                {output === "tiered"
+                  ? "差異化學習單只用開放式作答，三個版本才能各給不同的支持與預期答案。不選：每個層次用適合它的。"
+                  : "不選：每個層次用適合它的作答方式。有選：只用選了的，而且適合那個層次的。"}
+              </p>
             </div>
           </section>
           <section className="ws-opt" aria-labelledby={`${ids}-levels`}>
             <h2 id={`${ids}-levels`}>版本</h2>
             {output === "tiered" ? (
-              <p className="field-hint ws-opt-note">分層練習固定做基礎版、一般版、進階版三個版本；提示只印在基礎版。</p>
+              <p className="field-hint ws-opt-note">{TIERED_VERSIONS_NOTE}</p>
             ) : (
               <div role="group" aria-label={VERSIONS_HEADING}>
                 <div className="ws-chips">

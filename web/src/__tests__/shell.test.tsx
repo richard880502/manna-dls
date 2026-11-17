@@ -56,7 +56,7 @@ describe("app shell: the sidebar", () => {
       ["首頁", "/"],
       ["照我的學習單做", "/create/mimic"],
       ["閱讀理解題", "/create/comprehension"],
-      ["分層練習", "/create/tiered"],
+      ["差異化學習單", "/create/tiered"],
       ["課堂活動", "/create/activity"],
       ["教學套件", "/create/kit"],
       ["完整學習單", "/create/worksheet"],

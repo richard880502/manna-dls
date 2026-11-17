@@ -591,7 +591,6 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         scope: &scope,
         section: &section_ctx,
         levels: &levels,
-        tiered,
         block_bloom,
         taken: &taken,
         new_prefix: &prefix,

@@ -1129,6 +1129,31 @@ button.bloom-seg:focus-visible {
   font-style: italic;
 }
 
+/* ---------- 差異化學習單: a question's support in the version shown, and the version's code ---------- */
+.ws-tier .ws-answer {
+  grid-column: 1 / -1;
+}
+
+.ws-tier select {
+  display: block;
+  margin-top: var(--space-2xs);
+  font-size: var(--text-sm);
+}
+
+.ws-item-support {
+  font-style: normal;
+}
+
+.ws-item-support p {
+  margin: 0;
+}
+
+.ws-version {
+  margin-left: auto;
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
 /* ---------- settings: 要做什麼, presets, steppers ---------- */
 .ws-output {
   flex-wrap: wrap;

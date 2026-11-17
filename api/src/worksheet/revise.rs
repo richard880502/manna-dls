@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use sqlx::types::Json;
 use sqlx::PgPool;
 
-use super::bloom::{tier_levels, Bloom};
+use super::bloom::Bloom;
 use super::checks::{evaluate_revision, CleanSectionItem, RevisionDraft, SectionCtx};
 use super::comments::{Comment, Field, STATUS_OPEN};
 use super::template::{
@@ -208,10 +208,9 @@ pub struct MergeCtx<'a> {
     pub old: &'a Block,
     pub scope: &'a Scope,
     pub section: &'a SectionCtx<'a>,
-    /// The worksheet's versions (a new question appears in them).
+    /// The worksheet's versions (a new question appears in all of them; a 差異化學習單 has every
+    /// question in all three).
     pub levels: &'a [Level],
-    /// Tiered practice: a new question appears in the versions of its Bloom level.
-    pub tiered: bool,
     /// A block made for one Bloom level keeps every question at that level.
     pub block_bloom: Option<Bloom>,
     /// Question ids used anywhere in the worksheet.
@@ -258,7 +257,9 @@ fn same_question(a: &Item, b: &Item) -> bool {
 }
 
 /// The stored question with what the model changed: format, prompt, options and Bloom level;
-/// the answer (with its evidence) only when it changed. Id, versions, hint and purpose stay.
+/// the answer (with its evidence) only when it changed. Id, versions, hint and purpose stay. A
+/// 差異化學習單 question keeps its versions' support and answers only while its prompt is
+/// unchanged: a cloze cut from the old answer would not fit a new question.
 fn modified(old: &Item, c: &CleanSectionItem, block_bloom: Option<Bloom>) -> Item {
     let mut item = old.clone();
     item.answer_format = Some(c.answer_format.clone());
@@ -272,27 +273,11 @@ fn modified(old: &Item, c: &CleanSectionItem, block_bloom: Option<Bloom>) -> Ite
     if same_question(&item, old) {
         return old.clone();
     }
+    if item.prompt.trim() != old.prompt.trim() {
+        item.tiers.clear();
+    }
     item.origin = Origin::Ai;
     item
-}
-
-fn new_levels(bloom: Option<Bloom>, levels: &[Level], tiered: bool) -> Vec<Level> {
-    let kept: Vec<Level> = match bloom {
-        Some(b) if tiered => {
-            let wanted = tier_levels(b);
-            levels
-                .iter()
-                .copied()
-                .filter(|l| wanted.contains(l))
-                .collect()
-        }
-        _ => Vec::new(),
-    };
-    if kept.is_empty() {
-        levels.to_vec()
-    } else {
-        kept
-    }
 }
 
 /// A question id that is not used anywhere in the worksheet.
@@ -423,10 +408,11 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                         answer: c.answer.clone(),
                         evidence: c.evidence.clone().unwrap_or_default(),
                         purpose: None,
-                        levels: new_levels(bloom, m.levels, m.tiered),
+                        levels: m.levels.to_vec(),
                         origin: Origin::Ai,
                         bloom,
                         hint: String::new(),
+                        tiers: Vec::new(),
                     });
                 }
                 None => dropped_new += 1,
@@ -1048,7 +1034,6 @@ mod tests {
                 scope,
                 section: &section,
                 levels: &[Level::Standard],
-                tiered: false,
                 block_bloom: None,
                 taken: &taken,
                 new_prefix: "b2-p7",

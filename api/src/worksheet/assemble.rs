@@ -13,6 +13,7 @@ use super::checks::{CleanWarmup, CleanWord};
 use super::schemas::{
     RawBlock, RawExitItem, RawScaffoldSet, TARGET_WARMUP, TIER_CHALLENGE, TIER_SUPPORT,
 };
+use super::tiered::{self, SupportKind};
 use super::{
     info_function_from_label, Audience, Block, BlockKind, Bloom, Content, Item, Level, Material,
     Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES, FMT_BLANK,
@@ -275,6 +276,7 @@ pub fn activity_block(
                 origin: Origin::Ai,
                 bloom: it.bloom.as_deref().and_then(Bloom::parse),
                 hint: String::new(),
+                tiers: Vec::new(),
             })
         })
         .collect();
@@ -496,9 +498,30 @@ pub struct SheetItem {
     /// the student version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bloom: Option<Option<Bloom>>,
-    /// 基礎版 only (both audiences): the hint printed under the question.
+    /// 基礎版 only (both audiences): the hint printed under the question (a question without
+    /// versions of its own; see `support`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// 差異化學習單 (both audiences): this version's support under the question; absent when the
+    /// version gives none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub support: Option<SheetItemSupport>,
+    /// 差異化學習單, teacher version only: how to score this version's answer (評分說明).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scoring: Option<String>,
+}
+
+/// One version's support under a question of a 差異化學習單.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SheetItemSupport {
+    pub kind: SupportKind,
+    /// English heading printed above it: 「Sentence frame」, 「Word bank」…
+    pub heading: &'static str,
+    /// The lines (a cloze or frame has 「___」 blanks).
+    pub lines: Vec<String>,
+    /// The word bank, in alphabetical order (a cloze's words in blank order would give the
+    /// answer away).
+    pub word_bank: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -523,6 +546,10 @@ pub struct SheetBlock {
     /// `images::decorate`; absent when there are none).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<SheetImage>,
+    /// The block's original paragraphs, printed when this version also prints a simplified text
+    /// (T8: the rewrite is an aid, it never replaces the original). Empty otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub original_text: Vec<String>,
 }
 
 /// One picture of a printed block: the picture, or an empty box for the teacher to fill.
@@ -548,13 +575,71 @@ pub struct SheetImage {
     pub message: Option<String>,
 }
 
+/// The scaffold kind of a simplified text (「調整文本」, printed as 「Simplified text」).
+pub const KIND_SIMPLIFIED: &str = "調整文本";
+
+/// T8: a version that prints a simplified text keeps the original paragraphs beside it. Fills
+/// `original_text` of every such block with the paragraphs it covers (all of them when it names
+/// none). Applied by everything that prints a sheet and has the material (the sheet, the
+/// exports, the kit); the projection itself does not carry the material.
+pub fn keep_original_text(sheet: &mut Sheet, content: &Content, material: &Material) {
+    for sb in &mut sheet.blocks {
+        if !sb.supports.iter().any(|s| s.kind == KIND_SIMPLIFIED) {
+            continue;
+        }
+        let ids: Vec<&str> = content
+            .block(&sb.id)
+            .map(|b| b.paragraph_ids.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        sb.original_text = material
+            .paragraphs
+            .iter()
+            .filter(|p| ids.is_empty() || ids.contains(&p.id.as_str()))
+            .map(|p| p.text.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Sheet {
     pub title: String,
     pub level: Level,
     pub audience: Audience,
+    /// The neutral code this version carries on paper, 「A」「B」「C」 (T9: students never see the
+    /// level's name); `null` when the worksheet has only one version.
+    pub version_code: Option<String>,
+    /// Teacher version of a 差異化學習單 only: why the versions differ (分層說明).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tiering_note: Option<String>,
     pub objectives: Vec<String>,
     pub blocks: Vec<SheetBlock>,
+}
+
+/// One version's support, as printed; `None` when it gives none.
+fn item_support(tier: &super::ItemTier) -> Option<SheetItemSupport> {
+    if tier.support_kind == SupportKind::None {
+        return None;
+    }
+    let lines: Vec<String> = tier
+        .support
+        .iter()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let mut word_bank: Vec<String> = tier
+        .word_bank
+        .iter()
+        .map(|w| w.trim().to_string())
+        .filter(|w| !w.is_empty())
+        .collect();
+    word_bank.sort_by_key(|w| w.to_lowercase());
+    (!lines.is_empty() || !word_bank.is_empty()).then(|| SheetItemSupport {
+        kind: tier.support_kind,
+        heading: tier.support_kind.heading(),
+        lines,
+        word_bank,
+    })
 }
 
 /// The printed heading of each scaffold kind; any other kind prints under [`SUPPORT_FALLBACK`].
@@ -637,8 +722,8 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         // Lettered below, once the blocks that print are known.
         let label = String::new();
         let shown = |levels: &[Level]| levels.contains(&level);
-        // A block of one Bloom level whose questions are all in other versions (分層練習) is
-        // not part of this one.
+        // A block of one Bloom level whose questions are all in other versions (分層練習 made
+        // before the 差異化學習單 redesign) is not part of this one.
         if b.bloom.is_some() && !b.items.is_empty() && !b.items.iter().any(|i| shown(&i.levels)) {
             continue;
         }
@@ -648,6 +733,9 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             .filter(|i| shown(&i.levels))
             .map(|i| {
                 no += 1;
+                // A 差異化學習單 question: this version's support, answer and scoring note.
+                let tier = i.tier(level);
+                let answer = tier.map_or(i.answer.trim(), |t| t.answer.trim());
                 SheetItem {
                     id: i.id.clone(),
                     no,
@@ -655,13 +743,16 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     prompt: i.prompt.trim().to_string(),
                     options: i.options.clone(),
                     lines: answer_lines(i.answer_format.as_deref(), level),
-                    answer: (teacher && !i.answer.trim().is_empty())
-                        .then(|| i.answer.trim().to_string()),
+                    answer: (teacher && !answer.is_empty()).then(|| answer.to_string()),
                     evidence: (teacher && !i.evidence.trim().is_empty())
                         .then(|| i.evidence.trim().to_string()),
                     bloom: teacher.then_some(i.bloom),
-                    hint: (level == Level::Basic && !i.hint.trim().is_empty())
+                    hint: (tier.is_none() && level == Level::Basic && !i.hint.trim().is_empty())
                         .then(|| i.hint.trim().to_string()),
+                    support: tier.and_then(item_support),
+                    scoring: tier
+                        .filter(|t| teacher && !t.scoring.trim().is_empty())
+                        .map(|t| t.scoring.trim().to_string()),
                 }
             })
             .collect::<Vec<SheetItem>>();
@@ -724,6 +815,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 .then(|| b.teacher_notes.trim().to_string()),
             bloom_summary,
             images: Vec::new(),
+            original_text: Vec::new(),
         });
     }
     blocks.retain(has_content);
@@ -738,10 +830,16 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             }
         }
     }
+    let differentiated = content
+        .blocks
+        .iter()
+        .any(|b| b.enabled && b.items.iter().any(|i| !i.tiers.is_empty()));
     Sheet {
         title: title.trim().to_string(),
         level,
         audience,
+        version_code: tiered::version_code(&content.levels, level),
+        tiering_note: (teacher && differentiated).then(|| tiered::TIERED_REASON.to_string()),
         objectives: if content.show_objectives {
             content
                 .objectives
@@ -811,6 +909,17 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
             }
             if let Some(h) = &it.hint {
                 push(format!("{name} · 第 {} 題提示", it.no), h);
+            }
+            if let Some(s) = &it.support {
+                for line in &s.lines {
+                    push(format!("{name} · 第 {} 題支持", it.no), line);
+                }
+                if !s.word_bank.is_empty() {
+                    push(
+                        format!("{name} · 第 {} 題字庫", it.no),
+                        &s.word_bank.join(", "),
+                    );
+                }
             }
         }
     }
@@ -1108,6 +1217,191 @@ mod tests {
                     |(place, text)| place.ends_with("題提示") && text == "Start with: The writer …"
                 )
         );
+    }
+
+    /// A 差異化學習單 block: one question with its three versions, plus a question stored before
+    /// the redesign (no versions of its own, a hint).
+    fn differentiated() -> Content {
+        use crate::worksheet::ItemTier;
+        let tier = |level, kind, support: &[&str], bank: &[&str], answer: &str| ItemTier {
+            level,
+            support_kind: kind,
+            model_sentence: "The neighbors thought the umbrellas would be gone.".into(),
+            support: support.iter().map(|s| s.to_string()).collect(),
+            word_bank: bank.iter().map(|s| s.to_string()).collect(),
+            answer: answer.into(),
+            scoring: format!("{} 評分", level.label()),
+        };
+        let all = Level::ALL.to_vec();
+        Content {
+            blocks: vec![Block {
+                id: "r1b1".into(),
+                title: "Understand the Text".into(),
+                bloom: Some(Bloom::Understand),
+                items: vec![
+                    Item {
+                        id: "q1".into(),
+                        answer_format: Some("簡答題".into()),
+                        prompt: "What did the neighbors think?".into(),
+                        answer: "They were sure every umbrella would be gone.".into(),
+                        levels: all.clone(),
+                        bloom: Some(Bloom::Understand),
+                        tiers: vec![
+                            tier(
+                                Level::Basic,
+                                SupportKind::SentenceFrame,
+                                &["The neighbors thought the ___ would be ___."],
+                                &["umbrellas", "gone"],
+                                "umbrellas, gone",
+                            ),
+                            tier(
+                                Level::Standard,
+                                SupportKind::SentenceStarter,
+                                &["The neighbors thought that …"],
+                                &[],
+                                "They thought the umbrellas would be gone.",
+                            ),
+                            tier(
+                                Level::Advanced,
+                                SupportKind::None,
+                                &[],
+                                &[],
+                                "They were sure every umbrella would be gone.",
+                            ),
+                        ],
+                        ..Item::default()
+                    },
+                    Item {
+                        id: "old".into(),
+                        answer_format: Some("簡答題".into()),
+                        prompt: "An older question?".into(),
+                        answer: "Old answer.".into(),
+                        levels: all.clone(),
+                        hint: "Start with: I think".into(),
+                        ..Item::default()
+                    },
+                ],
+                ..Block::default()
+            }],
+            levels: all,
+            ..Content::default()
+        }
+    }
+
+    #[test]
+    fn the_three_versions_share_the_questions_and_differ_in_support() {
+        let c = differentiated();
+        let sheet = |level, audience| project("T", &c, level, audience);
+        let prompts = |s: &Sheet| -> Vec<String> {
+            s.blocks
+                .iter()
+                .flat_map(|b| b.items.iter().map(|i| i.prompt.clone()))
+                .collect()
+        };
+        let basic = sheet(Level::Basic, Audience::Student);
+        let standard = sheet(Level::Standard, Audience::Student);
+        let advanced = sheet(Level::Advanced, Audience::Student);
+        assert_eq!(prompts(&basic), prompts(&standard));
+        assert_eq!(prompts(&standard), prompts(&advanced));
+        // Support: 基礎版 a frame with its word bank in alphabetical order, 一般版 a starter,
+        // 進階版 none.
+        let s = basic.blocks[0].items[0].support.as_ref().unwrap();
+        assert_eq!(
+            (s.kind, s.heading),
+            (SupportKind::SentenceFrame, "Sentence frame")
+        );
+        assert_eq!(s.word_bank, ["gone", "umbrellas"]);
+        let s = standard.blocks[0].items[0].support.as_ref().unwrap();
+        assert_eq!(s.lines, ["The neighbors thought that …"]);
+        assert_eq!(advanced.blocks[0].items[0].support, None);
+        // The older question keeps its hint in 基礎版 only.
+        assert_eq!(
+            basic.blocks[0].items[1].hint.as_deref(),
+            Some("Start with: I think")
+        );
+        assert_eq!(standard.blocks[0].items[1].hint, None);
+        assert_eq!(basic.blocks[0].items[0].hint, None);
+        // Students: a neutral code, no answers, no scoring notes, no 分層說明.
+        let codes: Vec<Option<String>> = [&basic, &standard, &advanced]
+            .iter()
+            .map(|s| s.version_code.clone())
+            .collect();
+        assert_eq!(
+            codes,
+            [Some("A".into()), Some("B".into()), Some("C".into())]
+        );
+        for s in [&basic, &standard, &advanced] {
+            let json = serde_json::to_value(s).unwrap().to_string();
+            assert!(!json.contains("\"answer\"") && !json.contains("scoring"));
+            assert!(!json.contains("tiering_note") && !json.contains("評分"));
+            assert!(!json.contains("model_sentence"));
+        }
+        // Teachers: this version's answer and scoring note, and the 分層說明.
+        let t = sheet(Level::Basic, Audience::Teacher);
+        assert_eq!(
+            t.blocks[0].items[0].answer.as_deref(),
+            Some("umbrellas, gone")
+        );
+        assert_eq!(t.blocks[0].items[0].scoring.as_deref(), Some("基礎版 評分"));
+        assert_eq!(t.blocks[0].items[1].answer.as_deref(), Some("Old answer."));
+        assert!(t.tiering_note.is_some());
+        let t = sheet(Level::Advanced, Audience::Teacher);
+        assert_eq!(
+            t.blocks[0].items[0].answer.as_deref(),
+            Some("They were sure every umbrella would be gone.")
+        );
+        // The same Bloom distribution in every version.
+        let summaries: Vec<Option<String>> = Level::ALL
+            .iter()
+            .map(|l| sheet(*l, Audience::Teacher).blocks[0].bloom_summary.clone())
+            .collect();
+        assert!(summaries.iter().all(|x| *x == summaries[0]));
+        // The vocabulary check reads the printed support too.
+        assert!(text_lines(&basic)
+            .iter()
+            .any(|(place, text)| place.ends_with("題字庫") && text == "gone, umbrellas"));
+        // One version only: no code, no note.
+        let mut single = differentiated();
+        single.levels = vec![Level::Standard];
+        let s = project("T", &single, Level::Standard, Audience::Student);
+        assert_eq!(s.version_code, None);
+    }
+
+    #[test]
+    fn a_simplified_text_keeps_the_original_paragraphs() {
+        let material = Material::pasted(
+            None,
+            0,
+            "T",
+            "First paragraph of the text.\n\nSecond paragraph of the text.",
+            "",
+        )
+        .0;
+        let mut c = content();
+        c.blocks[1].paragraph_ids = vec![material.paragraphs[1].id.clone()];
+        c.blocks[1].scaffolds.push(Scaffold {
+            id: "b1-si9".into(),
+            kind_type: ScaffoldType::Instructional,
+            kind: KIND_SIMPLIFIED.into(),
+            content: "An easier way to say it.".into(),
+            levels: vec![Level::Basic],
+            origin: Origin::Ai,
+            ..Scaffold::default()
+        });
+        let mut basic = project("T", &c, Level::Basic, Audience::Student);
+        keep_original_text(&mut basic, &c, &material);
+        assert_eq!(
+            basic.blocks[1].original_text,
+            ["Second paragraph of the text."]
+        );
+        assert!(basic.blocks[1]
+            .supports
+            .iter()
+            .any(|s| s.heading == "Simplified text"));
+        // A version without the simplified text prints no original either.
+        let mut standard = project("T", &c, Level::Standard, Audience::Student);
+        keep_original_text(&mut standard, &c, &material);
+        assert!(standard.blocks.iter().all(|b| b.original_text.is_empty()));
     }
 
     #[test]

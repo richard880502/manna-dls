@@ -25,7 +25,8 @@ export const kindOf = (tool: Tool): KindTool => (tool === "mimic" ? "worksheet" 
  */
 export const TOOL_CHIP: Record<KindTool, string> = {
   comprehension: "閱讀理解題",
-  tiered: "分層練習",
+  // Formerly 分層練習 (the server still takes the old name as a bare chip label).
+  tiered: "差異化學習單",
   activity: "課堂活動",
   kit: "教學套件",
   worksheet: "學習單",
@@ -43,7 +44,7 @@ export const TOOL_BLURB: Record<Tool, string> = {
   comprehension: "依 Bloom 六個層次出題，附答案與文本依據",
   tiered: "同一篇文章，基礎／一般／進階三個版本",
   activity: "引起動機到統整的一節課流程",
-  kit: "活動流程＋分層學習單＋教師版答案，一次下載",
+  kit: "活動流程＋差異化學習單＋教師版答案，一次下載",
   worksheet: "完整學習單，可以照你的版型",
 };
 
@@ -51,9 +52,9 @@ export const TOOL_BLURB: Record<Tool, string> = {
 export const TOOL_SUBTITLE: Record<Tool, string> = {
   mimic: "上傳你以前的學習單，Manna 照它的樣式為新課文出題。",
   comprehension: "附上一篇文章，寫下學習目標（可以不寫），Manna 依 Bloom 認知層次出閱讀理解題，附答案與文本依據。",
-  tiered: "同一篇文章做成基礎／一般／進階三個版本；基礎版的題目附提示。",
+  tiered: "同一篇文章做成基礎／一般／進階三個版本。三個版本目標相同，差在提示與支持的多寡。",
   activity: "附上文章、寫下學習目標，Manna 規劃從引起動機到統整的一節課流程。",
-  kit: "一次做好活動流程、分層學習單和教師版答案，下載成一份 DOCX。",
+  kit: "一次做好活動流程、差異化學習單和教師版答案，下載成一份 DOCX。",
   worksheet: "暖身、逐段任務到 Exit ticket 的完整學習單，可以照你的版型排版。",
 };
 
@@ -70,11 +71,21 @@ export const TOOL_FIELDS: Record<Tool, { bloom: boolean; formats: boolean; templ
   worksheet: { bloom: true, formats: true, template: true },
 };
 
-/** 題數 when the teacher has not changed it. */
-export const defaultCount = (tool: Tool): number => (tool === "tiered" ? 12 : 8);
+/**
+ * 題數 when the teacher has not changed it. A 差異化學習單 prints every question in all three
+ * versions, so it starts at one per Bloom level.
+ */
+export const defaultCount = (tool: Tool): number => (tool === "tiered" ? 6 : 8);
 
 /** 題型 (fixed labels; none chosen = 自動). */
 export const FORMAT_CHOICES = ["選擇題", "是非題", "配對題", "填空題", "簡答題", "表格整理", "段落寫作"] as const;
+
+/**
+ * The 題型 a tool offers: a 差異化學習單 only uses open answers, where the versions' support and
+ * expected answers (a phrase in 基礎版, full sentences above) mean something.
+ */
+export const formatChoices = (tool: Tool): readonly string[] =>
+  tool === "tiered" ? FORMAT_CHOICES.filter((f) => ["簡答題", "表格整理", "段落寫作"].includes(f)) : FORMAT_CHOICES;
 
 export const MATERIAL_REQUIRED = "先附上文章或教材";
 

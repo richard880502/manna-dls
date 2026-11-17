@@ -37,7 +37,7 @@ export const bloomTitle = (level: Bloom | null | undefined) =>
 export const OUTPUT_LABEL: Record<WsOutput, string> = {
   worksheet: "學習單",
   comprehension: "閱讀理解題",
-  tiered: "分層練習",
+  tiered: "差異化學習單",
 };
 export const OUTPUTS: readonly WsOutput[] = ["worksheet", "comprehension", "tiered"];
 
@@ -54,7 +54,7 @@ export const LEVEL_MAX = 12;
 export const MINUTES_PER_ITEM = 2.5;
 
 /** What the server does when 題數 is 自動. */
-export const defaultTotal = (output: WsOutput) => (output === "tiered" ? 12 : 8);
+export const defaultTotal = (output: WsOutput) => (output === "tiered" ? 6 : 8);
 
 export type FullCounts = Record<Bloom, number>;
 
