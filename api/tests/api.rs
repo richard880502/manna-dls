@@ -1244,6 +1244,7 @@ async fn admin_prompts_imports_and_permissions() {
             "worksheet_template_details",
             "worksheet_template_outline",
             "worksheet_template_section",
+            "worksheet_tiered_level",
             "worksheet_warmup"
         ]
     );
@@ -1262,8 +1263,9 @@ async fn admin_prompts_imports_and_permissions() {
         // v2 since 0016_mimic.sql, worksheet_block_revise v1 since 0020_worksheet_block_revise.sql,
         // image_style and worksheet_image_slots since 0021_worksheet_images.sql, objective_check
         // and objective_draft v1, worksheet_exit_ticket v2 and worksheet_tasks v3 since
-        // 0022_siop_objectives.sql, siop_selfcheck v1 since 0024_siop_selfcheck.sql.
-        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 3, 2, 1, 2, 1]
+        // 0022_siop_objectives.sql, siop_selfcheck v1 since 0024_siop_selfcheck.sql,
+        // worksheet_bloom_level v2 and worksheet_tiered_level v1 since 0025_siop_differentiated.sql.
+        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 2, 2, 1, 1, 3, 2, 1, 2, 1, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

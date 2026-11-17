@@ -45,7 +45,7 @@
 //! | `FAKE_IMG_PHOTO`         | tasks: the second block gets a slot asking for a map (the server makes it `photo_needed`) |
 //! | `FAKE_IMG_FAIL`, `FAKE_IMG_BLOCKED`, `FAKE_IMG_SLOW`, `FAKE_IMG_TIMEOUT` | copied into every slot's description, for the fake picture provider (`worksheet::images::client`) |
 //!
-//! 閱讀理解題／分層練習 (per Bloom level), see [`bloom_level`] and [`bloom_check`]:
+//! 閱讀理解題 (per Bloom level), see [`bloom_level`] and [`bloom_check`]:
 //!
 //! | marker                   | effect                                                              |
 //! |--------------------------|---------------------------------------------------------------------|
@@ -65,6 +65,9 @@
 //! | `FAKE_REVISE_BAD`        | the change uses an answer format outside the fixed labels in both calls (the question stays as it was) |
 //! | `FAKE_REVISE_BAD_ONCE`   | the same on the first call only (the retry is fine)                 |
 //! | `FAKE_REVISE_NOTHING`    | every question kept; the reply asks a question (nothing to propose) |
+//!
+//! 差異化學習單 (`worksheet_tiered_level`): see [`tiered_level`] (`FAKE_TIER_LOCATION`,
+//! `FAKE_TIER_FLAT`, `FAKE_BLOCK`).
 
 use serde_json::{json, Value};
 
@@ -738,7 +741,8 @@ const TIER_CORE_LABEL: &str = "core";
 
 /// `count` questions of one level, cycling through its formats and the paragraphs, each about
 /// the paragraph's first sentence. Remember / understand questions quote it as evidence; every
-/// question has a hint. A redo (questions the judge rated as another level) is marked "redo".
+/// question has a hint; then three written steps and an example (prompt version 2, R5). A redo
+/// (questions the judge rated as another level) is marked "redo".
 pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let bloom = ctx["bloom"].as_str().unwrap_or("remember");
     let count = ctx["count"].as_u64().unwrap_or(1).max(1) as usize;
@@ -759,10 +763,10 @@ pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
         })
         .unwrap_or_default();
     if has("FAKE_BLOCK") || formats.is_empty() || paragraphs.is_empty() {
-        return json!({ "instructions": "", "items": [{
+        return json!({ "items": [{
             "answer_format": "探究", "prompt": "請討論。", "options": [], "answer": "",
             "evidence": "", "paragraph_ids": [], "hint": "",
-        }] });
+        }], "steps": [], "example": "" });
     }
     let quotes = matches!(bloom, "remember" | "understand");
     let no_evidence = has("FAKE_BLOOM_NO_EVIDENCE") && attempt == 1 && bloom == "remember" && !redo;
@@ -792,11 +796,19 @@ pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
                 "answer": raw["answer_en"],
                 "evidence": evidence,
                 "paragraph_ids": [code],
-                "hint": format!("Look at {label} again."),
+                "hint": "I think the answer is … because …",
             })
         })
         .collect();
-    json!({ "instructions": "Read the text again and answer the questions.", "items": items })
+    json!({
+        "items": items,
+        "steps": [
+            "Read the questions first.",
+            "Read the text again and underline the words that help you.",
+            "Write your answers, then check them against the text."
+        ],
+        "example": "Q: Who is the story about? A: It is about a shop owner and her neighbors.",
+    })
 }
 
 /// The judge rates every question at its target level (`fake_context` carries the targets;
@@ -898,5 +910,194 @@ fn kept_item(it: &Value) -> Value {
         "options": [],
         "answer": "",
         "bloom": it["bloom"].as_str().unwrap_or("understand"),
+    })
+}
+
+// ---------------------------------------------------------------- 差異化學習單 (per Bloom level)
+
+/// The support forms per question, cycling: (基礎版, 一般版, 進階版), strictly less each time.
+const FAKE_FORMS: [(&str, &str, &str); 3] = [
+    ("sentence_frame", "sentence_starter", "none"),
+    ("cloze", "word_bank", "sentence_starter"),
+    ("word_bank", "sentence_frame", "none"),
+];
+
+/// The two longest words of a sentence (the words a frame takes out), in sentence order.
+fn key_words(sentence: &str) -> Vec<String> {
+    let words: Vec<String> = sentence
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .filter(|w| w.len() > 2)
+        .collect();
+    let mut longest = words.clone();
+    longest.sort_by_key(|w| std::cmp::Reverse(w.len()));
+    longest.truncate(2);
+    words
+        .into_iter()
+        .filter(|w| longest.contains(w))
+        .take(2)
+        .collect()
+}
+
+/// `sentence` with `words` replaced by blanks.
+fn blanked(sentence: &str, words: &[String]) -> String {
+    sentence
+        .split_whitespace()
+        .map(|w| {
+            let bare = w.trim_matches(|c: char| !c.is_alphanumeric());
+            if words.iter().any(|k| k == bare) {
+                w.replace(bare, "___")
+            } else {
+                w.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// One version of a fake question.
+fn fake_version(kind: &str, sentence: &str, level: &str) -> Value {
+    let keys = key_words(sentence);
+    let full = format!("The text tells us this: {sentence}");
+    let (model, support, bank): (String, Vec<String>, Vec<String>) = match kind {
+        "cloze" => (
+            sentence.to_string(),
+            vec![blanked(sentence, &keys[..keys.len().min(1)])],
+            keys.iter().take(1).cloned().collect(),
+        ),
+        "sentence_frame" => (
+            sentence.to_string(),
+            vec![blanked(sentence, &keys)],
+            keys.clone(),
+        ),
+        "word_bank" => (
+            String::new(),
+            vec!["Use two of these words in your answer.".to_string()],
+            keys.iter()
+                .cloned()
+                .chain(["because".to_string(), "so".to_string()])
+                .collect(),
+        ),
+        "sentence_starter" => (
+            String::new(),
+            vec!["The text tells us that …".to_string()],
+            Vec::new(),
+        ),
+        _ => (String::new(), Vec::new(), Vec::new()),
+    };
+    let (answer, scoring) = match level {
+        "basic" => (
+            keys.join(" "),
+            "（測試）寫出關鍵片語即可給分，不要求完整句。",
+        ),
+        "standard" => (full, "（測試）一個完整句，內容正確即給分。"),
+        _ => (
+            format!("{full} I think this matters for the whole text."),
+            "（測試）1–2 個完整句，用自己的話說明。",
+        ),
+    };
+    json!({
+        "support_kind": kind, "model_sentence": model, "support": support,
+        "word_bank": bank, "answer": answer, "scoring_zh": scoring,
+    })
+}
+
+/// `count` questions of one level for a 差異化學習單, like [`bloom_level`] (formats and
+/// paragraphs in turn, remember / understand questions quote the paragraph's first sentence),
+/// each with its three versions in the forms of `FAKE_FORMS`; then three steps, an example and
+/// linking words (none for remember). Markers:
+///
+/// | marker                | effect                                                              |
+/// |-----------------------|---------------------------------------------------------------------|
+/// | `FAKE_TIER_LOCATION`  | every call: the first question's 基礎版 support also says 「Look at paragraph 1 again.」 (the line is removed) |
+/// | `FAKE_TIER_FLAT`      | first attempt: the first question's 一般版 has as much support as its 基礎版 (repaired) |
+/// | `FAKE_BLOCK`          | only formats outside the level's (the level fails)                  |
+pub fn tiered_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    let bloom = ctx["bloom"].as_str().unwrap_or("remember");
+    let count = ctx["count"].as_u64().unwrap_or(1).max(1) as usize;
+    let formats = strings(&ctx["formats"]);
+    let run_no = ctx["run_no"].as_i64().unwrap_or(1);
+    let redo = ctx["redo"] == true;
+    let paragraphs: Vec<(String, String)> = ctx["paragraphs"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|p| {
+                    (
+                        p["code"].as_str().unwrap_or("P1").to_string(),
+                        p["text"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let steps = json!([
+        "Read the question first.",
+        "Read the text again and underline the words that help you.",
+        "Write your answer. Use the support under the question if you need it."
+    ]);
+    if has("FAKE_BLOCK") || formats.is_empty() || paragraphs.is_empty() {
+        return json!({ "items": [{
+            "answer_format": "探究", "prompt": "請討論。", "evidence": "", "paragraph_ids": [],
+            "advanced": fake_version("none", "", "advanced"),
+            "standard": fake_version("none", "", "standard"),
+            "basic": fake_version("none", "", "basic"),
+        }], "steps": steps, "example": "",
+        "linking_words": { "function": "", "basic": [], "standard_more": [], "advanced_more": [] } });
+    }
+    let quotes = matches!(bloom, "remember" | "understand");
+    let tag = if redo {
+        format!("[{bloom} v{run_no} redo]")
+    } else {
+        format!("[{bloom} v{run_no}]")
+    };
+    let items: Vec<Value> = (0..count)
+        .map(|k| {
+            let (code, text) = &paragraphs[k % paragraphs.len()];
+            let sentence = first_sentence(text);
+            let label = format!("paragraph {}", k % paragraphs.len() + 1);
+            let format = formats[k % formats.len()].as_str();
+            let raw = item(format, &label, &sentence, k + 1, "core");
+            let (basic, standard, advanced) = FAKE_FORMS[k % FAKE_FORMS.len()];
+            let standard = if k == 0 && has("FAKE_TIER_FLAT") && attempt == 1 {
+                basic
+            } else {
+                standard
+            };
+            let mut basic_v = fake_version(basic, &sentence, "basic");
+            if k == 0 && has("FAKE_TIER_LOCATION") {
+                if let Some(lines) = basic_v["support"].as_array_mut() {
+                    lines.push(json!("Look at paragraph 1 again."));
+                }
+            }
+            json!({
+                "answer_format": format,
+                "prompt": format!("{} {tag}", raw["prompt_en"].as_str().unwrap_or_default()),
+                "evidence": if quotes { sentence.clone() } else { String::new() },
+                "paragraph_ids": [code],
+                "advanced": fake_version(advanced, &sentence, "advanced"),
+                "standard": fake_version(standard, &sentence, "standard"),
+                "basic": basic_v,
+            })
+        })
+        .collect();
+    let linking = match bloom {
+        "remember" => {
+            json!({ "function": "", "basic": [], "standard_more": [], "advanced_more": [] })
+        }
+        "analyze" | "evaluate" => json!({
+            "function": "giving reasons", "basic": ["because", "so"],
+            "standard_more": ["since", "as a result"], "advanced_more": ["consequently", "therefore"],
+        }),
+        _ => json!({
+            "function": "putting ideas in order", "basic": ["first", "next", "then"],
+            "standard_more": ["after that", "finally"], "advanced_more": ["subsequently"],
+        }),
+    };
+    json!({
+        "items": items,
+        "steps": steps,
+        "example": "Q: Who is the story about? A: It is about a shop owner and her neighbors.",
+        "linking_words": linking,
     })
 }

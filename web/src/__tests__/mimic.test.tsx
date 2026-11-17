@@ -184,7 +184,7 @@ describe("照我的學習單做: where it is", () => {
       within(screen.getByRole("group", { name: "要做什麼" }))
         .getAllByRole("button")
         .map((b) => b.textContent),
-    ).toEqual(["照我的學習單做", "閱讀理解題", "分層練習", "課堂活動", "教學套件", "學習單"]);
+    ).toEqual(["照我的學習單做", "閱讀理解題", "差異化學習單", "課堂活動", "教學套件", "學習單"]);
 
     await user.click(first);
     await waitFor(() => expect(router.state.location.pathname).toBe("/create/mimic"));
@@ -227,7 +227,7 @@ describe("照我的學習單做: where it is", () => {
       within(screen.getByRole("group", { name: "換一種" }))
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["照我的學習單做", "閱讀理解題", "分層練習", "課堂活動", "教學套件", "完整學習單"]);
+    ).toEqual(["照我的學習單做", "閱讀理解題", "差異化學習單", "課堂活動", "教學套件", "完整學習單"]);
   });
 
   it("完整學習單 keeps its 版型 select and links to 照我的學習單做, keeping what was filled in", async () => {

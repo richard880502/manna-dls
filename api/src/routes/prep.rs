@@ -615,6 +615,7 @@ pub async fn kit(
             let ws = worksheet.as_ref().map(|(ws, v)| KitWorksheet {
                 title: &ws.title,
                 content: &v.content,
+                material: Some(&ws.material),
                 tiered: v
                     .content
                     .chosen

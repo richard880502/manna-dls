@@ -5,7 +5,8 @@
 //! The worksheet is one ordered list of blocks. The student and teacher versions of each level
 //! (基礎版／一般版／進階版) are projections of it made in code ([`assemble::project`]): the three
 //! levels share the objectives and the core items and differ only in which items and scaffolds
-//! they show and how much room there is to answer (spec §5.4).
+//! they show and how much room there is to answer (spec §5.4). In a 差異化學習單 every question is
+//! in all three and carries its own support and answer per version ([`Item::tiers`]).
 
 pub mod ai;
 pub mod assemble;
@@ -22,6 +23,7 @@ pub mod store;
 pub mod sync;
 pub mod task_words;
 pub mod template;
+pub mod tiered;
 pub mod vocab;
 
 use std::collections::{BTreeMap, HashSet};
@@ -31,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::sop::{ExitKind, InfoFunction};
 pub use bloom::{Bloom, Output};
 pub use material::Material;
+pub use tiered::{ItemTier, SupportKind};
 
 // ---------------------------------------------------------------- fixed labels (spec §5)
 // These are display labels fixed by the spec: never rename, merge or split them.
@@ -599,8 +602,19 @@ pub struct Item {
     pub origin: Origin,
     /// The question's Bloom level (`null`: not labelled). Teacher version only.
     pub bloom: Option<Bloom>,
-    /// A hint or sentence starter, printed only in 基礎版.
+    /// A hint or sentence starter, printed only in 基礎版 (閱讀理解題, and 分層練習 made before
+    /// the 差異化學習單 redesign).
     pub hint: String,
+    /// 差異化學習單: the question's support, answer and scoring note per version (T3–T6); empty
+    /// for every other question, which prints `hint` and `answer` as before.
+    pub tiers: Vec<ItemTier>,
+}
+
+impl Item {
+    /// The question's part for one version of a 差異化學習單, if it has one.
+    pub fn tier(&self, level: Level) -> Option<&ItemTier> {
+        self.tiers.iter().find(|t| t.level == level)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -642,7 +656,7 @@ pub struct Block {
     /// The template section this block was generated from (a worksheet made from a template):
     /// regenerating the block re-runs that section.
     pub template_section_id: Option<String>,
-    /// The Bloom level this block was generated for (閱讀理解題／分層練習): regenerating the
+    /// The Bloom level this block was generated for (閱讀理解題／差異化學習單): regenerating the
     /// block re-runs that level.
     pub bloom: Option<Bloom>,
     /// Pictures that belong in this block (written by the model that wrote the block, at most
@@ -821,6 +835,30 @@ fn check_ids<'a>(what: &str, ids: impl Iterator<Item = &'a str>) -> Result<(), S
     Ok(())
 }
 
+/// A question's versions (差異化學習單): one per level, in level order, each within the limits.
+fn check_tiers(tiers: &mut [ItemTier]) -> Result<(), String> {
+    if tiers.len() > Level::ALL.len() {
+        return Err("一題最多有三個版本。".to_string());
+    }
+    let mut seen = HashSet::new();
+    for t in tiers.iter() {
+        if !seen.insert(t.level) {
+            return Err("一題的同一個版本只能有一份。".to_string());
+        }
+        if t.support.len() > 12 || t.word_bank.len() > 30 {
+            return Err("一題的支持或字庫太多了。".to_string());
+        }
+        for line in t.support.iter().chain(&t.word_bank) {
+            check_text("支持", line)?;
+        }
+        check_text("範句", &t.model_sentence)?;
+        check_text("參考答案", &t.answer)?;
+        check_text("評分說明", &t.scoring)?;
+    }
+    tiers.sort_by_key(|t| t.level);
+    Ok(())
+}
+
 impl Content {
     /// Checks what a client sent and puts labels and levels in canonical order. Labels must come
     /// from the spec's sets here too, so an edit can never introduce another one.
@@ -872,6 +910,7 @@ impl Content {
                 check_text("參考答案", &i.answer)?;
                 check_text("依據", &i.evidence)?;
                 check_text("提示", &i.hint)?;
+                check_tiers(&mut i.tiers)?;
                 if i.options.len() > 12 {
                     return Err("一題最多 12 個選項。".to_string());
                 }

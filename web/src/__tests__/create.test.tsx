@@ -169,7 +169,7 @@ describe("建立: the generator", () => {
     expect(tools.getAllByRole("link").map((a) => a.textContent)).toEqual([
       "照我的學習單做",
       "閱讀理解題",
-      "分層練習",
+      "差異化學習單",
       "課堂活動",
       "教學套件",
       "完整學習單",
@@ -180,21 +180,34 @@ describe("建立: the generator", () => {
     expect(switcher).toHaveFocus();
 
     await user.click(switcher);
-    await user.click(within(screen.getByRole("group", { name: "換一種" })).getByRole("link", { name: "分層練習" }));
+    await user.click(within(screen.getByRole("group", { name: "換一種" })).getByRole("link", { name: "差異化學習單" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/create/tiered"));
-    expect(heading()).toHaveTextContent("來做一份 分層練習");
+    expect(heading()).toHaveTextContent("來做一份 差異化學習單");
+    // UI 3: the subtitle, word for word.
+    expect(screen.getByText("同一篇文章做成基礎／一般／進階三個版本。三個版本目標相同，差在提示與支持的多寡。")).toHaveClass("lead");
     expect(screen.queryByRole("group", { name: "換一種" })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "內容目標（選填）" })).toHaveValue("I can explain why bees matter.");
     expect(article()).toHaveValue("Bees are busy.");
     expect(within(screen.getByRole("group", { name: "題數" })).getByText("9")).toBeInTheDocument();
   });
 
-  it("題數 starts at 12 for 分層練習 (8 elsewhere)", async () => {
+  it("題數 starts at 6 for 差異化學習單 (8 elsewhere): every question is in all three versions", async () => {
     signIn();
     mockApi(routes());
     await open("/create/tiered");
-    expect(within(screen.getByRole("group", { name: "題數" })).getByText("12")).toBeInTheDocument();
-    expect(summaryText()).toBe("12 題 · 記憶 2・理解 3・應用 3・分析 2・評鑑 1・創造 1 · 約 30 分鐘");
+    expect(within(screen.getByRole("group", { name: "題數" })).getByText("6")).toBeInTheDocument();
+    expect(summaryText()).toBe("6 題 · 記憶 1・理解 1・應用 1・分析 1・評鑑 1・創造 1 · 約 15 分鐘");
+  });
+
+  it("差異化學習單: the renamed title, the new subtitle, and only open answer formats", async () => {
+    signIn();
+    mockApi(routes());
+    await open("/create/tiered");
+    expect(heading()).toHaveTextContent("來做一份 差異化學習單");
+    expect(heading()).not.toHaveTextContent("分層");
+    expect(screen.getByText("同一篇文章做成基礎／一般／進階三個版本。三個版本目標相同，差在提示與支持的多寡。")).toBeInTheDocument();
+    const formats = within(screen.getByRole("group", { name: "題型" }));
+    expect(formats.getAllByRole("button").map((b) => b.textContent)).toEqual(["簡答題", "表格整理", "段落寫作"]);
   });
 
   it.each(["/create", "/create/nonsense"])("%s opens 閱讀理解題", async (path) => {
@@ -386,8 +399,8 @@ describe("建立: the generator", () => {
       { bloom: true, formats: true, template: false },
       {
         kind: "tiered",
-        request: "分層練習",
-        options: { bloom_counts: { remember: 2, understand: 3, apply: 3, analyze: 2, evaluate: 1, create: 1 }, question_count: 12 },
+        request: "差異化學習單",
+        options: { bloom_counts: { remember: 1, understand: 1, apply: 1, analyze: 1, evaluate: 1, create: 1 }, question_count: 6 },
       },
     ],
     ["activity", { bloom: false, formats: false, template: false }, { kind: "activity", request: "課堂活動" }],

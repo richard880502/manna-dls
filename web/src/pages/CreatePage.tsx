@@ -41,7 +41,6 @@ import { objectiveOptions } from "../lib/objectives";
 import { ocrBusyError, ocrBusyLine, ocrOpen } from "../lib/ocr";
 import {
   EXEMPLAR_TEXT,
-  FORMAT_CHOICES,
   LESSON_TEXT_HEADING,
   MATERIAL_REQUIRED,
   MIMIC_LINK,
@@ -58,6 +57,7 @@ import {
   TOOL_SUBTITLE,
   asCreateRequest,
   defaultCount,
+  formatChoices,
   isTool,
   kindOf,
   mimicPath,
@@ -318,7 +318,9 @@ function Generator({ tool }: { tool: Tool }) {
       options.bloom_counts = nonZeroCounts(counts);
       options.question_count = total;
     }
-    if (fields.formats && formats.length > 0) options.answer_formats = FORMAT_CHOICES.filter((f) => formats.includes(f));
+    // Only the 題型 this tool offers (a 差異化學習單 uses open answers only).
+    const picked = formatChoices(tool).filter((f) => formats.includes(f));
+    if (fields.formats && picked.length > 0) options.answer_formats = picked;
     Object.assign(options, objectiveOptions(content, language));
 
     setBusy(true);
@@ -581,7 +583,7 @@ function Generator({ tool }: { tool: Tool }) {
           <fieldset className="create-field" disabled={busy}>
             <legend className="field-label">題型</legend>
             <div className="format-chips">
-              {FORMAT_CHOICES.map((f) => (
+              {formatChoices(tool).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -593,7 +595,12 @@ function Generator({ tool }: { tool: Tool }) {
                 </button>
               ))}
             </div>
-            <p className="field-hint">{formats.length === 0 ? "沒有選：自動（依每個層次適合的題型）" : `已選 ${formats.length} 種`}</p>
+            <p className="field-hint">
+              {(() => {
+                const n = formatChoices(tool).filter((f) => formats.includes(f)).length;
+                return n === 0 ? "沒有選：自動（依每個層次適合的題型）" : `已選 ${n} 種`;
+              })()}
+            </p>
           </fieldset>
         )}
 

@@ -1333,7 +1333,7 @@ export type WsScaffoldType = "verbal" | "instructional" | "procedural";
 
 /** Bloom 認知層次（固定集合，順序一律由記憶到創造；伺服器只接受這些 id）。中文標籤在 lib/bloom.ts。 */
 export type Bloom = "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
-/** 要做什麼：學習單（原本的流程）｜閱讀理解題｜分層練習 */
+/** 要做什麼：學習單（原本的流程）｜閱讀理解題｜差異化學習單（原名分層練習） */
 export type WsOutput = "worksheet" | "comprehension" | "tiered";
 /** 每個層次的題數（0–12，合計 3–30）；有值時取代 `bloom` 與 `question_count` */
 export type BloomCounts = Partial<Record<Bloom, number>>;
@@ -1351,7 +1351,7 @@ export interface WorksheetSettings {
   output?: WsOutput;
   /** 目標層次，依 Bloom 順序、不重複；空陣列＝六個都要 */
   bloom?: Bloom[];
-  /** 3–30；null＝閱讀理解題 8 題、分層練習 12 題 */
+  /** 3–30；null＝閱讀理解題 8 題、差異化學習單 6 題 */
   question_count?: number | null;
   /** 每個層次的題數；有值時取代 bloom 與 question_count（大於 0 的層次就是要出的層次） */
   bloom_counts?: BloomCounts | null;
@@ -1427,8 +1427,31 @@ export interface WsItem {
   origin: WsOrigin;
   /** Bloom 認知層次；舊題目與未標的是 null。教師改的值由伺服器重新驗證。 */
   bloom?: Bloom | null;
-  /** 提示或句型開頭：只印在基礎版 */
+  /** 提示或句型開頭：只印在基礎版（閱讀理解題，與改版前的分層練習） */
   hint?: string;
+  /**
+   * 差異化學習單：這一題在三個版本的支持、參考答案與評分說明（依版本順序）；其他題目是 []。
+   * 舊資料沒有這個鍵。
+   */
+  tiers?: WsItemTier[];
+}
+
+/** 支持的形式，由多到少：預填克漏字 → 字庫 → 句型框架 → 句首 → 不給支持（SIOP T3） */
+export type WsSupportKind = "cloze" | "word_bank" | "sentence_frame" | "sentence_starter" | "none";
+
+/** 差異化學習單的一題在一個版本的部分 */
+export interface WsItemTier {
+  level: WsLevel;
+  support_kind: WsSupportKind;
+  /** 克漏字與句型框架挖空前的完整範句（只在教師端） */
+  model_sentence: string;
+  /** 印在題目下方，一行一項；空格是 ___ */
+  support: string[];
+  word_bank: string[];
+  /** 這個版本預期的答案（只在教師參考版） */
+  answer: string;
+  /** 這個版本的評分說明（中文，只在教師參考版） */
+  scoring: string;
 }
 
 export interface WsScaffold {
@@ -1879,6 +1902,10 @@ export interface WsSheet {
   title: string;
   level: WsLevel;
   audience: WsAudience;
+  /** 學生版印的中性代號 "A"／"B"／"C"（不印程度名稱）；只有一個版本時是 null。舊伺服器沒有這個鍵。 */
+  version_code?: string | null;
+  /** 只有差異化學習單的教師版：分層說明 */
+  tiering_note?: string;
   objectives: string[];
   blocks: WsSheetBlock[];
 }
@@ -1907,10 +1934,16 @@ export interface WsSheetBlock {
     bloom?: Bloom | null;
     /** 只有基礎版（印成 "Hint: …"） */
     hint?: string;
+    /** 差異化學習單：這個版本的支持（不給支持時沒有這個鍵） */
+    support?: { kind: WsSupportKind; heading: string; lines: string[]; word_bank: string[] };
+    /** 差異化學習單，只有教師版：這個版本的評分說明 */
+    scoring?: string;
   }>;
   teacher_notes?: string;
   /** 這一區的圖（印在作答指示之後）；沒有圖時沒有這個欄位 */
   images?: WsSheetImage[];
+  /** 這個版本印了簡化文本（調整文本）時，同一區的原文段落（T8）；沒有時沒有這個鍵 */
+  original_text?: string[];
 }
 
 export interface WsVersionRow {
@@ -1922,8 +1955,8 @@ export interface WsVersionRow {
 // ---- 備課對話（prep sessions）----
 
 /**
- * comprehension／tiered：output 為閱讀理解題／分層練習的學習單（像 worksheet）。
- * kit：教學套件＝活動流程（result）＋分層學習單（worksheet），兩者都好才 done。
+ * comprehension／tiered：output 為閱讀理解題／差異化學習單的學習單（像 worksheet）。
+ * kit：教學套件＝活動流程（result）＋差異化學習單（worksheet），兩者都好才 done。
  */
 export type PrepKind =
   | "worksheet"

@@ -7,6 +7,7 @@ import type {
   WsBlock,
   WsExportFormat,
   WsItem,
+  WsItemTier,
   WsLevel,
   WsScaffold,
 } from "../../api/types";
@@ -18,6 +19,8 @@ import {
   INFO_FUNCTION_LABEL,
   LEVEL_LABEL,
   SCAFFOLD_TYPE_LABEL,
+  SUPPORT_KINDS_FOR,
+  SUPPORT_KIND_LABEL,
   editedOrigin,
   isFromManna,
   moveBlock,
@@ -25,7 +28,10 @@ import {
   newId,
   newItem,
   projectSheet,
+  studentVersionName,
   toggleIn,
+  versionCode,
+  versionLabel,
   type SheetBlock,
 } from "../../lib/worksheet";
 import {
@@ -128,9 +134,102 @@ function LevelChips({
   );
 }
 
+/** Lines typed one per line (blank lines dropped on save by the server's trim). */
+const linesOf = (text: string) => text.split("\n").map((l) => l.trimStart());
+/** A word bank typed with commas (or 、). */
+const wordsOf = (text: string) => text.split(/[,、]/).map((w) => w.trimStart());
+
+/**
+ * 差異化學習單: one question's part for the version shown — its support form, the lines printed
+ * under the question and the word bank; in the teacher view also this version's answer and
+ * scoring note.
+ */
+function TierEditor({
+  tier,
+  no,
+  level,
+  teacher,
+  disabled,
+  onChange,
+}: {
+  tier: WsItemTier;
+  no: number;
+  level: WsLevel;
+  teacher: boolean;
+  disabled: boolean;
+  onChange: (change: (t: WsItemTier) => WsItemTier) => void;
+}) {
+  const kinds = SUPPORT_KINDS_FOR[level].includes(tier.support_kind)
+    ? SUPPORT_KINDS_FOR[level]
+    : [tier.support_kind, ...SUPPORT_KINDS_FOR[level]];
+  const name = LEVEL_LABEL[level];
+  return (
+    <div className="ws-hint ws-tier" lang="zh-Hant" role="group" aria-label={`${name}的支持 ${no}`}>
+      <span>
+        {name}的支持
+        <select
+          aria-label={`支持形式 ${no}`}
+          value={tier.support_kind}
+          disabled={disabled}
+          onChange={(e) => onChange((t) => ({ ...t, support_kind: e.target.value as WsItemTier["support_kind"] }))}
+        >
+          {kinds.map((k) => (
+            <option key={k} value={k}>
+              {SUPPORT_KIND_LABEL[k]}
+            </option>
+          ))}
+        </select>
+      </span>
+      {tier.support_kind !== "none" && (
+        <>
+          <SheetText
+            label={`支持 ${no}（每行一項）`}
+            value={tier.support.join("\n")}
+            placeholder="The writer thinks that ___ because ___."
+            disabled={disabled}
+            onChange={(text) => onChange((t) => ({ ...t, support: linesOf(text) }))}
+          />
+          <SheetText
+            label={`字庫 ${no}（用逗號分開）`}
+            value={tier.word_bank.join(", ")}
+            placeholder="Word bank"
+            disabled={disabled}
+            onChange={(text) => onChange((t) => ({ ...t, word_bank: wordsOf(text) }))}
+          />
+        </>
+      )}
+      {teacher && (
+        <div className="ws-answer">
+          <div className="ws-answer-row">
+            <span>參考答案（{name}）</span>
+            <SheetText
+              label={`參考答案 ${no}`}
+              value={tier.answer}
+              disabled={disabled}
+              onChange={(answer) => onChange((t) => ({ ...t, answer }))}
+            />
+          </div>
+          <div className="ws-answer-row">
+            <span>評分說明（{name}）</span>
+            <SheetText
+              label={`評分說明 ${no}`}
+              lang="zh-Hant"
+              value={tier.scoring}
+              disabled={disabled}
+              onChange={(scoring) => onChange((t) => ({ ...t, scoring }))}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface BlockProps {
   ws: WorksheetController;
   view: SheetBlock;
+  /** The version shown (a 差異化學習單 question edits this version's part). */
+  level: WsLevel;
   index: number;
   count: number;
   audience: WsAudience;
@@ -146,6 +245,7 @@ interface BlockProps {
 function BlockSection({
   ws,
   view,
+  level,
   index,
   count,
   audience,
@@ -183,6 +283,11 @@ function BlockSection({
     patch((b) => ({
       ...b,
       items: b.items.map((it) => (it.id === id ? { ...change(it), origin: editedOrigin(it.origin) } : it)),
+    }));
+  const patchTier = (id: string, change: (t: WsItemTier) => WsItemTier) =>
+    patchItem(id, (it) => ({
+      ...it,
+      tiers: (it.tiers ?? []).map((t) => (t.level === level ? change(t) : t)),
     }));
   const patchScaffold = (id: string, change: (s: WsScaffold) => WsScaffold) =>
     patch((b) => ({
@@ -516,6 +621,7 @@ function BlockSection({
         {shownItems.map(({ item, no, lines }) => {
           const hasOptions =
             item.options.length > 0 || ["選擇題", "是非題", "配對題"].includes(item.answer_format ?? "");
+          const tier = item.tiers?.find((t) => t.level === level);
           return (
             <li key={item.id} value={no}>
               <SheetText
@@ -537,29 +643,43 @@ function BlockSection({
                   }
                 />
               )}
-              <div className="ws-hint" lang="zh-Hant">
-                <span>提示（只印在基礎版）</span>
-                <SheetText
-                  label={`提示（只印在基礎版） ${no}`}
-                  value={item.hint ?? ""}
-                  placeholder="Hint: …"
+              {tier ? (
+                <TierEditor
+                  tier={tier}
+                  no={no}
+                  level={level}
+                  teacher={teacher}
                   disabled={locked}
-                  onChange={(hint) => patchItem(item.id, (it) => ({ ...it, hint }))}
+                  onChange={(change) => patchTier(item.id, change)}
                 />
-              </div>
+              ) : (
+                <div className="ws-hint" lang="zh-Hant">
+                  <span>提示（只印在基礎版）</span>
+                  <SheetText
+                    label={`提示（只印在基礎版） ${no}`}
+                    value={item.hint ?? ""}
+                    placeholder="Hint: …"
+                    disabled={locked}
+                    onChange={(hint) => patchItem(item.id, (it) => ({ ...it, hint }))}
+                  />
+                </div>
+              )}
               {!teacher &&
                 Array.from({ length: lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
               {teacher && (
                 <div className="ws-answer" lang="zh-Hant">
-                  <div className="ws-answer-row">
-                    <span>參考答案</span>
-                    <SheetText
-                      label={`參考答案 ${no}`}
-                      value={item.answer}
-                      disabled={locked}
-                      onChange={(answer) => patchItem(item.id, (it) => ({ ...it, answer }))}
-                    />
-                  </div>
+                  {/* A 差異化學習單 question has its answer per version (in TierEditor). */}
+                  {!tier && (
+                    <div className="ws-answer-row">
+                      <span>參考答案</span>
+                      <SheetText
+                        label={`參考答案 ${no}`}
+                        value={item.answer}
+                        disabled={locked}
+                        onChange={(answer) => patchItem(item.id, (it) => ({ ...it, answer }))}
+                      />
+                    </div>
+                  )}
                   <div className="ws-answer-row">
                     <span>依據（教材原文）</span>
                     <SheetText
@@ -659,6 +779,7 @@ function BlockSection({
 }
 
 function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) {
+  const code = versionCode(ws.state?.content.levels ?? [], level);
   const ids = useId();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -692,6 +813,7 @@ function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) 
       <h2 id={`${ids}-h`}>匯出</h2>
       <p className="quiet-note">
         匯出目前這個分頁（{LEVEL_LABEL[level]}）。DOCX 可以再用 Word 編輯；參考答案只在教師參考版。
+        {code && `學生版印成「${studentVersionName(code)}」，不印程度名稱。`}
       </p>
       <div className="actions">
         {combos.map(([audience, format]) => (
@@ -770,6 +892,10 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const filterCount =
     bloomFilter === null ? 0 : bloomFilter === "none" ? bloomTally.none : bloomTally.counts[bloomFilter];
   const filter: BloomFilter = filterCount > 0 ? bloomFilter : null;
+  // T9: the student sheet carries a neutral code, never the level's name.
+  const code = versionCode(levels, current);
+  const sheetName =
+    audience === "student" && code ? `${versionLabel(code)} ${AUDIENCE_LABEL.student}` : `${LEVEL_LABEL[current]} ${AUDIENCE_LABEL[audience]}`;
 
   return (
     <div className="ws-result">
@@ -860,7 +986,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
         </section>
       )}
 
-      <article className="ws" lang="en" aria-label={`${LEVEL_LABEL[current]} ${AUDIENCE_LABEL[audience]}`}>
+      <article className="ws" lang="en" aria-label={sheetName}>
         <input
           className="ws-title"
           type="text"
@@ -872,6 +998,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
           <span>Class ______</span>
           <span>No. ______</span>
           <span>Name ____________</span>
+          {code && <span className="ws-version">{studentVersionName(code)}</span>}
         </p>
 
         {content.show_objectives && (
@@ -962,6 +1089,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
               key={block.id}
               ws={ws}
               view={view}
+              level={current}
               index={index}
               count={content.blocks.length}
               audience={audience}

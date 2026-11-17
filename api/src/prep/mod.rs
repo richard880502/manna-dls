@@ -104,15 +104,16 @@ pub fn chip_label(kind: &str) -> &'static str {
         KIND_RESOURCES => "找教學資源",
         KIND_ASK => "直接問 AI",
         KIND_COMPREHENSION => "閱讀理解題",
-        KIND_TIERED => "分層練習",
+        KIND_TIERED => "差異化學習單",
         KIND_KIT => "教學套件",
         _ => "修改學習單",
     }
 }
 
 /// Labels the pages send as a request when the teacher typed nothing: the server's chip labels
-/// and the home page's chips and tool names. Such a request is no 「教師的要求」.
-const BARE_LABELS: [&str; 13] = [
+/// and the home page's chips and tool names. Such a request is no 「教師的要求」. 差異化學習單 was
+/// called 分層練習 before: a page loaded before the rename still sends the old name.
+const BARE_LABELS: [&str; 14] = [
     "做學習單",
     "設計評量",
     "規劃教學活動",
@@ -120,6 +121,7 @@ const BARE_LABELS: [&str; 13] = [
     "直接問 AI",
     "修改學習單",
     "閱讀理解題",
+    "差異化學習單",
     "分層練習",
     "課堂活動",
     "教學套件",
@@ -257,8 +259,8 @@ pub fn kit_error(activity: Option<&str>, worksheet: Option<&str>) -> Option<Stri
     match (activity, worksheet) {
         (None, None) => None,
         (Some(a), None) => Some(format!("教學套件的課堂活動沒有完成：{a}")),
-        (None, Some(w)) => Some(format!("教學套件的分層學習單沒有完成：{w}")),
-        (Some(a), Some(w)) => Some(format!("教學套件沒有完成。課堂活動：{a}分層學習單：{w}")),
+        (None, Some(w)) => Some(format!("教學套件的差異化學習單沒有完成：{w}")),
+        (Some(a), Some(w)) => Some(format!("教學套件沒有完成。課堂活動：{a}差異化學習單：{w}")),
     }
 }
 
@@ -2535,6 +2537,9 @@ mod tests {
     #[test]
     fn labels_and_kit_errors() {
         assert!(is_bare_label(" 閱讀理解題 "));
+        // 差異化學習單 and its old name, 分層練習 (a page loaded before the rename).
+        assert!(is_bare_label("差異化學習單") && is_bare_label("分層練習"));
+        assert_eq!(chip_label(KIND_TIERED), "差異化學習單");
         assert!(is_bare_label(chip_label(KIND_KIT)));
         assert!(!is_bare_label("閱讀理解題，8 題"));
         assert_eq!(output_of(KIND_KIT), Some(Output::Tiered));
@@ -2547,7 +2552,7 @@ mod tests {
         );
         assert_eq!(
             kit_error(Some("A。"), Some("W。")).unwrap(),
-            "教學套件沒有完成。課堂活動：A。分層學習單：W。"
+            "教學套件沒有完成。課堂活動：A。差異化學習單：W。"
         );
     }
 

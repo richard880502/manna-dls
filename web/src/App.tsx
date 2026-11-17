@@ -78,7 +78,7 @@ export function AppRoutes() {
       >
         {/* 首頁: a quick box, the five tools and the latest sessions (the class dashboard moved to /classes). */}
         <Route index element={<PrepHomePage />} />
-        {/* 建立: one generator per tool (閱讀理解題, 分層練習, 課堂活動, 教學套件, 完整學習單). */}
+        {/* 建立: one generator per tool (閱讀理解題, 差異化學習單, 課堂活動, 教學套件, 完整學習單). */}
         <Route path="create" element={<Navigate to="/create/comprehension" replace />} />
         <Route path="create/:tool" element={<CreatePage />} />
         <Route path="prep" element={<PrepListPage />} />

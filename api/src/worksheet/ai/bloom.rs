@@ -1,14 +1,19 @@
-//! 閱讀理解題 (`output = "comprehension"`) and 分層練習 (`output = "tiered"`): questions written
-//! per Bloom level and checked by a separate judge. Contract: docs/API.md「Phase 2.7」.
+//! 閱讀理解題 (`output = "comprehension"`) and 差異化學習單 (`output = "tiered"`, formerly 分層練習):
+//! questions written per Bloom level and checked by a separate judge. Contract: docs/API.md
+//! 「Phase 2.7」 and 「差異化學習單」.
 //!
-//! A run has two jobs. `bloom`: one model call per selected level (`worksheet_bloom_level`), one
-//! after another in Bloom order, each with its own checks and one repair call; a level starts
-//! with the questions the lower levels have already written, so it does not repeat them.
+//! A run has two jobs. `bloom`: one model call per selected level (`worksheet_bloom_level`; for a
+//! 差異化學習單 `worksheet_tiered_level`, which writes every question once with its three
+//! versions), one after another in Bloom order, each with its own checks and one repair call; a
+//! level starts with the questions the lower levels have already written, so it does not repeat
+//! them.
 //! `bloom_check`: one judge call (`worksheet_bloom_check`) classifies every question on its own;
 //! the questions it rates too far from their target are written again once (one call per
 //! affected level, the judge's reasons as the problems) and judged again; a question that still
-//! misses keeps the judged level as its label, and a notice says so. The worksheet is then
-//! assembled in code: one block per level, in Bloom order, with fixed titles.
+//! misses keeps the judged level as its label, and a notice says so. The judge sees each
+//! question once: a 差異化學習單 has the same questions, so the same Bloom distribution, in all
+//! three versions (T2). The worksheet is then assembled in code: one block per level, in Bloom
+//! order, with fixed titles and the written steps (R5).
 //!
 //! Regenerating one of those blocks re-runs its level call and judges that block only.
 
@@ -24,22 +29,27 @@ use super::{
 };
 use crate::error::{AppError, AppResult};
 use crate::routes::{clip_chars, log_usage, or_blank, track_label};
-use crate::worksheet::assemble::letter;
+use crate::worksheet::assemble::{auto_steps, letter};
 use crate::worksheet::bloom::{
     self as bl, Bloom, Output, RawBloomCheck, RawBloomLevel, CHECK_SCHEMA_NAME, LEVEL_SCHEMA_NAME,
 };
 use crate::worksheet::checks::{
-    evaluate_bloom_check, evaluate_bloom_level, BloomCtx, CleanBloomItem, CleanBloomLevel, Judged,
+    evaluate_bloom_check, evaluate_bloom_level, evaluate_tiered_level, BloomCtx, CleanBloomItem,
+    CleanBloomLevel, CleanLinking, Judged,
 };
 use crate::worksheet::store;
+use crate::worksheet::tiered::{self, RawTieredLevel};
 use crate::worksheet::{
-    Block, BlockKind, Chosen, Content, Item, Level, Material, Origin, Settings, GEN_OBJECTIVES,
+    Block, BlockKind, Chosen, Content, Item, Level, Material, Origin, Scaffold, ScaffoldType,
+    Settings, GEN_OBJECTIVES, KIND_EXAMPLE, KIND_STEPS, KIND_WORD_LIST,
 };
 use crate::AppState;
 
 pub const KEY_LEVEL: &str = "worksheet_bloom_level";
+pub const KEY_TIERED: &str = "worksheet_tiered_level";
 pub const KEY_CHECK: &str = "worksheet_bloom_check";
 const SCAFFOLD_LEVEL: &str = "SC-WS-BLOOM";
+const SCAFFOLD_TIERED: &str = "SC-WS-TIERED";
 const SCAFFOLD_CHECK: &str = "SC-WS-BLOOM-CHECK";
 
 const fn level_step(phase: &'static str, repair_phase: &'static str) -> StepInfo {
@@ -48,6 +58,17 @@ const fn level_step(phase: &'static str, repair_phase: &'static str) -> StepInfo
         module: KEY_LEVEL,
         scaffold: SCAFFOLD_LEVEL,
         schema_name: LEVEL_SCHEMA_NAME,
+        phase,
+        repair_phase,
+    }
+}
+
+const fn tiered_step(phase: &'static str, repair_phase: &'static str) -> StepInfo {
+    StepInfo {
+        key: KEY_TIERED,
+        module: KEY_TIERED,
+        scaffold: SCAFFOLD_TIERED,
+        schema_name: tiered::LEVEL_SCHEMA_NAME,
         phase,
         repair_phase,
     }
@@ -109,6 +130,79 @@ const REDO_STEPS: [StepInfo; 6] = [
     ),
 ];
 
+/// 差異化學習單: one per level, in Bloom order.
+const TIERED_STEPS: [StepInfo; 6] = [
+    tiered_step(
+        "正在出『記憶』層次的題目與三個版本的支持",
+        "『記憶』層次有題目沒有通過檢查，正在修正",
+    ),
+    tiered_step(
+        "正在出『理解』層次的題目與三個版本的支持",
+        "『理解』層次有題目沒有通過檢查，正在修正",
+    ),
+    tiered_step(
+        "正在出『應用』層次的題目與三個版本的支持",
+        "『應用』層次有題目沒有通過檢查，正在修正",
+    ),
+    tiered_step(
+        "正在出『分析』層次的題目與三個版本的支持",
+        "『分析』層次有題目沒有通過檢查，正在修正",
+    ),
+    tiered_step(
+        "正在出『評鑑』層次的題目與三個版本的支持",
+        "『評鑑』層次有題目沒有通過檢查，正在修正",
+    ),
+    tiered_step(
+        "正在出『創造』層次的題目與三個版本的支持",
+        "『創造』層次有題目沒有通過檢查，正在修正",
+    ),
+];
+
+const TIERED_REDO_STEPS: [StepInfo; 6] = [
+    tiered_step(
+        "正在重出層次不符的『記憶』題目",
+        "正在修正重出的『記憶』題目",
+    ),
+    tiered_step(
+        "正在重出層次不符的『理解』題目",
+        "正在修正重出的『理解』題目",
+    ),
+    tiered_step(
+        "正在重出層次不符的『應用』題目",
+        "正在修正重出的『應用』題目",
+    ),
+    tiered_step(
+        "正在重出層次不符的『分析』題目",
+        "正在修正重出的『分析』題目",
+    ),
+    tiered_step(
+        "正在重出層次不符的『評鑑』題目",
+        "正在修正重出的『評鑑』題目",
+    ),
+    tiered_step(
+        "正在重出層次不符的『創造』題目",
+        "正在修正重出的『創造』題目",
+    ),
+];
+
+/// The level call of an output (`redo`: rewriting questions the judge rated as another level).
+fn step_for(output: Output, b: Bloom, redo: bool) -> &'static StepInfo {
+    match (output, redo) {
+        (Output::Tiered, false) => &TIERED_STEPS[b.rank()],
+        (Output::Tiered, true) => &TIERED_REDO_STEPS[b.rank()],
+        (_, false) => &LEVEL_STEPS[b.rank()],
+        (_, true) => &REDO_STEPS[b.rank()],
+    }
+}
+
+/// The answer formats a level may use: a 差異化學習單 only uses the open ones.
+fn formats_for(output: Output, b: Bloom, selected: &[String]) -> Vec<&'static str> {
+    match output {
+        Output::Tiered => tiered::level_formats(b, selected),
+        _ => bl::level_formats(b, selected),
+    }
+}
+
 const CHECK: StepInfo = StepInfo {
     key: KEY_CHECK,
     module: KEY_CHECK,
@@ -118,7 +212,6 @@ const CHECK: StepInfo = StepInfo {
     repair_phase: "正在重新檢查題目的 Bloom 層次",
 };
 
-const DEFAULT_INSTRUCTIONS: &str = "Read the text again and answer the questions.";
 const SKIPPED: &str = "前一步沒有成功，所以沒有執行。";
 
 fn or_none(s: &str) -> String {
@@ -143,17 +236,37 @@ struct Draft {
 #[derive(Debug, Clone)]
 struct LevelDraft {
     bloom: Bloom,
+    /// Prompt version 1's one sentence ("" with the written steps of version 2).
     instructions: String,
+    /// The written steps (R5); empty: the program writes them.
+    steps: Vec<String>,
+    example: String,
+    linking: Option<CleanLinking>,
     items: Vec<Draft>,
     /// Why the level has no questions.
     failure: Option<String>,
 }
 
 impl LevelDraft {
+    fn failed(bloom: Bloom, reason: String) -> Self {
+        Self {
+            bloom,
+            instructions: String::new(),
+            steps: Vec::new(),
+            example: String::new(),
+            linking: None,
+            items: Vec::new(),
+            failure: Some(reason),
+        }
+    }
+
     fn from_output(bloom: Bloom, out: CleanBloomLevel) -> Self {
         Self {
             bloom,
             instructions: out.instructions,
+            steps: out.steps,
+            example: out.example,
+            linking: out.linking,
             items: out
                 .items
                 .into_iter()
@@ -174,16 +287,43 @@ impl LevelDraft {
 
 // ---------------------------------------------------------------- the two calls
 
-/// What the questions are for. Without it the 閱讀理解題 and 分層練習 requests were identical,
-/// and the gateway answered the second from its cache with the same questions.
+/// What the questions are for. The 閱讀理解題 and 差異化學習單 requests must never be identical
+/// (the gateway would answer the second from its cache); they now use different prompts, and
+/// this line still tells them apart.
 fn purpose_line(output: Output) -> &'static str {
     match output {
-        Output::Tiered => "分層練習：同一份題目會依層次分成基礎版、一般版、進階版；基礎版會印出 hint，所以每題的 hint 要真的能幫程度較弱的學生起步。",
+        Output::Tiered => {
+            "差異化學習單：同一份題目印成基礎版、一般版、進階版，三版只差在支持的多寡。"
+        }
         _ => "閱讀理解題：全班同一份，依 Bloom 層次由淺到深。",
     }
 }
 
+/// The worksheet's objectives as the prompts see them (T1: the questions serve them), one per
+/// line; 「（沒有）」 when there are none.
+fn objectives_text(content: &Content) -> String {
+    let lines: Vec<String> = content
+        .objectives
+        .iter()
+        .filter_map(|o| {
+            let both = [o.text.trim(), o.student_facing_en.trim()]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("｜");
+            (!both.is_empty()).then(|| format!("- {}：{both}", o.kind.label()))
+        })
+        .collect();
+    if lines.is_empty() {
+        "（沒有）".to_string()
+    } else {
+        lines.join("\n")
+    }
+}
+
 struct LevelRequest<'a> {
+    /// What the block is for (the generation's settings: a regenerated block keeps them).
+    output: Output,
     info: &'a StepInfo,
     bloom: Bloom,
     count: usize,
@@ -199,6 +339,7 @@ async fn level_call(
     job_id: i64,
     r: LevelRequest<'_>,
 ) -> AppResult<StepResult<CleanBloomLevel>> {
+    let output = r.output;
     let material = &run.input.worksheet.material;
     let codes = bl::paragraph_codes(material.paragraphs.len());
     let b = r.bloom;
@@ -219,6 +360,7 @@ async fn level_call(
     let mut vars: HashMap<&'static str, String> = HashMap::from([
         ("school_track", track_label(&run.input.track).to_string()),
         ("class_profile", or_blank(&run.input.class_profile)),
+        ("objectives", objectives_text(&run.input.content)),
         ("teacher_request", or_none(&run.request)),
         ("teacher_notes_for_ai", run.ai_notes.clone()),
         ("bloom_id", b.as_str().to_string()),
@@ -227,10 +369,7 @@ async fn level_call(
         ("bloom_stems", b.stems().to_string()),
         ("answer_formats", r.formats.join("、")),
         ("question_count", r.count.to_string()),
-        (
-            "purpose",
-            purpose_line(run.input.worksheet.settings.output).to_string(),
-        ),
+        ("purpose", purpose_line(output).to_string()),
         ("evidence_rule", evidence_rule.to_string()),
         ("earlier_questions", earlier),
         ("passage_numbered", material.numbered()),
@@ -239,7 +378,7 @@ async fn level_call(
     // 內容目標 and 語言目標, and both in `{{teacher_objective}}` for version 1.
     vars.extend(run.teacher.vars());
     let fake_context = json!({
-        "task": KEY_LEVEL,
+        "task": if output == Output::Tiered { KEY_TIERED } else { KEY_LEVEL },
         "bloom": b.as_str(),
         "count": r.count,
         "formats": r.formats,
@@ -256,6 +395,21 @@ async fn level_call(
         paragraph_codes: &codes,
         count: r.count,
     };
+    if output == Output::Tiered {
+        return run_step(
+            run,
+            r.info,
+            job_id,
+            StepCall {
+                vars,
+                schema: tiered::level_schema(r.formats, &codes, r.count),
+                fake_context,
+                max_tokens: tiered::level_max_tokens(r.count),
+            },
+            |raw: &RawTieredLevel| evaluate_tiered_level(raw, &ctx),
+        )
+        .await;
+    }
     run_step(
         run,
         r.info,
@@ -373,6 +527,7 @@ fn redo_note(b: Bloom, wrong: &[(&CleanBloomItem, &Judged)]) -> String {
 async fn judge_and_fix(
     run: &Run,
     job_id: i64,
+    output: Output,
     drafts: &mut [LevelDraft],
     first_no: &[usize],
     selected_formats: &[String],
@@ -459,12 +614,13 @@ async fn judge_and_fix(
             .map(|(ii, j)| (&drafts[li].items[*ii].item, j))
             .collect();
         let note = redo_note(b, &pairs);
-        let formats = bl::level_formats(b, selected_formats);
+        let formats = formats_for(output, b, selected_formats);
         let result = level_call(
             run,
             job_id,
             LevelRequest {
-                info: &REDO_STEPS[b.rank()],
+                output,
+                info: step_for(output, b, true),
                 bloom: b,
                 count: list.len(),
                 formats: &formats,
@@ -512,21 +668,81 @@ async fn judge_and_fix(
 
 // ---------------------------------------------------------------- blocks
 
-/// The versions a question appears in.
-fn item_levels(output: Output, label: Bloom, levels: &[Level]) -> Vec<Level> {
-    match output {
-        Output::Tiered => {
-            let tier = bl::tier_levels(label);
-            levels
+/// The scaffolds of a level's block: the written steps (R5; the program's own when the model
+/// gave none), the worked example (閱讀理解題: every version; 差異化學習單: 基礎版 and 一般版,
+/// support goes down) and the linking words, graded per version (T5).
+fn level_scaffolds(
+    block: &Block,
+    draft: &LevelDraft,
+    output: Output,
+    levels: &[Level],
+) -> Vec<Scaffold> {
+    let steps = if draft.steps.is_empty() {
+        auto_steps(block)
+    } else {
+        draft.steps.clone()
+    };
+    let mut out = vec![Scaffold {
+        id: format!("{}-sp", block.id),
+        kind_type: ScaffoldType::Procedural,
+        kind: KIND_STEPS.to_string(),
+        content: String::new(),
+        steps,
+        levels: levels.to_vec(),
+        auto: draft.steps.is_empty(),
+        origin: Origin::Ai,
+    }];
+    if !draft.example.trim().is_empty() {
+        let shown: Vec<Level> = match output {
+            Output::Tiered => levels
                 .iter()
                 .copied()
-                .filter(|l| tier.contains(l))
-                .collect()
+                .filter(|l| *l != Level::Advanced)
+                .collect(),
+            _ => levels.to_vec(),
+        };
+        if !shown.is_empty() {
+            out.push(Scaffold {
+                id: format!("{}-sx", block.id),
+                kind_type: ScaffoldType::Verbal,
+                kind: KIND_EXAMPLE.to_string(),
+                content: draft.example.clone(),
+                steps: Vec::new(),
+                levels: shown,
+                auto: false,
+                origin: Origin::Ai,
+            });
         }
-        _ => levels.to_vec(),
     }
+    if let Some(linking) = &draft.linking {
+        for level in levels {
+            let words = linking.words(*level);
+            if words.is_empty() {
+                continue;
+            }
+            let lead = if linking.function.trim().is_empty() {
+                "Linking words".to_string()
+            } else {
+                format!("Linking words for {}", linking.function.trim())
+            };
+            out.push(Scaffold {
+                id: format!("{}-sl{}", block.id, level.as_str()),
+                kind_type: ScaffoldType::Verbal,
+                kind: KIND_WORD_LIST.to_string(),
+                content: format!("{lead}: {}", words.join(", ")),
+                steps: Vec::new(),
+                levels: vec![*level],
+                auto: false,
+                origin: Origin::Ai,
+            });
+        }
+    }
+    out
 }
 
+/// A level's block. Every question is in all of the worksheet's versions: a 閱讀理解題 has one
+/// version (or the teacher's), a 差異化學習單 three, which differ only in each question's
+/// `tiers` (T2).
 fn level_block(
     id: &str,
     draft: &LevelDraft,
@@ -554,20 +770,26 @@ fn level_block(
             answer: d.item.item.answer.clone(),
             evidence: d.item.item.evidence.clone().unwrap_or_default(),
             purpose: None,
-            levels: item_levels(output, d.label, levels),
+            levels: levels.to_vec(),
             origin: Origin::Ai,
             bloom: Some(d.label),
             hint: d.hint(),
+            tiers: d
+                .item
+                .tiers
+                .iter()
+                .filter(|t| levels.contains(&t.level))
+                .cloned()
+                .collect(),
         })
         .collect();
-    Block {
+    let mut block = Block {
         id: id.to_string(),
         kind: BlockKind::Activity,
         title: bl::block_title(b),
-        instructions: match (&draft.failure, draft.instructions.trim()) {
-            (Some(_), _) => String::new(),
-            (None, "") => DEFAULT_INSTRUCTIONS.to_string(),
-            (None, s) => s.to_string(),
+        instructions: match &draft.failure {
+            Some(_) => String::new(),
+            None => draft.instructions.trim().to_string(),
         },
         paragraph_ids: nos
             .iter()
@@ -587,7 +809,11 @@ fn level_block(
             .map(|reason| empty_message(&format!("『{}』層次的題目", b.label()), reason)),
         bloom: Some(b),
         ..Block::default()
+    };
+    if draft.failure.is_none() {
+        block.scaffolds = level_scaffolds(&block, draft, output, levels);
     }
+    block
 }
 
 impl Draft {
@@ -628,7 +854,7 @@ fn chosen_for(settings: &Settings, plan: &[(Bloom, usize)]) -> Chosen {
         });
     }
     if settings.output == Output::Tiered {
-        reasons.push(bl::TIERED_REASON.to_string());
+        reasons.push(tiered::TIERED_REASON.to_string());
     }
     s.bloom = plan.iter().map(|(b, _)| *b).collect();
     s.question_count = Some(total as i32);
@@ -687,12 +913,14 @@ async fn make_level(
                 .collect()
         })
         .unwrap_or_default();
-    let formats = bl::level_formats(b, selected_formats);
+    let output = run.input.worksheet.settings.output;
+    let formats = formats_for(output, b, selected_formats);
     let result = level_call(
         run,
         job_id,
         LevelRequest {
-            info: &LEVEL_STEPS[b.rank()],
+            output,
+            info: step_for(output, b, false),
             bloom: b,
             count,
             formats: &formats,
@@ -709,12 +937,7 @@ async fn make_level(
             }
             draft
         }
-        StepResult::Failed { reason, .. } => LevelDraft {
-            bloom: b,
-            instructions: String::new(),
-            items: Vec::new(),
-            failure: Some(reason),
-        },
+        StepResult::Failed { reason, .. } => LevelDraft::failed(b, reason),
     })
 }
 
@@ -776,7 +999,8 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
 
     // ---- the judge
     let first_no = first_numbers(&drafts, 1);
-    let checked = judge_and_fix(run, check_job, &mut drafts, &first_no, formats, &[]).await?;
+    let checked =
+        judge_and_fix(run, check_job, output, &mut drafts, &first_no, formats, &[]).await?;
     let context = run.context(&[(
         "要檢查的題目",
         format!("{} 題", drafts.iter().map(|d| d.items.len()).sum::<usize>()),
@@ -823,7 +1047,8 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let latest = store::latest(db, ws.id).await?;
     let mut content = Content {
         objectives: run.objectives_for(&latest.content.objectives),
-        show_objectives: chosen.settings.wants(GEN_OBJECTIVES),
+        // T1: every version of a 差異化學習單 starts with the shared objectives.
+        show_objectives: output == Output::Tiered || chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
         levels: levels.clone(),
         chosen: Some(chosen),
@@ -942,7 +1167,7 @@ async fn regenerate(
         old.items.len()
     }
     .clamp(1, *bl::QUESTION_COUNT_RANGE.end() as usize);
-    let formats = bl::level_formats(b, &settings.answer_formats);
+    let formats = formats_for(output, b, &settings.answer_formats);
     let others: Vec<String> = content
         .blocks
         .iter()
@@ -953,7 +1178,8 @@ async fn regenerate(
         run,
         jobs[STEP_BLOOM],
         LevelRequest {
-            info: &LEVEL_STEPS[b.rank()],
+            output,
+            info: step_for(output, b, false),
             bloom: b,
             count,
             formats: &formats,
@@ -980,6 +1206,7 @@ async fn regenerate(
     let checked = judge_and_fix(
         run,
         jobs[STEP_BLOOM_CHECK],
+        output,
         &mut drafts,
         &[before + 1],
         &settings.answer_formats,
@@ -1005,23 +1232,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tiered_items_follow_their_label() {
-        let all = Level::ALL.to_vec();
-        assert_eq!(
-            item_levels(Output::Tiered, Bloom::Remember, &all),
-            [Level::Basic]
-        );
-        assert_eq!(
-            item_levels(Output::Tiered, Bloom::Evaluate, &all),
-            [Level::Advanced]
-        );
-        assert_eq!(
-            item_levels(Output::Comprehension, Bloom::Evaluate, &[Level::Standard]),
-            [Level::Standard]
-        );
-    }
-
-    #[test]
     fn chosen_reports_the_distribution() {
         let s = Settings {
             output: Output::Comprehension,
@@ -1043,7 +1253,7 @@ mod tests {
         };
         let c = chosen_for(&t, &bl::plan(&t));
         assert_eq!(c.settings.levels, Level::ALL);
-        assert!(c.reasons.iter().any(|r| r == bl::TIERED_REASON));
+        assert!(c.reasons.iter().any(|r| r == tiered::TIERED_REASON));
         assert_eq!(first_numbers(&[], 1), Vec::<usize>::new());
     }
 }

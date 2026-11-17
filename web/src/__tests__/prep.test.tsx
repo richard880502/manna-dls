@@ -435,7 +435,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(chips().getAllByRole("button").map((b) => b.textContent)).toEqual([
       "照我的學習單做",
       "閱讀理解題",
-      "分層練習",
+      "差異化學習單",
       "課堂活動",
       "教學套件",
       "學習單",
@@ -445,7 +445,8 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(pressed()).toEqual([]);
 
     for (const [words, chip] of [
-      ["做差異化的題目", "分層練習"],
+      ["做差異化的題目", "差異化學習單"],
+      ["要分層的題目", "差異化學習單"],
       ["一節課的教案", "課堂活動"],
       ["給我一個套件", "教學套件"],
       ["一份學習單", "學習單"],
@@ -604,9 +605,9 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(tools.getAllByRole("link").map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
       ["/create/mimic", "照我的學習單做上傳你以前的學習單，Manna 照它的樣式為新課文出題"],
       ["/create/comprehension", "閱讀理解題依 Bloom 六個層次出題，附答案與文本依據"],
-      ["/create/tiered", "分層練習同一篇文章，基礎／一般／進階三個版本"],
+      ["/create/tiered", "差異化學習單同一篇文章，基礎／一般／進階三個版本"],
       ["/create/activity", "課堂活動引起動機到統整的一節課流程"],
-      ["/create/kit", "教學套件活動流程＋分層學習單＋教師版答案，一次下載"],
+      ["/create/kit", "教學套件活動流程＋差異化學習單＋教師版答案，一次下載"],
       ["/create/worksheet", "完整學習單完整學習單，可以照你的版型"],
     ]);
 
@@ -805,7 +806,7 @@ describe("備課對話 (session page)", () => {
     const next = within(screen.getByRole("group", { name: "接下來可以" }));
     expect(next.getAllByRole("button").map((b) => b.textContent)).toEqual([
       "閱讀理解題",
-      "分層練習",
+      "差異化學習單",
       "課堂活動",
       "教學套件",
       "學習單",

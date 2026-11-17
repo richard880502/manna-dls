@@ -124,6 +124,10 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("worksheet_bloom_level") => {
             crate::worksheet::fake::bloom_level(ctx, req.attempt, &|m| has(req, m))
         }
+        // 差異化學習單 (see `worksheet::fake::tiered_level`).
+        Some("worksheet_tiered_level") => {
+            crate::worksheet::fake::tiered_level(ctx, req.attempt, &|m| has(req, m))
+        }
         Some("worksheet_bloom_check") => {
             crate::worksheet::fake::bloom_check(ctx, req.attempt, &|m| has(req, m))
         }

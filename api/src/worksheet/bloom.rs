@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 
 use super::template::{enum_of, obj, s_max, strings_max};
 use super::{
-    Level, Settings, ANSWER_FORMATS, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER,
-    FMT_PARAGRAPH, FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE,
+    Settings, ANSWER_FORMATS, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
+    FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE,
 };
 use crate::routes::clip_chars;
 
@@ -228,7 +228,7 @@ pub fn summary(counts: &[(Bloom, usize)]) -> String {
 // ---------------------------------------------------------------- what to generate
 
 /// What a worksheet generation makes: the full worksheet (the existing pipeline), reading
-/// comprehension questions, or tiered practice.
+/// comprehension questions, or a 差異化學習單 (`tiered`, formerly 分層練習).
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Output {
@@ -257,7 +257,7 @@ impl Output {
         match self {
             Self::Worksheet => "學習單",
             Self::Comprehension => "閱讀理解題",
-            Self::Tiered => "分層練習",
+            Self::Tiered => "差異化學習單",
         }
     }
 
@@ -287,15 +287,13 @@ impl<'de> Deserialize<'de> for Output {
 }
 
 pub const DEFAULT_COMPREHENSION_COUNT: usize = 8;
-pub const DEFAULT_TIERED_COUNT: usize = 12;
+/// Every question of a 差異化學習單 is in all three versions (T2), so one per level by default
+/// (before the redesign the 12 questions were spread over the versions).
+pub const DEFAULT_TIERED_COUNT: usize = 6;
 pub const QUESTION_COUNT_RANGE: std::ops::RangeInclusive<i32> = 3..=30;
 /// Most questions of one level in `bloom_counts`.
 pub const MAX_LEVEL_COUNT: i32 = 12;
 pub const MAX_OBJECTIVE_CHARS: usize = 300;
-
-/// The reason added for a tiered worksheet (contract, verbatim).
-pub const TIERED_REASON: &str =
-    "基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造";
 
 /// Keeps the levels in Bloom order, without duplicates.
 pub fn normalise_levels(levels: &[Bloom]) -> Vec<Bloom> {
@@ -379,16 +377,6 @@ pub fn level_formats(b: Bloom, selected: &[String]) -> Vec<&'static str> {
         .collect()
 }
 
-/// The versions an item of a tiered worksheet appears in, from its Bloom level.
-pub fn tier_levels(b: Bloom) -> Vec<Level> {
-    match b {
-        Bloom::Remember => vec![Level::Basic],
-        Bloom::Understand | Bloom::Apply => Level::ALL.to_vec(),
-        Bloom::Analyze => vec![Level::Standard, Level::Advanced],
-        Bloom::Evaluate | Bloom::Create => vec![Level::Advanced],
-    }
-}
-
 /// Whether the judge's level is too far from the target: any lower level, or two levels or more
 /// higher.
 pub fn is_mismatch(target: Bloom, judged: Bloom) -> bool {
@@ -441,11 +429,17 @@ pub struct RawBloomItem {
     pub hint: String,
 }
 
-/// The questions of one level.
+/// The questions of one level, then the block's written steps (R5, prompt version 2) and an
+/// optional worked example. Version 1 wrote one sentence of `instructions` instead.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RawBloomLevel {
+    #[serde(default)]
     pub instructions: String,
     pub items: Vec<RawBloomItem>,
+    #[serde(default)]
+    pub steps: Vec<String>,
+    #[serde(default)]
+    pub example: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -462,13 +456,15 @@ pub struct RawBloomCheck {
     pub items: Vec<RawJudgement>,
 }
 
-/// Exactly `count` questions of the given formats. Every string and array is capped: the
-/// gateway enforces the caps while decoding, which stops repetition runaways.
+/// Exactly `count` questions of the given formats, then the block's steps (2–5, one array item
+/// per step: gemma ends a string where it wants a line break) and an optional example. Every
+/// string and array is capped: the gateway enforces the caps while decoding, which stops
+/// repetition runaways.
 pub fn level_schema(formats: &[&str], paragraph_codes: &[String], count: usize) -> Value {
+    use super::tiered::{EXAMPLE_CHARS, MAX_STEPS, MIN_STEPS, STEP_CHARS};
     let codes: Vec<&str> = paragraph_codes.iter().map(String::as_str).collect();
     let count = count.max(1);
     obj(vec![
-        ("instructions", s_max(INSTRUCTIONS_CHARS)),
         (
             "items",
             json!({
@@ -488,6 +484,16 @@ pub fn level_schema(formats: &[&str], paragraph_codes: &[String], count: usize) 
                 "maxItems": count
             }),
         ),
+        (
+            "steps",
+            json!({
+                "type": "array",
+                "items": s_max(STEP_CHARS),
+                "minItems": MIN_STEPS,
+                "maxItems": MAX_STEPS
+            }),
+        ),
+        ("example", s_max(EXAMPLE_CHARS)),
     ])
 }
 
@@ -555,7 +561,7 @@ mod tests {
         };
         assert_eq!(counts(&plan(&s)), [2, 2, 1, 1, 1, 1]);
         s.output = Output::Tiered;
-        assert_eq!(counts(&plan(&s)), [2; 6], "tiered default is 12");
+        assert_eq!(counts(&plan(&s)), [1; 6], "差異化學習單 default is 6");
         s.bloom = vec![Bloom::Analyze, Bloom::Remember];
         s.question_count = Some(7);
         assert_eq!(plan(&s), [(Bloom::Remember, 4), (Bloom::Analyze, 3)]);
@@ -576,19 +582,6 @@ mod tests {
         assert!(check_counts(&BTreeMap::from([(Bloom::Remember, -1), (Bloom::Apply, 5)])).is_err());
         let many: BTreeMap<Bloom, i32> = Bloom::ALL.into_iter().map(|b| (b, 6)).collect();
         assert!(check_counts(&many).is_err(), "36 in all");
-    }
-
-    #[test]
-    fn tiers_follow_the_level() {
-        assert_eq!(tier_levels(Bloom::Remember), [Level::Basic]);
-        assert_eq!(tier_levels(Bloom::Understand), Level::ALL);
-        assert_eq!(tier_levels(Bloom::Apply), Level::ALL);
-        assert_eq!(
-            tier_levels(Bloom::Analyze),
-            [Level::Standard, Level::Advanced]
-        );
-        assert_eq!(tier_levels(Bloom::Evaluate), [Level::Advanced]);
-        assert_eq!(tier_levels(Bloom::Create), [Level::Advanced]);
     }
 
     #[test]
@@ -657,6 +650,17 @@ mod tests {
     #[test]
     fn schemas_are_capped_and_keep_the_written_order() {
         let s = level_schema(&[FMT_CHOICE, FMT_SHORT], &paragraph_codes(3), 4);
+        let top: Vec<&str> = s["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            top,
+            ["items", "steps", "example"],
+            "R5: steps, no one-line instructions"
+        );
         let items = &s["properties"]["items"];
         assert_eq!(items["maxItems"], 4);
         assert_eq!(items["minItems"], 4);

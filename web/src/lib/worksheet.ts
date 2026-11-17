@@ -16,6 +16,7 @@ import type {
   WsOrigin,
   WsScaffold,
   WsScaffoldType,
+  WsSupportKind,
 } from "../api/types";
 
 /** §5.1 素材類型 */
@@ -57,6 +58,56 @@ export const VERSIONS_HEADING = "產生基礎版／一般版／進階版";
 export const LEVELS: readonly WsLevel[] = ["basic", "standard", "advanced"];
 export const LEVEL_LABEL: Record<WsLevel, string> = { basic: "基礎版", standard: "一般版", advanced: "進階版" };
 export const AUDIENCE_LABEL: Record<WsAudience, string> = { student: "學生版", teacher: "教師參考版" };
+
+// ---------------------------------------------------------------- 差異化學習單 (docs/SIOP_DESIGN_RULES.md 三)
+
+/** The settings' note on the versions of a 差異化學習單 (T0, T9). */
+export const TIERED_VERSIONS_NOTE =
+  "差異化學習單固定做基礎版、一般版、進階版三個版本：三個版本目標與題目相同，差在提示與支持的多寡。學生版只印 A、B、C 版，不印程度名稱。";
+
+/** The answer formats a 差異化學習單 uses (open answers only). */
+export const TIERED_FORMATS = ["簡答題", "表格整理", "圖像組織", "段落寫作"] as const;
+
+/**
+ * The neutral code a version's student sheet prints (T9): 「A」「B」「C」 by its place among the
+ * worksheet's versions; null when there is only one (the server's rule).
+ */
+export function versionCode(levels: readonly WsLevel[], level: WsLevel): string | null {
+  if (levels.length < 2) return null;
+  const i = levels.indexOf(level);
+  return i < 0 ? null : String.fromCharCode(65 + i);
+}
+
+/** What the student sheet prints: 「Version A」 (「Version」 keeps it apart from the block letters). */
+export const studentVersionName = (code: string) => `Version ${code}`;
+
+/** The code in the teacher's words: 「A 版」. */
+export const versionLabel = (code: string) => `${code} 版`;
+
+/** The support forms, from most to least (T3), in the teacher's words. */
+export const SUPPORT_KIND_LABEL: Record<WsSupportKind, string> = {
+  cloze: "預填克漏字",
+  word_bank: "字庫",
+  sentence_frame: "句型框架",
+  sentence_starter: "句首",
+  none: "不給支持",
+};
+
+/** The English heading printed above a version's support (the server's). */
+export const SUPPORT_KIND_HEADING: Record<WsSupportKind, string> = {
+  cloze: "Fill in the blanks",
+  word_bank: "Word bank",
+  sentence_frame: "Sentence frame",
+  sentence_starter: "Start like this",
+  none: "",
+};
+
+/** The forms each version may use. */
+export const SUPPORT_KINDS_FOR: Record<WsLevel, readonly WsSupportKind[]> = {
+  basic: ["cloze", "word_bank", "sentence_frame"],
+  standard: ["word_bank", "sentence_frame", "sentence_starter"],
+  advanced: ["sentence_starter", "none"],
+};
 
 export const BLOCK_TITLES = ["素材類型", "學生任務", "作答方式", "產生設定"] as const;
 

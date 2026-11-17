@@ -1655,7 +1655,7 @@ type PrepKind = "worksheet" | "assessment" | "activity" | "resources" | "ask" | 
               | "comprehension" | "tiered" | "kit";
 interface PrepSessionOptions {     // 出題選項；沒有設定的鍵不會出現（都沒設定時是 {}）
   bloom?: Bloom[];                 // 依 Bloom 順序、去重；沒有＝六個層次
-  question_count?: number;         // 3–30；沒有＝該產出的預設（閱讀理解題 8、分層練習 12）
+  question_count?: number;         // 3–30；沒有＝該產出的預設（閱讀理解題 8、差異化學習單 6）
   bloom_counts?: Partial<Record<Bloom, number>>;   // 各 0–12、合計 3–30；有值時取代 bloom 與 question_count
   answer_formats?: string[];       // 固定標籤（作答方式），依標籤順序；沒有＝每個層次適合的
   content_objective?: string;      // 內容目標（≤300，一行一項）；舊資料的 objective 讀成這一欄（見「SIOP 目標」）
@@ -1777,9 +1777,9 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 **對話做的每一份學習單**（`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`）都帶入：
 
 - 出題選項：`settings` 的 `bloom`、`question_count`、`bloom_counts`、`answer_formats`、`objective`（等同 `POST /api/worksheets { settings }` 的部分設定；沒有設定的鍵維持預設）。`assessment` 的作答方式固定，不套用 `answer_formats`。
-- 「教師的要求」`request`：這一輪老師打的字；這一輪只是按鈕（`request` 是按鈕名稱）時，用對話**第一輪**的 `request`。按鈕或工具的名稱（做學習單、設計評量、規劃教學活動、找教學資源、直接問 AI、修改學習單、閱讀理解題、分層練習、課堂活動、教學套件、學習單、完整學習單）不算要求，學習單的 `request` 是 `""`。
+- 「教師的要求」`request`：這一輪老師打的字；這一輪只是按鈕（`request` 是按鈕名稱）時，用對話**第一輪**的 `request`。按鈕或工具的名稱（做學習單、設計評量、規劃教學活動、找教學資源、直接問 AI、修改學習單、閱讀理解題、差異化學習單（與舊名分層練習）、課堂活動、教學套件、學習單、完整學習單）不算要求，學習單的 `request` 是 `""`。
 
-### `comprehension`（閱讀理解題）、`tiered`（分層練習）
+### `comprehension`（閱讀理解題）、`tiered`（差異化學習單，原名分層練習）
 
 和 `worksheet` 一樣（學習單立刻建立、產生中 `running`、結束 `done`），但學習單的 `settings.output` 是 `comprehension`／`tiered`，依 Bloom 層次產生（見「Phase 2.7」）；**不用對話的版型**（版型只做完整學習單），也沒有暖身。標題是學習單預設的標題。
 
@@ -1803,17 +1803,17 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ### `kit`（教學套件）
 
-一次做兩件事：**課堂活動**（和 `activity` 相同的呼叫，結果在 `result`）與**分層學習單**（和 `tiered` 相同，學習單在 `worksheet`）。學習單在請求當下建立並開始產生（`worksheet_id` 立刻有值），活動規劃同時在背景進行。
+一次做兩件事：**課堂活動**（和 `activity` 相同的呼叫，結果在 `result`）與**差異化學習單**（和 `tiered` 相同，學習單在 `worksheet`）。學習單在請求當下建立並開始產生（`worksheet_id` 立刻有值），活動規劃同時在背景進行。
 
 - 兩者都結束前這一輪是 `running`。活動規劃一做好，`result` 就有值（輪詢時可以先顯示）；`error` 只在這一輪結束後才出現。
-- 兩者都成功 → `done`。任何一個失敗 → `failed`，成功的那一部分保留可見（`result` 或 `worksheet`）。`error`：「教學套件的課堂活動沒有完成：…」「教學套件的分層學習單沒有完成：…」，兩個都失敗時「教學套件沒有完成。課堂活動：…分層學習單：…」。分層學習單失敗是指：建立或開始失敗（例如教材超過 40 段），或產生結束時一題都沒有。
+- 兩者都成功 → `done`。任何一個失敗 → `failed`，成功的那一部分保留可見（`result` 或 `worksheet`）。`error`：「教學套件的課堂活動沒有完成：…」「教學套件的差異化學習單沒有完成：…」，兩個都失敗時「教學套件沒有完成。課堂活動：…差異化學習單：…」。差異化學習單失敗是指：建立或開始失敗（例如教材超過 40 段），或產生結束時一題都沒有。
 - 下一步建議裡 `kit` 做完不代表 `activity` 做完（反之亦然）。
 
 **下載**：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`（`format` 省略也是 DOCX；其他值 → 400「format 需為 docx。」）。一份 DOCX，每部分從新的一頁開始：
 
 1. **教學流程**：規劃的標題、學習目標（分成「內容目標」「語言目標」兩組，各自編號；每個目標是中文一行、附課綱代碼，英文斜體在下一行；語言目標前面標類別「〔學習策略〕」，下一行是「支持內容目標 1：學生要用……，才能……」；教師給的目標標「（教師提供）」；舊規劃照舊是一張中文清單）、關鍵字彙、教材與教具、高層次問題、背景連結、每一步（階段｜標題（分鐘）、`分組：小組｜語言技能：說、讀`、`Bloom：理解、應用`、教學思路、分工、教師巡視、鷹架、引起動機的選項、課堂用語、卡住了怎麼辦）、複習與評量、對應的課綱條目。舊規劃沒有的部分不印。
-2. **學生版（基礎版）**、**學生版（一般版）**、**學生版（進階版）**（學習單的每個版本）：和 `GET /api/worksheets/:id/export?audience=student` 印的一樣（基礎版有 Hint，沒有 Bloom 標記）。
-3. **教師版**：所有版本的題目各一次、依序編號，附答案、依據與 Bloom 標記（〔Bloom：分析 Analyze〕）與區塊的 Bloom 摘要；分層練習另印版本與層次的對應（「基礎版：記憶＋理解＋應用（附提示）；…」）。
+2. **學生版（A 版）**、**學生版（B 版）**、**學生版（C 版）**（學習單的每個版本；學生頁面不印程度名稱，見「差異化學習單」）：和 `GET /api/worksheets/:id/export?audience=student` 印的一樣（各版本自己的支持，沒有 Bloom 標記）。
+3. **教師版**：差異化學習單是每個版本一份教師版（「教師版（基礎版＝A 版）」…），附各版本的答案、評分說明、依據、Bloom 標記與分層說明；改版前的分層練習照舊：所有版本的題目各一次、依序編號，附答案、依據與 Bloom 標記（〔Bloom：分析 Analyze〕）與區塊的 Bloom 摘要，另印版本與層次的對應（「基礎版：記憶＋理解＋應用（附提示）；…」）。
 
 - 用的是學習單**目前**的版本（之後的修改、`revise` 都會反映）。檔名：`<對話標題>_教學套件.docx`（`Content-Disposition` 同學習單匯出，UTF-8 檔名）。
 - 404：不是自己的對話、或這一輪不在這個對話；400：這一輪不是 `kit`；409：這一輪還在跑（「教學套件還在產生，好了之後再下載。」）。`failed` 的教學套件照樣可以下載成功的那一部分（缺的部分印一行說明）；兩部分都沒有 → 409。
@@ -1831,7 +1831,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 套用在對話裡最新一個做出學習單的輪次（`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`）的學習單。一次呼叫（`prep_revise`，`max_tokens` 6000）。輸入：老師的指示、加段落標記的教材（學習單自己的教材快照）、學習單目前的區塊 `{block_id, label（學生版上的 A、B…）, kind, title, instructions, items[{answer_format, prompt, options, answer}]}`。輸出 `{ reply ≤300, changes ≤6: [{ block_id（enum）, title, instructions, items ≤12 }] }`。
 
 - 每個 change 用照版型產生時的同一個檢查（`evaluate_section`，題數上限 12、不需要外部素材）：作答方式只能用固定標籤、選擇題的答案必須是選項之一、題幹不可含答案、音節題依字典修正…。有 change 沒通過時重試一次（附上沒通過的區塊與原因）；重試後還沒通過的 change 不套用，`reply` 後面加上「（B 區沒有改成：修改沒有通過學習單的檢查，維持原樣。）」。
-- 通過的 change 取代該區塊的 `title`、`instructions` 與 `items`：新題目 `origin = "ai"`；出口卡的 `purpose`、題目的 `bloom`、`hint` 與 **`levels`（出現在哪些版本）依位置保留**（取代同一個位置的題目）；多出來的新題目 `bloom` = 區塊的層次（依 Bloom 層次產生的區塊才有），分層練習的學習單依那個層次對應的版本（記憶→基礎版；理解、應用→三個版本；分析→一般版、進階版；評鑑、創造→進階版），其他情況是學習單的所有版本（保留的版本只取學習單現有的版本，一個都不剩時也是所有版本）；鷹架與字詞保留。被取代的區塊先放進 `worksheet_block_history`（編輯器的「復原」照常可用），全部改動寫成**一個**新版本（`cause = "revise"`）。內容沒有實際改變的區塊不算。
+- 通過的 change 取代該區塊的 `title`、`instructions` 與 `items`：新題目 `origin = "ai"`；出口卡的 `purpose`、題目的 `bloom`、`hint` 與 **`levels`（出現在哪些版本）依位置保留**（取代同一個位置的題目）；多出來的新題目 `bloom` = 區塊的層次（依 Bloom 層次產生的區塊才有），出現在學習單的所有版本（差異化學習單每一題都在三個版本）（保留的版本只取學習單現有的版本，一個都不剩時也是所有版本）；鷹架與字詞保留。被取代的區塊先放進 `worksheet_block_history`（編輯器的「復原」照常可用），全部改動寫成**一個**新版本（`cause = "revise"`）。內容沒有實際改變的區塊不算。
 - 沒有改動 → 不新增版本（`reply` 本身就是回答，例如一個澄清問題）。`result = { reply, changed_block_ids, version_no }`。
 - 呼叫期間學習單開始產生時，這一輪 `failed`，不套用。
 - `revise` 只改學習單；活動規劃（包括學習目標）不會被改動，`activity`／`kit` 存的 `result` 原樣保留。
@@ -1940,7 +1940,7 @@ interface WorksheetSettings {
   /* …既有欄位… */
   output: WsOutput;                       // 預設 "worksheet"（原本的流程）
   bloom: Bloom[];                         // 目標層次，依 Bloom 順序、去重；空陣列＝六個都出
-  question_count: number | null;          // 3–30；null＝預設（閱讀理解題 8、分層練習 12）
+  question_count: number | null;          // 3–30；null＝預設（閱讀理解題 8、差異化學習單 6）
   bloom_counts: Partial<Record<Bloom, number>> | null;   // 每個層次的題數（各 0–12，合計 3–30）；有值時取代 bloom 與 question_count
   content_objective: string | null;       // 內容目標（≤300，一行一項，空字串變 null）；舊的 objective 讀成這一欄（見「SIOP 目標」）
   language_objective: string | null;      // 語言目標（≤300，一行一項）
@@ -2010,8 +2010,8 @@ interface WsSheetBlock { /* …既有欄位… */
 
 **每個層次一次呼叫**（`worksheet_bloom_level`，鷹架 `SC-WS-BLOOM`），依 Bloom 順序一個接一個（同時跑時，「理解」會重問「記憶」剛出過的題目），`WsJob.phase` 例如「正在出『分析』層次的題目」。`max_tokens` = 400 + 300 × 題數（1500–6000）。
 
-- 輸入：用途（閱讀理解題，或分層練習與基礎版提示的說明；兩者的請求因此不同，閘道不會拿快取的題目回應）、層次的定義、英文題幹、可用的作答方式、題數、學校類型、班級特性、學習目標、教師的要求、加了段落代號（`[P1]`…）的教材、較低層次已經出好的題目（不要重複），以及教師註記（有勾「提供給 AI」時）。
-- 輸出 schema（欄位照撰寫順序，每個字串與陣列都有上限）：`{ instructions ≤200, items: [正好 n 題] { answer_format: 該層次可用的作答方式（enum）, prompt ≤500, options ≤6×150, answer ≤400, evidence ≤300, paragraph_ids: ["P1"…]（enum，≤3）, hint ≤150 } }`。`paragraph_ids` 由伺服器換成教材的段落 id，聯集成區塊的 `paragraph_ids`。
+- 輸入：用途（閱讀理解題；差異化學習單用自己的 prompt，見「差異化學習單」，兩者的請求因此不同，閘道不會拿快取的題目回應）、層次的定義、英文題幹、可用的作答方式、題數、學校類型、班級特性、學習目標、教師的要求、加了段落代號（`[P1]`…）的教材、較低層次已經出好的題目（不要重複），以及教師註記（有勾「提供給 AI」時）。
+- 輸出 schema（第 1 版；第 2 版把 `instructions` 換成 `steps` 與 `example`，見「差異化學習單」一節的 R5）（欄位照撰寫順序，每個字串與陣列都有上限）：`{ instructions ≤200, items: [正好 n 題] { answer_format: 該層次可用的作答方式（enum）, prompt ≤500, options ≤6×150, answer ≤400, evidence ≤300, paragraph_ids: ["P1"…]（enum，≤3）, hint ≤150 } }`。`paragraph_ids` 由伺服器換成教材的段落 id，聯集成區塊的 `paragraph_ids`。
 - **檢查**（和照版型產生的 `evaluate_section` 同一套）：作答方式只能是這個層次可用的；選擇題至少 2 個不重複選項、答案必須是其中之一（只寫字母時換成該選項）；配對題至少 2 個選項；填空題要有 `___`；題幹不可含答案；音節題依字典修正；是非題沒給選項時補 True／False；超過題數由程式只留前面幾題。**記憶、理解**層次每一題都要有逐字依據：不是逐字的依據改成其中最長、至少 5 個字的逐字片段；找不到就算這一題沒通過。其他層次不需要依據，不是逐字的直接清空。
 - 沒通過 → **修復一次**（temperature +0.4，附上沒通過的項目）；還是沒通過的題目拿掉；一題都沒有時，這個層次的區塊留空並在 `message` 說明。
 
@@ -2030,6 +2030,8 @@ interface WsSheetBlock { /* …既有欄位… */
 - `content.chosen`：`settings` 是實際用的（`levels`、`bloom` = 實際產生的層次、`question_count` = 總題數），`item_budget` = 總題數，`reasons` 第一條是「Bloom：記憶 2、理解 2、應用 1、分析 1、評鑑 1、創造 1」，再說明題數與版本怎麼決定。
 
 ## 產生：分層練習（`output = "tiered"`）
+
+> **已由「差異化學習單」取代**（見下一個大節）：三個版本題目相同、只差在支持。以下是改版前的規則，改版前存下的學習單照這個規則顯示與匯出。
 
 和閱讀理解題相同，差別：
 
@@ -2095,13 +2097,148 @@ prompt key：`worksheet_bloom_level`、`worksheet_bloom_check`、`worksheet_task
 
 備課對話用上面的引擎做學習單，細節併入「Phase 2.6：備課對話」：
 
-- 新的輪次 `comprehension`、`tiered`（`settings.output` 為該值的學習單，不用對話的版型）與 `kit`（教學套件：活動規劃＋分層學習單，兩者都結束才不是 `running`；任何一個失敗是 `failed`，成功的部分保留）。
+- 新的輪次 `comprehension`、`tiered`（`settings.output` 為該值的學習單，不用對話的版型）與 `kit`（教學套件：活動規劃＋差異化學習單，兩者都結束才不是 `running`；任何一個失敗是 `failed`，成功的部分保留）。
 - 對話的出題選項 `options: { bloom?, question_count?, bloom_counts?, answer_formats?, objective? }`（建立與 PATCH 都可以給，用本節的驗證規則），和對話的「教師的要求」一起帶進對話做的每一份學習單（`settings` 的同名欄位與 `request`）；`objective` 也送進活動規劃。
 - `prep_activity` 第 2 版：每一步多了 `bloom`（≤3，enum，依 Bloom 順序），prompt 多了 `{{teacher_objective}}`、`{{teacher_request}}`。
 - `next` 的順序：`comprehension, tiered, activity, kit, worksheet`（都需要教材）。
 - 教學套件下載：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`，一份 DOCX：教學流程、每個版本的學生版、教師版（答案與 Bloom 標記）。
-- `revise` 適用最新一份任何種類的學習單；改過的題目保留原本的版本（分層練習不會變成三個版本都有）。
+- `revise` 適用最新一份任何種類的學習單；改過的題目保留原本的版本（改版前的分層練習不會變成三個版本都有）。
 - 資料：`prep_sessions.options`（JSONB，預設 `{}`）；`prep_turns.kind` 多三個值；`prompt_versions` 新增 `prep_activity` 第 2 版（第 1 版保留）。
+
+---
+
+# 差異化學習單（原名分層練習）與分步作答指示
+
+依 `docs/SIOP_DESIGN_RULES.md` 第三節（T0–T9）與 R5 重新設計 `output = "tiered"`；`閱讀理解題` 的作答指示改成分步驟。Migration `0025_siop_differentiated.sql`。以下取代「Phase 2.7」中「產生：分層練習」一節；改版前存下的學習單照舊顯示與匯出（見最後「舊資料」）。
+
+## 名稱
+
+- 介面名稱「分層練習」改為**差異化學習單**，頁面標題讀作「來做一份 差異化學習單」；網址 `/create/tiered`、`output = "tiered"`、輪次 `kind = "tiered"` 都不變。
+- 副標：「同一篇文章做成基礎／一般／進階三個版本。三個版本目標相同，差在提示與支持的多寡。」
+- 按鈕名稱（「教師的要求」不算的那些，見 Phase 2.6）同時接受「差異化學習單」與舊名「分層練習」。伺服器的按鈕名稱（`turn.request`）是「差異化學習單」。
+- 教學套件與錯誤訊息中的「分層學習單」改為「差異化學習單」（例如「教學套件的差異化學習單沒有完成：…」）。
+
+## 三個版本怎麼不同（T1–T6）
+
+- 三個版本（基礎版／一般版／進階版）用**同一組學習目標**（`content.objectives`，三版頂端都印；差異化學習單產生後 `show_objectives = true`）、**同一組題目**、**同樣的 Bloom 分布**。每一題 `levels` 都是三個版本。
+- 差別只在每一題下方的**支持**與**預期的作答**，存在題目的 `tiers`（每個版本一份）。
+- 預設 **6 題**（每個層次 1 題；以前的 12 題是分散到三個版本，現在每題三版都有）。`question_count`、`bloom_counts` 規則不變。
+- 只用**開放式作答方式**：簡答題、段落寫作、表格整理、圖像組織（各層次適合的開放式作答方式 ∩ 教師勾的；交集是空的就用該層次適合的開放式全部）。教師勾的選擇題、是非題、配對題、填空題不用在差異化學習單。
+
+```ts
+type WsSupportKind = "cloze" | "word_bank" | "sentence_frame" | "sentence_starter" | "none";
+
+interface WsItem {
+  /* …既有欄位… */
+  tiers: WsItemTier[];   // 差異化學習單：每個版本一份，依版本順序；其他題目 []（舊資料沒有這個鍵＝[]）
+}
+interface WsItemTier {
+  level: WsLevel;
+  support_kind: WsSupportKind;
+  model_sentence: string;   // 克漏字與句型框架挖空前的完整範句（T4）；只在編輯器與資料裡，不印
+  support: string[];        // 題目下方印的支持，一行一項；空格是 ___
+  word_bank: string[];      // 字庫（克漏字與句型框架：從範句挖掉的字詞）
+  answer: string;           // 這個版本預期的答案；只在教師版
+  scoring: string;          // 這個版本的評分說明（中文）；只在教師版
+}
+```
+
+- **支持形式**由多到少（T3）：`cloze` 預填大部分字詞的克漏字 → `word_bank` 字庫 → `sentence_frame` 句型框架 → `sentence_starter` 句首 → `none` 不給支持。各版本可用：
+
+  | 版本 | 可用的形式 |
+  |---|---|
+  | 基礎版 | cloze、word_bank、sentence_frame |
+  | 一般版 | word_bank、sentence_frame、sentence_starter |
+  | 進階版 | sentence_starter、none |
+
+  同一題由基礎版到進階版**嚴格遞減**。
+- 支持不可以**指出答案位置**（「Look at paragraph 2.」「Read the second paragraph again.」「The answer is in line 3.」、`[P2]`、「第 2 段」），也不可以把題目改簡單（題目三版共用，只寫一次）。一般版與進階版的支持不可以寫出完整答案。
+- **句型框架**（T4）：先寫範句（`model_sentence`），再把目標字詞換成 `___`，挖掉的字詞是 `word_bank`；程度越低句構越簡單。克漏字同樣從範句挖空。
+- **答案**（T6）：每個版本各有 `answer` 與 `scoring`。基礎版可接受片語；一般版與進階版要 1–2 個完整句。題目本身的 `answer` 是進階版的答案（給 Bloom 判斷與舊的流程用）。
+- **轉折詞**（T5）：每個層次的區塊依語言功能給轉折詞，基礎版最基本的幾個，一般版再加，進階版再加較正式的（例如 first, next, then → previously, subsequently）。印成各版本自己的字詞表鷹架（`kind = "字詞表"`，`levels` 只有那個版本），內容「Linking words for giving reasons: because, so, since」。
+- **改寫文本**（T8）：任何版本印出「調整文本」（Simplified text）鷹架時，同一區的原文段落也一起印（投影的 `original_text`，先印原文，再印簡化文本當輔助）。這條規則對所有學習單都適用；差異化學習單的產生本身不寫改寫文本。
+
+## 產生（`worksheet_tiered_level`）
+
+流程與閱讀理解題相同（每個層次一次呼叫，依 Bloom 順序一個接一個，再一次判斷層次），差別：
+
+- prompt key `worksheet_tiered_level`（第 1 版），鷹架 `SC-WS-TIERED`，`WsJob.phase` 例如「正在出『分析』層次的題目與三個版本的支持」。`max_tokens` = 800 + 900 × 題數（2500–8000）。
+- 輸入多了學習單的學習目標（`content.objectives` 的中英文，`{{objectives}}`）。
+- 輸出 schema（欄位照撰寫順序，字串與陣列都有上限）：
+
+  ```
+  { items: [正好 n 題] {
+      answer_format（enum，開放式）, prompt ≤500, evidence ≤300, paragraph_ids（enum，≤3）,
+      advanced: Version, standard: Version, basic: Version },   // 先寫進階版的完整答案
+    steps: [2–5 × ≤150], example ≤300,
+    linking_words: { function ≤40, basic ≤4×30, standard_more ≤4×30, advanced_more ≤4×30 } }
+  Version = { support_kind（該版本可用的 enum）, model_sentence ≤300, support ≤4×200,
+              word_bank ≤10×40, answer ≤400, scoring_zh ≤150 }
+  ```
+
+- **檢查**（`worksheet::checks::evaluate_tiered_level`）：題目本身照閱讀理解題的檢查（作答方式、題幹不含答案〔用進階版的答案比〕、記憶與理解的逐字依據…）；再檢查三個版本：
+  - 形式是該版本可用的，而且由基礎版到進階版嚴格遞減 → 否則拿掉這一題。
+  - 指出答案位置的那一行支持拿掉（並要求修復）。
+  - 克漏字／句型框架要有 `___`、範句與字庫；字庫裡不在範句的字詞拿掉；句首要有一行；`none` 的支持清空 → 不合格的拿掉這一題。
+  - 每個版本要有答案；一般版與進階版的答案不是完整句（簡答題、段落寫作）或沒有評分說明 → 要求修復，題目保留。
+  - 一般版、進階版的支持寫出了完整答案 → 拿掉這一題。
+  - 步驟少於 2 個 → 要求修復，之後仍不夠時由程式寫步驟；寫出答案的步驟或範例拿掉。轉折詞依版本累加，基礎版沒有時要求修復。
+  - 沒通過 → 修復一次；還是沒通過的題目拿掉（缺一個版本就不是差異化的題目）。
+- **判斷層次**：每一題只判斷一次（三版題目相同，Bloom 分布也相同）；重出用同一個 `worksheet_tiered_level` 呼叫。
+- **組裝**：每個層次一個區塊；題目 `levels` = 三個版本、`tiers` = 三個版本、`hint = ""`；區塊 `instructions = ""`，作答步驟是程序鷹架（`steps`，三個版本都印，`auto = false`；模型沒給時程式寫，`auto = true`）；範例是「作答示例」鷹架（基礎版、一般版）；轉折詞見上。`content.chosen.reasons` 加分層說明：「差異化學習單：三個版本的學習目標、題目與 Bloom 分布相同，只差在支持的多寡。…」。
+- 單一區塊重新產生照舊（重跑 `worksheet_tiered_level`）。
+- **修改學習單（`revise`）**：新加的題目出現在三個版本；改過的題目只有在題目文字沒變時保留各版本的支持，題目變了就沒有 `tiers`（三版印同樣的題目、沒有支持），可以重新產生那一區。
+
+## 學生版只印 A／B／C（T0、T9）
+
+```ts
+interface WsSheet { /* …既有欄位… */
+  version_code: string | null;   // 這個版本的中性代號 "A"／"B"／"C"（依學習單版本的順序）；只有一個版本時 null
+  tiering_note?: string;          // 只有差異化學習單的教師版：分層說明
+}
+interface WsSheetItem { /* …既有欄位… */
+  support?: { kind: WsSupportKind; heading: string; lines: string[]; word_bank: string[] };  // 這個版本的支持；字庫依字母排序
+  scoring?: string;               // 只有教師版
+}
+interface WsSheetBlock { /* …既有欄位… */
+  original_text?: string[];       // 這個版本印了簡化文本時，同一區的原文段落
+}
+```
+
+- **學生版**（預覽、DOCX、PDF、檔名、教學套件標題）只印中性代號，不印基礎／一般／進階：
+  - DOCX／PDF 的姓名欄後面印「Version A」；PDF 頁尾「Version A · 1/2」（只有一個版本時頁尾只有頁碼）。用「Version」是為了和區塊字母（「A. Find the Facts」、舊的「Part A · …」）分開。
+  - 檔名 `<檔名>_A版_學生版.docx`（只有一個版本時 `<檔名>_學生版.docx`）。
+  - 題目下方印這個版本的支持：「Sentence frame: …」「Fill in the blanks: …」「Start like this: …」，字庫印「Word bank: a  /  b」。
+- **教師版**保留程度名稱：橫幅「Teacher reference · Basic version (students' sheet: Version A) · …」、PDF 頁尾「Basic (Version A) · 1/2」、檔名 `<檔名>_基礎版_教師參考版.docx`；每題印這個版本的「Answer: …」「Scoring: …」，橫幅下印分層說明。
+- 代號依版本在學習單的順序：三個版本時基礎版＝A、一般版＝B、進階版＝C。這個規則適用於所有有兩個以上版本的學習單（完整學習單也是）。
+- **教學套件**：學生部分的標題「學生版（A 版）」「學生版（B 版）」「學生版（C 版）」；差異化學習單的教師部分是每個版本一份教師版，標題「教師版（基礎版＝A 版）」…（各版本的支持、答案與評分說明不同）。改版前的分層練習照舊印一份合併的教師版與舊的對應說明。
+- 編輯器與備課對話的預覽：學生版標示「Version A」，預覽的名稱是「A 版 學生版」；分頁（基礎版／一般版／進階版）與教師版照舊用程度名稱。
+
+## 閱讀理解題的分步作答指示（R5）
+
+- `worksheet_bloom_level` **第 2 版**（第 1 版保留）：不再寫一句 `instructions`，改寫 `steps`（2–5 個，依學生實際操作的順序，每個步驟一個陣列元素）與選填的 `example`（用不在學習單上的問題示範或部分完成的範例）；提示不可指出答案位置。
+- 輸出 schema：`{ items: [正好 n 題] {…同第 1 版…}, steps: [2–5 × ≤150], example ≤300 }`。
+- 區塊：`instructions = ""`；步驟是程序鷹架（和完整學習單同樣印成「Step 1: …」）；範例是「作答示例」鷹架（學習單的所有版本）。步驟少於 2 個 → 修復一次，之後仍不夠時由程式寫步驟。寫出答案的步驟或範例拿掉。
+- 讀到第 1 版的輸出（只有 `instructions`）時照舊：那一句放在 `instructions`，步驟由程式寫。
+
+## 舊資料
+
+- 不需要資料 migration。改版前存的分層練習：題目沒有 `tiers`（讀成 `[]`），照舊依 `levels` 分到各版本、基礎版印 `hint`；學生版一樣只印 A／B／C；教學套件照舊印合併的教師版。
+- 改版前存的閱讀理解題：區塊照舊印一句 `instructions`。
+
+## 測試用假模型
+
+`worksheet_tiered_level`：題目同閱讀理解題的假模型；三個版本依序輪流用（基礎版、一般版、進階版）＝（句型框架、句首、不給）、（克漏字、字庫、句首）、（字庫、句型框架、不給）；三個步驟、一個範例、轉折詞（記憶層次沒有）。`worksheet_bloom_level` 的假模型改成第 2 版的形狀（`steps`、`example`）。
+
+| 標記（寫在教材裡） | 效果 |
+|---|---|
+| `FAKE_TIER_LOCATION` | 每一次呼叫：第一題的基礎版支持多一行「Look at paragraph 1 again.」→ 要求修復，那一行被拿掉 |
+| `FAKE_TIER_FLAT` | 第 1 次：第一題的一般版和基礎版一樣多支持 → 修復呼叫改正 |
+| `FAKE_BLOCK` | 只用表外的作答方式 → 區塊留空並附說明 |
+
+## 試用真模型
+
+prompt key：`worksheet_tiered_level`（第 1 版）、`worksheet_bloom_level`（第 2 版）、`worksheet_bloom_check`（第 1 版，不變）。程式：`worksheet::tiered`（形式、代號、schema）、`worksheet::checks::evaluate_tiered_level`、`worksheet::assemble::project`（三個版本的投影）。
 
 ---
 
@@ -2747,7 +2884,7 @@ interface WsProposal {
 **伺服器怎麼組回去**（`worksheet::revise::merge`，從存著的區塊出發，只換模型改的地方）：
 
 - `keep: true` 的題目**原封不動**沿用存著的那一題（id、教師改過的字、`levels`、`hint`、`purpose`、`origin` 都不變），不採用模型抄回的文字。
-- 修改的題目保留 id、`levels`、`hint`、`purpose`，換掉作答方式、題幹、選項與 Bloom 層次；參考答案變了才換答案與依據。內容和原本一樣的不算修改。`origin` 改成 `ai`。新題目有新 id（`<block>-p<proposal>n<k>`），出現在學習單的所有版本（分層練習依 Bloom 層次對應的版本）。依 Bloom 層次產生的區塊，每一題都用那個層次。
+- 修改的題目保留 id、`levels`、`hint`、`purpose`，換掉作答方式、題幹、選項與 Bloom 層次；參考答案變了才換答案與依據。內容和原本一樣的不算修改。`origin` 改成 `ai`。差異化學習單的題目只有在題幹沒變時保留各版本的支持與答案（`tiers`），題幹變了就沒有 `tiers`。新題目有新 id（`<block>-p<proposal>n<k>`），出現在學習單的所有版本（差異化學習單每一題都在三個版本）。依 Bloom 層次產生的區塊，每一題都用那個層次。
 - 模型看不到的欄位（字詞表、鷹架、教師備註、`template_section_id`，以及之後加的欄位，例如圖片）全部沿用。
 - **範圍由程式決定**：有一句話、整區的註記或 `whole_block: true` → 整區都可以改（可以新增、刪除、調整順序；模型沒列出的題目就是刪除）。只有標在題目／標題／作答指示上的註記 → 只有那幾處可以改，其他題、標題、作答指示不論模型寫了什麼都沿用原樣，模型沒列出的題目放回原位，題目順序維持；新題目可以加，排在它在模型輸出裡跟著的那一題後面。
 - 修改與新題目用照版型產生時的同一套檢查（`evaluate_section` 的每一題檢查：固定標籤、選擇題答案在選項內、題幹不含答案、需要教師素材時不得寫出網址或影片、音節依字典）。沒通過 → 重試一次；重試後還是沒通過的那一題維持原樣（新題目不加入），`reply` 後面註明「（第 5 題的修改沒有通過學習單的檢查，維持原樣。）」。

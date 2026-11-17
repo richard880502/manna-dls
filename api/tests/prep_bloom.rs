@@ -262,7 +262,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
     // A chip: the request is the chip's label, the worksheet gets the session's request.
     let (s, v) = post_turn(&app, &t, id, json!({ "kind": "tiered" })).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    assert_eq!(last(&v)["request"], "分層練習");
+    assert_eq!(last(&v)["request"], "差異化學習單");
     let done = wait(&app, &t, id).await;
     let turn = last(&done);
     assert_eq!(turn["status"], "done", "{turn}");
@@ -285,13 +285,9 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
             )
         })
         .collect();
+    // 差異化學習單: every question in all three versions (T2).
     for (bloom, l) in &levels {
-        let want = match bloom.as_str() {
-            "remember" => json!(["basic"]),
-            "analyze" => json!(["standard", "advanced"]),
-            _ => json!(["advanced"]),
-        };
-        assert_eq!(*l, want, "{bloom}");
+        assert_eq!(*l, json!(["basic", "standard", "advanced"]), "{bloom}");
     }
 
     // A chip with words of its own: those are this worksheet's request.
@@ -344,12 +340,23 @@ async fn a_bare_label_is_no_request() {
     assert_eq!(ws["settings"]["bloom"], json!([]));
     assert_eq!(ws["settings"]["question_count"], Value::Null);
     assert_eq!(ws["settings"]["content_objective"], Value::Null);
-    // Tiered default: 12 questions over the six levels.
+    // 差異化學習單 default: 6 questions, one per level, each in all three versions.
     let n: usize = blocks(&ws)
         .iter()
         .map(|b| b["items"].as_array().unwrap().len())
         .sum();
-    assert_eq!(n, 12);
+    assert_eq!(n, 6);
+
+    // The new name is a bare label too.
+    let session = create(
+        &app,
+        &t,
+        json!({ "kind": "tiered", "request": "差異化學習單", "material": material("") }),
+    )
+    .await;
+    let done = wait(&app, &t, sid(&session)).await;
+    let ws = worksheet(&app, &t, &last(&done)).await;
+    assert_eq!(ws["request"], "");
 }
 
 // ---------------------------------------------------------------- options
@@ -620,17 +627,27 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
         xml.find(s)
             .unwrap_or_else(|| panic!("{s} is not in the kit"))
     };
-    assert!(at("教學流程") < at("學生版（基礎版）"));
-    assert!(at("學生版（基礎版）") < at("學生版（一般版）"));
-    assert!(at("學生版（一般版）") < at("學生版（進階版）"));
-    assert!(at("學生版（進階版）") < at("教師版"));
-    let teacher = at("教師版");
-    // The plan with its Bloom levels; hints on the 基礎版; tags and answers only in 教師版.
-    assert!(at("The Umbrella Stand 教學活動規劃（測試）") < at("學生版（基礎版）"));
-    assert!(at("Bloom：記憶、理解") < at("學生版（基礎版）"));
-    assert!(at("Hint: ") > at("學生版（基礎版）") && at("Hint: ") < at("學生版（一般版）"));
+    // Student pages carry the neutral code (T9); then a teacher version per level.
+    assert!(at("教學流程") < at("學生版（A 版）"));
+    assert!(at("學生版（A 版）") < at("學生版（B 版）"));
+    assert!(at("學生版（B 版）") < at("學生版（C 版）"));
+    assert!(at("學生版（C 版）") < at("教師版（基礎版＝A 版）"));
+    assert!(at("教師版（基礎版＝A 版）") < at("教師版（一般版＝B 版）"));
+    assert!(at("教師版（一般版＝B 版）") < at("教師版（進階版＝C 版）"));
+    let teacher = at("教師版（基礎版＝A 版）");
+    for name in ["學生版（基礎版）", "學生版（一般版）", "學生版（進階版）"]
+    {
+        assert!(!xml.contains(name), "{name}");
+    }
+    // The plan with its Bloom levels; the A version's support; tags, answers and scoring notes
+    // only in the teacher versions.
+    assert!(at("The Umbrella Stand 教學活動規劃（測試）") < at("學生版（A 版）"));
+    assert!(at("Bloom：記憶、理解") < at("學生版（A 版）"));
+    assert!(at("Version A") > at("學生版（A 版）") && at("Version A") < at("學生版（B 版）"));
+    assert!(at("Sentence frame: ") > at("學生版（A 版）"));
     assert!(at("〔Bloom：") > teacher);
     assert!(at("Answer: ") > teacher);
+    assert!(at("Scoring: ") > teacher);
     assert!(xml.contains("〔Bloom：創造 Create〕"));
     // The goals: 內容目標 then 語言目標, each goal in Chinese with its English under it.
     assert!(at("學習目標") < at("內容目標"));
@@ -774,7 +791,7 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     assert_eq!(turn["status"], "failed", "{turn}");
     let error = turn["error"].as_str().unwrap();
     assert!(
-        error.starts_with("教學套件的分層學習單沒有完成：") && error.contains("41 段"),
+        error.starts_with("教學套件的差異化學習單沒有完成：") && error.contains("41 段"),
         "{error}"
     );
     assert_eq!(turn["result"]["steps"].as_array().unwrap().len(), 3);
@@ -783,7 +800,7 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     let r = kit_raw(&app, &t, id, turn["id"].as_i64().unwrap(), "?format=docx").await;
     assert_eq!(r.status, StatusCode::OK);
     let xml = document_xml(r.body);
-    assert!(xml.contains("教學流程") && xml.contains("分層學習單沒有完成"));
+    assert!(xml.contains("教學流程") && xml.contains("差異化學習單沒有完成"));
     assert!(!xml.contains("學生版"));
 
     // The plan fails: the worksheet is kept.
@@ -808,7 +825,7 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     let r = kit_raw(&app, &t, id, turn["id"].as_i64().unwrap(), "?format=docx").await;
     assert_eq!(r.status, StatusCode::OK);
     let xml = document_xml(r.body);
-    assert!(xml.contains("課堂活動沒有完成") && xml.contains("學生版（進階版）"));
+    assert!(xml.contains("課堂活動沒有完成") && xml.contains("學生版（C 版）"));
     // A failed kit is offered again.
     assert!(done["next"].as_array().unwrap().contains(&json!("kit")));
 
@@ -825,7 +842,7 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     assert_eq!(turn["status"], "failed", "{turn}");
     let error = turn["error"].as_str().unwrap();
     assert!(
-        error.starts_with("教學套件沒有完成。課堂活動：") && error.contains("分層學習單："),
+        error.starts_with("教學套件沒有完成。課堂活動：") && error.contains("差異化學習單："),
         "{error}"
     );
     let r = kit_raw(&app, &t, id, turn["id"].as_i64().unwrap(), "?format=docx").await;
@@ -870,7 +887,11 @@ async fn revise_keeps_the_tiers_of_a_tiered_worksheet() {
     let before = worksheet(&app, &t, &ws_turn).await;
     let ws_id = before["id"].as_i64().unwrap();
     let tiers = item_levels(&before);
-    assert_eq!(tiers[0][0].1, json!(["basic"]), "remember: 基礎版");
+    assert_eq!(
+        tiers[0][0].1,
+        json!(["basic", "standard", "advanced"]),
+        "差異化學習單: every version"
+    );
 
     // The first block with items (記憶): its items keep their versions, labels and hints.
     let (s, v) = post_turn(&app, &t, id, json!({ "request": "第一題改難一點" })).await;
@@ -888,7 +909,7 @@ async fn revise_keeps_the_tiers_of_a_tiered_worksheet() {
         .unwrap()
         .ends_with(" (revised)"));
 
-    // The last block (創造) gets a new item: the tier of the block's level (進階版).
+    // The last block (創造) gets a new item: in every version, with the block's level.
     let (s, v) = post_turn(
         &app,
         &t,
@@ -905,21 +926,21 @@ async fn revise_keeps_the_tiers_of_a_tiered_worksheet() {
     assert_eq!(last_block.len(), tiers.last().unwrap().len() + 1);
     let added = last_block.last().unwrap();
     assert_eq!(added.0, "create");
-    assert_eq!(added.1, json!(["advanced"]));
+    assert_eq!(added.1, json!(["basic", "standard", "advanced"]));
     assert_eq!(added.2, "");
     assert_eq!(
         &last_block[..last_block.len() - 1],
         &tiers.last().unwrap()[..],
         "the replaced items keep theirs"
     );
-    // So the 基礎版 does not print it.
+    // So the 基礎版 prints it too.
     let (_, sheet) = app
         .get(
             &format!("/api/worksheets/{ws_id}/sheet?level=basic&audience=student"),
             Some(&t),
         )
         .await;
-    assert!(!sheet.to_string().contains("(added)"));
+    assert!(sheet.to_string().contains("(added)"));
     let (_, sheet) = app
         .get(
             &format!("/api/worksheets/{ws_id}/sheet?level=advanced&audience=student"),

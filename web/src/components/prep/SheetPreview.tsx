@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { WsSheet, WsSheetBlock } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
-import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL } from "../../lib/worksheet";
+import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL, studentVersionName, versionLabel } from "../../lib/worksheet";
 import { BloomChip } from "../worksheet/Bloom";
 import { SlotPicture, viewOfSheetImage, type PictureActions } from "../worksheet/SlotPicture";
 import { SectionTools } from "./SectionTools";
@@ -19,13 +19,22 @@ export function sheetBlockText(b: WsSheetBlock): string {
   b.images?.forEach((img) => {
     if (img.caption.trim()) lines.push(`（圖）${img.caption}`);
   });
+  if (b.original_text?.length) lines.push("Original text:", ...b.original_text);
   b.supports.forEach((s) => lines.push(`${s.heading ?? s.kind}: ${s.content}`));
   b.items.forEach((it) => {
     const tag = isBloom(it.bloom) ? ` 〔Bloom：${BLOOM_LABEL[it.bloom]} ${BLOOM_EN[it.bloom]}〕` : "";
     lines.push(`${it.no}. ${it.prompt}${tag}`);
     it.options.forEach((o) => lines.push(`   ${o}`));
     if (it.hint?.trim()) lines.push(`   Hint: ${it.hint}`);
+    if (it.support) {
+      const [first = "", ...rest] = it.support.lines;
+      lines.push(`   ${it.support.heading}: ${it.support.kind === "word_bank" ? it.support.word_bank.join(" / ") : first}`);
+      rest.forEach((l) => lines.push(`   ${l}`));
+      if (it.support.kind !== "word_bank" && it.support.word_bank.length > 0)
+        lines.push(`   Word bank: ${it.support.word_bank.join(" / ")}`);
+    }
     if (it.answer) lines.push(`   參考答案：${it.answer}`);
+    if (it.scoring) lines.push(`   評分說明：${it.scoring}`);
   });
   if (b.teacher_notes?.trim()) lines.push(`教師備註：${b.teacher_notes}`);
   return lines.filter((l) => l.trim() !== "").join("\n");
@@ -60,14 +69,24 @@ export function SheetPreview({
   pictures?: PictureActions | null;
 }) {
   const teacher = sheet.audience === "teacher";
+  // T9: a student sheet is named by its neutral code, never by the level.
+  const code = sheet.version_code ?? null;
+  const name =
+    !teacher && code ? `${versionLabel(code)} ${AUDIENCE_LABEL.student}` : `${LEVEL_LABEL[sheet.level]} ${AUDIENCE_LABEL[sheet.audience]}`;
   return (
-    <article className="ws prep-sheet" lang="en" aria-label={`${LEVEL_LABEL[sheet.level]} ${AUDIENCE_LABEL[sheet.audience]}`}>
+    <article className="ws prep-sheet" lang="en" aria-label={name}>
       <p className="prep-sheet-title">{sheet.title}</p>
       <p className="ws-meta">
         <span>Class ______</span>
         <span>No. ______</span>
         <span>Name ____________</span>
+        {code && <span className="ws-version">{studentVersionName(code)}</span>}
       </p>
+      {teacher && sheet.tiering_note && (
+        <p className="ws-bloom-line" lang="zh-Hant">
+          {sheet.tiering_note}
+        </p>
+      )}
       {sheet.objectives.length > 0 && (
         <section className="ws-block ws-objectives" aria-label="學習目標">
           <h3>Today I can …</h3>
@@ -146,6 +165,16 @@ export function SheetPreview({
                 </tbody>
               </table>
             )}
+            {(b.original_text?.length ?? 0) > 0 && (
+              <div className="ws-support">
+                <p className="ws-support-head">Original text (read this first; the simplified text below is a help)</p>
+                {b.original_text?.map((p) => (
+                  <p key={p} className="prep-pre">
+                    {p}
+                  </p>
+                ))}
+              </div>
+            )}
             {b.supports.map((s, i) => (
               // oxlint-disable-next-line react/no-array-index-key -- supports have no id on the sheet
               <div key={i} className="ws-support">
@@ -175,6 +204,27 @@ export function SheetPreview({
                       </ul>
                     )}
                     {it.hint?.trim() && <p className="ws-hint-print">Hint: {it.hint}</p>}
+                    {it.support && (
+                      <div className="ws-hint-print ws-item-support" aria-label={`${it.support.heading} ${it.no}`}>
+                        {it.support.kind === "word_bank" ? (
+                          <p>
+                            <strong>{it.support.heading}:</strong> {it.support.word_bank.join(" / ")}
+                          </p>
+                        ) : (
+                          <p>
+                            <strong>{it.support.heading}:</strong> {it.support.lines[0] ?? ""}
+                          </p>
+                        )}
+                        {(it.support.kind === "word_bank" ? it.support.lines : it.support.lines.slice(1)).map((l) => (
+                          <p key={l}>{l}</p>
+                        ))}
+                        {it.support.kind !== "word_bank" && it.support.word_bank.length > 0 && (
+                          <p>
+                            <strong>Word bank:</strong> {it.support.word_bank.join(" / ")}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {!teacher &&
                       Array.from({ length: it.lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
                     {teacher && (it.answer || it.evidence) && (
@@ -183,6 +233,12 @@ export function SheetPreview({
                           <div className="ws-answer-row">
                             <span>參考答案</span>
                             <span lang="en">{it.answer}</span>
+                          </div>
+                        )}
+                        {it.scoring && (
+                          <div className="ws-answer-row">
+                            <span>評分說明</span>
+                            <span>{it.scoring}</span>
                           </div>
                         )}
                         {it.evidence && (
