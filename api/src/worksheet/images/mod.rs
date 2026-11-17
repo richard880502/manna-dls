@@ -5,13 +5,13 @@
 //!   what picture belongs there, its alt text and an optional caption (words go in the caption,
 //!   never in the picture). Only asked for while pictures are on ([`Images::enabled`]): with
 //!   `IMAGE_PROVIDER=none` the requests to the text model are what they were before. The server
-//!   cleans them ([`clean_slots`]): lengths, at most two per block, and a slot that needs a real
-//!   photo (a map, a flag, a real person or landmark, history) becomes `photo_needed`, which is
-//!   never generated.
+//!   cleans them ([`clean_slots`]): lengths and at most two per block. Every slot is drawn: there
+//!   is no "needs a real photo" exception any more (the PI's decision, 2026-11-17); a picture
+//!   that came out wrong is the teacher's to redraw, replace or remove.
 //! * **Pictures** (`worksheet_images`, outside the versioned document): after a generation (or a
 //!   block regeneration) passes its checks and is saved, every new slot gets a row
-//!   ([`enqueue`]): `queued` and a background job ([`job`]), or `skipped` (photo needed, pictures
-//!   off, no storage, the cap per worksheet reached). The job calls the picture model with the
+//!   ([`enqueue`]): `queued` and a background job ([`job`]), or `skipped` (pictures off, no
+//!   storage, the cap per worksheet reached). The job calls the picture model with the
 //!   house style ([`STYLE_KEY`]), re-encodes the result as JPEG ([`normalize`]) and stores it.
 //!   A failure leaves an empty box with the slot's purpose.
 //! * **Teacher actions** (owner only): 重畫 with an optional note ([`regenerate`], capped per
@@ -28,14 +28,12 @@ pub mod job;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
-use std::sync::LazyLock;
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -87,7 +85,8 @@ pub const ALT_CHARS: usize = 120;
 pub const CAPTION_CHARS: usize = 80;
 /// The teacher's note for a 重畫.
 pub const HINT_CHARS: usize = 200;
-pub const KINDS: [&str; 4] = ["scene", "object", "icon", "photo_needed"];
+/// What the model may write as `kind` (`photo_needed` is only read from older worksheets).
+pub const KINDS: [&str; 3] = ["scene", "object", "icon"];
 
 /// Longest side of a stored picture.
 pub const MAX_SIDE: u32 = 1536;
@@ -95,8 +94,6 @@ const JPEG_QUALITY: u8 = 85;
 pub const MIME: &str = "image/jpeg";
 
 pub const MSG_DISABLED: &str = "這個環境沒有開啟 AI 產圖；請上傳自己的圖。";
-pub const MSG_PHOTO_NEEDED: &str =
-    "這裡需要真實、準確的照片（地圖、國旗、真實人物或地標、歷史照片），Manna 不會自己畫；請上傳一張。";
 const MSG_NO_STORAGE: &str = "這個環境目前沒有連上檔案儲存空間，無法保存圖片。";
 const MSG_CAP: &str = "這份學習單自動產生的圖已經到上限；這一張可以按「重畫」，或上傳自己的圖。";
 const MSG_GONE: &str = "這個圖片位置已經不在學習單上了。";
@@ -107,7 +104,6 @@ pub const MSG_CANNOT_RESUME: &str =
     "系統更新後無法繼續產這張圖（產圖或檔案儲存目前沒有開啟）；可以稍後按「重畫」，或上傳自己的圖。";
 const MSG_SLOT_NOT_FOUND: &str = "找不到這個圖片位置。";
 const MSG_BUSY: &str = "這張圖正在產生，好了之後再重畫。";
-const MSG_PHOTO_ONLY: &str = "這個位置需要真實照片，Manna 不會自己畫；請上傳一張圖。";
 const MSG_NOT_AN_IMAGE: &str = "只能上傳圖片（.png、.jpg、.webp、.gif）。";
 const MSG_UNREADABLE: &str = "這張圖讀不出來（可能已損壞），請換一張。";
 
@@ -122,7 +118,8 @@ pub enum SlotKind {
     Object,
     /// A simple icon.
     Icon,
-    /// A real, accurate photo (map, flag, real person or landmark, history): never generated.
+    /// Written by older worksheets for "a real photo is needed" (no longer skipped: drawn like a
+    /// scene from its alt text).
     PhotoNeeded,
 }
 
@@ -175,7 +172,7 @@ pub struct WithSlots<T> {
 }
 
 /// The `image_slots` property: at most `max` slots, every string capped, properties in the
-/// order they are written (the kind first, so `photo_needed` is decided before the prompt).
+/// order they are written.
 pub fn slots_schema(max: usize) -> Value {
     json!({
         "type": "array",
@@ -231,30 +228,11 @@ fn names_a_resource(text: &str) -> bool {
     .any(|k| t.contains(k))
 }
 
-static PHOTO_WORDS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)\b(maps?|flags?|portraits?|famous|celebrit(?:y|ies)|president|prime minister|king|queen|emperor|historical|history|war|battles?|landmarks?|monuments?|logos?|brands?|trademarks?|photographs?|real photo)\b|地圖|國旗|名人|總統|歷史|戰爭|地標",
-    )
-    .expect("valid regex")
-});
-
-/// Two capitalised words in a row (`Eiffel Tower`, `Taylor Swift`, `Statue of Liberty`): most
-/// likely a real person or place. A title with a full stop (`Mrs. Lin`) is not one.
-static NAMED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[A-Z][a-z]+(?:\s+(?:of\s+)?[A-Z][a-z]+)+").expect("valid regex")
-});
-
-/// Whether a slot asks for something that must be a real, accurate photo: a map, a flag, a real
-/// person or landmark, history (doc §6.3). Such a slot is never generated.
-pub fn needs_real_photo(slot: &ImageSlot) -> bool {
-    let text = format!("{} {}", slot.prompt_en, slot.purpose_zh);
-    PHOTO_WORDS.is_match(&text) || NAMED.is_match(&slot.prompt_en)
-}
-
 /// The slots of one block as the server keeps them (no ids yet), and what was changed (for the
 /// log). Strings are cut to their caps; a slot naming a web address or with nothing to draw is
-/// dropped; one that needs a real photo becomes `photo_needed`; repeated descriptions and slots
-/// beyond `max` are dropped. Never a reason for a repair call: slots are optional.
+/// dropped; a `photo_needed` the model still writes is drawn as a scene (from its alt text when it
+/// has no description); repeated descriptions and slots beyond `max` are dropped. Never a reason
+/// for a repair call: slots are optional.
 pub fn clean_slots(raw: &[RawImageSlot], max: usize) -> (Vec<ImageSlot>, Vec<String>) {
     let mut out: Vec<ImageSlot> = Vec::new();
     let mut notes = Vec::new();
@@ -278,7 +256,14 @@ pub fn clean_slots(raw: &[RawImageSlot], max: usize) -> (Vec<ImageSlot>, Vec<Str
             notes.push(format!("第 {n} 個圖片位置寫了網址，拿掉"));
             continue;
         }
-        if slot.prompt_en.is_empty() && slot.kind != SlotKind::PhotoNeeded {
+        if slot.kind == SlotKind::PhotoNeeded {
+            slot.kind = SlotKind::Scene;
+            notes.push(format!("第 {n} 個圖片位置原本要真實照片，改成插圖"));
+        }
+        if slot.prompt_en.is_empty() {
+            slot.prompt_en = clip(&slot.alt_en, PROMPT_CHARS);
+        }
+        if slot.prompt_en.is_empty() {
             notes.push(format!("第 {n} 個圖片位置沒有畫面描述，拿掉"));
             continue;
         }
@@ -294,10 +279,6 @@ pub fn clean_slots(raw: &[RawImageSlot], max: usize) -> (Vec<ImageSlot>, Vec<Str
         }
         if slot.alt_en.is_empty() {
             slot.alt_en = clip(&slot.prompt_en, ALT_CHARS);
-        }
-        if slot.kind != SlotKind::PhotoNeeded && needs_real_photo(&slot) {
-            notes.push(format!("第 {n} 個圖片位置需要真實照片，改成留給教師"));
-            slot.kind = SlotKind::PhotoNeeded;
         }
         if out
             .iter()
@@ -425,10 +406,21 @@ pub async fn style(db: &PgPool) -> sqlx::Result<Style> {
 
 /// What the picture model gets: the house style, then the slot's description and the
 /// teacher's note.
+/// What to draw: the description, else (an older `photo_needed` slot) its alt text, else its
+/// purpose.
+fn slot_description(slot: &ImageSlot) -> String {
+    [&slot.prompt_en, &slot.alt_en, &slot.purpose_zh]
+        .into_iter()
+        .map(|t| t.trim())
+        .find(|t| !t.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 pub fn picture_prompt(style: &Style, slot: &ImageSlot, hint: &str) -> String {
     let hint = hint.trim();
     let vars = HashMap::from([
-        ("description", slot.prompt_en.trim().to_string()),
+        ("description", slot_description(slot)),
         (
             "teacher_note",
             if hint.is_empty() {
@@ -672,9 +664,7 @@ pub async fn enqueue(
         if known.contains(&slot.id) || !seen.insert(slot.id.clone()) {
             continue;
         }
-        let skip = if slot.kind == SlotKind::PhotoNeeded {
-            Some(("photo_needed", MSG_PHOTO_NEEDED))
-        } else if !state.images.enabled() {
+        let skip = if !state.images.enabled() {
             Some(("disabled", MSG_DISABLED))
         } else if state.storage.is_none() {
             Some(("storage", MSG_NO_STORAGE))
@@ -825,10 +815,7 @@ pub async fn regenerate(
     if state.storage.is_none() {
         return Err(crate::materials::store::storage_missing());
     }
-    let (block_id, slot) = slot_of(&state.db, ws.id, slot_id).await?;
-    if slot.kind == SlotKind::PhotoNeeded {
-        return Err(AppError::bad_request(MSG_PHOTO_ONLY));
-    }
+    let (block_id, _slot) = slot_of(&state.db, ws.id, slot_id).await?;
     let max = i64::from(state.images.config().max_regenerations);
     let mut tx = state.db.begin().await?;
     lock_worksheet(&mut tx, ws.id).await?;
@@ -1271,37 +1258,47 @@ mod tests {
         let (one, notes) = clean_slots(&[raw("scene", "A cat."), raw("icon", "A dog.")], 1);
         assert_eq!(one.len(), 1);
         assert!(notes.iter().any(|n| n.contains("超過")));
-        // Nothing to draw: dropped, unless it is a photo for the teacher.
+        // Nothing to draw: dropped.
         let (none, _) = clean_slots(&[raw("scene", "  ")], 2);
         assert!(none.is_empty());
-        let (photo, _) = clean_slots(&[raw("photo_needed", "")], 2);
-        assert_eq!(photo[0].kind, SlotKind::PhotoNeeded);
     }
 
     #[test]
-    fn real_photos_are_left_for_the_teacher() {
+    fn every_slot_is_drawn_even_one_asking_for_a_real_photo() {
+        // Maps, flags, famous people… are drawn like anything else (no "real photo" exception).
         for prompt in [
             "A map of Taiwan with the main cities.",
             "The flag of Japan waving.",
-            "A portrait of a famous scientist.",
-            "Taylor Swift singing on a stage.",
             "Tourists in front of the Eiffel Tower.",
-            "Soldiers in a historical battle.",
-            "A bottle with a Coca-Cola logo.",
-        ] {
-            let (slots, notes) = clean_slots(&[raw("scene", prompt)], 2);
-            assert_eq!(slots[0].kind, SlotKind::PhotoNeeded, "{prompt}");
-            assert!(!notes.is_empty());
-        }
-        for prompt in [
-            "A girl holding an umbrella in the rain.",
-            "Students sharing umbrellas outside a small shop in Taipei.",
-            "Mrs. Lin smiling next to an umbrella stand.",
-            "FAKE_IMG_FAIL a shop.",
         ] {
             let (slots, _) = clean_slots(&[raw("scene", prompt)], 2);
             assert_eq!(slots[0].kind, SlotKind::Scene, "{prompt}");
         }
+        // A `photo_needed` the model still writes becomes a scene, drawn from its alt text.
+        let photo = RawImageSlot {
+            kind: "photo_needed".into(),
+            purpose_zh: "提供蜜蜂傳粉過程的真實照片".into(),
+            prompt_en: String::new(),
+            alt_en: "A close-up photo of a bee on a flower with pollen on its body.".into(),
+            caption: String::new(),
+        };
+        let (slots, notes) = clean_slots(&[photo], 2);
+        assert_eq!(slots[0].kind, SlotKind::Scene);
+        assert_eq!(
+            slots[0].prompt_en,
+            "A close-up photo of a bee on a flower with pollen on its body."
+        );
+        assert!(notes.iter().any(|n| n.contains("改成插圖")));
+        // An older stored `photo_needed` slot without a description is drawn from its alt text.
+        let old = ImageSlot {
+            id: "b1-p1".into(),
+            kind: SlotKind::PhotoNeeded,
+            purpose_zh: "蜜蜂的照片".into(),
+            prompt_en: String::new(),
+            alt_en: "A bee on a flower.".into(),
+            caption: String::new(),
+        };
+        assert_eq!(slot_description(&old), "A bee on a flower.");
     }
 
     #[test]

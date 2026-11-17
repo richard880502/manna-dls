@@ -244,8 +244,8 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
     let id = direct(&app, &t, &passage("FAKE_IMG_PHOTO")).await;
     let state = generate(&app, &t, id).await;
 
-    // The tasks step wrote one slot for the first block, and asked for a map in the second: a
-    // real photo, left for the teacher.
+    // The tasks step wrote one slot for the first block, and asked for a map in the second. A map
+    // is drawn like anything else (no "real photo" exception); this one's picture fails.
     let slots = slots_of(&state);
     assert_eq!(slots.len(), 2, "{slots:?}");
     let (first_block, first) = &slots[0];
@@ -256,7 +256,7 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
     assert!(!first["alt_en"].as_str().unwrap().is_empty());
     assert_eq!(first["caption"], "Look at the picture of paragraph 1.");
     let photo_id = slots[1].1["id"].as_str().unwrap().to_string();
-    assert_eq!(slots[1].1["kind"], "photo_needed");
+    assert_eq!(slots[1].1["kind"], "scene");
     assert_eq!(state["images"]["enabled"], true);
     assert_eq!(state["images"]["regenerations_left"], 10);
 
@@ -270,9 +270,9 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
         (Some(48), Some(32))
     );
     let photo = slot(&images, &photo_id);
-    assert_eq!(photo["status"], "skipped");
+    assert_eq!(photo["status"], "failed", "{images}");
     assert_eq!(photo["image_id"], Value::Null);
-    assert!(photo["message"].as_str().unwrap().contains("真實"));
+    assert!(!photo["message"].as_str().unwrap().is_empty());
 
     // Served to the owner only, as JPEG with a validator.
     let image_id = done["image_id"].as_i64().unwrap();
@@ -319,7 +319,7 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 
-    // The sheet: the picture after the instructions; the photo slot as an empty box. Only the
+    // The sheet: the picture after the instructions; the failed slot as an empty box. Only the
     // teacher version says what the box is for.
     let student = sheet(&app, &t, id, "student").await;
     let printed: Vec<&Value> = student["blocks"]
@@ -334,7 +334,7 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
     assert_eq!(printed[0]["ai_generated"], true);
     assert_eq!(printed[0]["caption"], "Look at the picture of paragraph 1.");
     assert!(printed[0].get("purpose").is_none() && printed[1].get("message").is_none());
-    assert_eq!(printed[1]["status"], "skipped");
+    assert_eq!(printed[1]["status"], "failed");
     let teacher = sheet(&app, &t, id, "teacher").await;
     let boxes: Vec<&Value> = teacher["blocks"]
         .as_array()
@@ -346,7 +346,7 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
         .as_str()
         .unwrap()
         .contains("paragraph 1"));
-    assert!(boxes[1]["message"].as_str().unwrap().contains("真實"));
+    assert!(!boxes[1]["message"].as_str().unwrap().is_empty());
 
     // The exports carry the picture (and the box).
     let docx = export(&app, &t, id, "format=docx&audience=student").await;
@@ -376,11 +376,17 @@ async fn a_generated_worksheet_gets_its_pictures_in_the_background() {
         (Some(2), Some(1))
     );
 
-    // One logged call: counts and hashes, never the prompt.
+    // Logged calls (the map was tried twice and failed): counts and hashes, never the prompt.
     let calls = picture_calls(&app).await;
-    assert_eq!(calls.len(), 1);
-    let call = &calls[0];
-    assert_eq!((call.attempt, call.status.as_str()), (1, "shown"));
+    assert_eq!(
+        calls.len(),
+        3,
+        "one picture, and the failing one tried twice"
+    );
+    let shown: Vec<_> = calls.iter().filter(|c| c.status == "shown").collect();
+    assert_eq!(shown.len(), 1);
+    let call = shown[0];
+    assert_eq!(call.attempt, 1);
     let snapshot = call.input_snapshot.to_string();
     assert!(
         !snapshot.contains("umbrella") && !snapshot.contains("Simple flat vector"),
@@ -573,16 +579,7 @@ async fn regenerate_upload_and_remove_are_the_owners() {
         .await;
     assert_eq!(s, StatusCode::OK);
 
-    // Bad requests: a slot that needs a real photo, an unknown slot, a long note, a link.
-    let (s, v) = app
-        .post(
-            &format!("/api/worksheets/{id}/image-slots/{photo_id}/regenerate"),
-            Some(&t),
-            json!({}),
-        )
-        .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
-    assert!(err_message(&v).contains("真實照片"));
+    // Bad requests: an unknown slot, a long note, a link.
     let (s, _) = app
         .post(
             &format!("/api/worksheets/{id}/image-slots/nope/regenerate"),

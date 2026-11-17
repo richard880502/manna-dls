@@ -18,7 +18,7 @@ export interface PictureView {
   aiGenerated: boolean;
   /** For the teacher: what the picture is for (null on the student sheet). */
   purpose: string | null;
-  /** Why there is no picture (teacher only). */
+  /** Why there is no picture (shown to the teacher, also on a student preview she can edit). */
   message: string | null;
   kind: WsImageSlotKind | null;
 }
@@ -90,7 +90,6 @@ function Tools({ view, actions, name }: { view: PictureView; actions: PictureAct
   const [error, setError] = useState<string | null>(null);
   const enabled = actions.images?.enabled ?? false;
   const left = actions.images?.regenerations_left ?? 0;
-  const photo = view.kind === "photo_needed";
   const open = isOpenStatus(view.status);
   const off = busy || actions.disabled === true;
 
@@ -119,15 +118,13 @@ function Tools({ view, actions, name }: { view: PictureView; actions: PictureAct
   // Why 重畫 is not offered, if it is not.
   const noRedraw = !enabled
     ? "這個環境沒有開啟 AI 產圖，可以上傳自己的圖。"
-    : photo
-      ? null
-      : left <= 0
-        ? "這份學習單的重畫次數用完了，可以上傳自己的圖。"
-        : null;
+    : left <= 0
+      ? "這份學習單的重畫次數用完了，可以上傳自己的圖。"
+      : null;
 
   return (
     <div className="ws-picture-tools" lang="zh-Hant" role="group" aria-label={`圖片工具 ${name}`}>
-      {enabled && !photo && !hinting && (
+      {enabled && !hinting && (
         <button
           type="button"
           className="text-link is-plain is-gold"
@@ -183,7 +180,7 @@ function Tools({ view, actions, name }: { view: PictureView; actions: PictureAct
           拿掉
         </button>
       )}
-      {enabled && !photo && <span className="ws-picture-left">還能重畫 {left} 次</span>}
+      {enabled && <span className="ws-picture-left">還能重畫 {left} 次</span>}
       {noRedraw && <span className="ws-picture-left">{noRedraw}</span>}
       {error && (
         <span className="ws-picture-error" role="alert">
@@ -225,6 +222,9 @@ export function SlotPicture({
     );
   }
   const open = isOpenStatus(view.status);
+  // The teacher is looking (her version, or a student preview she can edit): say why the box is
+  // empty. The printed student sheet never shows it.
+  const explain = teacher || actions !== null;
   return (
     <figure className={`ws-picture is-${view.status}`} aria-label={`圖片 ${name}`}>
       {done && url ? (
@@ -239,8 +239,11 @@ export function SlotPicture({
           )}
           {done && !url && !failed && <p>載入圖片中…</p>}
           {done && failed && <p>這張圖暫時讀不到。</p>}
-          {!done && !open && teacher && view.purpose && <p className="ws-picture-purpose">請放一張圖：{view.purpose}</p>}
-          {!done && !open && teacher && view.message && <p className="ws-picture-message">{view.message}</p>}
+          {!done && !open && explain && view.purpose && <p className="ws-picture-purpose">請放一張圖：{view.purpose}</p>}
+          {!done && !open && explain && view.message && <p className="ws-picture-message">{view.message}</p>}
+          {!done && !open && explain && !view.purpose && !view.message && (
+            <p className="ws-picture-message">這裡還沒有圖：可以按「重畫」，或換成自己的圖。</p>
+          )}
         </div>
       )}
       {view.caption.trim() && <figcaption>{view.caption}</figcaption>}

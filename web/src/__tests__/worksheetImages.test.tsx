@@ -220,12 +220,13 @@ describe("the editor", () => {
     const order = Array.from(a.getByRole("figure").parentElement?.children ?? []);
     expect(order.indexOf(first)).toBeGreaterThan(order.indexOf(a.getByRole("textbox", { name: /作答指示/ })));
 
-    // The two of block B: a real photo for the teacher (no 重畫), and one that failed.
+    // The two of block B: a slot an older worksheet left for a real photo (skipped, with its
+    // reason; it can be drawn now), and one that failed.
     const b = region("B");
     const [photo, failed] = b.getAllByRole("figure");
     expect(within(photo!).getByText("請放一張圖：讓學生看出故事發生的城市")).toBeInTheDocument();
     expect(within(photo!).getByText(/需要真實、準確的照片/)).toBeInTheDocument();
-    expect(within(photo!).queryByRole("button", { name: "重畫" })).not.toBeInTheDocument();
+    expect(within(photo!).getByRole("button", { name: "重畫" })).toBeEnabled();
     expect(within(failed!).getByText(/HTTP 503/)).toBeInTheDocument();
     expect(within(failed!).getByRole("button", { name: "重畫" })).toBeEnabled();
     expect(within(failed!).queryByText("AI 生成")).not.toBeInTheDocument();
@@ -463,9 +464,11 @@ describe("the 備課對話 preview", () => {
     );
     expect(api.callsTo("GET", "/api/worksheets/11/images/31")).not.toHaveLength(0);
     expect(within(preview).getByText("Look at the umbrella stand.")).toBeInTheDocument();
-    // Student version: an empty box, no purpose, no 「AI 生成」.
+    // Student version: an empty box, no purpose, no 「AI 生成」; the teacher looking at it still
+    // sees why the box is empty (the printed student sheet never does).
     expect(within(preview).getByRole("img", { name: "A map" })).toBeInTheDocument();
     expect(within(preview).queryByText(/請放一張圖/)).not.toBeInTheDocument();
+    expect(within(preview).getByText("產圖逾時")).toBeInTheDocument();
     expect(within(preview).queryByText("AI 生成")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "教師版" }));
