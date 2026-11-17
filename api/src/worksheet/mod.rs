@@ -20,6 +20,7 @@ pub mod revise;
 pub mod schemas;
 pub mod store;
 pub mod sync;
+pub mod task_words;
 pub mod template;
 pub mod vocab;
 
@@ -323,8 +324,12 @@ pub struct Settings {
     /// Explicit questions per level (each 0–12, 3–30 in all); overrides `bloom` and
     /// `question_count` when set.
     pub bloom_counts: Option<BTreeMap<Bloom, i32>>,
-    /// The teacher's learning objective (≤300), sent to every prompt.
-    pub objective: Option<String>,
+    /// 內容目標 (≤300; one objective per line), the teacher's own or a draft she adopted. A row
+    /// stored before the two fields existed has one `objective`: it is read as the 內容目標.
+    #[serde(alias = "objective")]
+    pub content_objective: Option<String>,
+    /// 語言目標 (≤300; one objective per line).
+    pub language_objective: Option<String>,
 }
 
 /// A partial `Settings` (`POST /api/worksheets { settings }`, `PUT …/:id { settings }`): the
@@ -345,8 +350,11 @@ pub struct SettingsPatch {
     pub question_count: Option<Option<i32>>,
     #[serde(deserialize_with = "crate::routes::double_option")]
     pub bloom_counts: Option<Option<BTreeMap<Bloom, i32>>>,
+    /// `objective` (the single field before 內容目標 and 語言目標) is the 內容目標.
+    #[serde(alias = "objective", deserialize_with = "crate::routes::double_option")]
+    pub content_objective: Option<Option<String>>,
     #[serde(deserialize_with = "crate::routes::double_option")]
-    pub objective: Option<Option<String>>,
+    pub language_objective: Option<Option<String>>,
 }
 
 impl SettingsPatch {
@@ -380,8 +388,11 @@ impl SettingsPatch {
         if let Some(v) = &self.bloom_counts {
             s.bloom_counts = v.clone();
         }
-        if let Some(v) = &self.objective {
-            s.objective = v.clone();
+        if let Some(v) = &self.content_objective {
+            s.content_objective = v.clone();
+        }
+        if let Some(v) = &self.language_objective {
+            s.language_objective = v.clone();
         }
         s
     }
@@ -438,18 +449,10 @@ impl Settings {
         if let Some(counts) = &self.bloom_counts {
             bloom::check_counts(counts)?;
         }
-        let objective = self
-            .objective
-            .as_deref()
-            .map(str::trim)
-            .filter(|o| !o.is_empty())
-            .map(str::to_string);
-        if objective
-            .as_ref()
-            .is_some_and(|o| o.chars().count() > bloom::MAX_OBJECTIVE_CHARS)
-        {
-            return Err(format!("學習目標最多 {} 字。", bloom::MAX_OBJECTIVE_CHARS));
-        }
+        let content_objective =
+            crate::objectives::normalised_field("內容目標", self.content_objective.as_deref())?;
+        let language_objective =
+            crate::objectives::normalised_field("語言目標", self.language_objective.as_deref())?;
         Ok(Settings {
             material_types: normalise_labels("素材類型", &self.material_types, &MATERIAL_TYPES)?,
             student_tasks: normalise_labels("學生任務", &self.student_tasks, &student_tasks())?,
@@ -461,19 +464,29 @@ impl Settings {
             bloom: bloom::normalise_levels(&self.bloom),
             question_count: self.question_count,
             bloom_counts: self.bloom_counts.clone(),
-            objective,
+            content_objective,
+            language_objective,
         })
     }
 
     /// The same settings with what says what to make (`output`, `bloom`, `question_count`,
-    /// `bloom_counts`, `objective`) taken from `other`.
+    /// `bloom_counts`, the two objectives) taken from `other`.
     pub fn with_focus_of(mut self, other: &Settings) -> Settings {
         self.output = other.output;
         self.bloom = other.bloom.clone();
         self.question_count = other.question_count;
         self.bloom_counts = other.bloom_counts.clone();
-        self.objective = other.objective.clone();
+        self.content_objective = other.content_objective.clone();
+        self.language_objective = other.language_objective.clone();
         self
+    }
+
+    /// The teacher's 內容目標 and 語言目標, one line per objective.
+    pub fn teacher_objectives(&self) -> crate::objectives::TeacherObjectives {
+        crate::objectives::TeacherObjectives::from_fields(
+            self.content_objective.as_deref(),
+            self.language_objective.as_deref(),
+        )
     }
 
     pub fn wants(&self, generation_option: &str) -> bool {
@@ -564,6 +577,10 @@ pub struct Vocab {
     pub definition: String,
     pub context: String,
     pub paragraph_id: Option<String>,
+    /// A word of the instructions (compare, support your answer …) listed by the code with a
+    /// Chinese hint as its `definition` (SIOP V2, [`task_words`]); not a key word of the text.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub task_word: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -633,6 +650,89 @@ pub struct Block {
     /// copies the block; absent from the JSON when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub image_slots: Vec<images::ImageSlot>,
+    /// Where an activity block of the 完整學習單 stands in 示範 → 共同練習 → 同儕練習 → 獨立應用
+    /// (SIOP Q4). Blocks made before (and of the other outputs) have none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub practice: Option<Practice>,
+}
+
+/// SIOP Q4: the order of the per-paragraph tasks of the 完整學習單, from the teacher showing
+/// how to the students doing it alone (a student who is stuck goes back a step).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Practice {
+    /// 示範: the teacher models the first item, thinking aloud.
+    Model,
+    /// 共同練習: the class does it with the teacher.
+    Guided,
+    /// 同儕練習: pairs or groups.
+    Peer,
+    /// 獨立應用: each student on their own.
+    Independent,
+}
+
+impl Practice {
+    pub const ALL: [Practice; 4] = [
+        Practice::Model,
+        Practice::Guided,
+        Practice::Peer,
+        Practice::Independent,
+    ];
+
+    /// The fixed label the model writes (`practice` in `worksheet_tasks`).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Model => "示範",
+            Self::Guided => "共同練習",
+            Self::Peer => "同儕練習",
+            Self::Independent => "獨立應用",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.label() == label.trim())
+    }
+
+    /// What the teacher reads in the block's notes.
+    pub fn note(self) -> &'static str {
+        match self {
+            Self::Model => "教學順序：示範——老師先放聲思考，做第一題給學生看，再讓學生接著做。",
+            Self::Guided => "教學順序：共同練習——全班和老師一起做，老師邊問邊引導。",
+            Self::Peer => "教學順序：同儕練習——兩人或小組合作完成，老師巡視。",
+            Self::Independent => {
+                "教學順序：獨立應用——學生自己完成；卡住時可以回到前一個區塊的做法。"
+            }
+        }
+    }
+
+    /// The stage of the block at `index` of `count` blocks in paragraph order: the first one
+    /// models, the last one is independent, the ones between move forward (all four from four
+    /// blocks on).
+    pub fn for_position(index: usize, count: usize) -> Self {
+        match count {
+            0 | 1 => Self::Independent,
+            2 => [Self::Model, Self::Independent][index.min(1)],
+            3 => [Self::Model, Self::Peer, Self::Independent][index.min(2)],
+            n => Self::ALL[(index.min(n - 1) * 4 / n).min(3)],
+        }
+    }
+
+    /// Whether the stages of the blocks, in order, follow Q4: every block has one, they never
+    /// go back, the first models and the last is independent (from two blocks on), and all
+    /// four are there (from four blocks on).
+    pub fn in_order(stages: &[Option<Practice>]) -> bool {
+        let Some(stages) = stages.iter().copied().collect::<Option<Vec<Practice>>>() else {
+            return false;
+        };
+        let n = stages.len();
+        if n < 2 {
+            return true;
+        }
+        let forward = stages.windows(2).all(|w| w[0] <= w[1]);
+        let ends = stages[0] == Self::Model && stages[n - 1] == Self::Independent;
+        let all = n < 4 || Self::ALL.iter().all(|p| stages.contains(p));
+        forward && ends && all
+    }
 }
 
 impl Default for Block {
@@ -657,6 +757,7 @@ impl Default for Block {
             template_section_id: None,
             bloom: None,
             image_slots: Vec::new(),
+            practice: None,
         }
     }
 }
@@ -1144,14 +1245,20 @@ mod tests {
             output: Output::Comprehension,
             bloom: vec![Bloom::Create, Bloom::Remember, Bloom::Create],
             question_count: Some(10),
-            objective: Some("  Students can explain the writer's view.  ".into()),
+            content_objective: Some("  Students can explain the writer's view.  ".into()),
+            language_objective: Some(" I can underline because. \n\n  I can retell it. ".into()),
             ..Settings::default()
         };
         let n = s.normalised().unwrap();
         assert_eq!(n.bloom, vec![Bloom::Remember, Bloom::Create]);
         assert_eq!(
-            n.objective.as_deref(),
+            n.content_objective.as_deref(),
             Some("Students can explain the writer's view.")
+        );
+        // One objective per line, every line trimmed, blank lines dropped.
+        assert_eq!(
+            n.language_objective.as_deref(),
+            Some("I can underline because.\nI can retell it.")
         );
         for bad in [2, 31] {
             let s = Settings {
@@ -1161,15 +1268,31 @@ mod tests {
             assert!(s.normalised().unwrap_err().contains("題數"), "{bad}");
         }
         let s = Settings {
-            objective: Some("o".repeat(301)),
+            content_objective: Some("o".repeat(301)),
             ..Settings::default()
         };
-        assert!(s.normalised().unwrap_err().contains("學習目標"));
+        assert!(s.normalised().unwrap_err().contains("內容目標"));
         let s = Settings {
-            objective: Some("   ".into()),
+            language_objective: Some("o".repeat(301)),
             ..Settings::default()
         };
-        assert_eq!(s.normalised().unwrap().objective, None);
+        assert!(s.normalised().unwrap_err().contains("語言目標"));
+        let s = Settings {
+            content_objective: Some("   ".into()),
+            language_objective: Some(" \n ".into()),
+            ..Settings::default()
+        };
+        let blank = s.normalised().unwrap();
+        assert_eq!(blank.content_objective, None);
+        assert_eq!(blank.language_objective, None);
+        // A row stored with the single field from before the two: read as the 內容目標, and
+        // written back without it.
+        let old: Settings =
+            serde_json::from_value(serde_json::json!({ "objective": "能說出主旨" })).unwrap();
+        assert_eq!(old.content_objective.as_deref(), Some("能說出主旨"));
+        assert_eq!(old.language_objective, None);
+        let written = serde_json::to_value(&old).unwrap();
+        assert!(written.get("objective").is_none(), "{written}");
         let s = Settings {
             bloom_counts: Some(BTreeMap::from([(Bloom::Apply, 1), (Bloom::Create, 1)])),
             ..Settings::default()
@@ -1185,7 +1308,13 @@ mod tests {
         assert_eq!(p.output, Output::Tiered);
         assert_eq!(p.question_count, None);
         assert_eq!(p.bloom, n.bloom, "not named, kept");
-        assert_eq!(p.objective, n.objective);
+        assert_eq!(p.content_objective, n.content_objective);
+        assert_eq!(p.language_objective, n.language_objective);
+        // An old client's `objective` patches the 內容目標.
+        let legacy: SettingsPatch =
+            serde_json::from_value(serde_json::json!({ "objective": null })).unwrap();
+        assert_eq!(legacy.apply(&n).content_objective, None);
+        assert_eq!(legacy.apply(&n).language_objective, n.language_objective);
         assert_eq!(p.bloom_counts, Some(BTreeMap::from([(Bloom::Analyze, 4)])));
         let err =
             serde_json::from_value::<SettingsPatch>(serde_json::json!({ "bloom": ["think"] }))
@@ -1195,6 +1324,51 @@ mod tests {
             serde_json::from_value::<SettingsPatch>(serde_json::json!({ "output": "quiz" }))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn practice_moves_from_modelling_to_independent_work() {
+        use Practice::*;
+        let at = |n: usize| {
+            (0..n)
+                .map(|i| Practice::for_position(i, n))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(at(1), [Independent]);
+        assert_eq!(at(2), [Model, Independent]);
+        assert_eq!(at(3), [Model, Peer, Independent]);
+        assert_eq!(at(4), [Model, Guided, Peer, Independent]);
+        assert_eq!(at(6), [Model, Model, Guided, Peer, Peer, Independent]);
+        for n in 1..=12 {
+            let s: Vec<Option<Practice>> = at(n).into_iter().map(Some).collect();
+            assert!(Practice::in_order(&s), "{n}");
+        }
+        assert!(!Practice::in_order(&[Some(Model), None]));
+        assert!(!Practice::in_order(&[
+            Some(Model),
+            Some(Peer),
+            Some(Guided),
+            Some(Independent)
+        ]));
+        assert!(
+            !Practice::in_order(&[Some(Guided), Some(Independent)]),
+            "starts with 示範"
+        );
+        assert!(
+            !Practice::in_order(&[Some(Model), Some(Peer)]),
+            "ends with 獨立應用"
+        );
+        assert!(
+            !Practice::in_order(&[Some(Model), Some(Model), Some(Peer), Some(Independent)]),
+            "four blocks use all four"
+        );
+        assert!(Practice::in_order(&[
+            Some(Model),
+            Some(Guided),
+            Some(Independent)
+        ]));
+        assert_eq!(Practice::from_label(" 同儕練習 "), Some(Peer));
+        assert_eq!(serde_json::json!(Peer), "peer");
     }
 
     #[test]

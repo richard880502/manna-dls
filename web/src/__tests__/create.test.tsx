@@ -13,6 +13,7 @@ import {
   type BloomCounts,
 } from "../components/bloom/presets";
 import { EXEMPLAR_TEXT } from "../lib/create";
+import { CONTENT_OBJECTIVE_PLACEHOLDER } from "../lib/objectives";
 import {
   baseRoutes,
   cardOf,
@@ -156,7 +157,7 @@ describe("建立: the generator", () => {
     const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
     expect(nav.getByRole("link", { name: "閱讀理解題" })).toHaveAttribute("aria-current", "page");
 
-    await user.type(screen.getByRole("textbox", { name: "學習目標（選填）" }), "學生能說出蜜蜂的重要");
+    await user.type(screen.getByRole("textbox", { name: "內容目標（選填）" }), "I can explain why bees matter.");
     await user.type(article(), "Bees are busy.");
     await user.click(screen.getByRole("button", { name: "題數：多一題" }));
     expect(within(screen.getByRole("group", { name: "題數" })).getByText("9")).toBeInTheDocument();
@@ -183,7 +184,7 @@ describe("建立: the generator", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/create/tiered"));
     expect(heading()).toHaveTextContent("來做一份 分層練習");
     expect(screen.queryByRole("group", { name: "換一種" })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "學習目標（選填）" })).toHaveValue("學生能說出蜜蜂的重要");
+    expect(screen.getByRole("textbox", { name: "內容目標（選填）" })).toHaveValue("I can explain why bees matter.");
     expect(article()).toHaveValue("Bees are busy.");
     expect(within(screen.getByRole("group", { name: "題數" })).getByText("9")).toBeInTheDocument();
   });
@@ -289,7 +290,7 @@ describe("建立: the generator", () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     await open("/create/comprehension");
-    await user.type(screen.getByRole("textbox", { name: "學習目標（選填）" }), "目標");
+    await user.type(screen.getByRole("textbox", { name: "內容目標（選填）" }), "目標");
     await user.click(generate());
     expect(screen.getByRole("alert")).toHaveTextContent("先附上文章或教材");
     expect(article()).toHaveFocus();
@@ -325,14 +326,17 @@ describe("建立: the generator", () => {
     expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "activity", request: "課堂活動", material_id: 5 });
   });
 
-  it("閱讀理解題: objective, class, Bloom counts, 題型 and the pasted text make the POST body", async () => {
+  it("閱讀理解題: objectives, class, Bloom counts, 題型 and the pasted text make the POST body", async () => {
     signIn();
     const api = mockApi(routes());
     const user = userEvent.setup();
     const { router } = await open("/create/comprehension");
-    const objective = screen.getByRole("textbox", { name: "學習目標（選填）" });
-    expect(objective).toHaveAttribute("placeholder", "例如：學生能分析作者如何用例子支持論點");
-    await user.type(objective, "學生能分析作者的論點");
+    const content = screen.getByRole("textbox", { name: "內容目標（選填）" });
+    expect(content).toHaveAttribute("placeholder", CONTENT_OBJECTIVE_PLACEHOLDER);
+    expect(content).toHaveAttribute("maxLength", "300");
+    await user.type(content, "學生能分析作者的論點");
+    // One objective per line.
+    await user.type(screen.getByRole("textbox", { name: "語言目標（選填）" }), "I can use because.{Enter}I can retell it.");
     await user.type(article(), "Bees are busy.");
 
     const klass = screen.getByRole("combobox", { name: "班級／程度" });
@@ -358,18 +362,22 @@ describe("建立: the generator", () => {
 
     await user.click(generate());
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
+    // The objectives go as objectives only (the request is the tool's label); no draft is asked
+    // for when the teacher wrote them.
     expect(api.lastBody("POST", SESSIONS)).toEqual({
       kind: "comprehension",
-      request: "學生能分析作者的論點",
+      request: "閱讀理解題",
       material: { title: "", text: "Bees are busy." },
       class_id: 3,
       options: {
         bloom_counts: { remember: 1, understand: 2, apply: 2, analyze: 1, evaluate: 1, create: 1 },
         question_count: 8,
         answer_formats: ["選擇題", "簡答題"],
-        objective: "學生能分析作者的論點",
+        content_objective: "學生能分析作者的論點",
+        language_objective: "I can use because.\nI can retell it.",
       },
     });
+    expect(api.callsTo("POST", "/api/objective-drafts")).toHaveLength(0);
   });
 
   it.each([

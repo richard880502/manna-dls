@@ -166,22 +166,28 @@ pub struct SessionOptions {
         deserialize_with = "null_as_empty"
     )]
     pub answer_formats: Vec<String>,
+    /// 內容目標 (≤300, one objective per line). A session stored before the two fields existed
+    /// has one `objective`: it is read as the 內容目標.
+    #[serde(skip_serializing_if = "Option::is_none", alias = "objective")]
+    pub content_objective: Option<String>,
+    /// 語言目標 (≤300, one objective per line).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub objective: Option<String>,
+    pub language_objective: Option<String>,
 }
 
 impl SessionOptions {
     /// Checked with the worksheet settings' own rules (fixed labels, 3–30 questions, 0–12 per
-    /// level and 3–30 in all, an objective of at most 300 characters) and put in their order:
-    /// levels in Bloom order without duplicates, formats in label order, the objective trimmed
-    /// (empty is none).
+    /// level and 3–30 in all, objectives of at most 300 characters) and put in their order:
+    /// levels in Bloom order without duplicates, formats in label order, every objective line
+    /// trimmed (empty is none).
     pub fn normalised(&self) -> Result<SessionOptions, String> {
         let s = Settings {
             answer_formats: self.answer_formats.clone(),
             bloom: self.bloom.clone(),
             question_count: self.question_count,
             bloom_counts: self.bloom_counts.clone(),
-            objective: self.objective.clone(),
+            content_objective: self.content_objective.clone(),
+            language_objective: self.language_objective.clone(),
             ..Settings::default()
         }
         .normalised()?;
@@ -190,8 +196,17 @@ impl SessionOptions {
             question_count: s.question_count,
             bloom_counts: s.bloom_counts,
             answer_formats: s.answer_formats,
-            objective: s.objective,
+            content_objective: s.content_objective,
+            language_objective: s.language_objective,
         })
+    }
+
+    /// The teacher's 內容目標 and 語言目標, one line per objective.
+    pub fn teacher_objectives(&self) -> crate::objectives::TeacherObjectives {
+        crate::objectives::TeacherObjectives::from_fields(
+            self.content_objective.as_deref(),
+            self.language_objective.as_deref(),
+        )
     }
 
     /// The partial settings of a worksheet the session makes: `output` (none for the full
@@ -209,7 +224,8 @@ impl SessionOptions {
             bloom_counts: self.bloom_counts.clone().map(Some),
             answer_formats: (with_formats && !self.answer_formats.is_empty())
                 .then(|| self.answer_formats.clone()),
-            objective: self.objective.clone().map(Some),
+            content_objective: self.content_objective.clone().map(Some),
+            language_objective: self.language_objective.clone().map(Some),
             ..SettingsPatch::default()
         };
         (patch != SettingsPatch::default()).then_some(patch)
@@ -1140,16 +1156,22 @@ mod tests {
         let o = SessionOptions {
             bloom: vec![Bloom::Evaluate, Bloom::Remember, Bloom::Evaluate],
             answer_formats: vec!["簡答題".into(), "選擇題".into()],
-            objective: Some("  能說出主旨  ".into()),
+            content_objective: Some("  能說出主旨  ".into()),
+            language_objective: Some("I can use because.\n I can retell it. ".into()),
             ..SessionOptions::default()
         }
         .normalised()
         .unwrap();
         assert_eq!(o.bloom, [Bloom::Remember, Bloom::Evaluate]);
         assert_eq!(o.answer_formats, ["選擇題", "簡答題"]);
-        assert_eq!(o.objective.as_deref(), Some("能說出主旨"));
+        assert_eq!(o.content_objective.as_deref(), Some("能說出主旨"));
+        assert_eq!(
+            o.language_objective.as_deref(),
+            Some("I can use because.\nI can retell it.")
+        );
         let blank = SessionOptions {
-            objective: Some(" ".into()),
+            content_objective: Some(" ".into()),
+            language_objective: Some("".into()),
             ..SessionOptions::default()
         };
         assert_eq!(blank.normalised().unwrap(), SessionOptions::default());
@@ -1167,7 +1189,11 @@ mod tests {
                 ..SessionOptions::default()
             },
             SessionOptions {
-                objective: Some("字".repeat(301)),
+                content_objective: Some("字".repeat(301)),
+                ..SessionOptions::default()
+            },
+            SessionOptions {
+                language_objective: Some("字".repeat(301)),
                 ..SessionOptions::default()
             },
         ] {
@@ -1175,6 +1201,15 @@ mod tests {
         }
         // Serialised without the keys that are not set.
         assert_eq!(json!(SessionOptions::default()), json!({}));
+        // A session stored with the single `objective`: read as the 內容目標.
+        let old: SessionOptions =
+            serde_json::from_value(json!({ "objective": "能說出主旨" })).unwrap();
+        assert_eq!(old.content_objective.as_deref(), Some("能說出主旨"));
+        assert_eq!(
+            json!(old),
+            json!({ "content_objective": "能說出主旨" }),
+            "written back with the new name"
+        );
         let parsed: SessionOptions =
             serde_json::from_value(json!({ "bloom": null, "question_count": null })).unwrap();
         assert_eq!(parsed, SessionOptions::default());
@@ -1189,14 +1224,16 @@ mod tests {
         let o = SessionOptions {
             question_count: Some(6),
             answer_formats: vec!["簡答題".into()],
-            objective: Some("O".into()),
+            content_objective: Some("C".into()),
+            language_objective: Some("L".into()),
             ..SessionOptions::default()
         };
         let p = o.settings_patch(Some(Output::Tiered), true).unwrap();
         assert_eq!(p.output, Some(Output::Tiered));
         assert_eq!(p.question_count, Some(Some(6)));
         assert_eq!(p.answer_formats, Some(vec!["簡答題".to_string()]));
-        assert_eq!(p.objective, Some(Some("O".to_string())));
+        assert_eq!(p.content_objective, Some(Some("C".to_string())));
+        assert_eq!(p.language_objective, Some(Some("L".to_string())));
         assert_eq!(p.bloom, None, "not set: the worksheet's own");
         assert_eq!(p.bloom_counts, None);
         assert_eq!(o.settings_patch(None, false).unwrap().answer_formats, None);

@@ -472,7 +472,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         ),
     };
     let max = max_items(block.items.len());
-    let vars: HashMap<&'static str, String> = HashMap::from([
+    let mut vars: HashMap<&'static str, String> = HashMap::from([
         (
             "instruction",
             if instruction.is_empty() {
@@ -493,10 +493,6 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         ("other_blocks", other_blocks(&content, &block.id, &labels)),
         ("objectives_summary", objectives_summary(&content)),
         ("class_profile", or_blank(&input.class_profile)),
-        (
-            "teacher_objective",
-            or_none(ws.settings.objective.as_deref().unwrap_or_default()),
-        ),
         ("teacher_request", or_none(&ws.request)),
         ("teacher_notes_for_ai", notes_for_ai.clone()),
         (
@@ -511,6 +507,8 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         ("passage_numbered", marked_passage(material)),
         ("answer_format_labels", ANSWER_FORMATS.join("、")),
     ]);
+    // 內容目標 and 語言目標 (SIOP G1), and both in one line for `{{teacher_objective}}`.
+    vars.extend(ws.settings.teacher_objectives().vars());
     let mut required = vec![
         ("instruction", "教師的修改指示"),
         ("block_notes", "教師在這一區的註記"),

@@ -192,7 +192,7 @@ describe("照我的學習單做: where it is", () => {
     expect(nav.getByRole("link", { name: "照我的學習單做" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("has three cards: the sample, the lesson text, and 設定 with only 班級／程度 and 學習目標", async () => {
+  it("has three cards: the sample, the lesson text, and 設定 with only 班級／程度 and the two objectives", async () => {
     mockApi(routes());
     const user = userEvent.setup();
     await openMimic();
@@ -215,7 +215,8 @@ describe("照我的學習單做: where it is", () => {
 
     const settings = within(screen.getByRole("region", { name: "設定" }));
     expect(settings.getByRole("combobox", { name: "班級／程度" })).toBeInTheDocument();
-    expect(settings.getByRole("textbox", { name: "學習目標（選填）" })).toBeInTheDocument();
+    expect(settings.getByRole("textbox", { name: "內容目標（選填）" })).toBeInTheDocument();
+    expect(settings.getByRole("textbox", { name: "語言目標（選填）" })).toBeInTheDocument();
     for (const gone of ["認知層次（Bloom）", "題數", "題型"]) {
       expect(screen.queryByRole("group", { name: gone })).not.toBeInTheDocument();
     }
@@ -286,16 +287,16 @@ describe("照我的學習單做: the sample and the request", () => {
     expect(generate()).toBeEnabled();
 
     await user.selectOptions(screen.getByRole("combobox", { name: "班級／程度" }), "高一 3 班");
-    await user.type(screen.getByRole("textbox", { name: "學習目標（選填）" }), "學生能說出蜜蜂的重要");
+    await user.type(screen.getByRole("textbox", { name: "內容目標（選填）" }), "學生能說出蜜蜂的重要");
     await user.click(generate());
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
       kind: "worksheet",
-      request: "學生能說出蜜蜂的重要",
+      request: "學習單",
       material: { title: "", text: EXEMPLAR_TEXT },
       class_id: 3,
       template_material_id: 6,
-      options: { objective: "學生能說出蜜蜂的重要" },
+      options: { content_objective: "學生能說出蜜蜂的重要" },
     });
   });
 
@@ -401,7 +402,7 @@ describe("a worksheet in the article slot", () => {
     const user = userEvent.setup();
     const { router } = renderApp("/create/comprehension");
     await waitFor(() => expect(heading()).toHaveTextContent("來做一份 閱讀理解題"));
-    await user.type(screen.getByRole("textbox", { name: "學習目標（選填）" }), "學生能分析作者的論點");
+    await user.type(screen.getByRole("textbox", { name: "內容目標（選填）" }), "學生能分析作者的論點");
     await user.selectOptions(screen.getByRole("combobox", { name: "班級／程度" }), "高一 3 班");
 
     // A material without the mark shows no notice.
@@ -424,7 +425,7 @@ describe("a worksheet in the article slot", () => {
     // It left the article slot; the objective and the class came along.
     expect(lessonCard().getByRole("textbox", { name: "這節課的課文" })).toHaveValue("");
     expect(lessonCard().queryByRole("button", { name: /^移除/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "學習目標（選填）" })).toHaveValue("學生能分析作者的論點");
+    expect(screen.getByRole("textbox", { name: "內容目標（選填）" })).toHaveValue("學生能分析作者的論點");
     expect(screen.getByRole("combobox", { name: "班級／程度" })).toHaveDisplayValue("高一 3 班");
     expect(notice()).not.toBeInTheDocument();
     // The title came along: nothing more was asked for.
@@ -435,11 +436,11 @@ describe("a worksheet in the article slot", () => {
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
       kind: "worksheet",
-      request: "學生能分析作者的論點",
+      request: "學習單",
       material: { title: "", text: EXEMPLAR_TEXT },
       class_id: 3,
       template_material_id: 4,
-      options: { objective: "學生能分析作者的論點" },
+      options: { content_objective: "學生能分析作者的論點" },
     });
   });
 

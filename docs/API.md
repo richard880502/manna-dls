@@ -1653,7 +1653,8 @@ interface PrepSessionOptions {     // 出題選項；沒有設定的鍵不會出
   question_count?: number;         // 3–30；沒有＝該產出的預設（閱讀理解題 8、分層練習 12）
   bloom_counts?: Partial<Record<Bloom, number>>;   // 各 0–12、合計 3–30；有值時取代 bloom 與 question_count
   answer_formats?: string[];       // 固定標籤（作答方式），依標籤順序；沒有＝每個層次適合的
-  objective?: string;              // 學習目標（≤300，前後空白去掉）
+  content_objective?: string;      // 內容目標（≤300，一行一項）；舊資料的 objective 讀成這一欄（見「SIOP 目標」）
+  language_objective?: string;     // 語言目標（≤300，一行一項）
 }
 interface PrepSessionSummary {
   id: number; title: string;
@@ -1852,7 +1853,8 @@ interface WorksheetSettings {
   bloom: Bloom[];                         // 目標層次，依 Bloom 順序、去重；空陣列＝六個都出
   question_count: number | null;          // 3–30；null＝預設（閱讀理解題 8、分層練習 12）
   bloom_counts: Partial<Record<Bloom, number>> | null;   // 每個層次的題數（各 0–12，合計 3–30）；有值時取代 bloom 與 question_count
-  objective: string | null;               // 教師寫的學習目標（≤300，前後空白去掉，空字串變 null）
+  content_objective: string | null;       // 內容目標（≤300，一行一項，空字串變 null）；舊的 objective 讀成這一欄（見「SIOP 目標」）
+  language_objective: string | null;      // 語言目標（≤300，一行一項）
 }
 interface WsItem {
   /* …既有欄位… */
@@ -1896,6 +1898,8 @@ interface WsSheetBlock { /* …既有欄位… */
 - **版型只用在完整學習單**：建立或儲存後，學習單有版型而 `output ≠ "worksheet"` →「版型只適用於完整學習單。」。要把有版型的學習單改成閱讀理解題，同一個請求送 `template_id: null`。
 
 ## 教師的要求與學習目標
+
+> 學習目標已拆成 `content_objective`（內容目標）與 `language_objective`（語言目標），並成為學習單的 `content.objectives`；變數與帶入方式見「SIOP 目標」。下面是拆開以前的說明，`objective` 現在讀成 `content_objective`。
 
 `request`（存在 `worksheets.request`）與 `settings.objective` 會送進這份學習單**每一次**模型呼叫：
 
@@ -2699,3 +2703,126 @@ interface WsProposal {
 ## 程式進入點
 
 `routes::worksheet_revise`；`worksheet::comments`（錨點與註記）、`worksheet::revise`（schema、範圍、`merge`、建議的存取與 `accept`）、`worksheet::ai::revise`（背景呼叫與 prompt 內容）、`worksheet::checks::evaluate_revision`；`store::save_content_over`（存檔的版本檢查）。測試 `api/tests/worksheet_revise.rs`、`web/src/__tests__/blockRevise.test.tsx`。
+
+# SIOP 目標：內容目標與語言目標（G1–G3）與完整學習單的 E1、Q4、V2
+
+依據 `docs/SIOP_DESIGN_RULES.md`。`0022_siop_objectives.sql` 只新增 prompt 與鷹架，沒有改資料表。
+
+## G1：兩個欄位
+
+- 原本一格的「學習目標（選填）」拆成兩格：**內容目標**（`content_objective`）與**語言目標**（`language_objective`），都是選填，各 ≤300 字。一行一項（R1：各一項為原則，最多兩項；教師自己寫的不限制）。伺服器把每一行前後空白去掉、拿掉空行，用 `\n` 接起來；空的是 `null`（不存）。超過 300 字 →「內容目標最多 300 字。」／「語言目標最多 300 字。」
+- 出現在：`WorksheetSettings`（`POST`／`PUT /api/worksheets` 的 `settings`，部分更新時送 `null` 清空）、`PrepSessionOptions`（`POST`／`PATCH /api/prep-sessions` 的 `options`）、`CreatePrepSessionRequest.options`。
+- **舊資料**：`worksheets.settings`、`prep_sessions.options` 裡的 `objective` 讀成 `content_objective`（舊的一格沒有分內容或語言，範例與用法都是內容目標）；舊的前端送 `objective` 也一樣。回應只有新的兩個欄位。同時送 `objective` 與 `content_objective` 是 400（重複欄位）。資料庫裡的 JSON 不改寫，下一次存檔時才換成新名稱。
+- `/create` 的六種產出不再把目標當成「教師的要求」再送一次：`request` 一律是工具名稱（不算教師的要求）。
+
+### 帶進 prompt
+
+| 變數 | 內容 |
+|---|---|
+| `{{teacher_content_objective}}` | 內容目標，多項用「；」接起來；沒有是「（沒有）」 |
+| `{{teacher_language_objective}}` | 語言目標，同上 |
+| `{{teacher_objective}}` | 兩組合成一行，給拆開以前的 prompt 版本：「內容目標：…｜語言目標：…」（只有一組就只有那一組）；沒有是「（沒有）」 |
+
+- 每個帶目標的呼叫三個變數都有。prompt 版本的文字用到兩個新變數之一時，另一個也一定送到（沒寫在文字裡就接在訊息最後，標題「內容目標（教師寫的或採用的）」「語言目標（教師寫的或採用的）」），不再附 `{{teacher_objective}}`；兩個都沒用到時附 `{{teacher_objective}}`（標題「學習目標（教師寫的）」）。所以 `prep_activity` 第 3 版、`worksheet_bloom_level` 第 1 版照樣拿到兩組目標（合成一行），新版改用兩個變數即可。
+- 各產生器的原則：教師寫的或採用的目標要**照原句使用，不要改寫**。
+
+### 學習單的結構化目標（`content.objectives`）
+
+- 建立學習單（`POST /api/worksheets`，或備課對話的學習單輪次）時，兩個欄位變成學習單的目標：`{ id: "teacher-c1" | "teacher-c2" | "teacher-l1" …, type: "content" | "language", text, student_facing_en（和 text 相同：印在學習單最上面「Today I can …」的那一行）, origin: "teacher", sop_id: null }`，接在從課例帶入的目標後面。
+- 有這些目標、請求沒有指定 `settings.generation`、也沒有版型時，`generation` 加上「顯示學習目標」（T1：目標印在最上面，三個版本相同）。
+- `PUT /api/worksheets/:id` 的兩個欄位有變（而且沒有正在產生）：學習單的 `teacher-*` 目標換成新的（請求有帶 `content` 就換在它上面，否則換在最新版本上，存成新版本）；原本沒有目標、現在有 → `generation` 加上「顯示學習目標」。課例帶入的目標、教師在學習單上自己加的目標不動。
+- 產生時：學習單已有 `teacher-*` 目標 → 照學習單上的（教師可能在學習單上改過字）；沒有（拆開以前存的學習單）→ 依欄位加上。完整學習單的四個步驟以 `O1`、`O2`… 看到它們（`{{objectives_summary}}`，例如「O1（內容目標）：I can …」），不再另外附「學習目標（教師寫的）」；閱讀理解題／分層練習與照版型產生依上表拿到變數或合成的一行。產生出來的版本保留這些目標。
+- 前端：學習單「要做什麼」頁的「學習目標」是兩格（`settings` 的兩個欄位）；「從課例帶入的內容」只列不是 `teacher-` 開頭的目標。
+
+## G2、G3：教師沒寫目標時，Manna 先草擬
+
+`POST /api/objective-drafts`（登入即可，同步回應，通常兩次呼叫約 10 秒）。
+
+```ts
+interface ObjectiveDraftRequest {
+  kind: "comprehension" | "tiered" | "activity" | "kit" | "worksheet";   // 照我的學習單做是 worksheet；也接受 assessment
+  material_id?: number;            // 自己的或平台的教材（要有文字；OCR 還在讀 → 409，同建立對話）
+  material?: { title?: string; text: string };   // 貼上的文字：只用來草擬，不存進教材庫
+  class_id?: number;               // 自己的班級，帶入班級特性（不是自己的 → 404）
+  request?: string;                // 教師的要求（≤2000；只是工具名稱的不算）
+  avoid?: string[];                // 「換一組」：上一組的句子（最多 8 句），不要重複
+}
+interface ObjectiveDraftResult {
+  interaction_id: number | null;   // 顯示的這一輪草擬；教師的決定記在這一筆
+  status: "shown" | "blocked" | "timeout" | "error" | "disabled";
+  message: string | null;          // 沒有草稿、或只剩一組時說明
+  objectives: ObjectiveDraft[];    // 通過 R1 與 R3 的草稿：內容目標在前；語言目標學習策略在前
+  hidden: number;                  // 這一輪沒有通過檢查、沒有列出的數量
+  context: AiContextItem[];        // 「Manna 已帶入的資訊」
+}
+interface ObjectiveDraft {
+  index: number;                   // 在模型輸出裡的位置（內容目標在前）＝決定的 item_index
+  kind: "content" | "language";
+  code: string;                    // "C1" "C2" "L1" "L2"
+  text: string;                    // 給學生的 "I can …"（採用時放進欄位的句子）
+  zh: string;                      // 給老師的中文（以動詞開頭）
+  category?: "strategy" | "function" | "structure" | "vocabulary";   // 語言目標才有（R2 的四類）
+  supports?: string;               // 語言目標支持的內容目標代號
+  relation_zh?: string;            // 語言目標才有：「學生要用……，才能……」
+  check_zh: string;                // 下課前怎麼檢核
+}
+```
+
+缺教材或貼上的文字是空的、`kind` 不對 → 400；沒有開啟 AI → 200 `status: "disabled"`（前端直接產生）。
+
+**流程**（`objectives::draft`；每次呼叫各一列 `ai_interactions`，教材只記字數與雜湊）：
+
+1. **草擬**（`objective_draft`，鷹架 `SC-OBJ-DRAFT`，`max_tokens` 1500）。輸入：用途（工具，例如「閱讀理解題（依 Bloom 認知層次出題…）」；不同工具的請求因此不同）、學校類型、班級特性、教師的要求、這位老師最近 3 次草擬的語言目標類別、以教材做混合檢索的前 8 個課綱條目、加段落標記的教材（最多 40 段）。輸出 schema（欄位照撰寫順序，每個字串都有上限）：`{ content_objectives: [1–2] { zh ≤100, en ≤180, check_zh ≤100 }, language_objectives: [1–2] { category（enum 四類）, supports（"C1"｜"C2"）, zh ≤100, en ≤180, relation_zh ≤160, check_zh ≤100 } }`——先寫內容目標，再從內容目標推出語言目標。
+2. **R1 規則檢查**（程式，`objectives::check_rules`），每一項各自判斷，不合格的拿掉：`en` 是英文、以 "I can" 開頭（"Students will be able to …" 改成 "I can …"）、不超過 30 個字、主要動詞（I can 後的第一個字與 and／or 後的字）不是 learn、know、understand 等看不到表現的動詞；`zh` 有中文、開頭（去掉「學生能」）不是了解、理解、知道、學會…；語言目標的類別是四類之一、`supports` 是通過的內容目標、`relation_zh` 寫成「學生要……才能……」；不重複。**R2**：有學習策略時排到語言目標的第一個——除非最近兩次草擬的語言目標都以策略為主（這時 prompt 請模型這次改用其他三類，讓一個單元的語言目標有變化；「單元」以這位老師最近的草擬近似，備課對話沒有單元）。規則檢查後一組都沒有時，同一次呼叫**重試一次**（temperature +0.4，附上問題）。
+3. **R3 審查**（`objective_check`，鷹架 `SC-OBJ-CHECK`，`max_tokens` 900），和 `worksheet_bloom_check` 一樣一次呼叫逐項判斷：`{ items: [正好 n 筆] { id（enum：這一輪的代號）, reason ≤100, problems: ("not_core" | "not_assessable" | "activity" | "not_readable" | "not_needed" | "no_relation")[] } }`。後兩種只用於語言目標（用在內容目標上不算）。有任何問題的草稿**不顯示**；語言目標支持的內容目標沒通過，它也不顯示；審查漏掉的項目重試一次後仍沒判斷的不顯示；審查呼叫失敗 → 這一輪都不顯示（G3）。
+4. **再草擬一次**：一組（內容或語言）沒有通過的草稿時，伺服器再草擬一輪（附上沒通過的原因，並列出已通過、可以照原句保留的目標），一樣經過 2、3。兩組都有的那一輪優先，否則留下通過較多的一輪。沒有被選的那一輪的草擬記錄標成 `blocked`。
+5. 顯示的那一輪的草擬記錄：有草稿是 `shown`，沒有是 `blocked`；`check_results` 記下 `r1_rules`、`r3_judge`、每一項的審查（`verdicts`）、顯示了哪些（`shown`）與程式的修改（`repairs`）。
+
+**教師的決定**：用既有的 `POST /api/ai/:interaction_id/decision`（`interaction_id` 是回應的那一筆、`item_index` 是草稿的 `index`）：
+
+| 教師 | 送出 |
+|---|---|
+| 採用（或沒選、按「全部採用並產生」） | `{ decision: "adopt" }` |
+| 修改（改草稿的句子） | `{ decision: "revise", revised_content: 改後的句子 }`（沒改字就是 adopt） |
+| 改寫（不要這句，自己寫） | `{ decision: "reject", reason: "better_idea", revised_content: 自己的句子 }`；留空＝不放這一項：`{ decision: "reject" }` |
+| 不用目標，直接產生 | 每一項 `{ decision: "skip" }` |
+
+決定送出後才建立備課對話，目標放在 `options.content_objective`／`language_objective`；記錄失敗不擋產生。
+
+**前端**：`/create` 的六種工具與首頁的快速輸入（選了工具、不是直接問 AI 時）在兩個目標都空著時，按「產生」／送出先草擬：出現「Manna 先幫你草擬目標」，每一項顯示學生版句子、中文、（語言目標）類別與「學生要用…才能…」、怎麼檢核，可以採用、修改、改寫或重選；「全部採用並產生」一鍵完成；另有「不用目標，直接產生」「換一組」「收起」。教師自己寫了任何一個目標就不草擬（在草擬時開始寫，草擬就收起）。`usage_logs` 新事件 `objectives_drafted`（`kind`、`status`、`shown`、`hidden`、`again` 等，沒有文字）。
+
+## 完整學習單的三條規則
+
+### E1：Exit ticket 檢核所有目標
+
+- `worksheet_exit_ticket` 第 2 版：「教師確認的目標」的每個代號（內容與語言目標都算）至少出現在一題的 `objective_refs`，一題可以檢核兩個目標；檢核語言目標的題目要學生真的用到那個語言。
+- 檢查新增 `covers_every_objective`：有目標沒被任何一題檢核 → 修復一次（附上沒檢核到的代號）；還是沒有 → 照樣使用，並在 `content.notices` 加一行「Exit ticket 沒有檢核到語言目標「I can …」。可以在 Exit ticket 加一題，或按它的「重新產生」。」（重新產生 Exit ticket 也一樣）。
+
+### Q4：逐段任務的順序
+
+- `worksheet_tasks` 第 3 版（第 1、2 版保留）：每個區塊多一個 `practice`（schema 是四個固定標籤的 enum，寫在 `info_function` 之後）：示範 → 共同練習 → 同儕練習 → 獨立應用，依區塊順序不可倒退；第一個區塊示範（老師放聲思考先做第一題）、最後一個獨立應用；兩個區塊時是示範、獨立應用；四個以上區塊時四個都要有。同一版也要求每個語言目標由一個示範或共同練習的區塊教到（R4）。
+- 檢查新增 `practice_in_order`（只在整份產生時；在依段落重排區塊之後判斷，階段跟著區塊走）：不合 → 修復一次，並先由程式依位置重新標好（`Practice::for_position`：1 個區塊＝獨立應用；2 個＝示範、獨立應用；3 個＝示範、同儕練習、獨立應用；4 個以上依比例分成四段）；修復後仍不合就用程式標的。對其他檢查沒有影響：題數、資訊處理功能、段落涵蓋與順序都照舊（示範區塊的示範寫在作答指示，不寫在題目裡，所以「題幹不可含答案」不受影響）。
+- `WsBlock.practice?: "model" | "guided" | "peer" | "independent"`（只有完整學習單的活動區塊有；其他沒有這一欄）；區塊的 `teacher_notes` 第一行是這個階段的教學說明（例如「教學順序：示範——老師先放聲思考，做第一題給學生看，再讓學生接著做。」）。單一區塊重新產生保留原本的階段（prompt 也會說明）。
+
+### V2：作答指示的功能詞
+
+- 程式（`worksheet::task_words`，不呼叫模型）在完整學習單產生後（四個步驟；照版型與閱讀理解題／分層練習不做）找出學生要照著做的文字（區塊的作答指示、題目、分步驟指示）裡的學術功能詞，例如 compare、summarize、explain、infer、support your answer、in your own words、according to、main idea、give reasons、evidence（固定的 30 個詞與它們的詞形），依出現順序最多 8 個，每個附固定的中文提示（例如 compare「比較（找出相同與不同）」），列在暖身的字彙表（關鍵字後面；沒有暖身時放在第一個活動區塊）。已經是關鍵字的不重複列。
+- `WsVocab.task_word: true`（一般關鍵字沒有這一欄），`definition` 是中文提示，`level` 照詞彙表；學習單投影的 `SheetWord` 也有 `task_word`。重新產生區塊後依當時的指示重列。編輯器的「級別」欄顯示「指示用語」。
+- 學生版因此會有中文（這些提示）：伺服器沒有中文字型時，學生版 PDF 也會像教師版一樣回 409（訊息改成「…例如教師備註或字彙的中文提示…」）；Docker 映像有安裝中文字型。
+
+## 測試用假模型（`AI_PROVIDER=fake`）新增的標記（寫在教材文字裡）
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_OBJ_TWO` | 草擬兩個內容目標與兩個語言目標，學習策略在第二個（伺服器排到第一個） |
+| `FAKE_OBJ_VAGUE` | 第一次草擬的內容目標用 understand（規則拿掉，連同它的語言目標，同一次呼叫重試） |
+| `FAKE_OBJ_R3` | 第一輪審查把語言目標判成 `not_needed`（伺服器草擬第二輪，通過） |
+| `FAKE_OBJ_R3_ALWAYS` | 每一輪審查都把語言目標判成 `no_relation`（只顯示內容目標） |
+| `FAKE_BLOCK` | 草擬的學生版句子都是中文（沒有可用的草稿） |
+| `FAKE_WS_EXIT_PARTIAL` | Exit ticket 兩次都只檢核第一個目標（E1：加提醒） |
+| `FAKE_WS_PRACTICE_OFF` | 逐段任務第一次全部標成獨立應用（Q4：修復後照順序） |
+| `FAKE_WS_PRACTICE_ALWAYS` | 兩次都全部標成獨立應用（伺服器依位置重新標） |
+
+## 程式進入點
+
+`objectives`（欄位、變數、`content.objectives`、R1 規則、R3 審查的檢查）、`objectives::draft`（草擬流程）、`objectives::fake`、`routes::objectives`；`worksheet::checks`（`covers_every_objective`、`practice_in_order`）、`worksheet::task_words`、`worksheet::Practice`。測試 `api/tests/objectives.rs`、`web/src/__tests__/objectives.test.tsx`。

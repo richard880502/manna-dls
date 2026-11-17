@@ -15,9 +15,9 @@ use super::schemas::{
 };
 use super::{
     info_function_from_label, Audience, Block, BlockKind, Bloom, Content, Item, Level, Material,
-    Origin, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE,
-    FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE, GEN_FRAMES,
-    GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS,
+    Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES, FMT_BLANK,
+    FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE,
+    GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS,
     KIND_WORD_LIST,
 };
 use crate::sop::ExitKind;
@@ -278,6 +278,13 @@ pub fn activity_block(
             })
         })
         .collect();
+    // Q4: the block's stage, said to the teacher first in its notes.
+    let practice = raw.practice.as_deref().and_then(Practice::from_label);
+    let teacher_notes = match practice {
+        Some(p) if raw.design_reason_zh.trim().is_empty() => p.note().to_string(),
+        Some(p) => format!("{}\n{}", p.note(), raw.design_reason_zh),
+        None => raw.design_reason_zh.clone(),
+    };
     Block {
         id: id.to_string(),
         kind: BlockKind::Activity,
@@ -297,13 +304,14 @@ pub fn activity_block(
             .filter_map(|r| objective_ids.get(r).cloned())
             .collect(),
         items,
-        teacher_notes: raw.design_reason_zh.clone(),
+        teacher_notes,
         origin: Origin::Ai,
         // Cleaned here (never a reason for a repair call); none unless pictures are on.
         image_slots: super::images::with_ids(
             super::images::clean_slots(&raw.image_slots, super::images::MAX_SLOTS_PER_TASK_BLOCK).0,
             id,
         ),
+        practice,
         ..Block::default()
     }
 }
@@ -318,6 +326,7 @@ fn vocab_of(w: &CleanWord, material: &Material) -> Vocab {
             .paragraph_no
             .and_then(|no| material.id_of(no))
             .map(str::to_string),
+        task_word: false,
     }
 }
 
@@ -454,6 +463,9 @@ pub struct SheetWord {
     pub word: String,
     pub level: Option<u8>,
     pub definition: String,
+    /// A word of the instructions whose `definition` is a Chinese hint (SIOP V2).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub task_word: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -688,6 +700,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     word: v.word.trim().to_string(),
                     level: v.level,
                     definition: v.definition.trim().to_string(),
+                    task_word: v.task_word,
                 })
                 .collect(),
             // The one place a support's heading meets its text: every printed form (preview,

@@ -947,3 +947,39 @@
     padding: var(--space-lg) var(--space-md);
   }
 }
+
+/* ================= 內容目標與語言目標 (SIOP G1–G3): the two fields and Manna's drafts ================= */
+.objective-fields textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.objective-drafts .lead {
+  max-width: var(--measure);
+}
+
+.objective-draft .soft-tag {
+  margin-left: var(--space-xs);
+}
+
+.objective-draft-text {
+  font-weight: var(--weight-strong);
+  overflow-wrap: anywhere;
+}
+
+.objective-draft-zh {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm);
+}
+
+.objective-draft-edit textarea {
+  width: 100%;
+  margin-top: var(--space-xs);
+  resize: vertical;
+}
+
+.objective-drafts-actions {
+  align-items: center;
+  margin-top: var(--space-md);
+}

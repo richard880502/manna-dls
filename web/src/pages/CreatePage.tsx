@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { CreatePrepSessionRequest } from "../api/types";
+import type { CreatePrepSessionRequest, DecisionRequest, ObjectiveDraftRequest } from "../api/types";
 import { BloomPicker } from "../components/bloom/BloomPicker";
 import {
   DEFAULT_PRESET,
@@ -24,6 +24,8 @@ import { NO_TEXT_LINE, materialFields, type MaterialChoice } from "../components
 import { WorksheetNotice, type MimicState } from "../components/material/WorksheetNotice";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
+import { ObjectiveDrafts, recordDecisions, useObjectiveDraft, type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
+import { ObjectiveFields } from "../components/objectives/ObjectiveFields";
 import { NO_CLASS_LABEL, useActiveClasses } from "../components/prep/ContextChips";
 import { Stepper } from "../components/Stepper";
 import {
@@ -35,6 +37,7 @@ import {
 } from "../components/template/SampleChooser";
 import { TemplateSelect, useReadyTemplates } from "../components/template/TemplateSelect";
 import { useApp } from "../context/AppContext";
+import { objectiveOptions } from "../lib/objectives";
 import { ocrBusyError, ocrBusyLine, ocrOpen } from "../lib/ocr";
 import {
   EXEMPLAR_TEXT,
@@ -44,7 +47,6 @@ import {
   MIMIC_LINK,
   NEED_LESSON_TEXT,
   NEED_SAMPLE,
-  OBJECTIVE_MAX,
   SAMPLE_HEADING,
   SAMPLE_LINE,
   TEXT_MAX,
@@ -63,20 +65,23 @@ import {
   type Tool,
 } from "../lib/create";
 
-export const OBJECTIVE_PLACEHOLDER = "例如：學生能分析作者如何用例子支持論點";
-
 /** 「8 題 · 記憶 1・理解 2・應用 2・分析 2・評鑑 1 · 約 20 分鐘」 */
 export function summaryLine(total: number, counts: BloomCounts): string {
   return [`${total} 題`, countsLine(counts), minutesLine(total)].filter(Boolean).join(" · ");
 }
 
 /**
- * The generator for one tool (like Eduaide's): 「來做一份 <tool ▾>」, a 內容 card (learning objective,
- * the article or topic, a file or a library material instead), a 設定 card with what this tool
- * takes, and a sticky bar with the summary and 產生. Switching tools keeps what was filled in.
+ * The generator for one tool (like Eduaide's): 「來做一份 <tool ▾>」, a 內容 card (內容目標 and
+ * 語言目標, the article or topic, a file or a library material instead), a 設定 card with what this
+ * tool takes, and a sticky bar with the summary and 產生. Switching tools keeps what was filled in.
  *
  * 照我的學習單做 (mimic) has its own cards: 你的學習單範本 (the sample), 這節課的課文 (the same
- * article field) and 設定 (班級／程度 and 學習目標); 產生 waits for both a sample and a text.
+ * article field) and 設定 (班級／程度 and the two objectives); 產生 waits for both a sample and a
+ * text.
+ *
+ * With both objectives empty, 產生 first asks Manna to draft them (SIOP G2/G3): the teacher
+ * adopts, edits or rewrites each draft (or all at once, or none) and the generation goes on with
+ * them; her choices are recorded as decisions on the draft.
  */
 function Generator({ tool }: { tool: Tool }) {
   const ids = useId();
@@ -92,7 +97,9 @@ function Generator({ tool }: { tool: Tool }) {
   const pickRef = useRef<HTMLButtonElement>(null);
   const backToPick = useCallback(() => pickRef.current, []);
 
-  const [objective, setObjective] = useState("");
+  const [contentObjective, setContentObjective] = useState("");
+  const [languageObjective, setLanguageObjective] = useState("");
+  const drafts = useObjectiveDraft();
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<MaterialChoice | null>(null);
   const [dialog, setDialog] = useState<"upload" | "library" | null>(null);
@@ -273,13 +280,46 @@ function Generator({ tool }: { tool: Tool }) {
       textRef.current?.focus();
       return;
     }
+    // G2: no objective at all, Manna drafts them first.
+    if (!contentObjective.trim() && !languageObjective.trim()) {
+      const body: ObjectiveDraftRequest = {
+        kind: kindOf(tool),
+        ...material,
+        ...(classId !== null ? { class_id: classId } : {}),
+      };
+      setError(null);
+      setOcrRefusal(null);
+      try {
+        const shown = await drafts.start(body);
+        if (!shown) await send("", "");
+      } catch (err) {
+        const reading = ocrBusyError(err);
+        if (reading) setOcrRefusal({ key: chosenKey, message: reading });
+        else setError(errorMessage(err));
+      }
+      return;
+    }
+    await send(contentObjective, languageObjective);
+  }
+
+  /** After the drafts: the fields as the teacher left them, her choices recorded, then 產生. */
+  async function adoptDrafts(outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) {
+    setContentObjective(outcome.content);
+    setLanguageObjective(outcome.language);
+    drafts.close();
+    await recordDecisions(interactionId, decisions);
+    await send(outcome.content, outcome.language);
+  }
+
+  async function send(content: string, language: string) {
+    if (material === null) return;
     const options: NonNullable<CreatePrepSessionRequest["options"]> = {};
     if (fields.bloom) {
       options.bloom_counts = nonZeroCounts(counts);
       options.question_count = total;
     }
     if (fields.formats && formats.length > 0) options.answer_formats = FORMAT_CHOICES.filter((f) => formats.includes(f));
-    if (objective.trim()) options.objective = objective.trim();
+    Object.assign(options, objectiveOptions(content, language));
 
     setBusy(true);
     setError(null);
@@ -288,7 +328,8 @@ function Generator({ tool }: { tool: Tool }) {
       const session = await api.createPrepSession(
         asCreateRequest({
           kind: kindOf(tool),
-          request: objective.trim() || TOOL_CHIP[kindOf(tool)],
+          // The objectives go as objectives only; the request is the tool's label.
+          request: TOOL_CHIP[kindOf(tool)],
           ...material,
           ...(classId !== null ? { class_id: classId } : {}),
           ...(fields.template && templateId !== null ? { template_id: templateId } : {}),
@@ -311,21 +352,21 @@ function Generator({ tool }: { tool: Tool }) {
       ? summaryLine(total, counts)
       : `${TOOL_NAME[tool]} · ${TOOL_BLURB[tool]}`;
 
+  // Writing her own objectives closes Manna's drafts.
   const objectiveField = (
-    <>
-      <label className="field-label" htmlFor={`${ids}-objective`}>
-        學習目標（選填）
-      </label>
-      <input
-        id={`${ids}-objective`}
-        type="text"
-        maxLength={OBJECTIVE_MAX}
-        value={objective}
-        placeholder={OBJECTIVE_PLACEHOLDER}
-        disabled={busy}
-        onChange={(e) => setObjective(e.target.value)}
-      />
-    </>
+    <ObjectiveFields
+      content={contentObjective}
+      language={languageObjective}
+      disabled={busy}
+      onContent={(value) => {
+        setContentObjective(value);
+        if (drafts.state) drafts.close();
+      }}
+      onLanguage={(value) => {
+        setLanguageObjective(value);
+        if (drafts.state) drafts.close();
+      }}
+    />
   );
 
   const exemplarButton = (
@@ -583,6 +624,21 @@ function Generator({ tool }: { tool: Tool }) {
         )}
       </section>
 
+      {drafts.state && (
+        <ObjectiveDrafts
+          state={drafts.state}
+          disabled={busy}
+          onUse={(outcome, decisions, interactionId) => void adoptDrafts(outcome, decisions, interactionId)}
+          onSkip={(decisions, interactionId) => {
+            drafts.close();
+            void recordDecisions(interactionId, decisions);
+            void send("", "");
+          }}
+          onAnother={() => void drafts.another()}
+          onCancel={drafts.close}
+        />
+      )}
+
       <ErrorText message={error} />
 
       <div className="create-bar">
@@ -597,7 +653,7 @@ function Generator({ tool }: { tool: Tool }) {
         <button
           type="button"
           className="primary-button"
-          disabled={busy || totalOff || needed !== null}
+          disabled={busy || totalOff || needed !== null || drafts.state !== null}
           aria-describedby={needed ? `${ids}-summary` : ocrBusy ? `${ids}-ocr` : undefined}
           onClick={() => void generate()}
         >

@@ -28,8 +28,10 @@ import {
   emptyBrief,
   toggleIn,
 } from "../../lib/worksheet";
+import { hasObjectives, isFromFields, syncedObjectives } from "../../lib/objectives";
 import { AiContextPanel } from "../AiContextPanel";
 import { ErrorText } from "../common";
+import { ObjectiveFields } from "../objectives/ObjectiveFields";
 import { BloomSettings } from "./BloomSettings";
 import { TemplateOption } from "./TemplateOption";
 import type { WorksheetController } from "./useWorksheet";
@@ -50,7 +52,8 @@ const GENERATE_LABEL: Record<WsOutput, string> = {
 };
 
 export const REQUEST_MAX = 2000;
-export const OBJECTIVE_MAX = 300;
+const SHOW_OBJECTIVES = "顯示學習目標";
+const OPTIONS_OBJECTIVES_HINT = "選填，一行一項，各寫一項就好。Manna 出題時會照這兩個目標，並印在學習單最上面。";
 
 function Chip({
   label,
@@ -199,7 +202,31 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
       suggested.levels.length >
     0;
 
-  const hasCarried = content.objectives.length > 0 || !briefIsEmpty(brief);
+  // The objectives of the two fields are edited above; the lesson's (and the teacher's own on the sheet) here.
+  const carried = content.objectives.filter((o) => !isFromFields(o));
+  const hasCarried = carried.length > 0 || !briefIsEmpty(brief);
+
+  /**
+   * One of the two objective fields changed: the worksheet's objectives follow (and, given where
+   * there were none, 顯示學習目標 is ticked), as the server does on save.
+   */
+  const setObjective = (field: "content_objective" | "language_objective", value: string) => {
+    const next = { ...settings, [field]: value === "" ? null : value };
+    const shown =
+      !hasObjectives(settings.content_objective, settings.language_objective) &&
+      hasObjectives(next.content_objective, next.language_objective) &&
+      !state.template &&
+      !settings.generation.includes(SHOW_OBJECTIVES);
+    ws.setSettings((s) => ({
+      ...s,
+      [field]: next[field],
+      generation: shown ? toggleIn(s.generation, SHOW_OBJECTIVES, GENERATION_SETTINGS) : s.generation,
+    }));
+    ws.setContent((c) => ({
+      ...c,
+      objectives: syncedObjectives(c.objectives, next.content_objective, next.language_objective),
+    }));
+  };
 
   async function generate() {
     // What the picker shows is what is asked for: the default preset is written before it is sent.
@@ -237,21 +264,14 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
 
       <section className="ws-opt" aria-labelledby={`${ids}-goal`}>
         <h2 id={`${ids}-goal`}>學習目標</h2>
-        <div>
-          <input
-            type="text"
-            aria-labelledby={`${ids}-goal`}
-            aria-describedby={`${ids}-goal-hint`}
-            maxLength={OBJECTIVE_MAX}
-            value={settings.objective ?? ""}
-            placeholder="例如：學生能說出作者的主要論點，並從文中找出兩個理由"
-            disabled={locked}
-            onChange={(e) => ws.setSettings((s) => ({ ...s, objective: e.target.value === "" ? null : e.target.value }))}
-          />
-          <p className="field-hint" id={`${ids}-goal-hint`}>
-            選填，一句話就好。Manna 出題時會照這個目標。
-          </p>
-        </div>
+        <ObjectiveFields
+          content={settings.content_objective ?? ""}
+          language={settings.language_objective ?? ""}
+          disabled={locked}
+          hint={OPTIONS_OBJECTIVES_HINT}
+          onContent={(value) => setObjective("content_objective", value)}
+          onLanguage={(value) => setObjective("language_objective", value)}
+        />
       </section>
 
       {!fullWorksheet && (
@@ -381,7 +401,7 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
               disabled={locked}
               onClick={() => {
                 ws.setBrief(() => emptyBrief());
-                ws.setContent((c) => ({ ...c, objectives: [] }));
+                ws.setContent((c) => ({ ...c, objectives: c.objectives.filter(isFromFields) }));
               }}
             >
               全部不帶入
@@ -389,11 +409,11 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
           </div>
           <p className="quiet-note">這些只是起點。可以改、可以拿掉；在這裡改不會動到課例。</p>
 
-          {content.objectives.length > 0 && (
+          {carried.length > 0 && (
             <div role="group" aria-label="帶入的學習目標">
               <p className="ws-sub">學習目標</p>
               <ul className="ws-carried-list">
-                {content.objectives.map((o, i) => (
+                {carried.map((o, i) => (
                   <li key={o.id}>
                     <span className="soft-tag">{o.type === "content" ? "內容目標" : "語言目標"}</span>
                     <input

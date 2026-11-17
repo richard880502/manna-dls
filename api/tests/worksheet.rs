@@ -134,7 +134,8 @@ fn has_cjk(s: &str) -> bool {
 }
 
 /// Printed text of a student sheet: what students see (block kinds and scaffold kind labels are
-/// internal names, not printed).
+/// internal names, not printed). The Chinese hints of the task words (SIOP V2: compare 比較)
+/// are the one place Chinese is meant to be; they are left out here.
 fn printed(sheet: &Value) -> Vec<String> {
     let mut out = vec![sheet["title"].as_str().unwrap_or_default().to_string()];
     strings(&sheet["objectives"], &mut out);
@@ -145,7 +146,9 @@ fn printed(sheet: &Value) -> Vec<String> {
         strings(&b["steps"], &mut out);
         for v in b["vocabulary"].as_array().unwrap() {
             strings(&v["word"], &mut out);
-            strings(&v["definition"], &mut out);
+            if v["task_word"] != true {
+                strings(&v["definition"], &mut out);
+            }
         }
         for s in b["supports"].as_array().unwrap() {
             strings(&s["content"], &mut out);
@@ -1090,16 +1093,24 @@ async fn export_returns_docx_and_pdf_for_both_audiences() {
     let text = String::from_utf8_lossy(&bytes);
     assert!(text.contains("word/document.xml"));
 
+    // The student PDF has the Chinese hints of the task words (SIOP V2) since the full
+    // worksheet lists them: made with a CJK font, refused clearly otherwise.
     let (s, ct, _, bytes) = raw_get(
         &app,
         &format!("/api/worksheets/{id}/export?format=pdf&level=standard&audience=student"),
         &t,
     )
     .await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(ct, "application/pdf");
-    assert!(bytes.starts_with(b"%PDF-"));
-    assert!(String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(64)..]).contains("%%EOF"));
+    if manna_api::worksheet::export::pdf_supports_cjk() {
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(ct, "application/pdf");
+        assert!(bytes.starts_with(b"%PDF-"));
+        assert!(
+            String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(64)..]).contains("%%EOF")
+        );
+    } else {
+        assert_eq!(s, StatusCode::CONFLICT);
+    }
 
     let (s, _, _, bytes) = raw_get(
         &app,

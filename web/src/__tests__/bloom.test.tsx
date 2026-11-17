@@ -494,23 +494,34 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     expect(progress.getByText("檢查題目的 Bloom 層次")).toBeInTheDocument();
   });
 
-  it("學習目標 and 給 Manna 的要求 are saved with the worksheet", async () => {
+  it("內容目標、語言目標 and 給 Manna 的要求 are saved with the worksheet", async () => {
     const api = mockApi(routes(wsState()));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
-    await user.type(await screen.findByRole("textbox", { name: "學習目標" }), "Students can explain why.");
+    const goals = within(await screen.findByRole("region", { name: "學習目標" }));
+    await user.type(goals.getByRole("textbox", { name: "內容目標（選填）" }), "I can explain why.");
+    await user.type(goals.getByRole("textbox", { name: "語言目標（選填）" }), "I can use because.");
     const ask = screen.getByRole("textbox", { name: "給 Manna 的要求" });
     expect(ask).toHaveAttribute("maxLength", "2000");
     await user.type(ask, "B1 程度");
     expect(screen.getByText("選填 · 5/2000")).toBeInTheDocument();
     await settle();
     const body = lastSave(api);
-    expect(body.settings?.objective).toBe("Students can explain why.");
+    expect(body.settings?.content_objective).toBe("I can explain why.");
+    expect(body.settings?.language_objective).toBe("I can use because.");
+    expect(body.settings).not.toHaveProperty("objective");
+    // The worksheet's objectives follow the fields (as the server does), and print at the top.
+    expect(body.content?.objectives.map((o) => [o.id, o.type, o.student_facing_en])).toEqual([
+      ["teacher-c1", "content", "I can explain why."],
+      ["teacher-l1", "language", "I can use because."],
+    ]);
+    expect(body.settings?.generation).toContain("顯示學習目標");
     expect(body.request).toBe("B1 程度");
-    // Emptied, the objective is null again.
-    await user.clear(screen.getByRole("textbox", { name: "學習目標" }));
+    // Emptied, an objective is null again.
+    await user.clear(goals.getByRole("textbox", { name: "內容目標（選填）" }));
     await settle();
-    expect(lastSave(api).settings?.objective).toBeNull();
+    expect(lastSave(api).settings?.content_objective).toBeNull();
+    expect(lastSave(api).settings?.language_objective).toBe("I can use because.");
   });
 
   it("with a template, only the full worksheet can be chosen", async () => {

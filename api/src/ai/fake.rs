@@ -16,7 +16,8 @@
 //!
 //! The lesson SOP stages (`sop_passage_analysis`, `sop_objectives`) add their own markers:
 //! see `crate::sop::fake`; the worksheet steps (`worksheet_*`) see `crate::worksheet::fake`;
-//! the 備課對話 calls (`prep_*`) see `crate::prep::fake`.
+//! the 備課對話 calls (`prep_*`) see `crate::prep::fake`; drafting objectives
+//! (`objective_draft`, `objective_check`) see `crate::objectives::fake`.
 //!
 //! Task-specific behaviour read from `fake_context`:
 //! * core assist level 2 with `goal_emphasis: true` names the goal-related dimensions
@@ -127,6 +128,13 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("prep_activity") => crate::prep::fake::activity(ctx, req.attempt, &|m| has(req, m)),
         Some("prep_ask") => crate::prep::fake::ask(ctx, req.attempt, &|m| has(req, m)),
         Some("prep_revise") => crate::prep::fake::revise(ctx, req.attempt, &|m| has(req, m)),
+        // 內容目標與語言目標的草擬與審查 (see `objectives::fake`).
+        Some("objective_draft") => {
+            crate::objectives::fake::draft(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("objective_check") => {
+            crate::objectives::fake::check(ctx, req.attempt, &|m| has(req, m))
+        }
         other => {
             return Err(ProviderError::InvalidOutput(format!(
                 "fake provider: unknown task {other:?}"

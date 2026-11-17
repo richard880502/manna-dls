@@ -99,10 +99,22 @@ jobs:
       DATABASE_URL: postgres://manna:manna@localhost:5432/manna
       AI_PROVIDER: fake
       CARGO_TERM_COLOR: always
+      # Each integration test is its own binary; with full debug info they no longer fit on the
+      # runner's disk (the linker died with SIGBUS). Line tables are enough for test backtraces.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+      WORKSHEET_CJK_FONT: /usr/share/fonts/truetype/wqy/wqy-microhei.ttc
     defaults:
       run:
         working-directory: api
     steps:
+      # The runner ships large toolchains this job never uses; free their space for target/.
+      - name: Free disk space
+        working-directory: .
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -111,8 +123,10 @@ jobs:
         with:
           workspaces: api
       # pdftoppm/pdfinfo: the OCR tests render PDF pages (api/tests/ocr.rs fails without them in CI).
-      - name: Install poppler-utils
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils
+      # fonts-wqy-microhei: the same Chinese font the Docker image ships, so PDFs with Chinese
+      # (teacher notes, word-list hints) export in tests as they do in production.
+      - name: Install poppler-utils and the Chinese font
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends poppler-utils fonts-wqy-microhei
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked

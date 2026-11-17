@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{
-    student_tasks, Bloom, ANSWER_FORMATS, EXIT_PURPOSES, INFO_FUNCTIONS, INSTRUCTIONAL_KINDS,
-    PROCEDURAL_KINDS, VERBAL_KINDS,
+    student_tasks, Bloom, Practice, ANSWER_FORMATS, EXIT_PURPOSES, INFO_FUNCTIONS,
+    INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 
 pub const TASKS_SCHEMA_NAME: &str = "worksheet_tasks";
@@ -44,6 +44,9 @@ pub struct RawBlock {
     pub paragraph_nos: Vec<i64>,
     pub title_en: String,
     pub info_function: String,
+    /// SIOP Q4 (prompt version 3): 示範／共同練習／同儕練習／獨立應用; checked by the server.
+    #[serde(default)]
+    pub practice: Option<String>,
     pub student_tasks: Vec<String>,
     pub objective_refs: Vec<String>,
     pub instructions_en: String,
@@ -78,6 +81,7 @@ fn nullable_string() -> Value {
 pub fn tasks_schema() -> Value {
     let functions: Vec<&str> = INFO_FUNCTIONS.iter().map(|(_, l)| *l).collect();
     let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
+    let stages: Vec<&str> = Practice::ALL.iter().map(|p| p.label()).collect();
     json!({
         "type": "object",
         "properties": {
@@ -90,6 +94,7 @@ pub fn tasks_schema() -> Value {
                         "paragraph_nos": { "type": "array", "items": { "type": "integer" } },
                         "title_en": { "type": "string" },
                         "info_function": enum_of(&functions),
+                        "practice": enum_of(&stages),
                         "student_tasks": enum_array(&student_tasks()),
                         "objective_refs": strings(),
                         "instructions_en": { "type": "string" },
@@ -115,8 +120,8 @@ pub fn tasks_schema() -> Value {
                         "design_reason_zh": { "type": "string" }
                     },
                     "required": ["block_id", "paragraph_nos", "title_en", "info_function",
-                                 "student_tasks", "objective_refs", "instructions_en", "items",
-                                 "design_reason_zh"],
+                                 "practice", "student_tasks", "objective_refs", "instructions_en",
+                                 "items", "design_reason_zh"],
                     "additionalProperties": false
                 }
             }

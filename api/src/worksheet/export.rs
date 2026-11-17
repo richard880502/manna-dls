@@ -2001,7 +2001,7 @@ mod tests {
                 title: "Paragraph 1: Find".into(),
                 instructions: "Read paragraph 1 again, then answer.".into(),
                 steps: vec!["Read on your own.".into(), "Check with a partner.".into()],
-                vocabulary: vec![SheetWord { word: "stand".into(), level: Some(1), definition: "a small table".into() }],
+                vocabulary: vec![SheetWord { word: "stand".into(), level: Some(1), definition: "a small table".into(), task_word: false }],
                 supports: vec![SheetSupport { kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames", content: "She started it because ___.".into() }],
                 items: (1..=30)
                     .map(|no| SheetItem {

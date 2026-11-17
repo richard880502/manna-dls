@@ -195,7 +195,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
                 "bloom": ["evaluate", "remember", "analyze", "remember"],
                 "question_count": 5,
                 "answer_formats": ["簡答題", "選擇題"],
-                "objective": format!("  {objective}  "),
+                "content_objective": format!("  {objective}  "),
             },
         }),
     )
@@ -208,7 +208,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
             "bloom": ["remember", "analyze", "evaluate"],
             "question_count": 5,
             "answer_formats": ["選擇題", "簡答題"],
-            "objective": objective,
+            "content_objective": objective,
         })
     );
     let first = last(&started);
@@ -233,7 +233,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
     assert_eq!(s["bloom"], json!(["remember", "analyze", "evaluate"]));
     assert_eq!(s["question_count"], 5);
     assert_eq!(s["answer_formats"], json!(["選擇題", "簡答題"]));
-    assert_eq!(s["objective"], objective);
+    assert_eq!(s["content_objective"], objective);
     assert_eq!(ws["request"], request);
     assert_eq!(
         ws["template"],
@@ -270,7 +270,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
     let ws = worksheet(&app, &t, &turn).await;
     assert_eq!(ws["settings"]["output"], "tiered");
     assert_eq!(ws["request"], request);
-    assert_eq!(ws["settings"]["objective"], objective);
+    assert_eq!(ws["settings"]["content_objective"], objective);
     assert_eq!(
         ws["content"]["levels"],
         json!(["basic", "standard", "advanced"])
@@ -343,7 +343,7 @@ async fn a_bare_label_is_no_request() {
     assert_eq!(ws["settings"]["output"], "tiered");
     assert_eq!(ws["settings"]["bloom"], json!([]));
     assert_eq!(ws["settings"]["question_count"], Value::Null);
-    assert_eq!(ws["settings"]["objective"], Value::Null);
+    assert_eq!(ws["settings"]["content_objective"], Value::Null);
     // Tiered default: 12 questions over the six levels.
     let n: usize = blocks(&ws)
         .iter()
@@ -393,9 +393,12 @@ async fn options_are_validated_echoed_and_patched() {
     assert!(bad(json!({ "answer_formats": ["連連看"] }))
         .await
         .contains("連連看"));
-    assert!(bad(json!({ "objective": "字".repeat(301) }))
+    assert!(bad(json!({ "content_objective": "字".repeat(301) }))
         .await
-        .contains("學習目標最多 300 字"));
+        .contains("內容目標最多 300 字"));
+    assert!(bad(json!({ "language_objective": "字".repeat(301) }))
+        .await
+        .contains("語言目標最多 300 字"));
     let count = |table: &'static str| {
         let db = app.db.clone();
         async move {
@@ -413,7 +416,7 @@ async fn options_are_validated_echoed_and_patched() {
         &app,
         &t,
         json!({ "kind": "resources", "topic": "trust",
-                "options": { "bloom": null, "question_count": null, "objective": "" } }),
+                "options": { "bloom": null, "question_count": null, "content_objective": "" } }),
     )
     .await;
     let id = sid(&session);
@@ -489,7 +492,7 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
         &app,
         &t,
         json!({ "kind": "activity", "request": request, "material": material(""),
-                "options": { "objective": objective } }),
+                "options": { "content_objective": objective } }),
     )
     .await;
     let id = sid(&session);
@@ -512,11 +515,16 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
     assert_eq!(rows.len(), 1);
     let snapshot = &rows[0].2;
     assert_eq!(snapshot["prompt"]["version_no"], 3);
-    assert_eq!(snapshot["inputs"]["teacher_objective"], objective);
+    // Version 3 has only `{{teacher_objective}}`: the 內容目標 in the combined line.
+    assert_eq!(
+        snapshot["inputs"]["teacher_objective"],
+        format!("內容目標：{objective}").as_str()
+    );
+    assert_eq!(snapshot["inputs"]["teacher_content_objective"], objective);
     assert_eq!(snapshot["inputs"]["teacher_request"], request);
     let user = snapshot["prompt"]["user"].as_str().unwrap();
     assert!(
-        user.contains(&format!("學習目標（教師寫的）：{objective}")),
+        user.contains(&format!("學習目標（教師寫的）：內容目標：{objective}")),
         "{user}"
     );
     assert!(user.contains(&format!("教師的要求：{request}")), "{user}");

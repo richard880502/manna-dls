@@ -37,7 +37,7 @@ use crate::worksheet::vocab::{self, VocabCheck};
 use crate::worksheet::{
     auto_filename, auto_title, safe_filename, suggest_direct, suggest_from_sop, Audience, Brief,
     Content, Level, Material, Objective, Origin, Output, SeedExit, SeedTask, Settings,
-    SettingsPatch, MAX_TITLE_CHARS,
+    SettingsPatch, GEN_OBJECTIVES, MAX_TITLE_CHARS,
 };
 use crate::AppState;
 
@@ -456,6 +456,23 @@ pub async fn create_worksheet(
         None => settings,
     };
     check_template_output(template.is_some(), &settings)?;
+    // G1: the 內容目標 and 語言目標 of the settings are the worksheet's objectives too, after
+    // the lesson's; T1: they print at the top of the sheet (unless the request said which
+    // generation options, or a template decides).
+    let objectives = crate::objectives::synced(&objectives, &settings);
+    let mut settings = settings;
+    let asked_generation = req
+        .settings
+        .as_ref()
+        .is_some_and(|p| p.generation.is_some());
+    if objectives.iter().any(crate::objectives::is_from_settings)
+        && !asked_generation
+        && template.is_none()
+        && !settings.wants(GEN_OBJECTIVES)
+    {
+        settings.generation.push(GEN_OBJECTIVES.to_string());
+        settings = settings.normalised().map_err(AppError::bad_request)?;
+    }
     let mut brief = brief;
     brief.warmup.extend(overrides.warmup);
     brief.validate().map_err(AppError::bad_request)?;
@@ -622,6 +639,28 @@ pub async fn save(
     let brief = req.brief.unwrap_or_else(|| ws.brief.clone());
     brief.validate().map_err(AppError::bad_request)?;
     let mut content = req.content;
+    // G1: new 內容目標／語言目標 in the settings replace the worksheet's objectives from the two
+    // fields (on the content sent, or the latest version); objectives given where there were
+    // none are shown at the top (T1). Not while Manna is generating: that run keeps its own.
+    let objectives_changed = settings.content_objective != ws.settings.content_objective
+        || settings.language_objective != ws.settings.language_objective;
+    if objectives_changed && !ws_ai::jobs(&state, id).await?.1 {
+        let had = !ws.settings.teacher_objectives().is_empty();
+        if !had
+            && !settings.teacher_objectives().is_empty()
+            && !has_template
+            && !settings.wants(GEN_OBJECTIVES)
+        {
+            settings.generation.push(GEN_OBJECTIVES.to_string());
+            settings = settings.normalised().map_err(AppError::bad_request)?;
+        }
+        let mut base = match content.take() {
+            Some(c) => c,
+            None => store::latest(db, id).await?.content,
+        };
+        base.objectives = crate::objectives::synced(&base.objectives, &settings);
+        content = Some(base);
+    }
     if let Some(c) = &mut content {
         c.normalise().map_err(AppError::bad_request)?;
         let (_, running) = ws_ai::jobs(&state, id).await?;
@@ -909,7 +948,7 @@ pub async fn export(
                 Ok(bytes) => (bytes, export::PDF_TYPE, "pdf"),
                 Err(ExportError::NoCjkFont) => {
                     return Err(AppError::Conflict(
-                        "這份學習單裡有中文（例如教師備註），但伺服器沒有中文字型，無法做成 PDF。請改用 DOCX，或請管理者安裝中文字型。".to_string(),
+                        "這份學習單裡有中文（例如教師備註或字彙的中文提示），但伺服器沒有中文字型，無法做成 PDF。請改用 DOCX，或請管理者安裝中文字型。".to_string(),
                     ))
                 }
                 Err(ExportError::Other(e)) => return Err(AppError::Internal(e)),

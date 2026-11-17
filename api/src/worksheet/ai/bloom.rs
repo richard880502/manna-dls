@@ -216,10 +216,9 @@ async fn level_call(
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let vars: HashMap<&'static str, String> = HashMap::from([
+    let mut vars: HashMap<&'static str, String> = HashMap::from([
         ("school_track", track_label(&run.input.track).to_string()),
         ("class_profile", or_blank(&run.input.class_profile)),
-        ("teacher_objective", or_none(&run.objective)),
         ("teacher_request", or_none(&run.request)),
         ("teacher_notes_for_ai", run.ai_notes.clone()),
         ("bloom_id", b.as_str().to_string()),
@@ -237,6 +236,8 @@ async fn level_call(
         ("passage_numbered", material.numbered()),
         ("redo_note", r.redo.clone().unwrap_or_default()),
     ]);
+    // 內容目標 and 語言目標, and both in `{{teacher_objective}}` for version 1.
+    vars.extend(run.teacher.vars());
     let fake_context = json!({
         "task": KEY_LEVEL,
         "bloom": b.as_str(),
@@ -821,7 +822,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     notices.extend(checked.notices);
     let latest = store::latest(db, ws.id).await?;
     let mut content = Content {
-        objectives: latest.content.objectives,
+        objectives: run.objectives_for(&latest.content.objectives),
         show_objectives: chosen.settings.wants(GEN_OBJECTIVES),
         blocks,
         levels: levels.clone(),

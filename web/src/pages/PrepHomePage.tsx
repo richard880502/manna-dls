@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { PrepSessionSummary } from "../api/types";
+import type { DecisionRequest, ObjectiveDraftKind, PrepSessionSummary } from "../api/types";
 import { ErrorText } from "../components/common";
 import { Icon } from "../components/Icon";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../components/material/AttachDialog";
 import { materialFields, type MaterialChoice, type PickedMaterial } from "../components/material/MaterialChooser";
 import { WorksheetNotice } from "../components/material/WorksheetNotice";
+import { ObjectiveDrafts, recordDecisions, useObjectiveDraft, type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
 import { LibraryPicker, pickedOf } from "../components/library/LibraryPicker";
@@ -46,6 +47,7 @@ import {
   type StartKind,
   type Tool,
 } from "../lib/create";
+import { objectiveOptions } from "../lib/objectives";
 import { ocrBusyError } from "../lib/ocr";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
@@ -190,6 +192,8 @@ function QuickBox() {
   const [needSlots, setNeedSlots] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** G2: a tool sent without objectives gets Manna's drafts first. */
+  const drafts = useObjectiveDraft();
   /**
    * 送出 was refused because a material is still being read (OCR, 409): said beside the arrow
    * for as long as the same material (and sample) are attached.
@@ -220,7 +224,7 @@ function QuickBox() {
     !mimic && picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
 
   async function send() {
-    if (busy || kind === null) return;
+    if (busy || kind === null || drafts.state !== null) return;
     if (mimic && slotsNeeded !== null) {
       setNeedSlots(true);
       return;
@@ -229,13 +233,49 @@ function QuickBox() {
       setNeedMaterial(true);
       return;
     }
+    if (kind === "ask" || material === null) {
+      await create("", "");
+      return;
+    }
+    // A tool: the quick box has no objective fields, so Manna drafts them first (SIOP G2).
+    setError(null);
+    setOcrRefusal(null);
+    try {
+      const shown = await drafts.start({
+        kind: kind as ObjectiveDraftKind,
+        ...material,
+        ...(typed ? { request: typed } : {}),
+      });
+      if (!shown) await create("", "");
+    } catch (err) {
+      const reading = ocrBusyError(err);
+      if (reading) setOcrRefusal({ key: attachedKey, message: reading });
+      else setError(errorMessage(err));
+    }
+  }
+
+  async function adoptDrafts(outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) {
+    drafts.close();
+    await recordDecisions(interactionId, decisions);
+    await create(outcome.content, outcome.language);
+  }
+
+  async function create(content: string, language: string) {
+    if (kind === null) return;
     setBusy(true);
     setError(null);
     setOcrRefusal(null);
     try {
       const request = typed || (kind === "ask" ? "" : TOOL_CHIP[kind]);
+      const options = objectiveOptions(content, language);
       const session = await api.createPrepSession(
-        asCreateRequest({ kind, request, ...(material ?? {}), ...(mimic && sample ? sampleFields(sample) : {}) }),
+        asCreateRequest({
+          kind,
+          request,
+          ...(material ?? {}),
+          ...(mimic && sample ? sampleFields(sample) : {}),
+          ...(Object.keys(options).length > 0 ? { options } : {}),
+        }),
       );
       navigate(`/prep/${session.id}`);
     } catch (err) {
@@ -343,7 +383,7 @@ function QuickBox() {
             className="send-button"
             aria-label="送出"
             aria-describedby={need ? `${ids}-need` : undefined}
-            disabled={busy || kind === null}
+            disabled={busy || kind === null || drafts.state !== null}
             onClick={() => void send()}
           >
             <Icon name="send" />
@@ -357,6 +397,21 @@ function QuickBox() {
           disabled={busy}
           onUse={() => takeAsSample(worksheetLike)}
           onKeep={() => setKeptAsText((kept) => new Set(kept).add(worksheetLike.id))}
+        />
+      )}
+
+      {drafts.state && (
+        <ObjectiveDrafts
+          state={drafts.state}
+          disabled={busy}
+          onUse={(outcome, decisions, interactionId) => void adoptDrafts(outcome, decisions, interactionId)}
+          onSkip={(decisions, interactionId) => {
+            drafts.close();
+            void recordDecisions(interactionId, decisions);
+            void create("", "");
+          }}
+          onAnother={() => void drafts.another()}
+          onCancel={drafts.close}
         />
       )}
 
