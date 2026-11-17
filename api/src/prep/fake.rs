@@ -8,14 +8,18 @@
 //! | `FAKE_BLOCK`           | activity / ask: unusable output in both calls (the turn fails)        |
 //! | `FAKE_BLOCK_ONCE`      | activity / ask: the first call is unusable, the retry is fine         |
 //! | `FAKE_PREP_NO_PLAN`    | activity: unusable output in both calls, without touching the worksheet calls (a kit whose plan fails) |
+//! | `FAKE_PREP_ONE_GROUP`  | activity: no 語言目標 in both calls (retried; the retry's plan is shown with its 內容目標 only) |
+//! | `FAKE_PREP_ONE_GROUP_ONCE` | activity: no 語言目標 in the first call, the retry has both groups |
 //! | `FAKE_PREP_BAD_REVISE` | revise: the change uses an answer format outside the fixed labels in both calls (it is dropped and the reply says so) |
 //! | `FAKE_PREP_REVISE_ADD` | revise: changes the **last** block that has items and adds one new item at its end |
 //!
-//! The plan cites the first curriculum candidate plus a code that was never offered (the server
-//! drops it), and its 發展活動 step asks for 80 minutes (clamped to 50). Every step carries Bloom
-//! levels (version 2 of the prompt), out of order, repeated and one too many on 發展活動 (the
-//! server keeps three, in Bloom order). The revision changes the first block that has items: its
-//! first item's prompt gets " (revised)".
+//! The plan has two 內容目標 and three 語言目標 (version 3 of the prompt), each in Chinese and
+//! English; the third 語言目標 has Chinese where its English should be (the server drops it).
+//! The first 內容目標 cites the first curriculum candidate plus a code that was never offered
+//! (the server drops it), and the 發展活動 step asks for 80 minutes (clamped to 50). Every step
+//! carries Bloom levels (version 2 of the prompt), out of order, repeated and one too many on
+//! 發展活動 (the server keeps three, in Bloom order). The revision changes the first block that
+//! has items: its first item's prompt gets " (revised)".
 
 use serde_json::{json, Value};
 
@@ -43,19 +47,60 @@ fn strings(v: &Value) -> Vec<String> {
 
 pub fn activity(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     if unusable(attempt, has) || has("FAKE_PREP_NO_PLAN") {
-        return json!({ "title": "（測試）不完整的規劃", "goals": [], "steps": [] });
+        return json!({
+            "title": "（測試）不完整的規劃",
+            "content_goals": [],
+            "language_goals": [],
+            "steps": [],
+        });
     }
     let title = ctx["material_title"].as_str().unwrap_or_default().trim();
     let title = if title.is_empty() { "這一課" } else { title };
     let mut codes: Vec<String> = strings(&ctx["candidates"]).into_iter().take(1).collect();
     codes.push("NOT-A-REAL-CODE".to_string());
     let script = |line: &str| vec![line.to_string()];
+    // FAKE_PREP_ONE_GROUP_ONCE contains FAKE_PREP_ONE_GROUP, so test it first.
+    let one_group = if has("FAKE_PREP_ONE_GROUP_ONCE") {
+        attempt == 1
+    } else {
+        has("FAKE_PREP_ONE_GROUP")
+    };
+    let language_goals = if one_group {
+        json!([])
+    } else {
+        json!([
+            {
+                "zh": "學生能用 because 和 so 說明事情的原因與結果。",
+                "en": "Students will be able to use because and so to explain causes and results.",
+                "curriculum_codes": [],
+            },
+            {
+                "zh": "學生能用課文中的句型寫出兩句自己的句子。",
+                "en": "Students will be able to write two sentences of their own with a pattern from the text.",
+                "curriculum_codes": [],
+            },
+            {
+                "zh": "學生能說出三個描述心情的形容詞。",
+                "en": "學生能說出三個形容詞。",
+                "curriculum_codes": [],
+            },
+        ])
+    };
     json!({
         "title": format!("**{title}** 教學活動規劃（測試）"),
-        "goals": [
-            { "text": format!("學生能說出「{title}」各段的重點。"), "curriculum_codes": codes },
-            { "text": "學生能用課文中的句型寫出兩句自己的句子。", "curriculum_codes": [] },
+        "content_goals": [
+            {
+                "zh": format!("學生能說出「{title}」各段的重點。"),
+                "en": "Students will be able to tell the main point of each paragraph of the text.",
+                "curriculum_codes": codes,
+            },
+            {
+                "zh": "學生能根據課文說明主角做決定的原因。",
+                "en": "Students will be able to explain, with the text, why the main character made a decision.",
+                "curriculum_codes": [],
+            },
         ],
+        "language_goals": language_goals,
         "steps": [
             {
                 "phase": "引起動機", "title": "看圖猜主題", "minutes": 8,

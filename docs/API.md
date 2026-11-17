@@ -1631,13 +1631,15 @@ prompt key：`worksheet_template_outline`、`worksheet_template_details`、`work
 
 **Phase 2.7 的擴充**（Migration `0015_prep_bloom.sql`，以下各節已併入）：新的輪次 `comprehension`（閱讀理解題）、`tiered`（分層練習）、`kit`（教學套件＝課堂活動＋分層學習單）；對話的**出題選項** `options`（帶進對話做的每一份學習單）；活動規劃的每一步標上 Bloom 層次（`prep_activity` 第 2 版）；教學套件下載成一份 DOCX；`next` 改成 `comprehension, tiered, activity, kit, worksheet`。
 
+**課堂活動的學習目標分成內容目標與語言目標、中英文並陳**（Migration `0019_prep_activity_goals.sql`，以下各節已併入）：`prep_activity` 第 3 版依 SIOP 分成內容目標（`content`）與語言目標（`language`），各 1–3 個，每個目標有中文（`zh`，給教師）與英文（`en`，給學生）；`ActivityPlan.goals` 每一項多了 `kind`、`zh`、`en`，取代 `text`。已存的舊規劃不改寫：它們的目標仍是 `{ text, curriculum_codes }`，照舊顯示成一張清單。
+
 ## 資料
 
 - `prep_sessions`：`id`、`teacher_id`（只有擁有者能存取，其他人的 id 回 404）、`title`（≤200；預設為教材標題，沒有教材時為主題，再沒有就是第一個請求的前 40 字）、`material_id`（教材庫教材；教材刪除時變成 null）、`topic`（≤200，沒有教材時用）、`class_id`、`template_id`（刪除時都變成 null）、`options`（JSONB，出題選項，預設 `{}`）、`created_at`、`updated_at`。
 - `prep_turns`：`id`、`session_id`（刪除對話時一起刪除）、`seq`（對話內從 1 起編號）、`kind`、`request`（≤2000：老師打的字，或按鈕的名稱）、`status`（`running`｜`done`｜`failed`）、`error`（失敗原因，中文）、`worksheet_id`（這一輪做出的學習單）、`result`（JSONB）、`interaction_id`（產生結果的 `ai_interactions`）、`created_at`、`finished_at`。同一個對話同時只會有一輪在跑（部分唯一索引）。
 - **刪除對話是真的刪除**：對話與所有輪次都刪掉。在對話裡做的學習單完整保留（仍在 /worksheets），只是 `prep_session_id` 變成 null。
 - `worksheets` 新增 `prep_session_id`（做出這份學習單的對話）。`worksheet_versions.cause` 新增 `revise`。
-- `prompt_versions` 新增 `prep_activity`（第 1、2 版）、`prep_ask`、`prep_revise`。`scaffolds` 新增 `SC-PREP-ACTIVITY`、`SC-PREP-ASK`、`SC-PREP-REVISE`。
+- `prompt_versions` 新增 `prep_activity`（第 1、2、3 版）、`prep_ask`、`prep_revise`。`scaffolds` 新增 `SC-PREP-ACTIVITY`、`SC-PREP-ASK`、`SC-PREP-REVISE`。
 - `prep_turns.kind` 多了 `comprehension`、`tiered`、`kit`（`0015_prep_bloom.sql`）。
 - 每次模型呼叫一列 `ai_interactions`（`module` = prompt key）；輸入快照裡的教材（以及由教材衍生的學習單內容、先前的對話摘要）只記字數與雜湊。檢索記在 `retrieval_logs`（查詢文字含教材時同樣只記字數與雜湊）。
 
@@ -1676,9 +1678,17 @@ interface PrepSession extends PrepSessionSummary {
                                    // 依這個順序；只在有教材時出現（沒有教材時是 []）。assessment、resources 仍是有效的 kind，但不再建議
   options: PrepSessionOptions;     // 只在 PrepSession（列表的 PrepSessionSummary 沒有）
 }
+type ActivityGoal =
+  // prep_activity 第 3 版起（0019_prep_activity_goals.sql）：SIOP 的兩組，中英文並陳
+  | { kind: "content" | "language";   // 內容目標｜語言目標
+      zh: string;                     // ≤150，給教師的繁體中文，一句（「學生能……」）
+      en: string;                     // ≤200，給學生的英文，一句（"Students will be able to …"）
+      curriculum_codes: string[] }    // ≤3，只會是這次提供的候選代碼
+  // 第 1、2 版做的規劃（資料庫裡原樣保留）：一行中文、沒有 kind
+  | { text: string; curriculum_codes: string[] };
 interface ActivityPlan {
   title: string;                                                    // ≤100
-  goals: Array<{ text: string; curriculum_codes: string[] }>;       // 1–4；text ≤150；codes ≤3
+  goals: ActivityGoal[];             // 第 3 版：先內容目標、再語言目標，各 1–3 個（重試後仍缺一組時，只有另一組）；舊規劃：1–4 個 { text }
   steps: Array<{
     phase: "引起動機" | "發展活動" | "統整與評量";
     title: string;                                                  // ≤60
@@ -1750,7 +1760,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ### `activity`（規劃教學活動）
 
-一次呼叫（`prep_activity` 第 2 版，`max_tokens` 6000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、學習目標（`options.objective`，變數 `{{teacher_objective}}`）與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`；沒有時都是「（沒有）」）。輸出 `ActivityPlan`（不含 `curriculum`），schema 裡每個字串與陣列都有 `maxLength`／`maxItems`，`curriculum_codes` 是候選代碼的 enum，每一步的 `bloom` 是六個 id 的 enum（1–3 個，寫在 `idea` 之後）；需要分行的內容（`script`）是陣列。伺服器檢查：不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；`bloom` 去掉重複、留模型寫的前 3 個、再依 Bloom 順序排；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。沒有目標或可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。
+一次呼叫（`prep_activity` 第 3 版，`max_tokens` 6000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、學習目標（`options.objective`，變數 `{{teacher_objective}}`）與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`；沒有時都是「（沒有）」）。模型的輸出依序是 `title`、`content_goals`（內容目標）、`language_goals`（語言目標）、`steps`：兩組目標是兩個陣列（schema 各要求 1–3 個，所以兩組都一定會寫），每個目標依序是 `zh`（≤150）、`en`（≤200）、`curriculum_codes`，伺服器再把它們合成 `goals`（`kind` 依所在的陣列）。schema 裡每個字串與陣列都有 `maxLength`／`maxItems`，`curriculum_codes` 是候選代碼的 enum，每一步的 `bloom` 是六個 id 的 enum（1–3 個，寫在 `idea` 之後）；需要分行的內容（`script`）是陣列，目標的 `zh`、`en` 各只寫一句（gemma 想換行時會提早結束字串）。伺服器檢查：`zh` 沒有中文字或 `en` 不是英文（含中文字、或沒有英文字母）的目標拿掉，每組最多留 3 個；不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；`bloom` 去掉重複、留模型寫的前 3 個、再依 Bloom 順序排；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。兩組目標都沒有可用的目標或可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。只缺一組（例如語言目標全被拿掉）時也重試一次並附上問題（`blocked`），但規劃本身可以用：重試補齊就用重試的，重試還是缺就照樣給教師看重試的規劃（只有另一組目標，`ai_interactions` 的檢查結果記下沒有通過）。
 
 ### `kit`（教學套件）
 
@@ -1762,7 +1772,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 **下載**：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`（`format` 省略也是 DOCX；其他值 → 400「format 需為 docx。」）。一份 DOCX，每部分從新的一頁開始：
 
-1. **教學流程**：規劃的標題、學習目標（附課綱代碼）、每一步（階段｜標題（分鐘）、`Bloom：理解、應用`、教學思路、引起動機的選項、課堂用語、卡住了怎麼辦）、對應的課綱條目。
+1. **教學流程**：規劃的標題、學習目標（分成「內容目標」「語言目標」兩組，各自編號；每個目標是中文一行、附課綱代碼，英文斜體在下一行；舊規劃照舊是一張中文清單）、每一步（階段｜標題（分鐘）、`Bloom：理解、應用`、教學思路、引起動機的選項、課堂用語、卡住了怎麼辦）、對應的課綱條目。
 2. **學生版（基礎版）**、**學生版（一般版）**、**學生版（進階版）**（學習單的每個版本）：和 `GET /api/worksheets/:id/export?audience=student` 印的一樣（基礎版有 Hint，沒有 Bloom 標記）。
 3. **教師版**：所有版本的題目各一次、依序編號，附答案、依據與 Bloom 標記（〔Bloom：分析 Analyze〕）與區塊的 Bloom 摘要；分層練習另印版本與層次的對應（「基礎版：記憶＋理解＋應用（附提示）；…」）。
 
@@ -1785,6 +1795,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 - 通過的 change 取代該區塊的 `title`、`instructions` 與 `items`：新題目 `origin = "ai"`；出口卡的 `purpose`、題目的 `bloom`、`hint` 與 **`levels`（出現在哪些版本）依位置保留**（取代同一個位置的題目）；多出來的新題目 `bloom` = 區塊的層次（依 Bloom 層次產生的區塊才有），分層練習的學習單依那個層次對應的版本（記憶→基礎版；理解、應用→三個版本；分析→一般版、進階版；評鑑、創造→進階版），其他情況是學習單的所有版本（保留的版本只取學習單現有的版本，一個都不剩時也是所有版本）；鷹架與字詞保留。被取代的區塊先放進 `worksheet_block_history`（編輯器的「復原」照常可用），全部改動寫成**一個**新版本（`cause = "revise"`）。內容沒有實際改變的區塊不算。
 - 沒有改動 → 不新增版本（`reply` 本身就是回答，例如一個澄清問題）。`result = { reply, changed_block_ids, version_no }`。
 - 呼叫期間學習單開始產生時，這一輪 `failed`，不套用。
+- `revise` 只改學習單；活動規劃（包括學習目標）不會被改動，`activity`／`kit` 存的 `result` 原樣保留。
 
 ## 測試用假模型（`AI_PROVIDER=fake`）
 
@@ -1794,9 +1805,11 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | `FAKE_BLOCK_ONCE` | activity／ask：第一次不能用，重試成功 |
 | `FAKE_PREP_BAD_REVISE` | revise：兩次的 change 都用了固定標籤以外的作答方式 → 不套用，`reply` 說明 |
 | `FAKE_PREP_NO_PLAN` | activity／kit：活動規劃兩次都不能用（不影響學習單的呼叫）→ `activity` 是 `failed`；`kit` 是 `failed`、學習單保留 |
+| `FAKE_PREP_ONE_GROUP` | activity：兩次都沒有語言目標 → 重試後仍照樣 `done`，規劃只有內容目標 |
+| `FAKE_PREP_ONE_GROUP_ONCE` | activity：第一次沒有語言目標，重試兩組都有 |
 | `FAKE_PREP_REVISE_ADD` | revise：改的是**最後一個**有題目的區塊，並在最後加一題 |
 
-假模型的活動規劃引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）；每一步的 `bloom` 順序打亂、有重複，發展活動寫了 4 個（伺服器留前 3 個並排序）。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
+假模型的活動規劃有 2 個內容目標與 3 個語言目標（中英文各一句），第 3 個語言目標的 `en` 寫成中文（伺服器拿掉）；第一個內容目標引用第一個候選代碼和一個不存在的代碼（伺服器拿掉），發展活動寫 80 分鐘（限制成 50），只有引起動機以外的步驟也帶了選項（伺服器拿掉）；每一步的 `bloom` 順序打亂、有重複，發展活動寫了 4 個（伺服器留前 3 個並排序）。假模型的 revise 修改第一個有題目的區塊：第一題的題幹後面加上 " (revised)"。既有的 `FAKE_TIMEOUT`、`FAKE_ERROR`、`FAKE_RUNAWAY`、`FAKE_SLOW` 照舊。
 
 ## usage_logs 新事件
 
@@ -1804,7 +1817,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ## 試用真模型
 
-prompt key：`prep_activity`（第 2 版）、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`；教學套件的 DOCX 在 `prep::kit`（用 `worksheet::export::combined_docx`）。
+prompt key：`prep_activity`（第 3 版）、`prep_ask`、`prep_revise`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`；教學套件的 DOCX 在 `prep::kit`（用 `worksheet::export::combined_docx`）。
 
 ---
 

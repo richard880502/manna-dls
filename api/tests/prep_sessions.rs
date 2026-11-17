@@ -246,9 +246,27 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     assert!(turn["interaction_id"].is_i64());
     let plan = &turn["result"];
     assert_eq!(plan["title"], "The Umbrella Stand 教學活動規劃（測試）");
-    // Codes only from the candidates; the invented one is gone; text from the knowledge base.
-    assert_eq!(plan["goals"][0]["curriculum_codes"], json!(["T-G-3-V-2"]));
+    // 內容目標 then 語言目標, each goal in Chinese and English; the 語言目標 whose English is
+    // Chinese is dropped. Codes only from the candidates; the invented one is gone; text from
+    // the knowledge base.
+    assert_eq!(
+        goal_kinds(&turn),
+        ["content", "content", "language", "language"]
+    );
+    assert_eq!(
+        plan["goals"][0],
+        json!({
+            "kind": "content",
+            "zh": "學生能說出「The Umbrella Stand」各段的重點。",
+            "en": "Students will be able to tell the main point of each paragraph of the text.",
+            "curriculum_codes": ["T-G-3-V-2"],
+        })
+    );
     assert_eq!(plan["goals"][1]["curriculum_codes"], json!([]));
+    assert_eq!(
+        plan["goals"][2]["en"],
+        "Students will be able to use because and so to explain causes and results."
+    );
     assert_eq!(
         plan["curriculum"],
         json!([{ "code": "T-G-3-V-2", "text": "能讀懂 umbrella 測試用的短文並找出主旨。" }])
@@ -341,6 +359,46 @@ async fn an_activity_is_retried_once_and_fails_honestly() {
     let turn = last(&wait(&app, &t, sid(&timeout)).await);
     assert_eq!(turn["status"], "failed");
     assert!(turn["error"].as_str().unwrap().contains("AI 目前沒有回應"));
+}
+
+/// The `kind` of each goal of a turn's plan, in order.
+fn goal_kinds(turn: &Value) -> Vec<String> {
+    turn["result"]["goals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["kind"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_missing_goal_group_is_asked_for_again() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-5G", "general").await;
+    // The first call has no 語言目標: the retry is asked for them and has both groups.
+    let once = pasted(&app, &t, "activity", "FAKE_PREP_ONE_GROUP_ONCE").await;
+    let turn = last(&wait(&app, &t, sid(&once)).await);
+    assert_eq!(turn["status"], "done", "{turn}");
+    assert_eq!(
+        goal_kinds(&turn),
+        ["content", "content", "language", "language"]
+    );
+    let rows = interactions(&app, "prep_activity").await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[0].0, rows[0].1.as_str()), (1, "blocked"));
+    assert_eq!((rows[1].0, rows[1].1.as_str()), (2, "shown"));
+    let user = rows[1].2["prompt"]["user"].as_str().unwrap();
+    assert!(user.contains("language_goals 沒有可用的語言目標"), "{user}");
+
+    // Never any 語言目標: the retry's plan is still shown, with its 內容目標 only.
+    let always = pasted(&app, &t, "activity", "FAKE_PREP_ONE_GROUP").await;
+    let turn = last(&wait(&app, &t, sid(&always)).await);
+    assert_eq!(turn["status"], "done", "{turn}");
+    assert_eq!(goal_kinds(&turn), ["content", "content"]);
+    let rows = interactions(&app, "prep_activity").await;
+    assert_eq!(rows.len(), 4);
+    assert_eq!((rows[2].0, rows[2].1.as_str()), (1, "blocked"));
+    assert_eq!((rows[3].0, rows[3].1.as_str()), (2, "shown"));
 }
 
 // ---------------------------------------------------------------- resources

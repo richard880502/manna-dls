@@ -431,6 +431,33 @@
   width: 30%;
 }
 
+/* 內容目標／語言目標: a label row above each group's goals. */
+.prep-goals .prep-goal-group th {
+  padding-top: var(--space-sm);
+  color: var(--color-ink);
+}
+
+.prep-goal-hint {
+  margin-left: var(--space-xs);
+  color: var(--color-muted);
+  font-weight: var(--weight-regular);
+}
+
+/* 中英文並陳: the Chinese line, the English line under it. */
+.prep-goal-zh,
+.prep-goal-en {
+  display: block;
+}
+
+.prep-goal-en {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-2);
+}
+
+.prep-goals td:first-child {
+  overflow-wrap: anywhere;
+}
+
 .prep-codes {
   display: flex;
   flex-wrap: wrap;
