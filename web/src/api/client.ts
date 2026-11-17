@@ -1,5 +1,6 @@
 import { loadToken } from "../lib/storage";
 import type {
+  Account,
   AdminSettings,
   AiResult,
   ApiErrorBody,
@@ -57,6 +58,7 @@ import type {
   RemoteRun,
   RetireDemoResult,
   ReviewRequest,
+  Role,
   RevokePairingResponse,
   RunDetail,
   SaveLessonVersionRequest,
@@ -573,6 +575,11 @@ export const api = {
     getSettings: () => get<AdminSettings>("/admin/settings"),
     updateSettings: (body: AdminSettings) => put<AdminSettings>("/admin/settings", body),
     createInvite: (body: InviteRequest) => post<InviteResponse>("/admin/invites", body),
+    /** 帳號與角色：未刪除的帳號，最早加入的在前 */
+    listAccounts: () => get<Account[]>("/admin/accounts"),
+    /** 變更角色；對方下一次操作時生效。自己的角色、最後一位主持人 → 409 */
+    updateAccountRole: (id: number, role: Role) =>
+      request<Account>("PATCH", `/admin/accounts/${id}`, { json: { role } }),
     listPrompts: () => get<PromptVersion[]>("/admin/prompts"),
     createPrompt: (body: CreatePromptRequest) => post<PromptVersion>("/admin/prompts", body),
     importTeacherCases: (csv: string) =>

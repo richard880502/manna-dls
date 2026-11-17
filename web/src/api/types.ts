@@ -492,6 +492,17 @@ export interface InviteResponse {
   code: string;
 }
 
+/** 帳號與角色：一個未刪除的帳號。只有研究編號，沒有姓名或 Email。 */
+export interface Account {
+  id: number;
+  research_id: string;
+  school_track: SchoolTrack;
+  role: Role;
+  created_at: string;
+  /** 目前登入的主持人自己（不能在這裡變更自己的角色） */
+  is_self: boolean;
+}
+
 export interface PromptVersion {
   id: number;
   prompt_key: string;

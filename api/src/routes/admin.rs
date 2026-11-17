@@ -1,18 +1,19 @@
-//! Management endpoints. Invites, platform settings, prompt versions and the teacher-case import
-//! are PI-only ([`Capability::Administer`]); the knowledge-base and vocabulary imports, their
-//! status and the demo retirement need [`Capability::ManageKnowledge`] (PI or 知識庫管理員).
-//! Contract: docs/API.md「Phase 2.0：知識庫與詞彙」.
+//! Management endpoints. Invites, accounts and roles, platform settings, prompt versions and the
+//! teacher-case import are PI-only ([`Capability::Administer`]); the knowledge-base and
+//! vocabulary imports, their status and the demo retirement need
+//! [`Capability::ManageKnowledge`] (PI or 知識庫管理員).
+//! Contract: docs/API.md「Phase 2.0：知識庫與詞彙」and「帳號與角色」.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::auth::{self, AuthTeacher, Capability};
-use crate::error::{ApiJson, ApiQuery, AppError, AppResult};
+use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::prompts::PromptVersion;
 use crate::routes::log_usage;
 use crate::settings;
@@ -60,6 +61,141 @@ pub async fn create_invite(
     .await?;
     // The clear-text code is returned only once; the database keeps its hash.
     Ok(Json(json!({ "code": code })))
+}
+
+// ---------------------------------------------------------------- accounts and roles
+
+/// An account as the PI's「帳號與角色」list shows it: the pseudonymous research id and nothing
+/// else personal (`identity_map` is never read here).
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Account {
+    pub id: i64,
+    pub research_id: String,
+    pub school_track: String,
+    pub role: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The signed-in PI's own row (read-only in the interface).
+    pub is_self: bool,
+}
+
+const ACCOUNT_COLUMNS: &str = "id, research_id, school_track, role, created_at, id = $1 AS is_self";
+
+/// Accounts that are not deleted, oldest first.
+pub async fn list_accounts(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+) -> AppResult<Json<Vec<Account>>> {
+    teacher.require(Capability::Administer)?;
+    let rows = sqlx::query_as(&format!(
+        "SELECT {ACCOUNT_COLUMNS} FROM teachers
+          WHERE deleted_at IS NULL ORDER BY created_at, id"
+    ))
+    .bind(teacher.id())
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoleChangeRequest {
+    pub role: String,
+}
+
+const SELF_ROLE_CHANGE: &str =
+    "不能變更自己的角色：請另一位主持人幫你變更，以免你失去後台的使用權限。";
+const LAST_PI: &str = "平台至少要有一位主持人：這是最後一位主持人，不能改成其他角色。";
+
+/// Why changing `target`'s role from `from` to `to` is refused (409), if it is. `other_pis` is
+/// the number of active `pi` accounts besides `target`.
+fn role_change_conflict(
+    actor_id: i64,
+    target_id: i64,
+    from: &str,
+    to: &str,
+    other_pis: i64,
+) -> Option<&'static str> {
+    if from == to {
+        return None;
+    }
+    if target_id == actor_id {
+        return Some(SELF_ROLE_CHANGE);
+    }
+    if from == "pi" && other_pis == 0 {
+        return Some(LAST_PI);
+    }
+    None
+}
+
+/// Changes an account's role. It applies from the account's next request (sessions read the role
+/// from `teachers` every time), so nobody has to sign in again. Setting the role an account
+/// already has changes nothing and is not an error.
+pub async fn update_account_role(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(req): ApiJson<RoleChangeRequest>,
+) -> AppResult<Json<Account>> {
+    teacher.require(Capability::Administer)?;
+    if !auth::valid_role(&req.role) {
+        return Err(AppError::bad_request("角色不正確。"));
+    }
+    let mut tx = state.db.begin().await?;
+    // One role change at a time: two PIs demoting each other at once must not both succeed.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('teachers.role'))")
+        .execute(&mut *tx)
+        .await?;
+    // The caller's role as of now, not as of the start of the request: a PI demoted by a change
+    // that committed while this one waited for the lock may no longer change roles.
+    let actor_role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM teachers WHERE id = $1 AND deleted_at IS NULL")
+            .bind(teacher.id())
+            .fetch_optional(&mut *tx)
+            .await?;
+    auth::require_role(
+        actor_role.as_deref().unwrap_or_default(),
+        Capability::Administer,
+    )?;
+
+    let account: Option<Account> = sqlx::query_as(&format!(
+        "SELECT {ACCOUNT_COLUMNS} FROM teachers WHERE id = $2 AND deleted_at IS NULL"
+    ))
+    .bind(teacher.id())
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let account = account.ok_or_else(|| AppError::not_found("找不到這個帳號。"))?;
+    if account.role == req.role {
+        return Ok(Json(account));
+    }
+    let other_pis: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM teachers WHERE role = 'pi' AND deleted_at IS NULL AND id <> $1",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if let Some(message) =
+        role_change_conflict(teacher.id(), id, &account.role, &req.role, other_pis)
+    {
+        return Err(AppError::Conflict(message.into()));
+    }
+    let updated: Account = sqlx::query_as(&format!(
+        "UPDATE teachers SET role = $3 WHERE id = $2 RETURNING {ACCOUNT_COLUMNS}"
+    ))
+    .bind(teacher.id())
+    .bind(id)
+    .bind(&req.role)
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    tracing::info!(
+        actor_id = teacher.id(),
+        account_id = id,
+        from = %account.role,
+        to = %updated.role,
+        "account role changed"
+    );
+    Ok(Json(updated))
 }
 
 // ---------------------------------------------------------------- settings
@@ -1130,6 +1266,24 @@ pub async fn import_teacher_cases(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn role_change_conflicts() {
+        // (actor, target, from, to, other active PIs)
+        assert_eq!(role_change_conflict(1, 2, "teacher", "kb_manager", 1), None);
+        assert_eq!(role_change_conflict(1, 2, "pi", "teacher", 1), None);
+        assert_eq!(role_change_conflict(1, 2, "teacher", "pi", 0), None);
+        // setting the role it already has is never a conflict, not even on one's own account
+        assert_eq!(role_change_conflict(1, 1, "pi", "pi", 0), None);
+        assert_eq!(
+            role_change_conflict(1, 1, "pi", "kb_manager", 3),
+            Some(SELF_ROLE_CHANGE)
+        );
+        assert_eq!(
+            role_change_conflict(1, 2, "pi", "teacher", 0),
+            Some(LAST_PI)
+        );
+    }
 
     const KB: &str =
         "item_code,category,school_track,title,content,source_doc,source_version,source_page\n\

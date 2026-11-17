@@ -3,9 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { api as client } from "../api/client";
 import { logScaffold } from "../lib/scaffold";
-import { baseRoutes, mockApi, renderApp, signIn, teacher, type MockCall } from "../test/mockApi";
+import type { Account } from "../api/types";
+import { baseRoutes, mockApi, renderApp, respond, signIn, teacher, type MockCall } from "../test/mockApi";
 
 const pi = { ...teacher, research_id: "PI-01", role: "pi" as const };
+
+const accounts: Account[] = [
+  { id: 1, research_id: "PI-01", school_track: "general", role: "pi", created_at: "2026-11-01T08:00:00Z", is_self: true },
+  {
+    id: 7,
+    research_id: "T-2026-007",
+    school_track: "vocational",
+    role: "teacher",
+    created_at: "2026-11-12T08:00:00Z",
+    is_self: false,
+  },
+];
 
 describe("admin page (pi)", () => {
   it("creates invite codes, saves a new prompt version and uploads CSV as text/csv", async () => {
@@ -14,6 +27,7 @@ describe("admin page (pi)", () => {
       ...baseRoutes(),
       "GET /api/me": pi,
       "GET /api/admin/settings": { route_choice_enabled: true },
+      "GET /api/admin/accounts": accounts,
       "GET /api/admin/prompts": [
         {
           id: 1,
@@ -84,6 +98,7 @@ describe("admin page (pi)", () => {
       ...baseRoutes(),
       "GET /api/me": pi,
       "GET /api/admin/settings": { route_choice_enabled: true },
+      "GET /api/admin/accounts": accounts,
       "GET /api/admin/prompts": [],
       "POST /api/admin/invites": { code: "KBKB-1234" },
     });
@@ -107,6 +122,7 @@ describe("admin page (pi)", () => {
       ...baseRoutes(),
       "GET /api/me": pi,
       "GET /api/admin/settings": { route_choice_enabled: true },
+      "GET /api/admin/accounts": accounts,
       "PUT /api/admin/settings": (call: MockCall) => call.body,
       "GET /api/admin/prompts": [],
     });
@@ -123,10 +139,120 @@ describe("admin page (pi)", () => {
 
   it("hides the admin page from teachers", async () => {
     signIn();
-    mockApi(baseRoutes());
+    const api = mockApi(baseRoutes());
     renderApp("/admin");
     expect(await screen.findByText("這個頁面只開放給計畫主持人。")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /後台管理/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "帳號與角色" })).not.toBeInTheDocument();
+    expect(api.callsTo("GET", "/api/admin/accounts")).toHaveLength(0);
+  });
+
+  it("hides 帳號與角色 from a 知識庫管理員", async () => {
+    signIn();
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/me": { ...teacher, role: "kb_manager", capabilities: ["manage_knowledge", "use_materials"] },
+    });
+    renderApp("/admin");
+    expect(await screen.findByText("這個頁面只開放給計畫主持人。")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "帳號與角色" })).not.toBeInTheDocument();
+    expect(api.callsTo("GET", "/api/admin/accounts")).toHaveLength(0);
+  });
+});
+
+describe("帳號與角色 (pi)", () => {
+  const routes = (patch: (call: MockCall) => unknown) => ({
+    ...baseRoutes(),
+    "GET /api/me": pi,
+    "GET /api/admin/settings": { route_choice_enabled: true },
+    "GET /api/admin/prompts": [],
+    "GET /api/admin/accounts": accounts,
+    "PATCH /api/admin/accounts/7": patch,
+  });
+
+  it("lists accounts, keeps the PI's own row read-only and explains 知識庫管理員", async () => {
+    signIn();
+    mockApi(routes(() => respond(500, null)));
+    renderApp("/admin");
+    const section = within(await screen.findByRole("region", { name: "帳號與角色" }));
+    expect(await section.findByText("T-2026-007")).toBeInTheDocument();
+    expect(section.getByText("2 個帳號")).toBeInTheDocument();
+    expect(
+      section.getByText(
+        "「知識庫管理員」可以管理知識庫的教材、學習單範本、課綱條目與詞彙，但不能建立邀請碼或變更平台設定，也看不到其他教師的資料。",
+      ),
+    ).toBeInTheDocument();
+
+    const rows = section.getAllByRole("listitem");
+    const own = within(rows[0]!);
+    expect(own.getByRole("heading", { name: /PI-01/ })).toBeInTheDocument();
+    expect(own.getByText("你")).toBeInTheDocument();
+    expect(own.getByText("主持人")).toBeInTheDocument();
+    expect(own.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(own.getByText(/普高 · 2026\/11\/01 加入/)).toBeInTheDocument();
+
+    const other = within(rows[1]!);
+    expect(other.queryByText("你")).not.toBeInTheDocument();
+    expect(other.getByText(/技高 · 2026\/11\/12 加入/)).toBeInTheDocument();
+    const select = other.getByRole("combobox", { name: "T-2026-007 的角色" });
+    expect(select).toHaveValue("teacher");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "教師",
+      "主持人",
+      "知識庫管理員",
+      "研究助理",
+      "評分者",
+      "工程師",
+    ]);
+  });
+
+  it("asks before changing a role, then saves it", async () => {
+    signIn();
+    const api = mockApi(
+      routes((call) => ({ ...accounts[1], ...(call.body as { role: string }) })),
+    );
+    const user = userEvent.setup();
+    renderApp("/admin");
+    const section = within(await screen.findByRole("region", { name: "帳號與角色" }));
+    const select = await section.findByRole("combobox", { name: "T-2026-007 的角色" });
+
+    // Choosing a role only asks; cancelling puts the old role back and sends nothing.
+    await user.selectOptions(select, "知識庫管理員");
+    let dialog = section.getByRole("alertdialog", { name: "確認變更 T-2026-007 的角色" });
+    expect(dialog).toHaveTextContent("把 T-2026-007 的角色從「教師」改為「知識庫管理員」？");
+    expect(dialog).toHaveTextContent("可以管理知識庫的教材、學習單範本、課綱條目與詞彙");
+    expect(select).toHaveValue("kb_manager");
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(section.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(select).toHaveValue("teacher");
+    expect(api.callsTo("PATCH", "/api/admin/accounts/7")).toHaveLength(0);
+
+    await user.selectOptions(select, "知識庫管理員");
+    dialog = section.getByRole("alertdialog", { name: "確認變更 T-2026-007 的角色" });
+    await user.click(within(dialog).getByRole("button", { name: "確定變更" }));
+    expect(
+      await section.findByText("已將 T-2026-007 的角色改為「知識庫管理員」。對方不必重新登入，重新整理網頁後畫面就會更新。"),
+    ).toBeInTheDocument();
+    expect(api.callsTo("PATCH", "/api/admin/accounts/7")).toHaveLength(1);
+    expect(api.lastBody("PATCH", "/api/admin/accounts/7")).toEqual({ role: "kb_manager" });
+    expect(section.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(select).toHaveValue("kb_manager");
+  });
+
+  it("shows the server's refusal and keeps the old role", async () => {
+    signIn();
+    // e.g. another PI took this account's PI role away a moment ago
+    mockApi(routes(() => respond(403, { error: { code: "forbidden", message: "只有計畫主持人可以使用這個功能。" } })));
+    const user = userEvent.setup();
+    renderApp("/admin");
+    const section = within(await screen.findByRole("region", { name: "帳號與角色" }));
+    const select = await section.findByRole("combobox", { name: "T-2026-007 的角色" });
+    await user.selectOptions(select, "主持人");
+    const dialog = section.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent("主持人可以使用全部後台功能");
+    await user.click(within(dialog).getByRole("button", { name: "確定變更" }));
+    expect(await section.findByRole("alert")).toHaveTextContent("只有計畫主持人可以使用這個功能。");
+    expect(select).toHaveValue("teacher");
   });
 });
 

@@ -1444,6 +1444,33 @@
   margin-top: var(--space-md);
 }
 
+/* 帳號與角色: parted from the invite grid above like one panel from the next. */
+.admin-grid + .admin-accounts {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-xl);
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+.admin-self-tag {
+  margin-left: var(--space-xs);
+  vertical-align: middle;
+}
+
+.admin-role-select {
+  width: auto;
+  min-width: 10rem;
+}
+
+.admin-role-confirm {
+  display: grid;
+  gap: var(--space-xs);
+  max-width: 44rem;
+  padding: var(--space-md);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-accent-wash);
+  line-height: var(--leading-ui);
+}
+
 .invite-code {
   padding: 0 var(--space-xs);
   border-radius: var(--radius-sm);

@@ -280,6 +280,8 @@ pub fn api_router() -> Router<AppState> {
         .route("/admin/vocabulary/items", get(knowledge::browse_vocabulary))
         // PI
         .route("/admin/invites", post(admin::create_invite))
+        .route("/admin/accounts", get(admin::list_accounts))
+        .route("/admin/accounts/{id}", patch(admin::update_account_role))
         .route(
             "/admin/settings",
             get(admin::get_settings).put(admin::put_settings),
