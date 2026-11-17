@@ -59,7 +59,7 @@
   - `share_with_ai` 預設關閉，只有勾了的才會給模型（`annotations.rs:461`、`api/migrations/0009_materials.sql:55-77`）。
   - 給模型時有固定標題，標明這是教師筆記，不是教材原文（`annotations.rs:507-530`）。
   - 前端的選字工具：`selectionInParagraph` 依 `data-pid` 找段落並對齊整個英文字（`web/src/lib/materials.ts:195-230`），註記卡片與「提供給 AI」勾選在 `MaterialViewer.tsx:120-215`。
-  - 用字：目前程式與介面字串寫成「注記」，建議一併統一為「註記」。
+  - 用字：已在 PR #43 統一為「註記」。
 - **區塊檢查**：`evaluate_section` 檢查固定標籤、選擇題格式、題幹不含答案、音節對字典、需要外部素材時不得編造（`api/src/worksheet/checks.rs:1395`）。
 - **需要外部素材的區塊**：版型的 `needs_external_material` 會讓區塊顯示 `MSG_EXTERNAL`「Manna 不會自己編造」（`api/src/worksheet/template/mod.rs:49,123`），編輯器會統計「有 N 個區塊需要你提供素材（影片、錄音、圖片…）」（`ResultView.tsx:728-730`）。這就是「圖片位置」的前身。
 - **範例學習單裡的圖**：chandra OCR 的 `Picture` 區塊連同 bbox 都存在 `materials.ocr_pages`，只是沒變成文字（`api/src/materials/ocr/html.rs:14,30-50`、`docs/API.md:2255`）。這只限掃描檔與圖片；DOCX 和有文字層的 PDF 不跑 OCR，裡面的圖目前完全沒讀。
