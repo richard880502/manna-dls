@@ -58,6 +58,13 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
     if has(req, "FAKE_REFUSAL") {
         return Err(ProviderError::Refusal("fake refusal".into()));
     }
+    // The SIOP self-check of a turn times out the first time it runs (see `prep::fake`).
+    if req.fake_context["task"] == "siop_selfcheck"
+        && req.fake_context["run_no"] == 1
+        && has(req, "FAKE_SIOP_FAIL_FIRST")
+    {
+        return Err(ProviderError::Timeout);
+    }
     if has(req, "FAKE_RUNAWAY") && req.attempt == 1 {
         // What gemma does when constrained decoding leaves it nothing it wants to write: an
         // unfinished object, then whitespace until max_tokens.
@@ -135,6 +142,8 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("objective_check") => {
             crate::objectives::fake::check(ctx, req.attempt, &|m| has(req, m))
         }
+        // SIOP 自我檢核 (see `prep::fake`).
+        Some("siop_selfcheck") => crate::prep::fake::selfcheck(ctx, req.attempt, &|m| has(req, m)),
         other => {
             return Err(ProviderError::InvalidOutput(format!(
                 "fake provider: unknown task {other:?}"

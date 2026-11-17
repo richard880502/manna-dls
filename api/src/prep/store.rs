@@ -7,6 +7,7 @@ use serde_json::Value;
 use sqlx::types::Json;
 use sqlx::PgPool;
 
+use super::selfcheck::{self, SiopCheck};
 use super::{
     is_worksheet_kind, kit_error, SessionOptions, KIND_REVISE, NEXT_KINDS, STATUS_DONE,
     STATUS_FAILED, STATUS_RUNNING,
@@ -76,6 +77,26 @@ pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<SessionRo
     .fetch_optional(db)
     .await?
     .ok_or_else(|| AppError::not_found(MSG_NOT_FOUND))
+}
+
+/// A session by id (no owner check: for background work on a turn already checked).
+pub async fn session_row(db: &PgPool, id: i64) -> AppResult<SessionRow> {
+    sqlx::query_as(&format!(
+        "SELECT {SESSION_COLS} FROM prep_sessions WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::not_found(MSG_NOT_FOUND))
+}
+
+/// A turn by id (no owner check: for background work on a turn already checked).
+pub async fn turn(db: &PgPool, id: i64) -> AppResult<TurnRow> {
+    sqlx::query_as(&format!("SELECT {TURN_COLS} FROM prep_turns WHERE id = $1"))
+        .bind(id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| AppError::not_found("找不到這一輪。"))
 }
 
 pub struct NewSession<'a> {
@@ -202,39 +223,58 @@ pub async fn set_worksheet(db: &PgPool, turn_id: i64, worksheet_id: i64) -> sqlx
 
 /// Closes a running turn: `Ok((result, interaction_id))` → `done`, `Err(message)` → `failed`.
 /// Nothing happens when the turn is gone (session deleted) or already closed.
+///
+/// A turn of a kind with a SIOP 自我檢核 that closes `done` opens its first check in the same
+/// transaction (so the page never sees the output without it): its id is returned, and the
+/// caller starts it with [`selfcheck::spawn`].
 pub async fn finish(
     db: &PgPool,
     turn_id: i64,
     outcome: Result<(Option<Value>, Option<i64>), String>,
-) -> sqlx::Result<()> {
+) -> sqlx::Result<Option<i64>> {
     let (status, error, result, interaction_id) = match outcome {
         Ok((result, interaction_id)) => (STATUS_DONE, None, result, interaction_id),
         Err(message) => (STATUS_FAILED, Some(message), None, None),
     };
-    let session: Option<i64> = sqlx::query_scalar(
+    let mut tx = db.begin().await?;
+    let closed: Option<(i64, String)> = sqlx::query_as(
         "UPDATE prep_turns
             SET status = $2, error = $3, result = $4, interaction_id = $5, finished_at = now()
           WHERE id = $1 AND status = 'running'
-        RETURNING session_id",
+        RETURNING session_id, kind",
     )
     .bind(turn_id)
     .bind(status)
     .bind(error)
     .bind(result)
     .bind(interaction_id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
-    touch(db, session).await
+    let check = after_close(&mut tx, turn_id, closed, status).await?;
+    tx.commit().await?;
+    Ok(check)
 }
 
-async fn touch(db: &PgPool, session: Option<i64>) -> sqlx::Result<()> {
-    if let Some(session_id) = session {
-        sqlx::query("UPDATE prep_sessions SET updated_at = now() WHERE id = $1")
-            .bind(session_id)
-            .execute(db)
-            .await?;
+/// What closing a turn also does, in its transaction: the session is touched, and a `done`
+/// turn of a checked kind opens its first SIOP check (its id returned).
+async fn after_close(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    turn_id: i64,
+    closed: Option<(i64, String)>,
+    status: &str,
+) -> sqlx::Result<Option<i64>> {
+    let Some((session_id, kind)) = closed else {
+        return Ok(None);
+    };
+    sqlx::query("UPDATE prep_sessions SET updated_at = now() WHERE id = $1")
+        .bind(session_id)
+        .execute(&mut **tx)
+        .await?;
+    if status == STATUS_DONE && selfcheck::is_checked(&kind) {
+        selfcheck::open(tx, turn_id).await
+    } else {
+        Ok(None)
     }
-    Ok(())
 }
 
 // ---------------------------------------------------------------- 教學套件
@@ -281,6 +321,7 @@ pub async fn close_kit_without_worksheet(
         Ok((result, interaction_id)) => (result.clone(), *interaction_id, None),
         Err(message) => (None, None, Some(message.as_str())),
     };
+    // Always `failed`: no SIOP check is opened.
     close_kit_turn(
         db,
         turn_id,
@@ -288,36 +329,46 @@ pub async fn close_kit_without_worksheet(
         kit_error(plan_error, Some(worksheet_error)),
     )
     .await
+    .map(|_| ())
 }
 
 /// Closes the turn: `done` without an error, `failed` with one. `plan` replaces the recorded
-/// plan; `None` keeps it.
+/// plan; `None` keeps it. A kit closed `done` opens its first SIOP check (see [`finish`]).
 async fn close_kit_turn(
     db: &PgPool,
     turn_id: i64,
     plan: Option<(Option<Value>, Option<i64>)>,
     error: Option<String>,
-) -> sqlx::Result<()> {
+) -> sqlx::Result<Option<i64>> {
     let replace = plan.is_some();
     let (result, interaction_id) = plan.unwrap_or_default();
-    let session: Option<i64> = sqlx::query_scalar(&format!(
+    let status = if error.is_none() {
+        STATUS_DONE
+    } else {
+        STATUS_FAILED
+    };
+    let mut tx = db.begin().await?;
+    let closed: Option<(i64, String)> = sqlx::query_as(&format!(
         "UPDATE prep_turns
-            SET status = CASE WHEN $2::TEXT IS NULL THEN '{STATUS_DONE}' ELSE '{STATUS_FAILED}' END,
+            SET status = $6,
                 error = $2,
                 result = CASE WHEN $3 THEN $4 ELSE result END,
                 interaction_id = CASE WHEN $3 THEN $5 ELSE interaction_id END,
                 finished_at = now()
           WHERE id = $1 AND status = '{STATUS_RUNNING}'
-        RETURNING session_id"
+        RETURNING session_id, kind"
     ))
     .bind(turn_id)
     .bind(error)
     .bind(replace)
     .bind(result)
     .bind(interaction_id)
-    .fetch_optional(db)
+    .bind(status)
+    .fetch_optional(&mut *tx)
     .await?;
-    touch(db, session).await
+    let check = after_close(&mut tx, turn_id, closed, status).await?;
+    tx.commit().await?;
+    Ok(check)
 }
 
 /// Closes a running kit turn once both parts are over: the plan's outcome is recorded and the
@@ -350,13 +401,16 @@ pub async fn close_kit(state: &AppState, turn_id: i64) -> AppResult<()> {
             (items == 0).then_some(MSG_KIT_NO_ITEMS)
         }
     };
-    close_kit_turn(
+    if let Some(check) = close_kit_turn(
         db,
         turn_id,
         None,
         kit_error(plan_error.as_deref(), worksheet_error),
     )
-    .await?;
+    .await?
+    {
+        selfcheck::spawn(state, check);
+    }
     Ok(())
 }
 
@@ -417,7 +471,9 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
         // No job yet: the worksheet was made but its generation is still being started (a
         // start that fails closes the turn itself).
         if !jobs.is_empty() && !running {
-            finish(db, turn_id, Ok((None, None))).await?;
+            if let Some(check) = finish(db, turn_id, Ok((None, None))).await? {
+                selfcheck::spawn(state, check);
+            }
         }
     }
     let kits: Vec<i64> = sqlx::query_scalar(&format!(
@@ -597,6 +653,11 @@ pub struct Turn {
     pub phase: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ocr: Option<TurnOcr>,
+    /// The latest SIOP 自我檢核 of a turn whose output is checked (`null` while it has none:
+    /// the turn is running or failed, or was made before the check existed); absent for the
+    /// other kinds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub siop_check: Option<Option<SiopCheck>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -655,8 +716,10 @@ async fn turn_template(db: &PgPool, template_id: i64) -> sqlx::Result<Option<Tur
 /// The whole session, brought up to date first.
 pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     refresh(state, id).await?;
+    selfcheck::expire_stale(state, id).await?;
     let summary = summary(&state.db, id).await?;
     let rows = turns(&state.db, id).await?;
+    let mut checks = selfcheck::latest_of_session(&state.db, id).await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let worksheet = match r.worksheet_id {
@@ -671,6 +734,7 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             (Some(t), true, None) => turn_ocr(&state.db, t).await?,
             _ => None,
         };
+        let siop_check = selfcheck::is_checked(&r.kind).then(|| checks.remove(&r.id));
         out.push(Turn {
             id: r.id,
             seq: r.seq,
@@ -691,6 +755,7 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             finished_at: r.finished_at,
             phase: ocr.map(|_| "ocr"),
             ocr,
+            siop_check,
         });
     }
     let running = out.iter().any(|t| t.status == STATUS_RUNNING);

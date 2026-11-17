@@ -17,6 +17,7 @@ use crate::materials::ocr;
 use crate::materials::store::{self as material_store, MaterialRow};
 use crate::prep::kit::{self, KitWorksheet};
 use crate::prep::run::{self, TurnInput};
+use crate::prep::selfcheck::{self, SiopCheck};
 use crate::prep::store::{self, Session, SessionRow, Summary};
 use crate::prep::{
     chip_label, is_worksheet_kind, ActivityPlan, SessionOptions, AUTO_TITLE_CHARS, KINDS,
@@ -647,4 +648,58 @@ pub async fn kit(
         made,
     )
         .into_response())
+}
+
+// ---------------------------------------------------------------- SIOP 自我檢核
+
+/// The turn `turn_id` of the teacher's session `id` (404 for another teacher's session or a
+/// turn of another session), the session brought up to date first.
+async fn own_turn(
+    state: &AppState,
+    teacher: &AuthTeacher,
+    id: i64,
+    turn_id: i64,
+) -> AppResult<store::TurnRow> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    store::refresh(state, id).await?;
+    selfcheck::expire_stale(state, id).await?;
+    store::turns(&state.db, id)
+        .await?
+        .into_iter()
+        .find(|t| t.id == turn_id)
+        .ok_or_else(|| AppError::not_found(MSG_TURN_NOT_FOUND))
+}
+
+/// `GET /api/prep-sessions/:id/turns/:turn_id/siop-check`: the turn's latest SIOP 自我檢核
+/// (the page polls it while it runs). 404 when the turn has none (or is not the teacher's).
+pub async fn siop_check(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
+) -> AppResult<Json<SiopCheck>> {
+    let turn = own_turn(&state, &teacher, id, turn_id).await?;
+    selfcheck::latest(&state.db, turn.id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| AppError::not_found(selfcheck::MSG_NO_CHECK))
+}
+
+/// `POST /api/prep-sessions/:id/turns/:turn_id/siop-check`: runs the turn's SIOP 自我檢核
+/// again (再試一次, or after the worksheet was revised). 202 with the new run (`running`); 400
+/// for a kind without a check; 409 while the turn is not `done` or a run of its check runs.
+pub async fn rerun_siop_check(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
+) -> AppResult<(StatusCode, Json<SiopCheck>)> {
+    let turn = own_turn(&state, &teacher, id, turn_id).await?;
+    let check = selfcheck::restart(&state, &turn).await?;
+    log_usage(
+        &state.db,
+        teacher.id(),
+        "siop_check_rerun",
+        json!({ "session_id": id, "turn_id": turn_id, "run_no": check.run_no }),
+    )
+    .await?;
+    Ok((StatusCode::ACCEPTED, Json(check)))
 }

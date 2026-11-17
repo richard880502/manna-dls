@@ -1940,35 +1940,114 @@ export type PrepPhase = "引起動機" | "發展活動" | "統整與評量";
 /** 學習目標的兩組（SIOP）：content＝內容目標、language＝語言目標 */
 export type ActivityGoalKind = "content" | "language";
 
+/** 語言目標的四類（SIOP）；Manna 以學習策略優先，所以 strategy 排第一 */
+export type LanguageGoalCategory = "strategy" | "function" | "structure" | "vocabulary";
+
 /**
  * 課堂活動的一個學習目標。prep_activity 第 3 版起分成內容目標與語言目標，中英文並陳：
  * zh 給教師（「學生能……」），en 給學生（"Students will be able to …"）。
+ * 第 4 版起語言目標多了 category、supports（支持第幾個內容目標，從 1 起）與 relation
+ * （「學生要用……，才能……」）；教師提供的目標一字不改，from_teacher 為 true（zh 或 en 可能是 ""）。
  * 之前做的規劃每個目標只有一行中文 text、沒有 kind，照舊顯示成一張清單。
  */
 export type ActivityGoal =
-  | { kind: ActivityGoalKind; zh: string; en: string; curriculum_codes: string[] }
+  | {
+      kind: ActivityGoalKind;
+      zh: string;
+      en: string;
+      curriculum_codes: string[];
+      category?: LanguageGoalCategory;
+      supports?: number;
+      relation?: string;
+      from_teacher?: boolean;
+    }
   | { kind?: undefined; text: string; curriculum_codes: string[] };
+
+/** 分組方式（SIOP A2） */
+export type ActivityGrouping = "全班" | "兩人一組" | "小組" | "個人";
+/** 語言技能（SIOP A3） */
+export type LanguageSkill = "聽" | "說" | "讀" | "寫";
+
+export interface ActivityStep {
+  phase: PrepPhase;
+  title: string;
+  minutes: number;
+  /** 教學思路 */
+  idea: string;
+  /** 只有引起動機：選項一／二／三 */
+  options: Array<{ title: string; idea: string; script: string[]; minutes: number }>;
+  /** 老師說的話（英文課室用語） */
+  script: string[];
+  /** 卡住了怎麼辦；可能是 "" */
+  stuck_tip: string;
+  /** 這一步練到的 Bloom 層次（≤3）；prep_activity 第 1 版的規劃沒有 */
+  bloom?: Bloom[];
+  /** 第 4 版起（舊的規劃沒有或是 ""）：分組方式 */
+  grouping?: ActivityGrouping | "";
+  /** 兩人一組：兩人各做什麼；小組：成員角色與責任；其他是 [] */
+  roles?: Array<{ role: string; task: string }>;
+  /** 教師巡視；可能是 "" */
+  monitoring?: string;
+  /** 聽說讀寫，依這個順序 */
+  skills?: LanguageSkill[];
+  /** 鷹架方式；可能是 "" */
+  scaffolding?: string;
+}
 
 export interface ActivityPlan {
   title: string;
-  /** 先內容目標、再語言目標（第 3 版）；舊的規劃是一張沒有 kind 的清單 */
+  /** 先內容目標、再語言目標（第 3 版；第 4 版各 1–2 個）；舊的規劃是一張沒有 kind 的清單 */
   goals: ActivityGoal[];
-  steps: Array<{
-    phase: PrepPhase;
-    title: string;
-    minutes: number;
-    /** 教學思路 */
-    idea: string;
-    /** 只有引起動機：選項一／二／三 */
-    options: Array<{ title: string; idea: string; script: string[]; minutes: number }>;
-    /** 老師說的話（英文課室用語） */
-    script: string[];
-    /** 卡住了怎麼辦；可能是 "" */
-    stuck_tip: string;
-    /** 這一步練到的 Bloom 層次（≤3）；prep_activity 第 1 版的規劃沒有 */
-    bloom?: Bloom[];
-  }>;
+  /** 第 4 版起（SIOP A6）；舊的規劃沒有這些欄位 */
+  key_vocabulary?: Array<{ word: string; zh: string }>;
+  /** 教材與教具 */
+  materials?: string[];
+  /** 高層次問題（英文），層次只會是 analyze／evaluate／create */
+  higher_order_questions?: Array<{ question: string; bloom: Bloom }>;
+  /** 背景連結：引起動機連結的學生經驗或舊知 */
+  background?: string;
+  steps: ActivityStep[];
+  /** 複習 */
+  review?: string;
+  /** 評量 */
+  assessment?: string;
   curriculum: Array<{ code: string; text: string }>;
+}
+
+// ---- SIOP 自我檢核（docs/SIOP_DESIGN_RULES.md 第八節）----
+
+/** page：從產出判斷；partial：只看書面的那一部分（note 說明）；classroom：需課堂觀察，AI 不評 */
+export type SiopScope = "page" | "partial" | "classroom";
+/** 符合／部分符合／未見 */
+export type SiopRating = "met" | "partial" | "not_seen";
+
+export interface SiopCheckItem {
+  /** 量表題號："1-2"、"12"… */
+  id: string;
+  name: string;
+  /** 檢核問題；classroom 是 "" */
+  question: string;
+  scope: SiopScope;
+  /** partial：看得到的部分；classroom：為什麼要在課堂上看；page 是 "" */
+  note: string;
+  /** null：需課堂觀察，或這次沒有判斷 */
+  rating: SiopRating | null;
+  reason: string;
+}
+
+export interface SiopCheck {
+  id: number;
+  /** 這一輪的第幾次檢核 */
+  run_no: number;
+  status: "running" | "done" | "failed";
+  error: string | null;
+  /** 檢核的是學習單的第幾版（學習單與教學套件） */
+  worksheet_version_no: number | null;
+  /** 量表全部項目，依題號順序（不產生總分） */
+  items: SiopCheckItem[];
+  interaction_id: number | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 export interface PrepResources {
@@ -2122,6 +2201,11 @@ export interface PrepTurn {
   phase?: "ocr";
   /** 與 phase 一起出現 */
   ocr?: { done_pages: number; total_pages: number };
+  /**
+   * 最新的 SIOP 自我檢核：學習單（完整學習單、照我的學習單做、閱讀理解題、分層練習）、課堂活動與教學套件
+   * 才有這一欄；還沒有檢核（這一輪還在跑、失敗了，或是在檢核功能之前做的）是 null。其他種類與舊的伺服器沒有這一欄
+   */
+  siop_check?: SiopCheck | null;
 }
 
 /** 對話的出題選項：之後在對話裡做的每一份學習單都帶入（settings 的同名欄位）。 */

@@ -23,10 +23,10 @@ use super::{
     activity_schema, ask_schema, chip_label, clean_answer, clean_plan, clean_text, is_bare_label,
     is_worksheet_kind, output_of, revise_schema, warmup_ideas, ActivityPlan, Answer, CurriculumRef,
     MaterialRef, RawAnswer, RawPlan, RawRevision, ResourceItem, Resources, Revision,
-    ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP, ASK_SCHEMA_NAME, CHANGES_MAX, CHANGE_ITEMS_MAX,
-    CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK, KEY_REVISE, KIND_ACTIVITY, KIND_ASK, KIND_ASSESSMENT,
-    KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET, MATERIALS_TOP, REPLY_CHARS,
-    REVISE_SCHEMA_NAME,
+    TeacherObjectives, ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP, ASK_SCHEMA_NAME, CHANGES_MAX,
+    CHANGE_ITEMS_MAX, CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK, KEY_REVISE, KIND_ACTIVITY, KIND_ASK,
+    KIND_ASSESSMENT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET, MATERIALS_TOP,
+    REPLY_CHARS, REVISE_SCHEMA_NAME,
 };
 use crate::ai::pipeline::InteractionMeta;
 use crate::ai::LlmRequest;
@@ -63,10 +63,10 @@ pub const SCAFFOLD_REVISE: &str = "SC-PREP-REVISE";
 
 /// Output budgets. A budget only matters on a runaway; the schema caps keep a normal output
 /// well below them.
-pub const ACTIVITY_MAX_TOKENS: u32 = 6000;
+pub const ACTIVITY_MAX_TOKENS: u32 = 8000;
 pub const ASK_MAX_TOKENS: u32 = 3000;
 pub const REVISE_MAX_TOKENS: u32 = 6000;
-const BASE_TEMPERATURE: f32 = 0.2;
+pub(super) const BASE_TEMPERATURE: f32 = 0.2;
 const RETRY_TEMPERATURE_STEP: f32 = 0.4;
 
 pub const MSG_NO_KB: &str = "知識庫裡沒有找到相關條目。";
@@ -184,8 +184,10 @@ fn spawn(state: &AppState, input: TurnInput) {
             tokio::spawn(async move { run(&state, &input).await })
         };
         let outcome = settle(turn_id, work.await);
-        if let Err(e) = store::finish(&state.db, turn_id, outcome).await {
-            tracing::error!(turn_id, error = %e, "could not close the prep turn");
+        match store::finish(&state.db, turn_id, outcome).await {
+            Ok(Some(check)) => super::selfcheck::spawn(&state, check),
+            Ok(None) => {}
+            Err(e) => tracing::error!(turn_id, error = %e, "could not close the prep turn"),
         }
     });
 }
@@ -321,7 +323,10 @@ async fn run(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
 
 /// The session's material with its paragraphs, if it still exists (the teacher's own or a
 /// platform one) and has text.
-async fn material(db: &sqlx::PgPool, session: &SessionRow) -> AppResult<Option<Material>> {
+pub(super) async fn material(
+    db: &sqlx::PgPool,
+    session: &SessionRow,
+) -> AppResult<Option<Material>> {
     let Some(id) = session.material_id else {
         return Ok(None);
     };
@@ -346,7 +351,7 @@ fn material_title(m: &Material) -> String {
 }
 
 /// `[第 n 段]` paragraphs, at most [`MAX_AI_PARAGRAPHS`] of them.
-fn passage(m: &Material) -> String {
+pub(super) fn passage(m: &Material) -> String {
     let n = m.paragraphs.len();
     if n <= MAX_AI_PARAGRAPHS {
         return marked_passage(m);
@@ -359,7 +364,10 @@ fn passage(m: &Material) -> String {
     )
 }
 
-async fn class_profile(state: &AppState, session: &SessionRow) -> AppResult<(String, Value)> {
+pub(super) async fn class_profile(
+    state: &AppState,
+    session: &SessionRow,
+) -> AppResult<(String, Value)> {
     let profile =
         match resolved_profile(&state.db, session.teacher_id, session.class_id, "", "").await {
             Ok(p) => p,
@@ -610,6 +618,7 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     .await?;
     let candidates: Vec<CurriculumRef> = items.iter().map(curriculum_ref).collect();
     let codes: Vec<String> = candidates.iter().map(|c| c.code.clone()).collect();
+    let teacher = TeacherObjectives::of(&session.options.0);
     let request = teacher_request(db, input).await?;
     let mut vars: HashMap<&'static str, String> = HashMap::from([
         ("class_profile", or_blank(&profile)),
@@ -632,7 +641,7 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         key: KEY_ACTIVITY,
         scaffold: SCAFFOLD_ACTIVITY,
         schema_name: ACTIVITY_SCHEMA_NAME,
-        schema: activity_schema(&codes),
+        schema: activity_schema(&codes, &teacher),
         vars,
         required: vec![
             ("class_profile", "班級特性"),
@@ -645,6 +654,8 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
             "material_title": m.title,
             "paragraphs": m.paragraphs.iter().map(|p| p.text.clone()).collect::<Vec<_>>(),
             "candidates": codes,
+            "teacher_content": teacher.content,
+            "teacher_language": teacher.language,
         }),
         max_tokens: ACTIVITY_MAX_TOKENS,
         temperature: BASE_TEMPERATURE,
@@ -655,8 +666,9 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         state,
         session.teacher_id,
         c,
-        // A goal group without a usable goal is retried, but the plan stays usable.
-        |raw: &RawPlan| match clean_plan(raw, &candidates) {
+        // A goal group without a usable goal, or a step rule broken, is retried, but the plan
+        // stays usable.
+        |raw: &RawPlan| match clean_plan(raw, &candidates, &teacher) {
             Ok((plan, problems)) => Checked {
                 output: Some(plan),
                 problems,

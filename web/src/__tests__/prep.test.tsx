@@ -5,6 +5,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
+  ActivityGoal,
   ActivityPlan,
   Material,
   MaterialLibrary,
@@ -12,13 +13,15 @@ import type {
   PrepSession,
   PrepSessionSummary,
   PrepTurn,
+  SiopCheck,
+  SiopCheckItem,
   WorksheetState,
   WsAudience,
   WsJob,
   WsSheet,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
-import { goalGroups, goalsText, prepConfig } from "../lib/prep";
+import { goalGroups, goalsText, hasPrepare, prepConfig, prepareText, reviewText, stepText } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import {
   baseRoutes,
@@ -157,6 +160,95 @@ const plan: ActivityPlan = {
   ],
   curriculum: [{ code: "5-IV-2", text: "能讀懂簡易故事的主要內容" }],
 };
+
+/** What goalGroups adds to a goal that has none of version 4's fields. */
+const OLD_GOAL = { en: "", curriculum_codes: [], category: null, supports: null, relation: "", fromTeacher: false };
+
+/** A plan of prep_activity version 4 (SIOP): goal relations, A6 fields, groupings and skills. */
+const planV4: ActivityPlan = {
+  ...plan,
+  goals: [
+    { ...(plan.goals[0] as Extract<ActivityGoal, { zh: string }>), from_teacher: true },
+    {
+      kind: "language",
+      zh: "學生能在讀不懂時重讀並畫出關鍵句",
+      en: "Students will be able to reread and underline the key sentence.",
+      curriculum_codes: [],
+      category: "strategy",
+      supports: 1,
+      relation: "學生要用重讀並畫出關鍵句的策略，才能說出林太太設置傘架的原因",
+    },
+  ],
+  key_vocabulary: [
+    { word: "trust", zh: "信任" },
+    { word: "neighbor", zh: "鄰居" },
+  ],
+  materials: ["課文第 1–4 段", "老師準備的傘架照片"],
+  higher_order_questions: [{ question: "Why do you think the plan worked?", bloom: "evaluate" }],
+  background: "請學生回想借東西給別人的經驗。",
+  steps: [
+    {
+      ...plan.steps[0]!,
+      grouping: "兩人一組",
+      roles: [
+        { role: "夥伴 A", task: "說一次借東西的經驗" },
+        { role: "夥伴 B", task: "聽完後問一個問題" },
+      ],
+      monitoring: "",
+      skills: ["聽", "說"],
+      scaffolding: "",
+    },
+    {
+      ...plan.steps[1]!,
+      grouping: "小組",
+      roles: [
+        { role: "主持", task: "帶討論" },
+        { role: "記錄", task: "寫下原因" },
+        { role: "報告", task: "向全班說明" },
+      ],
+      monitoring: "巡視各組，先聽記錄員的原因。",
+      skills: ["說", "讀"],
+      scaffolding: "教師先示範第 1 段。",
+    },
+  ],
+  review: "用字卡複習 trust 與 neighbor。",
+  assessment: "exit ticket 寫出一個原因。",
+};
+
+const SIOP_ITEMS: Array<Pick<SiopCheckItem, "id" | "name" | "scope" | "note">> = [
+  { id: "1-2", name: "內容目標與語言目標", scope: "page", note: "" },
+  { id: "3", name: "概念適切", scope: "page", note: "" },
+  { id: "10", name: "教師語速與用語", scope: "classroom", note: "要在課堂上聽教師說話才能判斷" },
+  { id: "12", name: "讓概念清楚的技巧", scope: "partial", note: "只看得到書面的視覺輔助" },
+  { id: "17", name: "分組", scope: "page", note: "" },
+  { id: "18", name: "等待時間", scope: "classroom", note: "要在課堂上看教師是否給學生足夠的時間回答" },
+  { id: "25", name: "學生投入", scope: "classroom", note: "要在課堂上看學生參與的情形" },
+  { id: "26", name: "節奏", scope: "classroom", note: "要在課堂上看教學節奏是否適合學生" },
+  { id: "30", name: "評量", scope: "page", note: "" },
+];
+const SIOP_RATINGS: Record<string, [SiopCheckItem["rating"], string]> = {
+  "1-2": ["met", "兩種目標都寫了，語言目標寫出了和內容目標的關係。"],
+  "3": ["partial", "內容適合高一，但第 3 段的概念沒有用到。"],
+  "12": ["met", "有傘架照片。"],
+  "17": ["not_seen", "這份產出沒有寫分組。"],
+};
+
+/** A turn's SIOP check (a short item list stands in for the 26). */
+const siopCheck = (status: SiopCheck["status"], overrides: Partial<SiopCheck> = {}): SiopCheck => ({
+  id: 1,
+  run_no: 1,
+  status,
+  error: null,
+  worksheet_version_no: null,
+  items: SIOP_ITEMS.map((i) => {
+    const [rating, reason] = status === "done" ? (SIOP_RATINGS[i.id] ?? [null, ""]) : [null, ""];
+    return { ...i, question: i.scope === "classroom" ? "" : "？", rating, reason };
+  }),
+  interaction_id: status === "done" ? 90 : null,
+  created_at: "2026-11-17T08:00:00Z",
+  finished_at: status === "running" ? null : "2026-11-17T08:01:00Z",
+  ...overrides,
+});
 
 const job = (id: number, step: WsJob["step"], extra: Partial<WsJob> = {}): WsJob => ({
   id,
@@ -934,12 +1026,215 @@ describe("學習目標：內容目標與語言目標", () => {
         label: null,
         hint: null,
         goals: [
-          { zh: "學生能說出主旨", en: "", curriculum_codes: ["5-IV-2"] },
-          { zh: "學生能寫出兩句", en: "", curriculum_codes: [] },
+          { ...OLD_GOAL, zh: "學生能說出主旨", curriculum_codes: ["5-IV-2"] },
+          { ...OLD_GOAL, zh: "學生能寫出兩句" },
         ],
       },
     ]);
     expect(goalsText(old)).toBe("1. 學生能說出主旨（5-IV-2）\n2. 學生能寫出兩句");
     expect(goalGroups({ ...plan, goals: [] })).toEqual([]);
+  });
+
+  it("a 語言目標 of version 4 copies with its kind and how it serves its 內容目標; a teacher's goal is marked", () => {
+    expect(goalsText(planV4)).toBe(
+      [
+        "【內容目標】",
+        "1. 學生能說出林太太設置傘架的原因（教師提供）（5-IV-2）",
+        "   Students will be able to explain why Mrs. Lin set up the umbrella stand.",
+        "【語言目標】",
+        "1. 〔學習策略〕學生能在讀不懂時重讀並畫出關鍵句",
+        "   Students will be able to reread and underline the key sentence.",
+        "   學生要用重讀並畫出關鍵句的策略，才能說出林太太設置傘架的原因",
+      ].join("\n"),
+    );
+    const [, language] = goalGroups(planV4);
+    expect(language!.goals[0]).toMatchObject({ category: "strategy", supports: 1, fromTeacher: false });
+    // A teacher's English goal has no Chinese line: the English one leads.
+    const english: ActivityPlan = {
+      ...planV4,
+      goals: [{ kind: "content", zh: "", en: "Students will be able to retell the story.", curriculum_codes: [], from_teacher: true }],
+    };
+    expect(goalsText(english)).toBe("【內容目標】\n1. Students will be able to retell the story.（教師提供）");
+  });
+
+  it("copies 課前準備, a step's grouping, roles and skills, and 複習與評量", () => {
+    expect(prepareText(planV4)).toBe(
+      [
+        "【關鍵字彙】",
+        "trust：信任",
+        "neighbor：鄰居",
+        "【教材與教具】",
+        "課文第 1–4 段、老師準備的傘架照片",
+        "【高層次問題】",
+        "1. Why do you think the plan worked?（評鑑）",
+        "【背景連結】",
+        "請學生回想借東西給別人的經驗。",
+      ].join("\n"),
+    );
+    expect(reviewText(planV4)).toBe("複習：用字卡複習 trust 與 neighbor。\n評量：exit ticket 寫出一個原因。");
+    expect(stepText(planV4.steps[1]!)).toBe(
+      [
+        "【發展活動】逐段找原因（25 分鐘）",
+        "分組：小組｜語言技能：說、讀",
+        "每段找一個原因。",
+        "分工：主持：帶討論；記錄：寫下原因；報告：向全班說明",
+        "教師巡視：巡視各組，先聽記錄員的原因。",
+        "鷹架：教師先示範第 1 段。",
+      ].join("\n"),
+    );
+    // A plan made before has none of them.
+    expect(hasPrepare(plan)).toBe(false);
+    expect(prepareText(plan)).toBe("");
+    expect(reviewText(plan)).toBe("");
+    expect(stepText(plan.steps[1]!)).toBe("【發展活動】逐段找原因（25 分鐘）\n每段找一個原因。");
+  });
+});
+
+// ---------------------------------------------------------------- 課堂活動（SIOP）與自我檢核
+
+describe("課堂活動的 SIOP 欄位與 SIOP 自我檢核", () => {
+  it("shows 課前準備, each step's grouping, skills, roles, monitoring and scaffolding, and 複習與評量", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: planV4, interaction_id: 77 })]) });
+    renderApp("/prep/7");
+    const prepare = within(await screen.findByRole("region", { name: "課前準備" }));
+    expect(prepare.getByText("背景連結")).toBeInTheDocument();
+    expect(prepare.getByText("請學生回想借東西給別人的經驗。")).toBeInTheDocument();
+    expect(prepare.getByText("trust")).toHaveAttribute("lang", "en");
+    expect(prepare.getByText("信任")).toBeInTheDocument();
+    expect(prepare.getByText("課文第 1–4 段、老師準備的傘架照片")).toBeInTheDocument();
+    expect(prepare.getByText("Why do you think the plan worked?")).toBeInTheDocument();
+    expect(prepare.getByText("評鑑")).toBeInTheDocument();
+    expect(prepare.getByRole("button", { name: "複製課前準備" })).toBeInTheDocument();
+
+    // The goals: a 語言目標's kind and relation, a teacher's goal marked.
+    const goals = activityGoals();
+    const content = within(goals.getByRole("rowgroup", { name: "內容目標" }));
+    expect(content.getByText("教師提供")).toBeInTheDocument();
+    const language = within(goals.getByRole("rowgroup", { name: "語言目標" }));
+    expect(language.getByText("學習策略")).toBeInTheDocument();
+    expect(language.getByText("支持內容目標 1：")).toBeInTheDocument();
+    expect(language.getByText(/學生要用重讀並畫出關鍵句的策略，才能/)).toBeInTheDocument();
+
+    const warm = within(screen.getByRole("region", { name: "引起動機：雨天經驗" }));
+    expect(warm.getByText("兩人一組")).toBeInTheDocument();
+    expect(warm.getByLabelText("語言技能：聽、說")).toBeInTheDocument();
+    expect(warm.getByText("夥伴 A")).toBeInTheDocument();
+    const develop = within(screen.getByRole("region", { name: "發展活動：逐段找原因" }));
+    expect(develop.getByText("小組")).toBeInTheDocument();
+    expect(develop.getByText("分工")).toBeInTheDocument();
+    expect(develop.getByText("主持")).toBeInTheDocument();
+    expect(develop.getByText("教師巡視")).toBeInTheDocument();
+    expect(develop.getByText("巡視各組，先聽記錄員的原因。")).toBeInTheDocument();
+    expect(develop.getByText("鷹架")).toBeInTheDocument();
+
+    const review = within(screen.getByRole("region", { name: "複習與評量" }));
+    expect(review.getByText("用字卡複習 trust 與 neighbor。")).toBeInTheDocument();
+    expect(review.getByText("exit ticket 寫出一個原因。")).toBeInTheDocument();
+  });
+
+  it("a plan made before version 4 shows none of the SIOP fields, and an old server shows no self-check", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: plan, interaction_id: 77 })]) });
+    renderApp("/prep/7");
+    await screen.findByRole("region", { name: "引起動機：雨天經驗" });
+    expect(screen.queryByRole("region", { name: "課前準備" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "複習與評量" })).toBeNull();
+    expect(screen.queryByText("分工")).toBeNull();
+    expect(screen.queryByText("教師巡視")).toBeNull();
+    // No `siop_check` on the turn: no panel.
+    expect(screen.queryByRole("region", { name: "SIOP 自我檢核" })).toBeNull();
+  });
+
+  it("a finished check opens to every item with its rating and reason, says which items need a classroom, and has no score", async () => {
+    signIn();
+    const activity = turn("activity", { result: planV4, interaction_id: 77, siop_check: siopCheck("done") });
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([activity]) });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const panel = within(await screen.findByRole("region", { name: "SIOP 自我檢核" }));
+    // Collapsed until opened.
+    const summary = panel.getByText("SIOP 自我檢核", { selector: "summary" });
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    await user.click(summary);
+    expect(summary.closest("details")).toHaveAttribute("open");
+    expect(panel.getByText(/這是給你的建議，不是評分/)).toBeInTheDocument();
+    const goalsItem = within(panel.getByText("內容目標與語言目標").closest("li")!);
+    expect(goalsItem.getByText("符合")).toHaveClass("siop-rating", "is-met");
+    expect(goalsItem.getByText("兩種目標都寫了，語言目標寫出了和內容目標的關係。")).toBeInTheDocument();
+    expect(within(panel.getByText("概念適切").closest("li")!).getByText("部分符合")).toHaveClass("is-partial");
+    expect(within(panel.getByText("分組").closest("li")!).getByText("未見")).toBeInTheDocument();
+    // Judged on the visible part only: the panel says so.
+    const visual = within(panel.getByText("讓概念清楚的技巧").closest("li")!);
+    expect(visual.getByText("只看書面：只看得到書面的視覺輔助")).toBeInTheDocument();
+    // An item this check did not judge.
+    expect(within(panel.getByText("評量").closest("li")!).getByText("這次沒有判斷")).toBeInTheDocument();
+    // The classroom items: named, never rated.
+    expect(panel.getByText("這幾項要在課堂上看，AI 不評：")).toBeInTheDocument();
+    expect(panel.getAllByText("需課堂觀察")).toHaveLength(4);
+    expect(panel.getByText("等待時間")).toBeInTheDocument();
+    expect(panel.queryByText(/總分|分數/)).toBeNull();
+    expect(panel.queryByRole("button")).toBeNull();
+  });
+
+  it("a running check is polled until it is done; a failed one can be run again and the output stays", async () => {
+    signIn();
+    const activity = turn("activity", { result: planV4, interaction_id: 77, siop_check: siopCheck("running") });
+    let polled = 0;
+    let retried = false;
+    const api = mockApi({
+      ...baseRoutes(),
+      [`GET ${S7}`]: session([activity]),
+      [`GET ${S7}/turns/${activity.id}/siop-check`]: () =>
+        retried
+          ? siopCheck("done", { id: 2, run_no: 2 })
+          : ++polled < 2
+            ? siopCheck("running")
+            : siopCheck("failed", { error: "AI 目前沒有回應，這次沒有完成。請稍後按「再試一次」。" }),
+      [`POST ${S7}/turns/${activity.id}/siop-check`]: siopCheck("running", { id: 2, run_no: 2 }),
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const panel = within(await screen.findByRole("region", { name: "SIOP 自我檢核" }));
+    expect(panel.getByRole("status")).toHaveTextContent("Manna 正在做 SIOP 自我檢核…");
+    // Failed: said plainly, the output is untouched, 再試一次.
+    expect(await panel.findByRole("alert")).toHaveTextContent("這次的 SIOP 自我檢核沒有完成，產出不受影響。");
+    expect(panel.getByText(/AI 目前沒有回應/)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "引起動機：雨天經驗" })).toBeInTheDocument();
+    // The next poll after 再試一次 finds the new run done.
+    retried = true;
+    await user.click(panel.getByRole("button", { name: "再試一次" }));
+    await waitFor(() => expect(api.callsTo("POST", `${S7}/turns/${activity.id}/siop-check`)).toHaveLength(1));
+    expect(await panel.findByText("SIOP 自我檢核", { selector: "summary" })).toBeInTheDocument();
+  });
+
+  it("a worksheet revised after its check offers 重新檢核; a turn made before the check offers 開始檢核", async () => {
+    signIn();
+    const ws = turn("comprehension", {
+      worksheet: { id: 11, title: "U", version_no: 5, running: false },
+      siop_check: siopCheck("done", { worksheet_version_no: 3 }),
+    });
+    const old = turn("activity", { result: plan, siop_check: null });
+    const api = mockApi({
+      ...baseRoutes(),
+      [`GET ${S7}`]: session([ws, old]),
+      "GET /api/worksheets/11": worksheet(),
+      "GET /api/worksheets/11/sheet": sheetRoute,
+      [`POST ${S7}/turns/${ws.id}/siop-check`]: siopCheck("done", { id: 3, run_no: 2, worksheet_version_no: 5 }),
+      [`POST ${S7}/turns/${old.id}/siop-check`]: siopCheck("done", { id: 4 }),
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const [wsPanel, oldPanel] = (await screen.findAllByRole("region", { name: "SIOP 自我檢核" })).map((p) => within(p));
+    await user.click(wsPanel!.getByText("SIOP 自我檢核", { selector: "summary" }));
+    expect(wsPanel!.getByText("這是第 3 版的檢核；學習單之後改過了。")).toBeInTheDocument();
+    await user.click(wsPanel!.getByRole("button", { name: "重新檢核" }));
+    await waitFor(() => expect(wsPanel!.queryByText(/學習單之後改過了/)).toBeNull());
+    expect(api.callsTo("POST", `${S7}/turns/${ws.id}/siop-check`)).toHaveLength(1);
+
+    expect(oldPanel!.getByText("這份產出還沒有做 SIOP 自我檢核。")).toBeInTheDocument();
+    await user.click(oldPanel!.getByRole("button", { name: "開始檢核" }));
+    await waitFor(() => expect(api.callsTo("POST", `${S7}/turns/${old.id}/siop-check`)).toHaveLength(1));
+    expect(await oldPanel!.findByText("SIOP 自我檢核", { selector: "summary" })).toBeInTheDocument();
   });
 });
