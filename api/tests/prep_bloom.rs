@@ -510,8 +510,8 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
             json!(["evaluate", "create"]),
         ]
     );
-    // The latest version of the prompt (4: SIOP), with the objective and the request. The
-    // separate 內容目標 and 語言目標 are not set: the model drafts its own goals.
+    // The latest version of the prompt (4: SIOP), with the objective and the request. The teacher
+    // gave a 內容目標 only: it is passed as is; the 語言目標 is left for the model to draft.
     let rows = calls(&app, "prep_activity").await;
     assert_eq!(rows.len(), 1);
     let snapshot = &rows[0].2;
@@ -529,7 +529,9 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
         "{user}"
     );
     assert!(
-        user.contains("教師的內容目標：（沒有）\n教師的語言目標：（沒有）"),
+        user.contains(&format!(
+            "教師的內容目標：{objective}\n教師的語言目標：（沒有）"
+        )),
         "{user}"
     );
     assert!(user.contains(&format!("教師的要求：{request}")), "{user}");

@@ -706,8 +706,14 @@ pub fn render_worksheet(title: &str, content: &Content, settings: &Settings) -> 
     push_line(
         &mut out,
         0,
-        "教師寫的學習目標：",
-        settings.objective.as_deref().unwrap_or_default(),
+        "教師寫的內容目標：",
+        settings.content_objective.as_deref().unwrap_or_default(),
+    );
+    push_line(
+        &mut out,
+        0,
+        "教師寫的語言目標：",
+        settings.language_objective.as_deref().unwrap_or_default(),
     );
     let several = content.levels.len() > 1;
     if several {
@@ -1413,12 +1419,14 @@ mod tests {
         }))
         .unwrap();
         let settings = Settings {
-            objective: Some("能說出主旨".into()),
+            content_objective: Some("能說出主旨".into()),
+            language_objective: Some("能用 because 說明原因".into()),
             ..Settings::default()
         };
         let text = render_worksheet("The Umbrella", &content, &settings);
         for line in [
-            "教師寫的學習目標：能說出主旨",
+            "教師寫的內容目標：能說出主旨",
+            "教師寫的語言目標：能用 because 說明原因",
             "版本：基礎版、一般版、進階版",
             "  - 內容目標：說出主旨／I can tell the main idea.",
             "區塊 A（暖身）：Before you read",
