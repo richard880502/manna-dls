@@ -2597,7 +2597,7 @@ interface WsBlock {
 
 interface WsImageSlot {
   id: string;                      // 伺服器給的，整份學習單唯一：r1b2-p1；重新產生的區塊換新 id（r1b2-r3p1）
-  kind: "scene" | "object" | "icon" | "photo_needed";
+  kind: "scene" | "object" | "icon";   // 舊的學習單可能還有 "photo_needed"：現在一樣會產圖（照插圖畫）
   purpose_zh: string;              // ≤80，給老師看：這張圖在這裡做什麼
   prompt_en: string;               // ≤300，給產圖模型：只描述畫面
   alt_en: string;                  // ≤120，替代文字
@@ -2609,15 +2609,16 @@ interface WsImageSlot {
   - 一般學習單的逐段任務步驟（`worksheet_tasks`）：每個區塊最多 1 個（一次呼叫寫全部區塊，輸出預算有限），schema 放在 `items` 之後；
   - 照版型產生（`worksheet_template_section`，「照我的學習單做」）：每個區塊最多 2 個，放在最後（先寫區塊，再寫需要的圖）。版型的來源範例是掃描檔、OCR 數到圖（`materials.ocr_pages[].pictures`）時，規則多一行告訴模型範例裡有幾張圖。需要教師自己素材的區塊（`needs_external_material`）通常不會要圖，假模型也不給；
   - 暖身、Exit ticket、閱讀理解題／分層練習、備課對話的「改學習單」不寫圖片位置（改學習單會保留區塊原本的圖片位置）。
-- **schema**：每個字串有 `maxLength`、陣列有 `maxItems`，屬性依寫出順序（`kind` 在前，先決定是不是 `photo_needed`），`kind` 是 enum。圖片規則（prompt key `worksheet_image_slots`，可在管理頁改）以「圖片位置：…」附在 user 訊息後。
-- **伺服器清理**（`images::clean_slots`，不會因此多一次修正呼叫）：字串截到上限；寫了網址或 e-mail 的拿掉；沒有畫面描述的拿掉（`photo_needed` 除外）；重複的拿掉；超過上限的只留前面；`alt_en`／`purpose_zh` 空的由其他欄位補。**需要真實照片的改成 `photo_needed`**：提到地圖、國旗、肖像、名人、總統、國王、歷史、戰爭、地標、紀念碑、商標、品牌、照片，或出現連續兩個大寫開頭的字（`Eiffel Tower`、`Taylor Swift`；`Mrs. Lin` 這種有句點的稱謂不算）。`photo_needed` **從不產圖**，只留空框請老師放。
+- **schema**：每個字串有 `maxLength`、陣列有 `maxItems`，屬性依寫出順序，`kind` 是 enum（scene／object／icon）。圖片規則（prompt key `worksheet_image_slots`，可在管理頁改）以「圖片位置：…」附在 user 訊息後。
+- **伺服器清理**（`images::clean_slots`，不會因此多一次修正呼叫）：字串截到上限；寫了網址或 e-mail 的拿掉；模型仍寫出 `photo_needed` 時改成 `scene` 照常產圖（沒有畫面描述就用替代文字）；沒有畫面描述也沒有替代文字的拿掉；重複的拿掉；超過上限的只留前面；`alt_en`／`purpose_zh` 空的由其他欄位補。**需要真實照片的改成 `photo_needed`**：提到地圖、國旗、肖像、名人、總統、國王、歷史、戰爭、地標、紀念碑、商標、品牌、照片，或出現連續兩個大寫開頭的字（`Eiffel Tower`、`Taylor Swift`；`Mrs. Lin` 這種有句點的稱謂不算）。`photo_needed` **從不產圖**，只留空框請老師放。
 - **存檔**：`PUT /api/worksheets/:id` 送回的 `image_slots` 照樣檢查：每區最多 2 個、id 1–40 字元且整份唯一、各欄位不超過上限、`kind` 只能是四個值之一，否則 400。編輯器的存檔會原樣送回；老師改區塊、搬移、逐區修改都會保留。
 - **重新產生區塊**：圖片開啟時，新區塊用模型新寫的位置（新 id，所以會產新圖；舊圖還在，按「復原上一版」就回來）；圖片關閉時保留原本的位置與圖。
 
 ## 產圖
 
+**所有圖片位置都會產圖**（主持人 2026-11-17 決定）：以前地圖、國旗、真實人物、地標、歷史這類「需要真實照片」的位置會跳過、留給老師；現在一律由 AI 畫成插圖，畫得不對由老師重畫、換圖或拿掉（`0026_images_always_drawn.sql`：`worksheet_image_slots` 第 2 版拿掉 `photo_needed`）。舊學習單裡已經被跳過的位置可以直接按「重畫」。
+
 1. 學習單或單一區塊產生完、存檔後（`cause = generate`／`regenerate`），伺服器依學習單順序看每個啟用區塊的圖片位置；從沒有圖片紀錄的位置各新增一筆（`images::enqueue`）：
-   - `photo_needed` → `skipped`（「這裡需要真實、準確的照片…請上傳一張。」）；
    - 圖片關閉 → `skipped`；沒有檔案儲存 → `skipped`；
    - 這份學習單自動產生的圖已達 `IMAGE_MAX_PER_WORKSHEET` → `skipped`（「…已經到上限；這一張可以按「重畫」，或上傳自己的圖。」）；
    - 其他 → `queued`，開一個背景工作。
@@ -2686,7 +2687,7 @@ interface WsSheetImage {
 | POST | `/api/worksheets/:id/image-slots/:slot_id/upload` | `multipart/form-data`，欄位 `file`：png、jpg、webp、gif，≤10 MB（與教材圖片相同的檔頭檢查） | 200 `WorksheetImages`（`done`，`source = "upload"`） |
 | DELETE | `/api/worksheets/:id/image-slots/:slot_id` | – | 200 `WorksheetImages`（`removed`） |
 
-- **重畫**：圖片關閉 → 503；沒有檔案儲存 → 503；沒有這個位置 → 404；`photo_needed` → 400（「這個位置需要真實照片…」）；這張正在產生 → 409；這份學習單的重畫次數用完 → 409（「…已經重畫 10 次，到上限了；可以上傳自己的圖。」）。自動產生時因上限被略過的位置也可以重畫（算在重畫次數裡）。
+- **重畫**：圖片關閉 → 503；沒有檔案儲存 → 503；沒有這個位置 → 404；這張正在產生 → 409；這份學習單的重畫次數用完 → 409（「…已經重畫 10 次，到上限了；可以上傳自己的圖。」）。自動產生時因上限被略過的位置也可以重畫（算在重畫次數裡）。
 - **換成我的圖**：不是圖片 → 400；檔頭與副檔名不符或讀不出來 → 400；沒有檔案儲存 → 503。上傳的圖同樣轉成 JPEG（最長邊 1536 px，去掉中繼資料）。這張正在產生時直接取代（產圖工作在下一次寫入時停下）。
 - **拿掉**：這個位置不再印出；重畫或上傳就會回來。
 - 這三個動作都只動那一張圖，**不會產生新的學習單版本**，也不受「Manna 正在產生這份學習單」的限制。每次都新增一筆紀錄成為目前的圖，舊的保留。
@@ -2720,7 +2721,7 @@ interface WsSheetImage {
 ## 測試用假模型
 
 - `IMAGE_PROVIDER=fake`：回傳一張 48 × 32 的 PNG（顏色依提示而定），回應形狀與正式 API 相同（`data[0].b64_json`、`generation_id`、`usage` 20／196／216）。提示裡的標記：`FAKE_IMG_FAIL`（HTTP 503，兩次都失敗）、`FAKE_IMG_BLOCKED`（`moderation_blocked`）、`FAKE_IMG_TIMEOUT`（逾時）、`FAKE_IMG_SLOW`（2 秒）。
-- 假文字模型（請求有 `image_slots` 時）：逐段任務的第一個區塊一個 `scene` 位置；教材有 `FAKE_IMG_PHOTO` 時第二個區塊要一張地圖（伺服器改成 `photo_needed`）；版型的每個區塊一個（需要教師素材的區塊除外）。教材裡的 `FAKE_IMG_*` 標記會帶進畫面描述。
+- 假文字模型（請求有 `image_slots` 時）：逐段任務的第一個區塊一個 `scene` 位置；教材有 `FAKE_IMG_PHOTO` 時第二個區塊要一張地圖（描述帶 `FAKE_IMG_FAIL`，這張會失敗、留空框）；版型的每個區塊一個（需要教師素材的區塊除外）。教材裡的 `FAKE_IMG_*` 標記會帶進畫面描述。
 
 ## 費用與上限
 
@@ -2731,7 +2732,7 @@ interface WsSheetImage {
 
 - **從老師的範例找出圖（第 3 期）**：抽版型時讀出範例裡的圖（OCR 的 `Picture` bbox 已存在 `materials.ocr_pages`；DOCX 的 `word/media` 與有文字層的 PDF 還沒讀），用視覺模型描述，對應到版型區塊的圖片位置；裝飾性的圖可以直接裁用。目前版型沒有「這一區有圖」的資訊，所以照版型產生時是由文字模型依每一區的內容判斷要不要圖；範例是掃描檔（OCR 數到圖）時，圖片規則後面多一行「這位老師的範例學習單裡有 N 張圖…」當提示（`images::sample_pictures`）。
 - 圖放在某一題旁邊（研究文件的 `position: item:<id>`）：目前一律放在區塊的作答指示之後。
-- Openverse／Wikimedia 搜圖（給 `photo_needed`）、用第一張圖當參考讓整份風格一致（`/v1/images/edits`）、每位老師每月上限、「有 N 張 AI 產生的圖還沒看過」的匯出提醒、把換掉的舊圖換回來的介面、刪除學習單時清掉圖檔（學習單目前只有軟刪除）。
+- Openverse／Wikimedia 搜圖、用第一張圖當參考讓整份風格一致（`/v1/images/edits`）、每位老師每月上限、「有 N 張 AI 產生的圖還沒看過」的匯出提醒、把換掉的舊圖換回來的介面、刪除學習單時清掉圖檔（學習單目前只有軟刪除）。
 
 ## 程式進入點
 

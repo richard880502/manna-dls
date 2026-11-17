@@ -42,7 +42,7 @@
 //!
 //! | marker                   | effect                                                              |
 //! |--------------------------|---------------------------------------------------------------------|
-//! | `FAKE_IMG_PHOTO`         | tasks: the second block gets a slot asking for a map (the server makes it `photo_needed`) |
+//! | `FAKE_IMG_PHOTO`         | tasks: the second block gets a slot asking for a map, whose picture fails (an empty box) |
 //! | `FAKE_IMG_FAIL`, `FAKE_IMG_BLOCKED`, `FAKE_IMG_SLOW`, `FAKE_IMG_TIMEOUT` | copied into every slot's description, for the fake picture provider (`worksheet::images::client`) |
 //!
 //! 閱讀理解題 (per Bloom level), see [`bloom_level`] and [`bloom_check`]:
@@ -337,7 +337,7 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 (true, 1) if has("FAKE_IMG_PHOTO") => vec![json!({
                     "kind": "scene",
                     "purpose_zh": "讓學生看出故事發生的地方",
-                    "prompt_en": format!("A map of the town in {label}."),
+                    "prompt_en": format!("FAKE_IMG_FAIL A map of the town in {label}."),
                     "alt_en": "A map of the town.",
                     "caption": "",
                 })],

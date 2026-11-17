@@ -1493,7 +1493,7 @@ export interface WsBlock {
 
 // ---- 學習單的圖片（docs/API.md「學習單的圖片」）----
 
-/** photo_needed：需要真實照片（地圖、國旗、真實人物或地標、歷史），不產圖，留給老師放 */
+/** photo_needed 只出現在舊的學習單（以前「需要真實照片、不產圖」的位置）；現在所有位置都會產圖 */
 export type WsImageSlotKind = "scene" | "object" | "icon" | "photo_needed";
 
 /** 區塊裡的一個圖片位置（寫區塊的模型一起寫的） */
@@ -1509,7 +1509,7 @@ export interface WsImageSlot {
   caption: string;
 }
 
-/** removed：老師拿掉了（不印）；skipped：沒有送去產圖（需要真實照片、產圖沒開、到上限） */
+/** removed：老師拿掉了（不印）；skipped：沒有送去產圖（產圖沒開、沒有檔案儲存、到上限；舊學習單的「需要真實照片」） */
 export type WsImageStatus = "queued" | "running" | "done" | "failed" | "skipped" | "removed";
 export type WsImageSource = "generated" | "upload" | "none";
 
