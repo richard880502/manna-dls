@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { api, errorMessage } from "../../api/client";
 import type {
   PrepTurn,
+  RunProgress,
   WorksheetImages,
   WorksheetState,
   WsAudience,
@@ -19,6 +20,7 @@ import { READING_SAMPLE_LINE, prepConfig } from "../../lib/prep";
 import { templateTitle } from "../../lib/templates";
 import { LEVEL_LABEL, projectSheet } from "../../lib/worksheet";
 import { ErrorText, Loading } from "../common";
+import { RunProgressSlot } from "../RunProgress";
 import { OcrProgress } from "../material/Ocr";
 import { BloomDistribution } from "../worksheet/Bloom";
 import { ExportMenu } from "../worksheet/ExportMenu";
@@ -64,6 +66,7 @@ export function WorksheetCard({
   target = null,
   onTarget,
   proposalsKey,
+  stepsShown = false,
 }: {
   turn: PrepTurn;
   /** Changes when the worksheet got a new version (a revise turn finished). */
@@ -77,12 +80,16 @@ export function WorksheetCard({
   onTarget?: (worksheetId: number, blockId: string, name: string) => void;
   /** Changes when the bottom bar started a block revision here. */
   proposalsKey?: number;
+  /** The page shows this turn's 「進度」 panel above the card: no working line of our own. */
+  stepsShown?: boolean;
 }) {
   const ids = useId();
   const ref = turn.worksheet;
   const wsId = ref?.id ?? null;
   const running = turn.status === "running" || (ref?.running ?? false);
   const [jobs, setJobs] = useState<WsJob[]>([]);
+  // The worksheet's own steps (a regeneration started in the editor is not a turn of its own).
+  const [wsProgress, setWsProgress] = useState<RunProgress | null>(null);
   const [state, setState] = useState<WorksheetState | null>(null);
   const [sheet, setSheet] = useState<WsSheet | null>(null);
   const [level, setLevel] = useState<WsLevel | null>(null);
@@ -148,7 +155,11 @@ export function WorksheetCard({
     const load = () =>
       api
         .worksheetJobs(wsId)
-        .then((res) => alive && setJobs(res.jobs))
+        .then((res) => {
+          if (!alive) return;
+          setJobs(res.jobs);
+          setWsProgress(res.progress ?? null);
+        })
         .catch(() => undefined);
     void load();
     const timer = setInterval(() => void load(), prepConfig.pollMs);
@@ -213,6 +224,7 @@ export function WorksheetCard({
   }, [picturesOpen, wsId]);
 
   if (wsId === null) {
+    if (turn.status === "running" && stepsShown) return null;
     if (turn.status === "running" && turn.phase === "ocr" && turn.ocr) {
       return (
         <div className="prep-working">
@@ -228,8 +240,26 @@ export function WorksheetCard({
     ) : null;
   }
 
-  // The steps are listed in the page's 「進度」 panel (by the bottom bar); a turn without them (an
-  // older server) shows the job rows here as before.
+  // The steps are listed in the turn's 「進度」 panel just above; when that panel is closed (×) the
+  // working line stands in. A turn without steps (an older server) shows the job rows as before.
+  if (running && stepsShown) return null;
+  // Not the turn's own run (e.g. regenerated from the editor): the worksheet's steps, here in the
+  // conversation, with the working line once the panel is closed.
+  if (running && !turn.progress && wsProgress) {
+    return (
+      <RunProgressSlot
+        progress={wsProgress}
+        runKey={`ws-${wsId}-${jobs[0]?.run_no ?? 0}`}
+        className="prep-turn-progress"
+        fallback={
+          <p className="manna-label prep-working" role="status">
+            <span className="star is-working" aria-hidden="true" />
+            Manna 正在產生這份學習單…
+          </p>
+        }
+      />
+    );
+  }
   if (running && turn.progress) {
     return (
       <p className="manna-label prep-working" role="status">

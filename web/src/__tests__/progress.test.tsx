@@ -210,7 +210,38 @@ const activitySteps = (statuses: ProgressStep["status"][], current: number | nul
 });
 
 describe("the 備課對話", () => {
-  it("shows the turn's steps by the bottom bar while it runs, then its failure", async () => {
+  it("a worksheet regenerated after its turn shows the worksheet's steps in its card", async () => {
+    signIn();
+    // The turn is long over (no progress of its own); the worksheet runs again (from the editor).
+    const wsTurn = turn({
+      kind: "worksheet",
+      request: "學習單",
+      status: "done",
+      finished_at: "2026-11-18T06:00:00Z",
+      progress: null,
+      worksheet: { id: 11, title: "U", version_no: 2, running: true },
+    });
+    mockApi({
+      ...baseRoutes(),
+      [`GET ${S7}`]: { ...session(wsTurn), running: false },
+      "GET /api/worksheets/11/jobs": {
+        running: true,
+        version_no: 2,
+        jobs: [],
+        progress: {
+          steps: [step("read", "讀教材", "done"), step("tasks", "寫逐段任務", "running"), step("pictures", "配圖", "pending")],
+          current: 1,
+          status: "running",
+        },
+      },
+    });
+    renderApp("/prep/7");
+    const region = await screen.findByRole("region", { name: "進度" });
+    expect(region.closest(".prep-result")).not.toBeNull();
+    expect(within(region).getAllByRole("listitem")[1]).toHaveAttribute("aria-current", "step");
+  });
+
+  it("shows the turn's steps in the conversation, in the turn's place, while it runs, then its failure", async () => {
     signIn();
     const polls: PrepSession[] = [
       session(turn({ progress: activitySteps(["done", "running", "pending"], 1, "running") })),
@@ -229,7 +260,11 @@ describe("the 備課對話", () => {
     renderApp("/prep/7");
     const region = await screen.findByRole("region", { name: "進度" });
     expect(within(region).getAllByRole("listitem")).toHaveLength(3);
-    // The working line is the panel now.
+    // In the conversation, where the turn's result will be, not by the bottom bar.
+    expect(region.closest(".prep-result")).not.toBeNull();
+    expect(region.closest("form")).toBeNull();
+    // The panel stands in for the working line.
+    expect(document.querySelector(".prep-working")).toBeNull();
     await waitFor(() => expect(within(region).getByRole("status")).toHaveTextContent("規劃教學活動"));
     await waitFor(() => expect(within(region).getByRole("status")).toHaveTextContent("沒有成功：規劃教學活動"));
     const failedItem = within(region).getAllByRole("listitem")[2]!;
@@ -256,7 +291,7 @@ describe("the 備課對話", () => {
     // An older server: no `progress` at all.
     mockApi({ ...baseRoutes(), [`GET ${S7}`]: session(turn()) });
     renderApp("/prep/7");
-    await waitFor(() => expect(document.querySelector(".prep-bottom-status")).not.toBeNull());
+    await waitFor(() => expect(document.querySelector(".prep-working")).not.toBeNull());
     expect(screen.queryByRole("region", { name: "進度" })).toBeNull();
   });
 
@@ -293,7 +328,7 @@ describe("the 備課對話", () => {
     renderApp("/prep/7");
     await screen.findByRole("region", { name: "進度" });
     await waitFor(() => expect(screen.queryByRole("region", { name: "進度" })).toBeNull());
-    expect(document.querySelector(".prep-bottom-status")).toBeNull();
+    expect(document.querySelector(".prep-working")).toBeNull();
 
     // Loading a session whose turns are all over: nothing to show.
     mockApi({ ...baseRoutes(), [`GET ${S7}`]: session(over) });
