@@ -192,8 +192,8 @@ describe("差異化學習單: neutral codes and per-version support", () => {
     expect(screen.getByText(/學生版印成「Version C」，不印程度名稱。/)).toBeInTheDocument();
 
     // The teacher view: this version's answer and scoring note, edited in its own part.
-    await user.click(screen.getByRole("radio", { name: "教師參考版" }));
-    await screen.findByRole("article", { name: "進階版 教師參考版" });
+    await user.click(screen.getByRole("radio", { name: "教師版" }));
+    await screen.findByRole("article", { name: "進階版 教師版" });
     expect(screen.getByRole("textbox", { name: "參考答案 1" })).toHaveValue("They were sure every umbrella would be gone.");
     const scoring = screen.getByRole("textbox", { name: "評分說明 1" });
     expect(scoring).toHaveValue("1–2 個完整句");
@@ -307,7 +307,7 @@ describe("差異化學習單: neutral codes and per-version support", () => {
 
     // The teacher keeps the level name, this version's answer and scoring note, and the 分層說明.
     await user.click(within(result).getByRole("radio", { name: "教師版" }));
-    const teacher = await within(result).findByRole("article", { name: "一般版 教師參考版" });
+    const teacher = await within(result).findByRole("article", { name: "一般版 教師版" });
     expect(within(teacher).getByText("一個完整句")).toBeInTheDocument();
     expect(within(teacher).getByText(/^差異化學習單：三個版本/)).toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-/* 資源: 教材參考, 我的教材, 學習單範本 and the library picker (library contract, "Shared browse UI").
+/* 資源: 平台教材, 我的教材, 學習單範本 and the library picker (library contract, "Shared browse UI").
  * A marketplace laid out with Manna's own tokens: a big search field, category chips with counts
  * (the chosen one filled in the teacher's ink), 只看 chips with icons, and large rounded cards whose
  * preview is a sheet of paper set in the print voice. Manna's gold marks only what Manna guessed
@@ -27,7 +27,7 @@
   margin-top: var(--space-sm);
 }
 
-/* ================= tabs (平台範本 | 我的範本, 教材參考 | 我的教材) ================= */
+/* ================= tabs (平台範本 | 我的範本, 平台教材 | 我的教材) ================= */
 .lib-tabs {
   display: flex;
   gap: var(--space-lg);

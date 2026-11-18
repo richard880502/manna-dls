@@ -15,7 +15,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 ];
 
 /**
- * 教材與範本管理 (/admin/library): admins seed 教材參考 (past 學測／統測 papers, the curriculum, the
+ * 教材與範本管理 (/admin/library): admins seed 平台教材 (past 學測／統測 papers, the curriculum, the
  * word list, exam guides) and the platform 學習單範本. pi and kb_manager only; others go home.
  */
 export function AdminLibraryPage() {

@@ -169,7 +169,7 @@ function PreviewDialog({ opened, onClose }: { opened: Opened; onClose: () => voi
 }
 
 /**
- * 知識庫's wall of materials (/knowledge): every platform material (教材參考) as a card of its own
+ * 知識庫's wall of materials (/knowledge): every platform material (平台教材) as a card of its own
  * height in columns, with the browse search, category chips, filters and tags. A card opens its
  * preview.
  */

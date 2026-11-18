@@ -427,7 +427,7 @@ describe("report 1: choosing an answer format changes the sheet", { timeout: 20_
     await user.click(question(2).getByRole("button", { name: "刪掉這些選項" }));
     expect(question(2).queryByText(/選項還留著/)).not.toBeInTheDocument();
     // Lines show in the teacher view too, as on the printed teacher sheet.
-    await user.click(screen.getByRole("radio", { name: "教師參考版" }));
+    await user.click(screen.getByRole("radio", { name: "教師版" }));
     expect(linesOf(1)).toHaveAccessibleName("作答線 1：2 行");
   });
 });

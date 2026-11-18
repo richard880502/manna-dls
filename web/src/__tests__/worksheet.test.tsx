@@ -470,7 +470,7 @@ describe("result editor", () => {
     expect(projectSheet(content, "standard", "student").blocks[0]?.label).toBe("A");
   });
 
-  it("answers, evidence and teacher notes exist only in 教師參考版", async () => {
+  it("answers, evidence and teacher notes exist only in 教師版", async () => {
     const api = mockApi(routes(generated()));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
@@ -481,7 +481,7 @@ describe("result editor", () => {
     expect(screen.queryByDisplayValue("先確認大意。")).not.toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain("A stranger once helped her.");
 
-    await user.click(toggle.getByRole("radio", { name: "教師參考版" }));
+    await user.click(toggle.getByRole("radio", { name: "教師版" }));
     const answer = screen.getByRole("textbox", { name: "參考答案 2" });
     expect(answer).toHaveValue("A stranger once helped her.");
     expect(screen.getByRole("textbox", { name: "依據 2" })).toHaveValue("A sign said");

@@ -1037,7 +1037,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
       <p className="manna-label ws-draft-note">
         <span className="star" aria-hidden="true" />
         Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除，也可以按「改這一區」或加註記，請 Manna 只改那一區。
-        {audience === "teacher" ? "參考答案只在教師參考版。" : ""}
+        {audience === "teacher" ? "參考答案只在教師版。" : ""}
       </p>
       <p className="field-hint">{NOTES_HINT}</p>
       <LostNotes ctl={revise} />

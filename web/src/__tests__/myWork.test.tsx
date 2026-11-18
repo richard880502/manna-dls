@@ -1,6 +1,6 @@
 // 我的作品 (/prep): one list of prep sessions and standalone worksheets, filter chips kept in the
 // URL, delete of a standalone worksheet, the empty state, and /worksheets leading to it.
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { PrepSessionSummary, WorksheetSummary } from "../api/types";
@@ -98,8 +98,9 @@ describe("我的作品", () => {
     await user.click(chips.getByRole("button", { name: /^問 Manna/ }));
     expect(titles()).toEqual(["環境保護"]);
 
-    await router.navigate(-1);
-    await waitFor(() => expect(router.state.location.search).toBe("?type=worksheet"));
+    // Outside act, React commits the re-render after router.state changes: wrap it so the list is read after.
+    await act(() => router.navigate(-1));
+    expect(router.state.location.search).toBe("?type=worksheet");
     expect(titles()).toHaveLength(3);
     expect(chips.getByRole("button", { name: /^學習單/ })).toHaveAttribute("aria-pressed", "true");
 
@@ -132,6 +133,24 @@ describe("我的作品", () => {
     await waitFor(() => expect(screen.queryByText("獨立的學習單")).not.toBeInTheDocument());
     expect(api.callsTo("DELETE", "/api/worksheets/21")).toHaveLength(1);
     expect(titles()).toHaveLength(4);
+  });
+
+  it("moves focus through the delete confirmation and says a failed delete in the row", async () => {
+    signIn();
+    mockApi(routes({ "DELETE /api/worksheets/21": respond(500, { error: { message: "刪不掉" } }) }));
+    const user = userEvent.setup();
+    renderApp("/prep");
+    await screen.findByRole("list", { name: "我的作品" });
+    await user.click(screen.getByRole("button", { name: "刪除 獨立的學習單" }));
+    expect(screen.getByRole("button", { name: "不刪" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "不刪" }));
+    expect(screen.getByRole("button", { name: "刪除 獨立的學習單" })).toHaveFocus();
+
+    await user.click(screen.getByRole("button", { name: "刪除 獨立的學習單" }));
+    await user.click(screen.getByRole("button", { name: "確定刪除" }));
+    const row = screen.getByRole("link", { name: "獨立的學習單" }).closest("li") as HTMLElement;
+    expect(await within(row).findByRole("alert")).toHaveTextContent("刪不掉");
+    expect(titles()).toHaveLength(5);
   });
 
   it("says so when there is nothing yet, with a way to the home page", async () => {

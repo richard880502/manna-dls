@@ -40,7 +40,7 @@ export const OTHER_LABEL = "我想做別的…";
 /** What a session's last step was, as the list says it. */
 export const KIND_LABEL: Record<PrepKind, string> = {
   ...ACTION_LABEL,
-  ask: "問 AI",
+  ask: "問 Manna",
   revise: "修改學習單",
   comprehension: "閱讀理解題",
   tiered: "差異化學習單",

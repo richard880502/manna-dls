@@ -234,7 +234,7 @@ function Generator({ tool }: { tool: Tool }) {
     };
   }, [templateParam, drop]);
 
-  // 用這篇出題 (教材參考, 我的教材) lands here with ?material=<id>: that material in the article slot.
+  // 用這篇出題 (平台教材, 我的教材) lands here with ?material=<id>: that material in the article slot.
   const materialParam = idParam("material");
   useEffect(() => {
     if (materialParam === null) return undefined;

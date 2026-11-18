@@ -7,7 +7,7 @@ import { LibraryStep, type MaterialChoice, type PickedMaterial } from "./Materia
 
 export type AttachWay = "upload" | "library" | "paste";
 
-/** 「從教材挑選」 opens the library picker (教材參考 | 我的教材) instead of a dialog of its own. */
+/** 「從教材挑選」 opens the library picker (平台教材 | 我的教材) instead of a dialog of its own. */
 export const ATTACH_LABEL: Record<AttachWay, string> = {
   upload: "上傳檔案",
   library: "從教材挑選",

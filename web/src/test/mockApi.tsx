@@ -318,7 +318,7 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     // 備課 (the home page) lists recent prep sessions and offers the material library.
     "GET /api/prep-sessions": { sessions: [] },
     "GET /api/materials": emptyLibrary(),
-    // 教材參考／我的教材／學習單範本 and the pickers.
+    // 平台教材／我的教材／學習單範本 and the pickers.
     "GET /api/browse/materials": materialBrowse([]),
     "GET /api/browse/templates": templateBrowse([]),
     // SIOP G2: without AI there is nothing to draft, so 產生 goes straight on.
@@ -333,7 +333,7 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
   };
 }
 
-// ---------- 教材參考、我的教材、學習單範本 (library contract) ----------
+// ---------- 平台教材、我的教材、學習單範本 (library contract) ----------
 
 /** One material card as GET /api/browse/materials lists it (all made up). */
 export const materialCard = (overrides: Partial<MaterialCard> = {}): MaterialCard => ({

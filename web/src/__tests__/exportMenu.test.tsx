@@ -102,11 +102,21 @@ describe("ExportMenu", () => {
     await waitFor(() => expect(exportSpy).toHaveBeenCalledWith(9, { format: "docx", level: "standard", audience: "student" }));
   });
 
+  it("Enter on the button opens the menu with focus on the first file", async () => {
+    const { user } = setup();
+    screen.getByRole("button", { name: /匯出/ }).focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "學生版 Word" })).toHaveFocus());
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => expect(exportSpy).toHaveBeenCalledTimes(1));
+    expect(exportSpy).toHaveBeenLastCalledWith(9, expect.objectContaining({ format: "pdf", audience: "student" }));
+  });
+
   it("Esc closes the menu and returns focus to the button", async () => {
     const { user } = setup();
     const button = screen.getByRole("button", { name: /匯出/ });
     await user.click(button);
-    await user.keyboard("{ArrowDown}");
+    // Opening puts focus on the first file.
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "學生版 Word" })).toHaveFocus());
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();

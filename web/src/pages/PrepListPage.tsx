@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { PrepKind, PrepSessionSummary, WorksheetSummary } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
-import { TOOL_CHIP } from "../lib/create";
+import { TOOL_NAME } from "../lib/create";
 import { NEXT_LABEL, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
 
@@ -28,9 +28,16 @@ const filterOfKind = (kind: PrepKind | null): Filter | null => {
   return null;
 };
 
-/** The tag on a session row, in the tools' own names. A revise turn does not say what it revised: 學習單. */
+/**
+ * The tag on a row, in the tools' visible names (TOOL_NAME; TOOL_CHIP is wire-only). A revise turn
+ * does not say what it revised: 學習單.
+ */
 const KIND_TAG: Record<PrepKind, string> = {
-  ...TOOL_CHIP,
+  comprehension: TOOL_NAME.comprehension,
+  tiered: TOOL_NAME.tiered,
+  activity: TOOL_NAME.activity,
+  kit: TOOL_NAME.kit,
+  worksheet: TOOL_NAME.worksheet,
   assessment: NEXT_LABEL.assessment,
   resources: NEXT_LABEL.resources,
   ask: "問 Manna",
@@ -54,6 +61,8 @@ export function PrepListPage() {
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  /** After a delete the row (and the focused button) is gone: focus goes to the list. */
+  const listRef = useRef<HTMLUListElement>(null);
 
   const typeParam = params.get("type");
   const filter: Filter = isFilter(typeParam) ? typeParam : "all";
@@ -99,6 +108,7 @@ export function PrepListPage() {
       await api.deleteWorksheet(id);
       setWorksheets((rows) => rows?.filter((r) => r.id !== id) ?? null);
       setConfirming(null);
+      listRef.current?.focus();
     } catch (err) {
       setDeleteError(errorMessage(err));
     }
@@ -140,7 +150,7 @@ export function PrepListPage() {
           </div>
           {shown.length === 0 && <p className="empty-line">這個類型還沒有作品。</p>}
           {shown.length > 0 && (
-            <ul className="rows" aria-label="我的作品">
+            <ul className="rows" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) =>
                 item.type === "session" ? (
                   <SessionRow key={item.key} s={item.session} />
@@ -149,8 +159,15 @@ export function PrepListPage() {
                     key={item.key}
                     w={item.worksheet}
                     confirming={confirming === item.worksheet.id}
-                    onAsk={() => setConfirming(item.worksheet.id)}
-                    onCancel={() => setConfirming(null)}
+                    error={confirming === item.worksheet.id ? deleteError : null}
+                    onAsk={() => {
+                      setDeleteError(null);
+                      setConfirming(item.worksheet.id);
+                    }}
+                    onCancel={() => {
+                      setDeleteError(null);
+                      setConfirming(null);
+                    }}
                     onConfirm={() => void remove(item.worksheet.id)}
                   />
                 ),
@@ -159,7 +176,6 @@ export function PrepListPage() {
           )}
         </>
       )}
-      <ErrorText message={deleteError} />
     </>
   );
 }
@@ -189,17 +205,32 @@ function SessionRow({ s }: { s: PrepSessionSummary }) {
 function WorksheetRow({
   w,
   confirming,
+  error,
   onAsk,
   onCancel,
   onConfirm,
 }: {
   w: WorksheetSummary;
   confirming: boolean;
+  /** A failed delete, said in this row. */
+  error: string | null;
   onAsk: () => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const name = w.title || "未命名的學習單";
+  // The confirmation replaces 刪除 in place: focus goes to the safe 不刪, and back to 刪除 after.
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const askRef = useRef<HTMLButtonElement>(null);
+  /** Set by 不刪: only then does focus go back to 刪除 (another row's 刪除 keeps its own focus). */
+  const backToAsk = useRef(false);
+  useEffect(() => {
+    if (confirming) keepRef.current?.focus();
+    else if (backToAsk.current) {
+      backToAsk.current = false;
+      askRef.current?.focus();
+    }
+  }, [confirming]);
   return (
     <li className="row">
       <div>
@@ -207,7 +238,7 @@ function WorksheetRow({
           <Link to={`/worksheets/${w.id}`}>{name}</Link>
         </h3>
         <p className="meta">
-          <span className="mywork-tag">學習單</span>
+          <span className="mywork-tag">{TOOL_NAME.worksheet}</span>
           {[
             w.lesson ? `${w.lesson.unit_title} / ${w.lesson.title}` : null,
             w.generated ? (w.levels.length > 0 ? w.levels.map((l) => LEVEL_LABEL[l]).join("、") : "已產生") : "還沒產生",
@@ -224,15 +255,24 @@ function WorksheetRow({
             <button type="button" className="text-link is-danger" onClick={onConfirm}>
               確定刪除
             </button>
-            <button type="button" className="text-link is-plain" onClick={onCancel}>
+            <button
+              ref={keepRef}
+              type="button"
+              className="text-link is-plain"
+              onClick={() => {
+                backToAsk.current = true;
+                onCancel();
+              }}
+            >
               不刪
             </button>
           </span>
         ) : (
-          <button type="button" className="text-link is-plain" aria-label={`刪除 ${name}`} onClick={onAsk}>
+          <button ref={askRef} type="button" className="text-link is-plain" aria-label={`刪除 ${name}`} onClick={onAsk}>
             刪除
           </button>
         )}
+        <ErrorText message={error} />
       </div>
     </li>
   );

@@ -65,7 +65,7 @@ export function WorksheetCheckPage() {
       <>
         <ErrorText message={loadError} />
         <p className="after-rows">
-          <Link to="/worksheets">回學習單</Link>
+          <Link to="/prep">回我的作品</Link>
         </p>
       </>
     );
@@ -99,7 +99,7 @@ export function WorksheetCheckPage() {
       <div className="head-row page-head">
         <div>
           <p className="crumbs">
-            <Link to="/worksheets">學習單</Link> / <Link to={`/worksheets/${id}`}>{state.title || "未命名的學習單"}</Link>
+            <Link to="/prep">我的作品</Link> / <Link to={`/worksheets/${id}`}>{state.title || "未命名的學習單"}</Link>
           </p>
           <h1>詞彙級別檢查</h1>
           <p className="lead">對照大考中心高中英文參考詞彙表，看這份學習單的學生版用了哪些級別的字。</p>

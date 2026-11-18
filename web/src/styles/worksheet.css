@@ -729,14 +729,6 @@
   border-top: var(--rule-hair) solid var(--color-rule);
 }
 
-.ws-export h2 {
-  font-size: var(--text-lg);
-}
-
-.ws-export .actions {
-  margin-top: var(--space-sm);
-}
-
 .ws-export-row {
   display: flex;
   flex-wrap: wrap;

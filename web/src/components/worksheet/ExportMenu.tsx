@@ -97,7 +97,8 @@ export function ExportMenu({
         aria-expanded={open}
         aria-controls={open ? `${id}-menu` : undefined}
         disabled={inactive}
-        onClick={() => (open ? close(false) : setOpen(true))}
+        // Opened by click, Enter or Space: focus goes to the first file (the items are not in the tab order).
+        onClick={() => (open ? close(false) : openAt(0))}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();

@@ -282,7 +282,7 @@
   font-weight: var(--weight-strong);
 }
 
-/* ================= output chips (quick box) and 題型 chips: single or multiple choice ================= */
+/* ================= 題型 chips (/create): single or multiple choice ================= */
 .format-chips {
   display: flex;
   flex-wrap: wrap;
@@ -308,20 +308,6 @@
 .output-chip.is-small {
   min-height: var(--control-h-sm);
   padding: 0 var(--space-sm);
-}
-
-/* 照我的學習單做 leads the chips in the teacher's ink, like its tool card; chosen, it fills as the others do. */
-.output-chip.is-featured {
-  gap: var(--space-2xs);
-  border-color: var(--color-accent-rule);
-  background: var(--color-accent-wash);
-  color: var(--color-accent-text);
-}
-
-.output-chip.is-featured .ui-icon {
-  flex: none;
-  width: 1.125rem;
-  height: 1.125rem;
 }
 
 .output-chip[aria-pressed="true"] {
@@ -997,11 +983,11 @@
   font-size: var(--text-md);
 }
 
-/* Manna's line in a box the teacher can write in. */
+/* Manna's line in a box the teacher can write in: the gold is the well; the field keeps the
+ * field edge (a gold edge is 1.7:1 on the wash, below the 3:1 a field's boundary needs). */
 .objective-draft textarea {
   width: 100%;
   margin-top: var(--space-xs);
-  border-color: var(--color-manna-rule);
   resize: vertical;
 }
 

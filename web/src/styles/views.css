@@ -309,6 +309,11 @@
   font-size: var(--text-sm);
 }
 
+/* A failed action is said on its own line in the row it belongs to. */
+.row-tools .error-text {
+  flex-basis: 100%;
+}
+
 .num {
   display: inline-block;
   min-width: 1.6em;
