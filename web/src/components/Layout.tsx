@@ -125,6 +125,19 @@ export function Layout() {
 
   return (
     <>
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          // Move focus without leaving "#main-content" in the address.
+          event.preventDefault();
+          const main = document.getElementById("main-content");
+          main?.focus();
+          main?.scrollIntoView?.({ block: "start" });
+        }}
+      >
+        跳到主要內容
+      </a>
       <DemoBanner />
       <div className={`shell${collapsed ? " is-collapsed" : ""}${drawerOpen ? " is-drawer-open" : ""}`}>
         <Sidebar
@@ -159,7 +172,7 @@ export function Layout() {
             <div className="top-slot" ref={setTopSlot} />
           </header>
 
-          <main className={`workspace${frameClass(pathname)}`}>
+          <main id="main-content" tabIndex={-1} className={`workspace${frameClass(pathname)}`}>
             {preferencesStatus === "loading" ? (
               <Loading label="正在載入你的備課偏好…" />
             ) : (

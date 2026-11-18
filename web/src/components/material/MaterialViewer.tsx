@@ -681,6 +681,15 @@ export interface MaterialViewerProps {
   annotate?: boolean;
 }
 
+/** Where the worksheet stacks its columns (worksheet.css, with the sidebar taking 248px) the pane must not be open on arrival. */
+function paneOverlaysPage(): boolean {
+  try {
+    return typeof window.matchMedia === "function" && window.matchMedia("(max-width: 75rem)").matches;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 教材檢視: the material, readable while working on something else, with the teacher's notes.
  * One component for the lesson SOP and the worksheet generator (docs/DESIGN_OVERHAUL.md).
@@ -703,7 +712,7 @@ export function MaterialViewer({
   annotate = true,
 }: MaterialViewerProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
-  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [collapsed, setCollapsed] = useState(() => defaultCollapsed || (mode === "pane" && paneOverlaysPage()));
   const [full, setFull] = useState(false);
   const [width, setWidth] = useState(loadPaneWidth);
   const showing = mode === "panel" ? open : !collapsed;

@@ -538,3 +538,26 @@
     padding: 1.75rem var(--gutter) var(--space-section);
   }
 }
+
+/* Skip link: the first Tab stop on every page; visible only while it has focus. */
+.skip-link {
+  position: fixed;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  z-index: var(--z-overlay);
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-weight: var(--weight-strong);
+  text-decoration: none;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
+.workspace:focus {
+  outline: none;
+}

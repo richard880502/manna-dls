@@ -44,6 +44,19 @@ const summary = (id: number, title: string): PrepSessionSummary => ({
 });
 
 describe("app shell: the sidebar", () => {
+  it("starts with a skip link that moves focus to the page", async () => {
+    signIn();
+    mockApi(baseRoutes());
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    await user.tab();
+    const skip = screen.getByRole("link", { name: "跳到主要內容" });
+    expect(skip).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
   it("lists 首頁, 建立 with 照我的學習單做 first and the five tools, the work places and a folded 更多; then preferences and sign-out", async () => {
     signIn();
     mockApi(baseRoutes());
