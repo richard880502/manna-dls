@@ -12,20 +12,22 @@ import { ocrBusyError } from "../../lib/ocr";
 import {
   ANOTHER_SET,
   CATEGORY_LABEL,
-  CHOICE_LABEL,
   DRAFTING_LINE,
   DRAFTS_HEADING,
   DRAFTS_LEAD,
+  DRAFTS_READY_FILL_LINE,
+  DRAFTS_READY_LINE,
   DRAFT_FAILED,
   OBJECTIVE_KIND_LABEL,
+  OBJECTIVE_MAX,
   SKIP_DRAFTS,
-  USE_ALL,
-  USE_THESE,
+  SKIP_DRAFTS_FILL,
+  USE_DRAFTS,
+  USE_DRAFTS_FILL,
+  choiceFor,
   decisionsFor,
   fieldsFrom,
-  finalText,
   hasDrafts,
-  type DraftChoice,
 } from "../../lib/objectives";
 
 export type DraftState =
@@ -48,6 +50,8 @@ export interface DraftOutcome {
   /** The two fields as they now are (one objective per line). */
   content: string;
   language: string;
+  /** Which fields the drafts spoke for (a field with no draft is left as it was). */
+  has: { content: boolean; language: boolean };
 }
 
 /**
@@ -129,137 +133,74 @@ export async function recordDecisions(interactionId: number | null, decisions: D
   await Promise.allSettled(decisions.map((d) => api.sendDecision(interactionId, d)));
 }
 
-interface DraftRowProps {
-  draft: ObjectiveDraft;
-  choice: DraftChoice | undefined;
-  disabled: boolean;
-  onChoose: (choice: DraftChoice | undefined) => void;
-}
-
-/** One draft: the students' line, the teacher's Chinese, (語言目標) its kind and relation, how to check, and 採用／修改／改寫. */
-function DraftRow({ draft, choice, disabled, onChoose }: DraftRowProps) {
-  const ids = useId();
-  const [editing, setEditing] = useState<"revise" | "rewrite" | null>(null);
-  const [text, setText] = useState("");
-  const editRef = useRef<HTMLTextAreaElement>(null);
-  const kind = OBJECTIVE_KIND_LABEL[draft.kind];
-  const name = `${kind} ${draft.code}`;
-  const shown = finalText(draft, choice);
-  // 修改／改寫 opens the box with the cursor in it.
-  useEffect(() => {
-    if (editing) editRef.current?.focus();
-  }, [editing]);
-
-  function edit(mode: "revise" | "rewrite") {
-    setEditing(mode);
-    setText(mode === "revise" ? (choice && choice.decision !== "adopt" ? choice.text : draft.text) : "");
-  }
-
-  return (
-    <div className="manna-well objective-draft" role="group" aria-label={name}>
-      <p className="manna-label">
-        <span className="star" aria-hidden="true" />
-        {kind}
-        {draft.category ? ` · ${CATEGORY_LABEL[draft.category]}` : ""}
-        {choice && <span className="soft-tag">{CHOICE_LABEL[choice.decision]}</span>}
-      </p>
-      {choice && choice.decision !== "adopt" ? (
-        <p className="objective-draft-text" lang="en">
-          {shown ?? <span className="quiet-note">（不放這一項）</span>}
-        </p>
-      ) : (
-        <>
-          <p className="objective-draft-text" lang="en">
-            {draft.text}
-          </p>
-          <p className="objective-draft-zh">{draft.zh}</p>
-          {draft.relation_zh && <p className="why">{draft.relation_zh}</p>}
-          {draft.check_zh && <p className="why">怎麼檢核：{draft.check_zh}</p>}
-        </>
-      )}
-      {editing ? (
-        <form
-          className="objective-draft-edit"
-          onSubmit={(e) => {
-            e.preventDefault();
-            onChoose({ decision: editing, text });
-            setEditing(null);
-          }}
-        >
-          <label className="sr-only" htmlFor={`${ids}-edit`}>
-            {editing === "revise" ? `修改${name}` : `改寫${name}`}
-          </label>
-          <textarea
-            id={`${ids}-edit`}
-            ref={editRef}
-            rows={2}
-            lang="en"
-            value={text}
-            placeholder={editing === "rewrite" ? `寫你自己的${kind}（留空＝不放這一項）` : undefined}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div className="decide">
-            <button type="submit" className="decide-button is-take">
-              確定
-            </button>
-            <button type="button" className="decide-button" onClick={() => setEditing(null)}>
-              取消
-            </button>
-          </div>
-        </form>
-      ) : (
-        <div className="decide">
-          {choice ? (
-            <button type="button" className="decide-button" disabled={disabled} onClick={() => onChoose(undefined)}>
-              重選
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="decide-button is-take"
-                aria-label={`採用${name}`}
-                disabled={disabled}
-                onClick={() => onChoose({ decision: "adopt" })}
-              >
-                採用
-              </button>
-              <button type="button" className="decide-button" aria-label={`修改${name}`} disabled={disabled} onClick={() => edit("revise")}>
-                修改
-              </button>
-              <button type="button" className="decide-button" aria-label={`改寫${name}`} disabled={disabled} onClick={() => edit("rewrite")}>
-                改寫
-              </button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface ObjectiveDraftsProps {
   state: DraftState;
   disabled: boolean;
-  /** 採用並產生 (undecided drafts count as adopted). */
+  /** 用這組目標(產生): the drafts as they now read (unchanged: adopted, edited: revised, cleared: rejected). */
   onUse: (outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) => void;
   /** 不用目標，直接產生. */
   onSkip: (decisions: DecisionRequest[], interactionId: number | null) => void;
   onAnother: () => void;
   /** 收起: back to the form, nothing decided (nothing recorded). */
   onCancel: () => void;
+  /** Inside a card of the page (/create), not a card of its own. */
+  embedded?: boolean;
+  /** Opened by 請 Manna 擬一組: the primary fills the two fields instead of generating. */
+  fill?: boolean;
+}
+
+/** One draft: Manna's line in an editable field (gold), with the students' Chinese and how to check it. */
+function DraftField({
+  draft,
+  value,
+  disabled,
+  onChange,
+}: {
+  draft: ObjectiveDraft;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const id = useId();
+  const kind = OBJECTIVE_KIND_LABEL[draft.kind];
+  const name = `${kind} ${draft.code}`;
+  return (
+    <div className="manna-well objective-draft" role="group" aria-label={name}>
+      <label className="manna-label" htmlFor={id}>
+        <span className="star" aria-hidden="true" />
+        {name}
+        {draft.category ? ` · ${CATEGORY_LABEL[draft.category]}` : ""}
+      </label>
+      <textarea
+        id={id}
+        rows={2}
+        lang="en"
+        maxLength={OBJECTIVE_MAX}
+        value={value}
+        disabled={disabled}
+        aria-describedby={`${id}-zh`}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <div id={`${id}-zh`}>
+        <p className="objective-draft-zh">{draft.zh}</p>
+        {draft.relation_zh && <p className="why">{draft.relation_zh}</p>}
+        {draft.check_zh && <p className="why">怎麼檢核：{draft.check_zh}</p>}
+      </div>
+    </div>
+  );
 }
 
 function ReadyDrafts({
   result,
   disabled,
+  fill,
   onUse,
   onSkip,
   onAnother,
-}: Omit<ObjectiveDraftsProps, "state" | "onCancel"> & { result: ObjectiveDraftResult }) {
-  const [choices, setChoices] = useState<Record<number, DraftChoice>>({});
+}: Pick<ObjectiveDraftsProps, "disabled" | "fill" | "onUse" | "onSkip" | "onAnother"> & { result: ObjectiveDraftResult }) {
   const drafts = result.objectives;
-  const undecided = drafts.filter((d) => !choices[d.index]).length;
+  const [texts, setTexts] = useState<Record<number, string>>(() => Object.fromEntries(drafts.map((d) => [d.index, d.text])));
+  const choices = () => Object.fromEntries(drafts.map((d) => [d.index, choiceFor(d, texts[d.index] ?? d.text)]));
   return (
     <>
       <p className="lead">{DRAFTS_LEAD}</p>
@@ -268,19 +209,12 @@ function ReadyDrafts({
         drafts
           .filter((d) => d.kind === kind)
           .map((d) => (
-            <DraftRow
+            <DraftField
               key={d.index}
               draft={d}
-              choice={choices[d.index]}
+              value={texts[d.index] ?? d.text}
               disabled={disabled}
-              onChoose={(choice) =>
-                setChoices((all) => {
-                  const next = { ...all };
-                  if (choice) next[d.index] = choice;
-                  else delete next[d.index];
-                  return next;
-                })
-              }
+              onChange={(value) => setTexts((all) => ({ ...all, [d.index]: value }))}
             />
           )),
       )}
@@ -289,20 +223,29 @@ function ReadyDrafts({
           type="button"
           className="primary-button"
           disabled={disabled}
-          onClick={() => onUse(fieldsFrom(drafts, choices), decisionsFor(drafts, choices, false), result.interaction_id)}
+          onClick={() =>
+            onUse(
+              {
+                ...fieldsFrom(drafts, choices()),
+                has: { content: drafts.some((d) => d.kind === "content"), language: drafts.some((d) => d.kind === "language") },
+              },
+              decisionsFor(drafts, choices(), false),
+              result.interaction_id,
+            )
+          }
         >
-          {undecided === drafts.length ? USE_ALL : USE_THESE}
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          disabled={disabled}
-          onClick={() => onSkip(decisionsFor(drafts, choices, true), result.interaction_id)}
-        >
-          {SKIP_DRAFTS}
+          {fill ? USE_DRAFTS_FILL : USE_DRAFTS}
         </button>
         <button type="button" className="text-link is-plain" disabled={disabled} onClick={onAnother}>
           {ANOTHER_SET}
+        </button>
+        <button
+          type="button"
+          className="text-link is-plain"
+          disabled={disabled}
+          onClick={() => onSkip(decisionsFor(drafts, choices(), true), result.interaction_id)}
+        >
+          {fill ? SKIP_DRAFTS_FILL : SKIP_DRAFTS}
         </button>
       </div>
     </>
@@ -310,25 +253,37 @@ function ReadyDrafts({
 }
 
 /**
- * G2/G3 on the generator: Manna's drafts (only the ones that passed the R1 and R3 checks), each
- * to 採用、修改 or 改寫, then 全部採用並產生 in one click — or 不用目標，直接產生.
+ * G2/G3: Manna's drafts (only the ones that passed the R1 and R3 checks), each an editable line:
+ * leave it (adopt), edit it (revise) or clear it (not used). One primary — 用這組目標(產生) —
+ * with 換一組 and 不用目標，直接產生 as quiet links.
  */
-export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onCancel }: ObjectiveDraftsProps) {
+export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onCancel, embedded = false, fill = false }: ObjectiveDraftsProps) {
   const ids = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // Opening (and each change of phase) takes focus to the heading and brings the panel into view.
   useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
     headingRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
   }, [state.phase]);
+  const Tag = embedded ? "div" : "section";
   return (
-    <section className="create-card objective-drafts" aria-labelledby={`${ids}-heading`} aria-busy={state.phase === "drafting"}>
+    <Tag
+      className={embedded ? "objective-drafts is-embedded" : "create-card objective-drafts"}
+      {...(embedded ? { role: "region" } : {})}
+      aria-labelledby={`${ids}-heading`}
+      aria-busy={state.phase === "drafting"}
+    >
       <div className="create-card-head">
-        <h2 id={`${ids}-heading`} ref={headingRef}>
+        <h2 id={`${ids}-heading`} ref={headingRef} tabIndex={-1}>
           {DRAFTS_HEADING}
         </h2>
         <button type="button" className="text-link is-plain" disabled={disabled} onClick={onCancel}>
           收起
         </button>
       </div>
+      <p className="sr-only" role="status">
+        {state.phase === "ready" ? (fill ? DRAFTS_READY_FILL_LINE : DRAFTS_READY_LINE) : ""}
+      </p>
       {state.phase === "drafting" && (
         <>
           <RunProgressSlot
@@ -341,11 +296,13 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
               </p>
             }
           />
-          <div className="button-row objective-drafts-actions">
-            <button type="button" className="secondary-button" onClick={() => onSkip([], null)}>
-              {SKIP_DRAFTS}
-            </button>
-          </div>
+          {!fill && (
+            <div className="button-row objective-drafts-actions">
+              <button type="button" className="text-link is-plain" onClick={() => onSkip([], null)}>
+                {SKIP_DRAFTS}
+              </button>
+            </div>
+          )}
         </>
       )}
       {state.phase === "failed" && (
@@ -353,11 +310,13 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
           <p className="quiet-note" role="status">
             {state.message}
           </p>
-          <div className="button-row objective-drafts-actions">
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => onSkip([], null)}>
-              {SKIP_DRAFTS}
-            </button>
-          </div>
+          {!fill && (
+            <div className="button-row objective-drafts-actions">
+              <button type="button" className="primary-button" disabled={disabled} onClick={() => onSkip([], null)}>
+                {SKIP_DRAFTS}
+              </button>
+            </div>
+          )}
         </>
       )}
       {state.phase === "ready" && (
@@ -365,11 +324,12 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
           key={state.result.interaction_id ?? 0}
           result={state.result}
           disabled={disabled}
+          fill={fill}
           onUse={onUse}
           onSkip={onSkip}
           onAnother={onAnother}
         />
       )}
-    </section>
+    </Tag>
   );
 }

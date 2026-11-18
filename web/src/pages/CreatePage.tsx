@@ -79,13 +79,12 @@ export function summaryLine(total: number, counts: BloomCounts): string {
  * article field) and 設定 (班級／程度 and the two objectives); 產生 waits for both a sample and a
  * text.
  *
- * With both objectives empty, 產生 first asks Manna to draft them (SIOP G2/G3): the teacher
- * adopts, edits or rewrites each draft (or all at once, or none) and the generation goes on with
- * them; her choices are recorded as decisions on the draft.
+ * With both objectives empty, 產生 first asks Manna to draft them (SIOP G2/G3): the drafts open
+ * under the two fields as editable lines (left: adopted, edited: revised, cleared: not used) and
+ * 用這組目標產生 goes on with them; 請 Manna 擬一組 opens the same panel on request, and 用這組目標
+ * only fills the fields. Her choices are recorded as decisions on the draft. While the panel is
+ * open the bar's 產生 is hidden, so the page has one primary button.
  */
-/** What the summary says while the drafted objectives still wait for a choice (產生 is off until then). */
-const DRAFTS_PENDING = "請先在上方選好目標";
-
 function Generator({ tool }: { tool: Tool }) {
   const ids = useId();
   const navigate = useNavigate();
@@ -103,6 +102,8 @@ function Generator({ tool }: { tool: Tool }) {
   const [contentObjective, setContentObjective] = useState("");
   const [languageObjective, setLanguageObjective] = useState("");
   const drafts = useObjectiveDraft();
+  /** The panel was opened by 請 Manna 擬一組: its primary fills the fields instead of generating. */
+  const [fillMode, setFillMode] = useState(false);
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<MaterialChoice | null>(null);
   const [dialog, setDialog] = useState<"upload" | "library" | null>(null);
@@ -285,24 +286,44 @@ function Generator({ tool }: { tool: Tool }) {
     }
     // G2: no objective at all, Manna drafts them first.
     if (!contentObjective.trim() && !languageObjective.trim()) {
-      const body: ObjectiveDraftRequest = {
-        kind: kindOf(tool),
-        ...material,
-        ...(classId !== null ? { class_id: classId } : {}),
-      };
-      setError(null);
-      setOcrRefusal(null);
-      try {
-        const shown = await drafts.start(body);
-        if (!shown) await send("", "");
-      } catch (err) {
-        const reading = ocrBusyError(err);
-        if (reading) setOcrRefusal({ key: chosenKey, message: reading });
-        else setError(errorMessage(err));
-      }
+      await draft(false);
       return;
     }
     await send(contentObjective, languageObjective);
+  }
+
+  /** Asks Manna for a set of objectives; `fill`: for the two fields only (nothing is generated after it). */
+  async function draft(fill: boolean) {
+    if (busy || drafts.state !== null) return;
+    if (material === null) {
+      setNeedMaterial(true);
+      textRef.current?.focus();
+      return;
+    }
+    const body: ObjectiveDraftRequest = {
+      kind: kindOf(tool),
+      ...material,
+      ...(classId !== null ? { class_id: classId } : {}),
+    };
+    setError(null);
+    setOcrRefusal(null);
+    setFillMode(fill);
+    try {
+      const shown = await drafts.start(body);
+      if (!shown && !fill) await send("", "");
+    } catch (err) {
+      const reading = ocrBusyError(err);
+      if (reading) setOcrRefusal({ key: chosenKey, message: reading });
+      else setError(errorMessage(err));
+    }
+  }
+
+  /** 用這組目標: the drafts as the teacher left them go into the two fields, her choices recorded. */
+  function fillFields(outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) {
+    if (outcome.has.content) setContentObjective(outcome.content);
+    if (outcome.has.language) setLanguageObjective(outcome.language);
+    drafts.close();
+    void recordDecisions(interactionId, decisions);
   }
 
   /** After the drafts: the fields as the teacher left them, her choices recorded, then 產生. */
@@ -352,29 +373,48 @@ function Generator({ tool }: { tool: Tool }) {
     }
   }
 
-  const baseSummary = mimic
+  const summary = mimic
     ? [sample ? styleLine(sampleName(sample)) : null, needed].filter(Boolean).join(" · ")
     : fields.bloom
       ? summaryLine(total, counts)
       : `${TOOL_NAME[tool]} · ${TOOL_BLURB[tool]}`;
-  // 產生 is off while Manna's drafted objectives wait for a choice: say so, instead of a silent grey button.
-  const summary = drafts.state ? `${baseSummary} · ${DRAFTS_PENDING}` : baseSummary;
 
-  // Writing her own objectives closes Manna's drafts.
+  // Writing her own objectives closes Manna's drafts. The panel opens right under the fields.
   const objectiveField = (
-    <ObjectiveFields
-      content={contentObjective}
-      language={languageObjective}
-      disabled={busy}
-      onContent={(value) => {
-        setContentObjective(value);
-        if (drafts.state) drafts.close();
-      }}
-      onLanguage={(value) => {
-        setLanguageObjective(value);
-        if (drafts.state) drafts.close();
-      }}
-    />
+    <>
+      <ObjectiveFields
+        content={contentObjective}
+        language={languageObjective}
+        disabled={busy}
+        onAsk={() => void draft(true)}
+        onContent={(value) => {
+          setContentObjective(value);
+          if (drafts.state) drafts.close();
+        }}
+        onLanguage={(value) => {
+          setLanguageObjective(value);
+          if (drafts.state) drafts.close();
+        }}
+      />
+      {drafts.state && (
+        <ObjectiveDrafts
+          embedded
+          fill={fillMode}
+          state={drafts.state}
+          disabled={busy}
+          onUse={(outcome, decisions, interactionId) =>
+            fillMode ? fillFields(outcome, decisions, interactionId) : void adoptDrafts(outcome, decisions, interactionId)
+          }
+          onSkip={(decisions, interactionId) => {
+            drafts.close();
+            void recordDecisions(interactionId, decisions);
+            if (!fillMode) void send("", "");
+          }}
+          onAnother={() => void drafts.another()}
+          onCancel={drafts.close}
+        />
+      )}
+    </>
   );
 
   const exemplarButton = (
@@ -637,21 +677,6 @@ function Generator({ tool }: { tool: Tool }) {
         )}
       </section>
 
-      {drafts.state && (
-        <ObjectiveDrafts
-          state={drafts.state}
-          disabled={busy}
-          onUse={(outcome, decisions, interactionId) => void adoptDrafts(outcome, decisions, interactionId)}
-          onSkip={(decisions, interactionId) => {
-            drafts.close();
-            void recordDecisions(interactionId, decisions);
-            void send("", "");
-          }}
-          onAnother={() => void drafts.another()}
-          onCancel={drafts.close}
-        />
-      )}
-
       <ErrorText message={error} />
 
       <div className="create-bar">
@@ -663,15 +688,17 @@ function Generator({ tool }: { tool: Tool }) {
             {ocrBusy}
           </p>
         )}
-        <button
-          type="button"
-          className="primary-button"
-          disabled={busy || totalOff || needed !== null || drafts.state !== null}
-          aria-describedby={needed || drafts.state ? `${ids}-summary` : ocrBusy ? `${ids}-ocr` : undefined}
-          onClick={() => void generate()}
-        >
-          {busy ? "產生中…" : "產生"}
-        </button>
+        {drafts.state === null && (
+          <button
+            type="button"
+            className="primary-button"
+            disabled={busy || totalOff || needed !== null}
+            aria-describedby={needed ? `${ids}-summary` : ocrBusy ? `${ids}-ocr` : undefined}
+            onClick={() => void generate()}
+          >
+            {busy ? "產生中…" : "產生"}
+          </button>
+        )}
       </div>
 
       {dialog === "upload" && (
