@@ -66,6 +66,8 @@ function PrepSessionView({ id }: { id: number }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // A taller composer for long instructions (the expand corner, as in chat composers).
+  const [composerTall, setComposerTall] = useState(false);
   const [draft, setDraft] = useState("");
   // With a worksheet in the session the bar edits it by default; 問 Manna asks a question instead.
   const [barMode, setBarMode] = useState<"revise" | "ask">("revise");
@@ -517,10 +519,40 @@ function PrepSessionView({ id }: { id: number }) {
         )}
         {/* One rounded box, like the chat composers teachers already know: the text on top, the
             mode switch bottom-left, the send button bottom-right. */}
-        <div className="prep-composer" data-disabled={locked || undefined}>
+        <div
+          className="prep-composer"
+          data-disabled={locked || undefined}
+          data-tall={composerTall || undefined}
+        >
           <label className="sr-only" htmlFor={`${ids}-draft`}>
             給 Manna 的話
           </label>
+          <button
+            type="button"
+            className="prep-composer-size"
+            aria-pressed={composerTall}
+            aria-label={composerTall ? "縮小輸入框" : "放大輸入框"}
+            title={composerTall ? "縮小輸入框" : "放大輸入框"}
+            onClick={() => {
+              setComposerTall((tall) => !tall);
+              draftRef.current?.focus();
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path
+                d={
+                  composerTall
+                    ? "M4 14h6v6M20 10h-6V4M10 14l-6 6M14 10l6-6"
+                    : "M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"
+                }
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
           <textarea
             id={`${ids}-draft`}
             ref={draftRef}

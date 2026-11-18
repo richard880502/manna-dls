@@ -875,6 +875,7 @@
 /* The composer: one rounded box holding the text, the mode switch and the send button, the way
    chat composers look elsewhere. The box carries the border and the focus ring, not the textarea. */
 .prep-composer {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-2xs);
@@ -903,6 +904,42 @@
   background: transparent;
   box-shadow: none;
   resize: none;
+}
+
+/* Leave room for the expand corner so text never runs under it. */
+.prep-composer textarea {
+  padding-right: 2.25rem;
+}
+
+.prep-composer[data-tall] textarea {
+  min-height: min(55vh, 28rem);
+  max-height: none;
+}
+
+.prep-composer-size {
+  position: absolute;
+  top: var(--space-2xs);
+  right: var(--space-2xs);
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.prep-composer-size:hover {
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+}
+
+.prep-composer-size:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
 }
 
 .prep-composer textarea:focus,
