@@ -592,6 +592,8 @@ export const api = {
   materialFileLink: (id: number) => post<MaterialFileLink>(`/materials/${id}/file-link`),
   /** 知識庫的預覽圖：上傳的 PDF 第 1 頁或圖片，480 px 寬的 JPEG；其他教材 404 */
   materialThumbnail: (id: number) => download(`/materials/${id}/thumbnail`, {}, "thumbnail.jpg").then((r) => r.blob),
+  /** 我的作品卡片的預覽圖：學生版第 1 頁，480 px 寬的 JPEG；還在產生（409）或做不出圖時錯誤 */
+  worksheetThumbnail: (id: number) => download(`/worksheets/${id}/thumbnail`, {}, "thumbnail.jpg").then((r) => r.blob),
   listAnnotations: (materialId: number) => get<MaterialAnnotation[]>(`/materials/${materialId}/annotations`),
   createAnnotation: (materialId: number, body: CreateAnnotationRequest) =>
     post<MaterialAnnotation>(`/materials/${materialId}/annotations`, body),

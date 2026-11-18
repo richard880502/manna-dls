@@ -2470,6 +2470,10 @@ export interface PrepSessionSummary {
   template: { id: number; title: string } | null;
   turn_count: number;
   last_kind: PrepKind | null;
+  /** 我的作品卡片的預覽：這個對話最近的學習單（沒有則 null）。舊的伺服器沒有這一欄。 */
+  preview_worksheet?: { id: number; version_no: number } | null;
+  /** 沒有學習單圖片時卡片上的幾行字（≤200 字，行與行之間 \n）。舊的伺服器沒有這一欄。 */
+  preview_text?: string | null;
   updated_at: string;
   created_at: string;
 }

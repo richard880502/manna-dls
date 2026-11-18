@@ -34,11 +34,12 @@ const JPEG_QUALITY: u8 = 80;
 pub const MAX_CONCURRENT_RENDERS: usize = 2;
 
 pub const MSG_NONE: &str = "這份教材沒有預覽圖（只有上傳的 PDF 與圖片有）。";
-const MSG_NO_STORAGE: &str = "這個環境目前沒有連上檔案儲存空間，無法產生預覽圖。";
+pub(crate) const MSG_NO_STORAGE: &str = "這個環境目前沒有連上檔案儲存空間，無法產生預覽圖。";
 const MSG_FILE_GONE: &str = "原檔已經不在儲存空間裡了。";
-const MSG_FILE_UNAVAILABLE: &str = "原檔暫時讀不到，請稍後再試。";
-const MSG_NO_PDFTOPPM: &str = "這個環境沒有安裝 PDF 轉圖工具（pdftoppm），無法產生預覽圖。";
-const MSG_UNREADABLE: &str = "這份檔案轉不成預覽圖（可能已加密或損壞）。";
+pub(crate) const MSG_FILE_UNAVAILABLE: &str = "原檔暫時讀不到，請稍後再試。";
+pub(crate) const MSG_NO_PDFTOPPM: &str =
+    "這個環境沒有安裝 PDF 轉圖工具（pdftoppm），無法產生預覽圖。";
+pub(crate) const MSG_UNREADABLE: &str = "這份檔案轉不成預覽圖（可能已加密或損壞）。";
 const MSG_FORGET_FAILED: &str =
     "預覽圖沒有刪除成功（儲存空間暫時無法使用），所以這份教材還沒有刪除。請稍後再試一次。";
 
@@ -68,7 +69,7 @@ pub fn etag(row: &MaterialRow) -> String {
     )
 }
 
-async fn read_all(storage: &dyn Storage, key: &str) -> Result<Vec<u8>, StorageError> {
+pub(crate) async fn read_all(storage: &dyn Storage, key: &str) -> Result<Vec<u8>, StorageError> {
     storage
         .get(key, None)
         .await?

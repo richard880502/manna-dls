@@ -533,8 +533,57 @@ pub struct Summary {
     pub template: Option<Named>,
     pub turn_count: i64,
     pub last_kind: Option<String>,
+    /// The session's most recent worksheet (not deleted) and its latest version: what a card
+    /// of 我的作品 draws the first page of (`GET /api/worksheets/:id/thumbnail`).
+    pub preview_worksheet: Option<PreviewWorksheet>,
+    /// A few lines from the last turn for a card without a worksheet picture (≤200 chars).
+    pub preview_text: Option<String>,
     pub updated_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreviewWorksheet {
+    pub id: i64,
+    pub version_no: i32,
+}
+
+/// Longest `preview_text`, in characters.
+const PREVIEW_CHARS: usize = 200;
+
+/// The lines of a card's text preview from the last turn: an activity plan (the kit's too) is
+/// its title and the first steps; 問 Manna the question and the start of the answer; anything
+/// else the request.
+fn preview_text(row: &SummaryRow) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    match row.turn_kind.as_deref() {
+        Some("activity" | "kit") if row.plan_title.is_some() => {
+            lines.extend(row.plan_title.clone());
+            if let Some(Value::Array(steps)) = row.plan_steps.as_ref().map(|s| &s.0) {
+                for (i, step) in steps.iter().filter_map(Value::as_str).enumerate() {
+                    lines.push(format!("{}. {step}", i + 1));
+                }
+            }
+        }
+        Some("ask") => {
+            lines.extend(row.turn_request.clone());
+            lines.extend(row.answer_start.clone());
+        }
+        _ => lines.extend(row.turn_request.clone()),
+    }
+    let text = lines
+        .iter()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        return None;
+    }
+    Some(match text.char_indices().nth(PREVIEW_CHARS) {
+        Some((end, _)) => text[..end].trim_end().to_string(),
+        None => text,
+    })
 }
 
 #[derive(sqlx::FromRow)]
@@ -550,12 +599,20 @@ struct SummaryRow {
     template_title: Option<String>,
     turn_count: i64,
     last_kind: Option<String>,
+    preview_worksheet_id: Option<i64>,
+    preview_version_no: Option<i32>,
+    turn_kind: Option<String>,
+    turn_request: Option<String>,
+    plan_title: Option<String>,
+    plan_steps: Option<Json<Value>>,
+    answer_start: Option<String>,
     updated_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
 }
 
 impl From<SummaryRow> for Summary {
     fn from(r: SummaryRow) -> Self {
+        let preview_text = preview_text(&r);
         Self {
             id: r.id,
             title: r.title,
@@ -574,6 +631,11 @@ impl From<SummaryRow> for Summary {
                 .map(|(id, title)| Named { id, title }),
             turn_count: r.turn_count,
             last_kind: r.last_kind,
+            preview_worksheet: r
+                .preview_worksheet_id
+                .zip(r.preview_version_no)
+                .map(|(id, version_no)| PreviewWorksheet { id, version_no }),
+            preview_text,
             updated_at: r.updated_at,
             created_at: r.created_at,
         }
@@ -585,11 +647,27 @@ const SUMMARY_SELECT: &str = "SELECT s.id, s.title, s.material_id, m.title AS ma
         (SELECT COUNT(*) FROM prep_turns x WHERE x.session_id = s.id) AS turn_count,
         (SELECT x.kind FROM prep_turns x WHERE x.session_id = s.id
           ORDER BY x.seq DESC LIMIT 1) AS last_kind,
+        pw.id AS preview_worksheet_id, pw.version_no AS preview_version_no,
+        lt.kind AS turn_kind, left(lt.request, 300) AS turn_request,
+        left(lt.result ->> 'title', 120) AS plan_title,
+        jsonb_path_query_array(lt.result, '$.steps[0 to 2].title') AS plan_steps,
+        left(lt.result ->> 'answer', 300) AS answer_start,
         s.updated_at, s.created_at
    FROM prep_sessions s
    LEFT JOIN materials m ON m.id = s.material_id
    LEFT JOIN classes c ON c.id = s.class_id
-   LEFT JOIN worksheet_templates t ON t.id = s.template_id";
+   LEFT JOIN worksheet_templates t ON t.id = s.template_id
+   -- The newest worksheet of the session that still exists, and its latest version.
+   LEFT JOIN LATERAL (
+        SELECT w.id, (SELECT MAX(v.version_no) FROM worksheet_versions v
+                       WHERE v.worksheet_id = w.id) AS version_no
+          FROM prep_turns x JOIN worksheets w ON w.id = x.worksheet_id
+         WHERE x.session_id = s.id AND w.deleted_at IS NULL
+         ORDER BY x.seq DESC LIMIT 1) pw ON TRUE
+   -- The last turn: the text of a card without a worksheet picture.
+   LEFT JOIN LATERAL (
+        SELECT x.kind, x.request, x.result FROM prep_turns x
+         WHERE x.session_id = s.id ORDER BY x.seq DESC LIMIT 1) lt ON TRUE";
 
 /// The teacher's sessions, newest `updated_at` first.
 pub async fn list(db: &PgPool, teacher_id: i64) -> sqlx::Result<Vec<Summary>> {
