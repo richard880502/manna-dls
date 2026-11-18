@@ -267,6 +267,33 @@ const prepBlock = () => within(screen.getByRole("region", { name: /^區塊 B/ })
 
 // ---------------------------------------------------------------- 備課對話
 
+describe("備課對話: the composer", () => {
+  it("the expand corner makes the box taller and back, keeping the text", async () => {
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/prep-sessions/7": session(),
+      [`GET ${WS}`]: worksheet(),
+      [`GET ${WS}/sheet`]: sheetRoute(),
+      [`GET ${WS}/comments`]: [],
+      [`GET ${WS}/proposals`]: [],
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const bar = await screen.findByRole("textbox", { name: "給 Manna 的話" });
+    await user.type(bar, "第 2 題太難");
+    const grow = screen.getByRole("button", { name: "放大輸入框" });
+    expect(grow).toHaveAttribute("aria-pressed", "false");
+    await user.click(grow);
+    const shrink = screen.getByRole("button", { name: "縮小輸入框" });
+    expect(shrink).toHaveAttribute("aria-pressed", "true");
+    expect(bar.closest(".prep-composer")).toHaveAttribute("data-tall");
+    expect(bar).toHaveFocus();
+    expect(bar).toHaveValue("第 2 題太難");
+    await user.click(shrink);
+    expect(bar.closest(".prep-composer")).not.toHaveAttribute("data-tall");
+  });
+});
+
 describe("備課對話: one block of the worksheet", () => {
   it("改這一區 targets the block from the bottom bar; the proposal waits for 採用", async () => {
     let reads = 0;
