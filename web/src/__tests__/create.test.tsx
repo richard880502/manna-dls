@@ -207,7 +207,7 @@ describe("建立: the generator", () => {
     expect(heading()).not.toHaveTextContent("分層");
     expect(screen.getByText("同一篇文章做成基礎／一般／進階三個版本。三個版本目標相同，差在提示與支持的多寡。")).toBeInTheDocument();
     const formats = within(screen.getByRole("group", { name: "題型" }));
-    expect(formats.getAllByRole("button").map((b) => b.textContent)).toEqual(["簡答題", "表格整理", "段落寫作"]);
+    expect(formats.getAllByRole("button").map((b) => b.textContent)).toEqual(["簡答題", "表格整理", "圖像組織", "段落寫作"]);
   });
 
   it.each(["/create", "/create/nonsense"])("%s opens 閱讀理解題", async (path) => {
@@ -364,6 +364,7 @@ describe("建立: the generator", () => {
       "填空題",
       "簡答題",
       "表格整理",
+      "圖像組織",
       "段落寫作",
     ]);
     expect(screen.getByText("沒有選：自動（依每個層次適合的題型）")).toBeInTheDocument();

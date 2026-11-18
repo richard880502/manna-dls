@@ -104,21 +104,20 @@ async fn create_material(
     accept: &(dyn Fn(Kind, &Extracted) -> AppResult<()> + Sync),
 ) -> AppResult<MaterialRow> {
     match form.file {
-        Some((filename, data)) => {
-            material_store::create_upload(
-                state,
-                admin_id,
-                Upload {
-                    filename: &filename,
-                    title: &form.title,
-                    source_note: &form.source_note,
-                    data,
-                },
-                placement,
-                accept,
-            )
-            .await
-        }
+        Some((filename, data)) => material_store::create_upload(
+            state,
+            admin_id,
+            Upload {
+                filename: &filename,
+                title: &form.title,
+                source_note: &form.source_note,
+                data,
+            },
+            placement,
+            accept,
+        )
+        .await
+        .map(|u| u.row),
         None if !form.text.trim().is_empty() => {
             material_store::create_text_placed(
                 &state.db,

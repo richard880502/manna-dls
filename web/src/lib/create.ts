@@ -78,14 +78,14 @@ export const TOOL_FIELDS: Record<Tool, { bloom: boolean; formats: boolean; templ
 export const defaultCount = (tool: Tool): number => (tool === "tiered" ? 6 : 8);
 
 /** 題型 (fixed labels; none chosen = 自動). */
-export const FORMAT_CHOICES = ["選擇題", "是非題", "配對題", "填空題", "簡答題", "表格整理", "段落寫作"] as const;
+export const FORMAT_CHOICES = ["選擇題", "是非題", "配對題", "填空題", "簡答題", "表格整理", "圖像組織", "段落寫作"] as const;
 
 /**
  * The 題型 a tool offers: a 差異化學習單 only uses open answers, where the versions' support and
  * expected answers (a phrase in 基礎版, full sentences above) mean something.
  */
 export const formatChoices = (tool: Tool): readonly string[] =>
-  tool === "tiered" ? FORMAT_CHOICES.filter((f) => ["簡答題", "表格整理", "段落寫作"].includes(f)) : FORMAT_CHOICES;
+  tool === "tiered" ? FORMAT_CHOICES.filter((f) => ["簡答題", "表格整理", "圖像組織", "段落寫作"].includes(f)) : FORMAT_CHOICES;
 
 export const MATERIAL_REQUIRED = "先附上文章或教材";
 
