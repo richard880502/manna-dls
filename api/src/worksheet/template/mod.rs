@@ -323,6 +323,10 @@ pub struct RawOutItem {
     /// fixed six is dropped by the checks. Absent in a revision (`prep_revise`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bloom: Option<String>,
+    /// 圖像組織 (`worksheet_template_section` version 3, when the section may use it): the
+    /// organizer to draw; absent or `null` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organizer: Option<crate::worksheet::organizer::RawOrganizer>,
 }
 
 /// One generated block.
@@ -469,8 +473,21 @@ pub const ITEM_ANSWER_CHARS: usize = 400;
 /// SECTION_OUT of the probe (gen2), with length caps; at most `item_count` items. Version 2 of
 /// the prompt: the scaffold is an array of lines and every item ends with its Bloom level (an
 /// enum of the six ids), written after the item so the label describes what was written.
-pub fn section_out_schema(item_count: usize) -> Value {
+/// `organizers` (the section may use 圖像組織): every item has an `organizer` after its options.
+pub fn section_out_schema(item_count: usize, organizers: bool) -> Value {
     let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
+    let mut item = vec![
+        ("answer_format", enum_of(&ANSWER_FORMATS)),
+        ("prompt", s_max(ITEM_PROMPT_CHARS)),
+        ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
+    ];
+    if organizers {
+        item.push(("organizer", crate::worksheet::organizer::schema(false)));
+    }
+    item.extend([
+        ("answer", s_max(ITEM_ANSWER_CHARS)),
+        ("bloom", enum_of(&blooms)),
+    ]);
     obj(vec![
         ("title", s_max(SECTION_TITLE_CHARS)),
         ("instructions", s_max(SECTION_INSTRUCTIONS_CHARS)),
@@ -482,13 +499,7 @@ pub fn section_out_schema(item_count: usize) -> Value {
             "items",
             json!({
                 "type": "array",
-                "items": obj(vec![
-                    ("answer_format", enum_of(&ANSWER_FORMATS)),
-                    ("prompt", s_max(ITEM_PROMPT_CHARS)),
-                    ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
-                    ("answer", s_max(ITEM_ANSWER_CHARS)),
-                    ("bloom", enum_of(&blooms)),
-                ]),
+                "items": obj(item),
                 "maxItems": item_count.clamp(1, MAX_ITEM_COUNT as usize)
             }),
         ),
@@ -1078,9 +1089,30 @@ mod tests {
         let o = outline_schema();
         let keys: Vec<&String> = o["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys.last().map(|k| k.as_str()), Some("outline"));
-        let out = section_out_schema(20);
+        let out = section_out_schema(20, false);
         assert_eq!(out["properties"]["items"]["maxItems"], 12, "capped at 12");
-        assert_eq!(section_out_schema(3)["properties"]["items"]["maxItems"], 3);
+        assert_eq!(
+            section_out_schema(3, false)["properties"]["items"]["maxItems"],
+            3
+        );
+        // A section that may use 圖像組織: an organizer after the options.
+        let with = section_out_schema(3, true);
+        let keys: Vec<&String> = with["properties"]["items"]["items"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "answer_format",
+                "prompt",
+                "options",
+                "organizer",
+                "answer",
+                "bloom"
+            ]
+        );
         assert_eq!(
             out["properties"]["items"]["items"]["properties"]["answer"]["maxLength"],
             ITEM_ANSWER_CHARS

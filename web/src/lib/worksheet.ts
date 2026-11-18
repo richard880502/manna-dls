@@ -19,6 +19,7 @@ import type {
   WsScaffoldType,
   WsSupportKind,
 } from "../api/types";
+import { withOrganizerFor } from "./organizer";
 
 /** §5.1 素材類型 */
 export const MATERIAL_TYPES = ["閱讀文本", "聽力素材", "影片素材", "圖像素材", "資料／數據"] as const;
@@ -286,7 +287,9 @@ const allBlank = (list: readonly string[]) => list.every((o) => o.trim() === "")
  * - 是非題 prints True／False; other choices are set aside in `kept_options`;
  * - every other format keeps the choices unprinted, ready for a switch back;
  * - 表格整理 needs no data of its own: [`tableOf`] gives the table the prompt names until the
- *   teacher edits it. A table the question has is kept whatever the format.
+ *   teacher edits it. A table the question has is kept whatever the format;
+ * - 圖像組織 gets a T-chart to edit when the question has no organizer yet ([`withOrganizerFor`]);
+ *   an organizer the question has is kept whatever the format.
  * The prompt, answer, evidence, hint and versions are never touched.
  */
 export function withAnswerFormat(item: WsItem, format: string | null): WsItem {
@@ -303,7 +306,7 @@ export function withAnswerFormat(item: WsItem, format: string | null): WsItem {
       if (kept.length > 0) next.kept_options = [];
     }
   }
-  return next;
+  return withOrganizerFor(next);
 }
 
 export const TABLE_ROWS = 3;

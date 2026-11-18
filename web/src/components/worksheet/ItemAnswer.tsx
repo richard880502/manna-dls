@@ -1,6 +1,6 @@
 // Where a question is answered on the sheet, by its 作答方式 (§5.3), drawn the way the printed
 // sheet draws it (api/src/worksheet/export.rs): the choices of 選擇題／是非題／配對題, the table of
-// 表格整理, the box of 圖像組織 and the writing lines of 簡答題／段落寫作. Everything the teacher
+// 表格整理, the box of 圖像組織 (its chart, when it has one, is Organizer.tsx's) and the writing lines of 簡答題／段落寫作. Everything the teacher
 // can change here is part of the question and saved with it.
 import type { WsItem, WsItemTable } from "../../api/types";
 import {
@@ -10,6 +10,7 @@ import {
   tableOf,
   usesChoices,
 } from "../../lib/worksheet";
+import { newOrganizer } from "../../lib/organizer";
 import { SheetText } from "./SheetText";
 
 type ItemChange = (change: (it: WsItem) => WsItem) => void;
@@ -207,7 +208,7 @@ function TableArea({ item, no, disabled, onChange }: { item: WsItem; no: number;
 
 /**
  * The room to answer under a question (and its support): the table of 表格整理, the box of
- * 圖像組織, else `lines` writing lines (none for the formats answered on the choices or in the
+ * 圖像組織 without an organizer (with the way to make it a chart), else `lines` writing lines (none for the formats answered on the choices or in the
  * blanks).
  */
 export function WritingArea({
@@ -225,7 +226,24 @@ export function WritingArea({
 }) {
   if (item.answer_format === "表格整理") return <TableArea item={item} no={no} disabled={disabled} onChange={onChange} />;
   if (item.answer_format === "圖像組織") {
-    return <div className="ws-organizer" role="img" aria-label={`圖像組織作答框 ${no}`} />;
+    // A question with an organizer is drawn by OrganizerEditor instead; one without (made before
+    // organizers) prints this box until the teacher turns it into a chart.
+    return (
+      <>
+        <div className="ws-organizer" role="img" aria-label={`圖像組織作答框 ${no}`} />
+        <p className="ws-org-missing" lang="zh-Hant">
+          這一題印成空白方框。
+          <button
+            type="button"
+            className="text-link is-plain"
+            disabled={disabled}
+            onClick={() => onChange((it) => ({ ...it, organizer: newOrganizer() }))}
+          >
+            改成圖表
+          </button>
+        </p>
+      </>
+    );
   }
   if (lines === 0) return null;
   return (

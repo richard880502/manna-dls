@@ -69,6 +69,15 @@
 //!
 //! 差異化學習單 (`worksheet_tiered_level`): see [`tiered_level`] (`FAKE_TIER_LOCATION`,
 //! `FAKE_TIER_FLAT`, `FAKE_BLOCK`).
+//!
+//! 圖像組織: every 圖像組織 question (tasks, template blocks, 閱讀理解題, 差異化學習單) carries an
+//! organizer, the types in turn by question number ([`fake_organizer`]): labels for the type,
+//! answers from the paragraph's words, the first cell pre-filled (差異化學習單: the first in every
+//! version, the second in 基礎版 only). Marker:
+//!
+//! | marker                   | effect                                                              |
+//! |--------------------------|---------------------------------------------------------------------|
+//! | `FAKE_ORG_BAD`           | tasks and 閱讀理解題: every organizer has the type `fishbone` and eight sections of three cells, all pre-filled (the server falls back to a sequence, cuts it to six boxes of two cells and leaves one to write) |
 
 use serde_json::{json, Value};
 
@@ -186,7 +195,7 @@ fn item(format: &str, label: &str, sentence: &str, k: usize, tier: &str) -> Valu
             Some(sentence.to_string()),
         ),
         f if f == FMT_ORGANIZER => (
-            format!("Draw a cause-and-effect chain for {label} with at least three boxes. (Question {k})"),
+            format!("Complete the organizer for {label}. (Question {k})"),
             Vec::new(),
             "Cause, event and result in the order of the text.".to_string(),
             None,
@@ -204,9 +213,97 @@ fn item(format: &str, label: &str, sentence: &str, k: usize, tier: &str) -> Valu
             Some(sentence.to_string()),
         ),
     };
-    json!({
+    let mut out = json!({
         "item_id": format!("X-{k}"), "answer_format": format, "tier": tier,
         "prompt_en": prompt, "options": options, "answer_en": answer, "evidence": evidence,
+    });
+    if format == FMT_ORGANIZER {
+        out["organizer"] = fake_organizer(k, label, sentence, false);
+    }
+    out
+}
+
+/// The organizer types in the order fake questions use them.
+const FAKE_ORGANIZERS: [(&str, &[&str]); 8] = [
+    ("t_chart", &["Before", "After"]),
+    ("cause_effect", &["Cause", "Effect", "Effect"]),
+    ("sequence", &["First", "Next", "Finally"]),
+    ("venn", &["The writer", "Both", "The neighbors"]),
+    ("mind_map", &["Who", "What", "Why", "How"]),
+    (
+        "story_map",
+        &["Setting", "Characters", "Problem", "Events", "Solution"],
+    ),
+    ("problem_solution", &["Problem", "Solution", "Result"]),
+    (
+        "kwl",
+        &["What I Know", "What I Want to Know", "What I Learned"],
+    ),
+];
+
+/// The organizer of fake question `k` (from 1) about `label`: the type by `k`, answers made of
+/// the sentence's words, the first cell pre-filled (`tiered`: in every version, the second
+/// section's in 基礎版 only).
+pub fn fake_organizer(k: usize, label: &str, sentence: &str, tiered: bool) -> Value {
+    let (kind, labels) = FAKE_ORGANIZERS[(k.max(1) - 1) % FAKE_ORGANIZERS.len()];
+    let words: Vec<String> = sentence
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
+        .filter(|w| w.len() > 2)
+        .collect();
+    let word = |n: usize| {
+        words
+            .get(n % words.len().max(1))
+            .cloned()
+            .unwrap_or_else(|| "idea".to_string())
+    };
+    let per = match kind {
+        "cause_effect" | "sequence" | "problem_solution" => 1,
+        _ => 2,
+    };
+    let sections: Vec<Value> = labels
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let cells: Vec<Value> = (0..per)
+                .map(|j| {
+                    let answer = if kind == "kwl" && i < 2 {
+                        String::new()
+                    } else {
+                        format!("{} in {label}", word(i * per + j))
+                    };
+                    let first = i == 0 && j == 0 && !answer.is_empty();
+                    if tiered {
+                        let prefill = match (i, j) {
+                            _ if first => "all",
+                            (1, 0) => "basic",
+                            _ => "none",
+                        };
+                        json!({ "answer": answer, "prefill_in": prefill })
+                    } else {
+                        json!({ "answer": answer, "prefilled": first })
+                    }
+                })
+                .collect();
+            json!({ "label": l, "cells": cells })
+        })
+        .collect();
+    json!({
+        "type": kind,
+        "title": format!("Organize {label}"),
+        "center": if kind == "mind_map" { word(0) } else { String::new() },
+        "sections": sections,
+    })
+}
+
+/// `FAKE_ORG_BAD`: a type outside the eight, too many sections and cells, every cell pre-filled.
+fn bad_organizer() -> Value {
+    let cell = json!({ "answer": "a fact", "prefilled": true });
+    json!({
+        "type": "fishbone", "title": "Too big", "center": "",
+        "sections": (1..=8)
+            .map(|i| json!({ "label": format!("Bone {i}"), "cells": [cell, cell, cell] }))
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -314,6 +411,13 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             if invalid {
                 for it in &mut items {
                     it["prompt_en"] = json!("請用中文回答這一題。");
+                }
+            }
+            if has("FAKE_ORG_BAD") {
+                for it in &mut items {
+                    if it.get("organizer").is_some() {
+                        it["organizer"] = bad_organizer();
+                    }
                 }
             }
             if bi == 0 {
@@ -706,13 +810,17 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
                 });
             }
             let raw = item(&format, &label, &sentence, k, TIER_CORE_LABEL);
-            json!({
+            let mut out = json!({
                 "answer_format": format,
                 "prompt": format!("{} [v{run_no}.{attempt}]", raw["prompt_en"].as_str().unwrap_or_default()),
                 "options": raw["options"],
                 "answer": raw["answer_en"],
                 "bloom": bloom(k),
-            })
+            });
+            if let Some(o) = raw.get("organizer") {
+                out["organizer"] = o.clone();
+            }
+            out
         })
         .collect();
     let scaffold: Vec<&str> = if external {
@@ -790,7 +898,7 @@ pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
             } else {
                 String::new()
             };
-            json!({
+            let mut out = json!({
                 "answer_format": format,
                 "prompt": format!("{} {tag}", raw["prompt_en"].as_str().unwrap_or_default()),
                 "options": raw["options"],
@@ -798,7 +906,15 @@ pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
                 "evidence": evidence,
                 "paragraph_ids": [code],
                 "hint": "I think the answer is … because …",
-            })
+            });
+            if let Some(o) = raw.get("organizer") {
+                out["organizer"] = if has("FAKE_ORG_BAD") {
+                    bad_organizer()
+                } else {
+                    o.clone()
+                };
+            }
+            out
         })
         .collect();
     json!({
@@ -1071,7 +1187,7 @@ pub fn tiered_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
                     lines.push(json!("Look at paragraph 1 again."));
                 }
             }
-            json!({
+            let mut out = json!({
                 "answer_format": format,
                 "prompt": format!("{} {tag}", raw["prompt_en"].as_str().unwrap_or_default()),
                 "evidence": if quotes { sentence.clone() } else { String::new() },
@@ -1079,7 +1195,11 @@ pub fn tiered_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
                 "advanced": fake_version(advanced, &sentence, "advanced"),
                 "standard": fake_version(standard, &sentence, "standard"),
                 "basic": basic_v,
-            })
+            });
+            if format == FMT_ORGANIZER {
+                out["organizer"] = fake_organizer(k + 1, &label, &sentence, true);
+            }
+            out
         })
         .collect();
     let linking = match bloom {

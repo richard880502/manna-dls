@@ -429,7 +429,8 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
         .starts_with("教學順序：示範"));
     let tasks = interactions(&app, "worksheet_tasks").await;
     assert_eq!(tasks.len(), 1, "in order: no repair call");
-    assert_eq!(tasks[0].3["prompt"]["version_no"], 3);
+    // Version 4 (0029_graphic_organizers.sql) is version 3 with the organizer section.
+    assert_eq!(tasks[0].3["prompt"]["version_no"], 4);
     assert!(tasks[0].3["prompt"]["system"]
         .as_str()
         .unwrap()

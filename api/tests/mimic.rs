@@ -209,7 +209,8 @@ async fn a_sample_becomes_a_template_and_the_first_turn_follows_it() {
     .unwrap();
     assert_eq!(calls.len(), 7);
     for c in &calls {
-        assert_eq!(c["prompt"]["version_no"], 2);
+        // Version 3 (0029_graphic_organizers.sql) is version 2 with the organizer section.
+        assert_eq!(c["prompt"]["version_no"], 3);
         assert!(c["prompt"]["system"]
             .as_str()
             .unwrap()

@@ -411,14 +411,17 @@ describe("report 1: choosing an answer format changes the sheet", { timeout: 20_
     });
   });
 
-  it("a format that does not use choices keeps them, says so, and the teacher can drop them; 圖像組織 draws a box", async () => {
+  it("a format that does not use choices keeps them, says so, and the teacher can drop them; 圖像組織 draws a chart", async () => {
     server(state(plain()));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
     const select = await screen.findByRole("combobox", { name: "作答方式 2" });
     expect(within(question(2).getByRole("group", { name: "選項 2" })).getAllByRole("textbox")).toHaveLength(4);
     await user.selectOptions(select, "圖像組織");
-    expect(question(2).getByRole("img", { name: "圖像組織作答框 2" })).toBeInTheDocument();
+    // Switched to 圖像組織, the question gets a T-chart to fill in (no empty box).
+    expect(question(2).getByRole("group", { name: "圖像組織 2" })).toBeInTheDocument();
+    expect(question(2).getByRole("combobox", { name: "圖表類型 2" })).toHaveValue("t_chart");
+    expect(question(2).queryByRole("img", { name: "圖像組織作答框 2" })).not.toBeInTheDocument();
     expect(question(2).queryByRole("group", { name: "選項 2" })).not.toBeInTheDocument();
     expect(question(2).getByText(/這題原本的 4 個選項還留著，圖像組織不會印出/)).toBeInTheDocument();
     await user.click(question(2).getByRole("button", { name: "刪掉這些選項" }));

@@ -17,6 +17,7 @@ pub mod export;
 pub mod fake;
 pub mod images;
 pub mod material;
+pub mod organizer;
 pub mod revise;
 pub mod schemas;
 pub mod store;
@@ -33,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use crate::sop::{ExitKind, InfoFunction};
 pub use bloom::{Bloom, Output};
 pub use material::Material;
+pub use organizer::{Organizer, OrganizerKind};
 pub use tiered::{ItemTier, SupportKind};
 
 // ---------------------------------------------------------------- fixed labels (spec §5)
@@ -617,6 +619,10 @@ pub struct Item {
     /// place): changing it back to 選擇題 or 配對題 brings them back. Never printed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub kept_options: Vec<String>,
+    /// 圖像組織: the organizer the sheet draws (printed only while `answer_format` is 圖像組織).
+    /// A question without one (made before organizers, or by hand) prints an empty box.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organizer: Option<Organizer>,
 }
 
 impl Item {
@@ -630,6 +636,13 @@ impl Item {
         self.table
             .clone()
             .unwrap_or_else(|| ItemTable::for_prompt(&self.prompt))
+    }
+
+    /// The organizer the sheet draws: the question's, while its format is 圖像組織.
+    pub fn printed_organizer(&self) -> Option<&Organizer> {
+        self.organizer
+            .as_ref()
+            .filter(|_| self.answer_format.as_deref() == Some(FMT_ORGANIZER))
     }
 }
 
@@ -1001,6 +1014,9 @@ impl Content {
                 check_text("依據", &i.evidence)?;
                 check_text("提示", &i.hint)?;
                 check_tiers(&mut i.tiers)?;
+                if let Some(org) = &mut i.organizer {
+                    org.validate()?;
+                }
                 if i.options.len() > 12 || i.kept_options.len() > 12 {
                     return Err("一題最多 12 個選項。".to_string());
                 }

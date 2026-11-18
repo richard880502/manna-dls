@@ -1441,6 +1441,11 @@ export interface WsItem {
   table?: WsItemTable | null;
   /** 改成是非題時收起來的選項（True／False 取代了它們）；改回選擇題或配對題時放回去。不會印出。 */
   kept_options?: string[];
+  /**
+   * 圖像組織：題目的圖表（只在 answer_format 是「圖像組織」時印出）。舊題目與手寫的題目沒有這個鍵，
+   * 印成一個空白方框。
+   */
+  organizer?: WsOrganizer | null;
 }
 
 export interface WsItemTable {
@@ -1448,6 +1453,56 @@ export interface WsItemTable {
   columns: string[];
   /** 欄名下方的空白列數，1–12 */
   rows: number;
+}
+
+// ---- 圖像組織（docs/API.md「圖像組織」）----
+
+/** 八種圖像組織 */
+export type WsOrganizerType =
+  | "t_chart"
+  | "venn"
+  | "sequence"
+  | "cause_effect"
+  | "problem_solution"
+  | "story_map"
+  | "kwl"
+  | "mind_map";
+
+/** 一個空格：參考答案（只在教師版）與在 prefilled 版本的學生版預填的文字 */
+export interface WsOrganizerCell {
+  answer: string;
+  given: string;
+  /** 學生版印出 given 的版本（基礎版預填最多，T3）；空陣列＝都不預填 */
+  prefilled: WsLevel[];
+}
+
+/** 一格：欄標題、方框標題或分支，和它的空格 */
+export interface WsOrganizerSection {
+  label: string;
+  cells: WsOrganizerCell[];
+}
+
+export interface WsOrganizer {
+  type: WsOrganizerType;
+  /** 印在圖表上方（"" 不印） */
+  title: string;
+  /** 只有心智圖：中心詞 */
+  center: string;
+  sections: WsOrganizerSection[];
+}
+
+/** 投影裡的圖像組織（某個版本、某個對象） */
+export interface WsSheetOrganizer {
+  type: WsOrganizerType;
+  /** "T-chart"…（無障礙文字） */
+  name: string;
+  title: string;
+  center: string;
+  sections: Array<{
+    label: string;
+    /** given：學生版預填的文字（"" 是空白）；answer：只有教師版，學生要寫的格子的參考答案 */
+    cells: Array<{ given: string; answer?: string }>;
+  }>;
 }
 
 /** 支持的形式，由多到少：預填克漏字 → 字庫 → 句型框架 → 句首 → 不給支持（SIOP T3） */
@@ -1984,6 +2039,8 @@ export interface WsSheetBlock {
     support?: { kind: WsSupportKind; heading: string; lines: string[]; word_bank: string[] };
     /** 差異化學習單，只有教師版：這個版本的評分說明 */
     scoring?: string;
+    /** 圖像組織：這個版本印的圖表（取代作答線）；其他題目與沒有圖表的舊題目沒有這個鍵 */
+    organizer?: WsSheetOrganizer;
   }>;
   teacher_notes?: string;
   /** 這一區的圖（印在作答指示之後）；沒有圖時沒有這個欄位 */

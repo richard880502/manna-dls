@@ -246,7 +246,13 @@ async fn section_call(
         item_count: r.section.item_count.clamp(1, 12) as usize,
         needs_external: r.section.needs_external_material,
     };
-    let mut schema = section_out_schema(ctx.item_count);
+    // 圖像組織 is in the section's formats (or it names none, so any format may come).
+    let organizers = r.section.answer_formats.is_empty()
+        || r.section
+            .answer_formats
+            .iter()
+            .any(|f| f == crate::worksheet::FMT_ORGANIZER);
+    let mut schema = section_out_schema(ctx.item_count, organizers);
     if slots {
         // Last: the block first, then the pictures it needs.
         images::add_slots_property(&mut schema, None, MAX_SLOTS_PER_BLOCK);
@@ -358,6 +364,7 @@ fn section_block(
             levels: levels.to_vec(),
             origin: Origin::Ai,
             bloom: it.bloom,
+            organizer: it.organizer.clone(),
             ..Item::default()
         })
         .collect();

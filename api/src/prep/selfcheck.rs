@@ -564,7 +564,7 @@ const BLOCK_KEYS: [&str; 18] = [
     "template_section_id",
     "bloom",
 ];
-const ITEM_KEYS: [&str; 12] = [
+const ITEM_KEYS: [&str; 13] = [
     "id",
     "answer_format",
     "prompt",
@@ -577,6 +577,7 @@ const ITEM_KEYS: [&str; 12] = [
     "bloom",
     "hint",
     "paragraph_ids",
+    "organizer",
 ];
 const SCAFFOLD_KEYS: [&str; 8] = [
     "id", "type", "kind", "content", "steps", "levels", "auto", "origin",
@@ -685,6 +686,10 @@ fn block_text(no: usize, b: &Block, several: bool, out: &mut Vec<String>) {
             "提示（印在基礎版）：",
             &clip_chars(it.hint.trim(), 200),
         );
+        // 圖像組織 (SIOP 4 補充教材, 14 鷹架): the type, its labels and what is pre-filled.
+        if let Some(o) = it.printed_organizer() {
+            push_line(out, 2, "圖像組織：", &o.summary(several));
+        }
         extras(&json!(it), &ITEM_KEYS, 2, out);
     }
     push_line(
@@ -1444,6 +1449,33 @@ mod tests {
             assert!(text.lines().any(|l| l == line), "{line:?} missing:\n{text}");
         }
         assert!(!text.contains("Hidden") && !text.contains("In no version"));
+        // An organizer question: the type, the labels and the pre-filled cells, in one line.
+        let with_org: Content = serde_json::from_value(json!({
+            "levels": ["basic", "standard"],
+            "blocks": [{ "id": "b1", "kind": "activity", "title": "Organize",
+                "items": [{ "id": "i1", "answer_format": "圖像組織", "prompt": "Complete the chain.",
+                            "levels": ["basic", "standard"],
+                            "organizer": { "type": "cause_effect", "title": "Why it worked",
+                                "sections": [
+                                    { "label": "Cause", "cells": [{ "answer": "It rained.", "given": "It rained.", "prefilled": ["basic"] }] },
+                                    { "label": "Effect", "cells": [{ "answer": "People borrowed umbrellas." }] }
+                                ] } },
+                          { "id": "i2", "answer_format": "簡答題", "prompt": "Why?", "levels": ["basic"],
+                            "organizer": { "type": "t_chart", "sections": [] } }] }],
+        }))
+        .unwrap();
+        let text = render_worksheet("T", &with_org, &Settings::default());
+        assert!(
+            text.lines().any(|l| l
+                == "    圖像組織：因果鏈（cause_effect）｜標題：Why it worked｜Cause：It rained.〔預填：基礎版〕｜Effect：People borrowed umbrellas."),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("圖像組織：").count(),
+            1,
+            "only the organizer question"
+        );
+        assert!(!text.contains("organizer："), "not printed generically");
         // A field added to an item, a block or the content later is read too, as 「key：value」.
         let mut extra = Vec::new();
         extras(

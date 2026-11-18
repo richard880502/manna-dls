@@ -16,7 +16,10 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
+mod organizer;
+
 use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport, SheetTable};
+use super::organizer::SheetOrganizer;
 use super::tiered::{student_version_name, SupportKind};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
 use crate::retrieval::is_cjk;
@@ -76,14 +79,19 @@ fn option_letter(i: usize) -> char {
     (b'A' + (i % 26) as u8) as char
 }
 
-/// Where a question is answered: a table (表格整理), a box (圖像組織) or answer lines.
-enum AnswerSpace {
+/// Where a question is answered: a table (表格整理), a drawn organizer (圖像組織 with one), a
+/// box (圖像組織 without one) or answer lines.
+enum AnswerSpace<'a> {
     Table(SheetTable),
+    Organizer(&'a SheetOrganizer),
     Box,
     Lines(u8),
 }
 
-fn answer_space(item: &SheetItem) -> AnswerSpace {
+fn answer_space(item: &SheetItem) -> AnswerSpace<'_> {
+    if let Some(o) = &item.organizer {
+        return AnswerSpace::Organizer(o);
+    }
     match (&item.table, item.answer_format.as_deref()) {
         (Some(t), _) => AnswerSpace::Table(t.clone()),
         // A sheet assembled before tables had their own size: the grid it always printed.
@@ -212,6 +220,7 @@ struct ParaStyle {
     after: u32,
     keep_next: bool,
     border_bottom: bool,
+    centre: bool,
 }
 
 fn para(runs: &[String], p: &ParaStyle) -> String {
@@ -237,6 +246,9 @@ fn para(runs: &[String], p: &ParaStyle) -> String {
             "<w:ind w:left=\"{}\" w:hanging=\"{}\"/>",
             p.indent, p.hanging
         ));
+    }
+    if p.centre {
+        props.push_str("<w:jc w:val=\"center\"/>");
     }
     format!("<w:p><w:pPr>{props}</w:pPr>{}</w:p>", runs.join(""))
 }
@@ -393,6 +405,7 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
             rows.extend((0..t.rows).map(|_| vec![String::new(); n]));
             out.push_str(&table(&vec![width; n], &rows, Some(520), t.has_headings()));
         }
+        AnswerSpace::Organizer(o) => organizer::docx_organizer(out, o),
         AnswerSpace::Box => out.push_str(&table(
             &[DOCX_WIDTH - 400],
             &[vec![String::new()]],
@@ -1293,6 +1306,13 @@ enum Op {
         w: f32,
         h: f32,
     },
+    /// An ellipse outline (a circle of a Venn diagram), centred at (cx, cy).
+    Ellipse {
+        cx: f32,
+        cy: f32,
+        rx: f32,
+        ry: f32,
+    },
     /// A stored picture (by `image_id`), its top-left corner at (x, y).
     Image {
         x: f32,
@@ -1724,9 +1744,11 @@ impl<'a> Layout<'a> {
 fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     let body = Style::body();
     let indent = 20.0;
-    // Keep the number with the first line of the question.
+    // Keep the number with the first line of the question (and an organizer's question with
+    // the start of its organizer).
     l.y += 6.0;
-    l.ensure(Layout::line_height(body.size) * 2.0);
+    let room = if it.organizer.is_some() { 90.0 } else { 0.0 };
+    l.ensure(Layout::line_height(body.size) * 2.0 + room);
     let no = format!("{}.", it.no);
     l.draw_line(
         &no,
@@ -1801,6 +1823,7 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     }
     match answer_space(it) {
         AnswerSpace::Table(t) => l.answer_table(indent, &t, 26.0),
+        AnswerSpace::Organizer(o) => l.organizer(o, indent),
         AnswerSpace::Box => l.grid(indent, 1, 1, 96.0),
         AnswerSpace::Lines(n) => l.answer_lines(n, indent),
     }
@@ -2063,6 +2086,9 @@ fn printed_text(sheet: &Sheet) -> String {
                 out.extend(s.word_bank.iter().cloned());
             }
             out.extend(it.scoring.iter().cloned());
+            if let Some(o) = &it.organizer {
+                out.extend(o.texts().into_iter().map(str::to_string));
+            }
             out.extend(it.options.iter().cloned());
             out.extend(it.table.iter().flat_map(|t| t.columns.iter().cloned()));
             out.extend(it.answer.iter().cloned());
@@ -2190,6 +2216,22 @@ pub fn pdf_with_images(sheet: &Sheet, images: &ImageBank) -> Result<Vec<u8>, Exp
                         surface.draw_path(&path);
                     }
                 }
+                Op::Ellipse { cx, cy, rx, ry } => {
+                    // Four cubic Béziers (κ ≈ 0.5523 of the radius to the control points).
+                    let (k, cx, cy, rx, ry) = (0.552_284_8_f32, *cx, *cy, *rx, *ry);
+                    let mut pb = PathBuilder::new();
+                    pb.move_to(cx + rx, cy);
+                    pb.cubic_to(cx + rx, cy + k * ry, cx + k * rx, cy + ry, cx, cy + ry);
+                    pb.cubic_to(cx - k * rx, cy + ry, cx - rx, cy + k * ry, cx - rx, cy);
+                    pb.cubic_to(cx - rx, cy - k * ry, cx - k * rx, cy - ry, cx, cy - ry);
+                    pb.cubic_to(cx + k * rx, cy - ry, cx + rx, cy - k * ry, cx + rx, cy);
+                    pb.close();
+                    if let Some(path) = pb.finish() {
+                        surface.set_fill(None);
+                        surface.set_stroke(Some(stroke(INK, 0.9)));
+                        surface.draw_path(&path);
+                    }
+                }
                 Op::Image { x, y, w, h, id } => {
                     let image = embedded.entry(*id).or_insert_with(|| {
                         images.get(id).and_then(|p| {
@@ -2277,6 +2319,7 @@ mod tests {
                         hint: None,
                         support: None,
                         scoring: None,
+                        organizer: None,
                     })
                     .collect(),
                 teacher_notes: teacher.then(|| "先找出關鍵句再推論。".to_string()),

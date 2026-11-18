@@ -245,6 +245,7 @@ fn raw_out(it: &RawRevisedItem) -> RawOutItem {
         options: it.options.clone(),
         answer: it.answer.clone(),
         bloom: Some(it.bloom.clone()),
+        organizer: None,
     }
 }
 
@@ -278,6 +279,10 @@ fn modified(old: &Item, c: &CleanSectionItem, block_bloom: Option<Bloom>) -> Ite
         // columns) no longer fit.
         item.tiers.clear();
         item.table = None;
+    }
+    // The revision's schema has no organizer: the stored one stays.
+    if c.organizer.is_some() {
+        item.organizer = c.organizer.clone();
     }
     item.origin = Origin::Ai;
     item
@@ -418,6 +423,7 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                         tiers: Vec::new(),
                         table: None,
                         kept_options: Vec::new(),
+                        organizer: c.organizer.clone(),
                     });
                 }
                 None => dropped_new += 1,

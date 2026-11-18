@@ -856,6 +856,7 @@ fn level_block(
                 .collect(),
             table: None,
             kept_options: Vec::new(),
+            organizer: d.item.item.organizer.clone(),
         })
         .collect();
     let mut block = Block {
