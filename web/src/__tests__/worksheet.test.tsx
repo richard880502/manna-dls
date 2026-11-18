@@ -339,27 +339,6 @@ describe("options: the four blocks of spec §5", () => {
 });
 
 describe("entries", () => {
-  it("direct: paste material on 學習單, create, and land on the options", async () => {
-    const api = mockApi({
-      ...routes(wsState()),
-      "POST /api/worksheets": wsState(),
-    });
-    const user = userEvent.setup();
-    renderApp("/worksheets");
-    expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "貼上文字" }));
-    await user.type(screen.getByRole("textbox", { name: /教材標題/ }), "The Umbrella Stand");
-    await user.type(screen.getByRole("textbox", { name: "貼上教材文字" }), P1);
-    await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));
-
-    expect(await screen.findByRole("heading", { name: "做一份學習單", level: 1 })).toBeInTheDocument();
-    expect(api.lastBody("POST", "/api/worksheets")).toEqual({ material: { title: "The Umbrella Stand", text: P1 } });
-    // The material sits beside the options, read-only.
-    const material = within(screen.getByRole("region", { name: "教材" }));
-    expect(material.getByText(P1)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "產生學習單" })).toBeEnabled();
-  });
-
   it("from a lesson: the lesson page creates a linked worksheet; what was carried over can be edited and removed", async () => {
     const fromLesson = wsState({
       lesson: { id: 7, title: "第 1 課：Not only… but also", unit_id: 1, unit_title: "倒裝句單元" },

@@ -140,10 +140,6 @@
   margin-top: var(--space-md);
 }
 
-.ws-new-form > .field-label {
-  margin-top: var(--space-md);
-}
-
 .ws-template-line {
   margin-top: var(--space-3xs);
 }

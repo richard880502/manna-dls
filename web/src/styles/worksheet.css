@@ -10,18 +10,6 @@
   color: var(--color-error);
 }
 
-/* ================= list page ================= */
-.ws-new-form {
-  display: grid;
-  gap: var(--space-xs);
-  max-width: var(--measure);
-  margin-top: var(--space-md);
-}
-
-.ws-new-form .actions {
-  margin-top: var(--space-sm);
-}
-
 /* ================= two columns: material | work ================= */
 .ws-split {
   display: grid;

@@ -28,7 +28,6 @@ import { TemplatesPage } from "./pages/TemplatesPage";
 import { UnitPage } from "./pages/UnitPage";
 import { WorksheetCheckPage } from "./pages/WorksheetCheckPage";
 import { WorksheetPage } from "./pages/WorksheetPage";
-import { WorksheetsPage } from "./pages/WorksheetsPage";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { token, teacher, authChecked, authError, retryAuth, logout } = useApp();
@@ -102,7 +101,7 @@ export function AppRoutes() {
         <Route path="record" element={<RecordIndexPage />} />
         <Route path="runs/:runId" element={<RunConsolePage />} />
         <Route path="runs/:runId/review" element={<RunReviewPage />} />
-        <Route path="worksheets" element={<WorksheetsPage />} />
+        <Route path="worksheets" element={<Navigate to="/prep" replace />} />
         <Route path="worksheets/:worksheetId" element={<WorksheetPage />} />
         <Route path="worksheets/:worksheetId/check" element={<WorksheetCheckPage />} />
         <Route path="preferences" element={<PreferencesPage />} />

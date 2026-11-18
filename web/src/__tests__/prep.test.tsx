@@ -1,6 +1,6 @@
 // 備課對話 (prep sessions): the home page's quick box (Bloom contract, Addendum 1) with its keyword
 // chips, 附上文章 and its dialogs, the conversation page with a card per turn kind, the bottom bar,
-// polling, 工作區 (/prep), and where a session sits in the sidebar.
+// polling, and where a session sits in the sidebar.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -964,33 +964,9 @@ describe("備課對話 (session page)", () => {
   });
 });
 
-// ---------------------------------------------------------------- 我的備課 (工作區) and the shell
+// ---------------------------------------------------------------- the shell (the list itself: myWork.test.tsx)
 
-describe("我的備課", () => {
-  it("lists the sessions with material, class, last step and date, and links to all worksheets", async () => {
-    signIn();
-    mockApi({
-      ...baseRoutes(),
-      [`GET ${SESSIONS}`]: {
-        sessions: [
-          summary({ id: 7, class: { id: 3, name: "高一 3 班" }, last_kind: "worksheet" }),
-          summary({ id: 8, title: "環境保護", material: null, topic: "環境保護", last_kind: "resources" }),
-        ],
-      },
-    });
-    renderApp("/prep");
-    expect(await screen.findByRole("heading", { name: "我的備課", level: 1 })).toBeInTheDocument();
-    const rows = within(await screen.findByRole("list", { name: "備課對話" }));
-    expect(rows.getByRole("link", { name: "The Umbrella Stand" })).toHaveAttribute("href", "/prep/7");
-    expect(rows.getByText(/教材：The Umbrella Stand · 高一 3 班 · 做學習單 · 11\/15/)).toBeInTheDocument();
-    expect(rows.getByRole("link", { name: "環境保護" })).toHaveAttribute("href", "/prep/8");
-    expect(rows.getByText(/主題：環境保護 · 找教學資源/)).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByRole("link", { name: "所有學習單" })).toHaveAttribute("href", "/worksheets");
-    // In the sidebar it is 我的作品.
-    const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
-    expect(nav.getByRole("link", { name: "我的作品" })).toHaveAttribute("aria-current", "page");
-  });
-
+describe("the shell around a session", () => {
   it("a session counts as being inside 我的作品 in the sidebar", async () => {
     signIn();
     mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: plan })]) });

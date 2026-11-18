@@ -227,22 +227,6 @@ describe("app shell: the sidebar", () => {
     expect(await screen.findByRole("heading", { name: HOME, level: 1 })).toBeInTheDocument();
   });
 
-  it("the page behind 我的作品's old sibling /worksheets still works: upload, pick or paste material, and an honest empty list", async () => {
-    signIn();
-    mockApi({ ...baseRoutes(), "GET /api/worksheets": [] });
-    const user = userEvent.setup();
-    renderApp("/worksheets");
-
-    expect(await screen.findByRole("heading", { name: "學習單", level: 1 })).toBeInTheDocument();
-    const ways = within(screen.getByRole("group", { name: "教材從哪裡來" }));
-    expect(ways.getAllByRole("button").map((b) => b.textContent)).toEqual(["上傳檔案", "從教材庫選", "貼上文字"]);
-    expect(ways.getByRole("button", { name: "上傳檔案" })).toHaveAttribute("aria-pressed", "true");
-    await user.click(ways.getByRole("button", { name: "貼上文字" }));
-    expect(screen.getByRole("textbox", { name: "貼上教材文字" })).toBeInTheDocument();
-    expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
-    expect(currentNav()).toEqual(["我的作品"]);
-  });
-
   it.each([
     ["/units/1", "倒裝句單元"],
     ["/units", "備課庫"],

@@ -543,7 +543,7 @@ interface LessonDetail { /* 原欄位… */ class_profile_source: ClassProfileSo
 - **班級是情境，不是欄位**：從班級進入單元或課例時，那一班就是這次的班級，只在麵包屑出現一次，頁面上沒有切換班級的欄位；存在瀏覽器的 sessionStorage（`manna.currentClass`）。從備課庫進入時清除；單元只有一個班級取用時自動視為該班。帶 `class_id` 的呼叫（課例、建議、CoRe 協助、教材候選）都用這個班級。
 - **班級只問一次**：從首頁或班級頁按「開始上課」直接帶該班的 `class_id`。只有從備課庫進到課例、而單元有多個班級取用時，按「開始上課」才跳出「這節課在哪一班上？」對話框（預設選這節課正在上的班，其次是還沒上過這一節的班）。單元沒有班級取用時照舊建立沒有班級的上課紀錄。伺服器不接受「多個班級取用卻不指定班級」（409），所以對話框沒有「不記在任何班級」的選項。
 - **上課紀錄** `/record`：所有上課紀錄依班級分組（含沒有班級的），只供補寫與回顧；不再從這裡開始上課。上課畫面與課後補寫頁顯示班級。
-- 已移除的頁面（`/reflect`、`/share`、`/profile`、`/community`）一律導回首頁；`/worksheets` 是「學習單產生器開發中」的說明頁，沒有任何功能。
+- 已移除的頁面（`/reflect`、`/share`、`/profile`、`/community`）一律導回首頁；`/worksheets`（清單）轉到 `/prep`「我的作品」。
 
 ---
 
@@ -1383,7 +1383,7 @@ interface WsGloss { word: string; pos: string; meaning_zh: string; definition_en
 
 ## 前端
 
-- `/worksheets`：做過的學習單清單＋「直接做一份」（貼上教材）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
+- `/prep`「我的作品」：一份清單，依 `updated_at` 新到舊，含每一次備課對話（連到 `/prep/:id`）和不屬於任何備課對話的獨立學習單（`prep_session_id` 為空，連到 `/worksheets/:id`，可刪除）；屬於備課對話的學習單不另列。上方篩選晶片「全部／學習單／課堂活動／問 Manna」（單選，記在 `?type=worksheet|activity|ask`；學習單包含 kind 為 worksheet、comprehension、tiered、kit、assessment、revise 的備課對話與獨立學習單）。`/worksheets`（清單）轉到 `/prep`；已沒有「直接做一份」的表單，新的學習單一律從首頁的備課開始（`POST /api/worksheets` 仍供課例頁「產生學習單」使用）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
 - 教材欄是一個可替換的插槽（`materialPane`）：這一版放唯讀的教材檢視；教材庫分支的 `MaterialViewer`（含註記）之後接在同一個位置。
 
 ---
