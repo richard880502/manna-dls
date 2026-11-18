@@ -259,19 +259,21 @@ export function useWorksheet(id: number): WorksheetController {
     };
   }, [picturesOpen, id, setImages]);
 
-  // Poll while steps are queued or running; when they end, take the assembled worksheet.
+  // Poll while steps are queued or running; when they end, take the assembled worksheet. After the
+  // text, the run's progress may still be open (its pictures): follow it until it ends.
   const running = state?.running ?? false;
+  const progressOpen = state?.progress?.status === "running";
   useEffect(() => {
-    if (!running) return;
+    if (!running && !progressOpen) return;
     let stopped = false;
     const timer = setInterval(() => {
       void (async () => {
         try {
           const jobs = await api.worksheetJobs(id);
           if (stopped) return;
-          if (jobs.running) {
-            const now = stateRef.current;
-            if (now) put({ ...now, jobs: jobs.jobs });
+          const now = stateRef.current;
+          if (jobs.running || (now && !now.running)) {
+            if (now) put({ ...now, jobs: jobs.jobs, progress: jobs.progress ?? null });
             return;
           }
           const next = await api.getWorksheet(id);
@@ -285,7 +287,7 @@ export function useWorksheet(id: number): WorksheetController {
       stopped = true;
       clearInterval(timer);
     };
-  }, [running, id, put]);
+  }, [running, progressOpen, id, put]);
 
   return {
     status,

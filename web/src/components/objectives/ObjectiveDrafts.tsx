@@ -1,6 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
-import type { DecisionRequest, ObjectiveDraft, ObjectiveDraftRequest, ObjectiveDraftResult } from "../../api/types";
+import type {
+  DecisionRequest,
+  ObjectiveDraft,
+  ObjectiveDraftRequest,
+  ObjectiveDraftResult,
+  RunProgress,
+} from "../../api/types";
+import { RunProgressSlot } from "../RunProgress";
 import { ocrBusyError } from "../../lib/ocr";
 import {
   ANOTHER_SET,
@@ -22,9 +29,19 @@ import {
 } from "../../lib/objectives";
 
 export type DraftState =
-  | { phase: "drafting" }
+  /** `key`: the progress key sent with the request; `progress`: its steps, once the server has them. */
+  | { phase: "drafting"; key: string; progress: RunProgress | null }
   | { phase: "ready"; result: ObjectiveDraftResult }
   | { phase: "failed"; message: string };
+
+/** How often the drafting's progress is asked for. Tests shorten it. */
+export const draftConfig = { pollMs: 1000 };
+
+/** A key for one drafting request: 8–64 of A–Z a–z 0–9 - _. */
+function progressKey(): string {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `draft-${random.replace(/[^A-Za-z0-9_-]/g, "")}`.slice(0, 64);
+}
 
 /** What the generator does once the teacher is done with the drafts. */
 export interface DraftOutcome {
@@ -44,12 +61,33 @@ export function useObjectiveDraft() {
   const seq = useRef(0);
   const last = useRef<ObjectiveDraftRequest | null>(null);
 
+  // While Manna drafts: ask how far she is (docs/API.md「產生進度」).
+  const drafting = state?.phase === "drafting" ? state.key : null;
+  useEffect(() => {
+    if (drafting === null) return undefined;
+    let alive = true;
+    const timer = setInterval(() => {
+      api
+        .objectiveDraftProgress(drafting)
+        .then((res) => {
+          if (!alive || !res.progress) return;
+          setState((now) => (now?.phase === "drafting" && now.key === drafting ? { ...now, progress: res.progress } : now));
+        })
+        .catch(() => undefined);
+    }, draftConfig.pollMs);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [drafting]);
+
   async function run(body: ObjectiveDraftRequest): Promise<boolean> {
     const id = ++seq.current;
     last.current = body;
-    setState({ phase: "drafting" });
+    const key = progressKey();
+    setState({ phase: "drafting", key, progress: null });
     try {
-      const result = await api.draftObjectives(body);
+      const result = await api.draftObjectives({ ...body, progress_id: key });
       if (id !== seq.current) return true;
       if (result.status === "disabled") {
         setState(null);
@@ -293,10 +331,16 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
       </div>
       {state.phase === "drafting" && (
         <>
-          <p className="manna-label" role="status">
-            <span className="star is-working" aria-hidden="true" />
-            {DRAFTING_LINE}
-          </p>
+          <RunProgressSlot
+            progress={state.progress}
+            runKey={state.key}
+            fallback={
+              <p className="manna-label" role="status">
+                <span className="star is-working" aria-hidden="true" />
+                {DRAFTING_LINE}
+              </p>
+            }
+          />
           <div className="button-row objective-drafts-actions">
             <button type="button" className="secondary-button" onClick={() => onSkip([], null)}>
               {SKIP_DRAFTS}

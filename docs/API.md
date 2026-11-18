@@ -3053,3 +3053,65 @@ interface ObjectiveDraft {
 ## 程式進入點
 
 `objectives`（欄位、變數、`content.objectives`、R1 規則、R3 審查的檢查）、`objectives::draft`（草擬流程）、`objectives::fake`、`routes::objectives`；`worksheet::checks`（`covers_every_objective`、`practice_in_order`）、`worksheet::task_words`、`worksheet::Practice`。測試 `api/tests/objectives.rs`、`web/src/__tests__/objectives.test.tsx`。
+
+# 產生進度（進度表）
+
+Migration `0027_generation_progress.sql`。產生東西時（學習單、閱讀理解題、差異化學習單、課堂活動、教學套件、評量、修改學習單、草擬學習目標），頁面顯示一個「進度」表：依序列出這次真正會做的步驟，做完的變灰、正在做的有橘點、還沒做的照常顯示；失敗的那一步附上原本就會顯示的錯誤文字。步驟由伺服器在工作進行時寫入（每換一步寫一次），不是前端的計時器。
+
+## 型別
+
+```ts
+interface ProgressStep {
+  key: string;      // 同一次產生裡不變：read、tasks、warmup、scaffolds、exit_ticket、template、bloom:<level>、bloom_check、pictures、curriculum、plan、siop、sample、revise、save、draft、check…
+  label: string;    // 給老師看的繁體中文（見下表）
+  status: "pending" | "running" | "done" | "failed";
+  note?: string;    // 進行中的補充：「重試中」（同一步的第二次呼叫）、「重出層次不符的題目」、「再判斷一次」、「辨識掃描檔」
+  count?: { done: number; total: number };  // 由好幾件組成的一步：配圖中（3／6）、照版型寫各區塊（2／8）、讀範本時的 OCR 頁數
+  message?: string; // failed 的一步：原本的錯誤文字（例如工作的 message、這一輪的 error）
+}
+interface RunProgress {
+  steps: ProgressStep[];       // 依執行順序；略過的步驟（沒勾暖身、圖片關閉…）不列出
+  current: number | null;      // 正在做的那一步（教學套件兩部分同時進行時是第一個）；結束後是 null
+  status: "running" | "done" | "failed";  // 還有步驟在做或還沒做 → running；之後有一步失敗 → failed，否則 done
+}
+```
+
+回傳的地方（都是頁面原本就在輪詢的回應）：
+
+- `WorksheetState.progress`（`GET /api/worksheets/:id`、產生與重新產生的 202）與 `GET /api/worksheets/:id/jobs` 的 `progress`：這份學習單**最近一次**產生或單區重新產生的步驟。
+- `PrepTurn.progress`（`GET /api/prep-sessions/:id` 等回傳整個對話的端點）：這一輪自己的步驟、它的學習單第一次產生的步驟、照版型的輪次在等的範本，以及 SIOP 自我檢核。
+- `POST /api/objective-drafts` 多一個選填的 `progress_id`（頁面自己取，8–64 個英數、`-` 或 `_`；格式不對 400）；等待時 `GET /api/objective-drafts/progress/:progress_id` → `{ progress: RunProgress | null }`（只看得到自己的；還沒開始、別人的鍵或結束 15 分鐘後是 `null`）。
+
+`null`：進度功能之前做的學習單與輪次（欄位是 NULL）、還沒產生過的學習單、找教學資源與直接問 AI。頁面這時照舊顯示原本的「Manna 正在…」與工作列表。
+
+## 存在哪裡
+
+- `worksheets.progress`（JSONB）：`{ run_no, steps, pictures, finished }`。`run_no` 對應 `worksheet_jobs.run_no`；不是最近一次的就不回傳。`pictures` 是這次排進去的 `worksheet_images` id，讀的時候算還在畫的張數（配圖那一步在文字完成後仍可能是 running，頁面繼續輪詢到畫完）。
+- `prep_turns.progress`（JSONB）：`{ steps, finished }`，只有課堂活動、教學套件的活動規劃與修改學習單這三種自己跑的輪次。學習單類的輪次讀它的學習單（只取第一次產生，之後在編輯器裡的重新產生屬於學習單本身）；SIOP 自我檢核讀 `siop_checks`。
+- 草擬學習目標是一個同步請求，進度只放在記憶體（伺服器重啟就沒有，請求本身也一起中斷）。
+- 工作死在伺服器重啟裡（工作被 stale 規則關掉、步驟沒有結束）：讀取時把當時在做的那一步標成 failed（「這次產生中斷了…」或這一輪的錯誤）。
+
+## 各種產出的步驟
+
+| 產出 | 步驟 |
+|---|---|
+| 完整學習單 | 讀教材 → 寫逐段任務 → 寫暖身（有勾或沒有設定時）→ 寫鷹架 → 寫 Exit ticket → 配圖（圖片開啟時；沒有排到圖就拿掉） |
+| 照版型／照我的學習單做 | （備課對話：讀你的學習單範本，OCR 時附頁數）→ 讀教材 → 照版型寫各區塊（n／m，三個同時寫）→ 配圖 |
+| 閱讀理解題 | 讀教材 → 每個層次一步「出『記憶』題」…（依 Bloom 順序，一層一次呼叫）→ 判斷 Bloom 層次（重出層次不符的題目、再判斷一次寫在 note） |
+| 差異化學習單 | 讀教材 → 每個層次「出『X』題與三版支持」（三個版本的支持在同一次呼叫裡寫，沒有另外一步）→ 判斷 Bloom 層次 |
+| 單區重新產生 | 讀教材 → 重寫這一區的任務 → 寫鷹架 → 配圖；暖身：重寫暖身 → 寫鷹架；Exit ticket：重寫 Exit ticket；照版型：照版型重寫這一區 → 配圖；Bloom：重出『X』題 → 判斷 Bloom 層次 |
+| 課堂活動 | 讀教材 → 找課綱條目 → 規劃教學活動（重試寫在 note）→ SIOP 自我檢核 |
+| 教學套件 | 讀教材（兩部分共用一步）→ 找課綱條目 → 規劃教學活動 → 差異化學習單的各層次 → 判斷 Bloom 層次 → SIOP 自我檢核（活動規劃與學習單同時進行） |
+| 評量、做學習單（備課對話） | 同完整學習單，最後加 SIOP 自我檢核（評量沒有） |
+| 修改學習單 | 讀學習單 → 照你的指示修改 → 存成新版本 |
+| 草擬學習目標（/create、首頁） | 讀教材 → 找課綱條目 → 草擬學習目標 → 檢查目標（第二輪時加「重新草擬沒通過的目標」「再檢查一次」） |
+
+失敗的輪次：失敗的那一步之後還沒做的步驟不列出；沒有任何一步失敗時（例如教學套件的學習單沒有題目）把原因放在最後一步或「做差異化學習單」。
+
+## 前端
+
+`RunProgressPanel`（`web/src/components/RunProgress.tsx`）：標題「進度」、× 關閉（只關這一次產生）、`<ol>` 每步一行、正在做的那一步 `aria-current="step"`、`role="status"` 的 polite live region 說「進行中：寫暖身（第 3 步，共 5 步）」「全部完成」「沒有成功：寫暖身」。全部完成後停留約 4 秒再收起；失敗會一直留著直到老師關掉。頁面載入時已經結束的產生不顯示（頁面本來就會說結果）。顯示在備課對話底部輸入列、學習單頁的產生進度處，以及 /create 與首頁的草擬目標面板。
+
+## 測試用假模型
+
+教材文字裡放 `FAKE_PACED`：每一次呼叫先等 150 ms（在 `sop::ai::attempt`），測試可以一步一步看到進度（`api/tests/progress.rs`）。

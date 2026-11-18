@@ -9,10 +9,11 @@ use sqlx::PgPool;
 
 use super::selfcheck::{self, SiopCheck};
 use super::{
-    is_worksheet_kind, kit_error, SessionOptions, KIND_REVISE, NEXT_KINDS, STATUS_DONE,
-    STATUS_FAILED, STATUS_RUNNING,
+    is_worksheet_kind, kit_error, SessionOptions, KIND_ACTIVITY, KIND_KIT, KIND_REVISE,
+    KIND_WORKSHEET, NEXT_KINDS, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING,
 };
 use crate::error::{AppError, AppResult};
+use crate::progress::{self, Progress, Step, StepStatus, Stored};
 use crate::worksheet::ai as ws_ai;
 use crate::worksheet::store as ws_store;
 use crate::worksheet::template::extract as tpl_extract;
@@ -62,10 +63,13 @@ pub struct TurnRow {
     pub finished_at: Option<DateTime<Utc>>,
     /// `worksheet` turns: the template the turn follows (the session's when it started).
     pub template_id: Option<i64>,
+    /// The steps the turn runs itself ([`progress::Stored`]; NULL for the other kinds and for
+    /// turns made before progress was kept).
+    pub progress: Option<Value>,
 }
 
 const TURN_COLS: &str = "id, session_id, seq, kind, request, status, error, worksheet_id, result,
-    interaction_id, created_at, finished_at, template_id";
+    interaction_id, created_at, finished_at, template_id, progress";
 
 /// The session if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<SessionRow> {
@@ -658,6 +662,9 @@ pub struct Turn {
     /// other kinds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub siop_check: Option<Option<SiopCheck>>,
+    /// The turn's steps (docs/API.md「產生進度」): its own, its worksheet's, its SIOP 自我檢核;
+    /// `null` for 找教學資源／直接問 AI and for turns made before progress was kept.
+    pub progress: Option<Progress>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -713,6 +720,137 @@ async fn turn_template(db: &PgPool, template_id: i64) -> sqlx::Result<Option<Tur
         .await
 }
 
+// ---------------------------------------------------------------- progress (docs/API.md「產生進度」)
+
+const L_KIT_WORKSHEET: &str = "做差異化學習單";
+const NOTE_OCR: &str = "辨識掃描檔";
+
+/// The sample a template turn reads before its worksheet exists (OCR pages counted).
+fn sample_step(r: &TurnRow, ocr: Option<TurnOcr>) -> Step {
+    let mut step = Step::new(progress::SAMPLE, progress::L_SAMPLE);
+    if r.worksheet_id.is_some() {
+        step.status = StepStatus::Done;
+    } else if r.status == STATUS_RUNNING {
+        step.status = StepStatus::Running;
+        if let Some(o) = ocr {
+            step.note = Some(NOTE_OCR.to_string());
+            step.count = Some(progress::Count {
+                done: usize::try_from(o.done_pages).unwrap_or(0),
+                total: usize::try_from(o.total_pages).unwrap_or(0),
+            });
+        }
+    } else {
+        step.status = StepStatus::Failed;
+        step.message = r.error.clone();
+    }
+    step
+}
+
+/// The SIOP 自我檢核 of a checked turn: to come while the turn runs, then as its latest check
+/// is (nothing for a turn that has none once it is over).
+fn siop_step(r: &TurnRow, check: Option<&SiopCheck>) -> Option<Step> {
+    let mut step = Step::new(progress::SIOP, progress::L_SIOP);
+    match check {
+        None if r.status == STATUS_RUNNING => {}
+        None => return None,
+        Some(c) => match c.status.as_str() {
+            STATUS_RUNNING => step.status = StepStatus::Running,
+            STATUS_DONE => step.status = StepStatus::Done,
+            _ => {
+                step.status = StepStatus::Failed;
+                step.message = c.error.clone();
+            }
+        },
+    }
+    Some(step)
+}
+
+/// A turn's steps: the ones it runs itself (`prep_turns.progress`), its worksheet's first run
+/// (a later regeneration of that worksheet is the worksheet's own), the sample a template turn
+/// waits for, and its SIOP 自我檢核. A turn that failed says where. `None` when there is
+/// nothing to show from: 找教學資源、直接問 AI, and turns or worksheets made before progress
+/// was kept.
+async fn turn_progress(
+    state: &AppState,
+    r: &TurnRow,
+    worksheet: Option<&TurnWorksheet>,
+    ocr: Option<TurnOcr>,
+    check: Option<&SiopCheck>,
+) -> AppResult<Option<Progress>> {
+    let kind = r.kind.as_str();
+    let running = r.status == STATUS_RUNNING;
+    let mut open = running;
+    let own: Option<Vec<Step>> = r
+        .progress
+        .clone()
+        .and_then(|v| serde_json::from_value::<Stored>(v).ok())
+        .filter(|s| !s.steps.is_empty())
+        .map(|mut s| {
+            // Work that died with the server: its turn went stale.
+            if !running && !s.finished {
+                s.settle(Some(r.error.as_deref().unwrap_or(MSG_STALE)));
+            }
+            s.steps
+        });
+    let makes_worksheet = is_worksheet_kind(kind) || kind == KIND_KIT;
+    let ws_steps: Option<Vec<Step>> = match (r.worksheet_id, worksheet) {
+        (Some(id), Some(w)) if makes_worksheet => {
+            match ws_ai::run_steps(state, id, 1, w.running).await? {
+                Some((steps, ws_open)) => {
+                    open |= ws_open;
+                    Some(steps)
+                }
+                None => None,
+            }
+        }
+        _ => None,
+    };
+    let mut steps: Vec<Step> = match kind {
+        KIND_ACTIVITY | KIND_REVISE => match own {
+            Some(own) => own,
+            None => return Ok(None),
+        },
+        KIND_KIT => {
+            let Some(own) = own else {
+                return Ok(None);
+            };
+            match ws_steps {
+                Some(ws) => progress::merge(own, ws),
+                // The worksheet could not be made: that is where the kit failed.
+                None if r.worksheet_id.is_none() => {
+                    let mut list = own;
+                    list.push(Step::new("worksheet", L_KIT_WORKSHEET));
+                    list
+                }
+                None => own,
+            }
+        }
+        _ if is_worksheet_kind(kind) => {
+            let mut list = Vec::new();
+            if kind == KIND_WORKSHEET && r.template_id.is_some() {
+                list.push(sample_step(r, ocr));
+            }
+            match (r.worksheet_id, ws_steps) {
+                (Some(_), Some(ws)) => list.extend(ws),
+                // A worksheet from before progress was kept, or deleted since.
+                (Some(_), None) => return Ok(None),
+                (None, _) if list.is_empty() => return Ok(None),
+                (None, _) => {}
+            }
+            list
+        }
+        _ => return Ok(None),
+    };
+    if selfcheck::is_checked(kind) {
+        steps.extend(siop_step(r, check));
+    }
+    if r.status == STATUS_FAILED {
+        let message = r.error.as_deref().unwrap_or("這一步沒有成功。");
+        return Ok(Progress::failed(steps, message));
+    }
+    Ok(Progress::of(steps, open))
+}
+
 /// The whole session, brought up to date first.
 pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     refresh(state, id).await?;
@@ -735,6 +873,14 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             _ => None,
         };
         let siop_check = selfcheck::is_checked(&r.kind).then(|| checks.remove(&r.id));
+        let progress = turn_progress(
+            state,
+            &r,
+            worksheet.as_ref(),
+            ocr,
+            siop_check.as_ref().and_then(Option::as_ref),
+        )
+        .await?;
         out.push(Turn {
             id: r.id,
             seq: r.seq,
@@ -756,6 +902,7 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             phase: ocr.map(|_| "ocr"),
             ocr,
             siop_check,
+            progress,
         });
     }
     let running = out.iter().any(|t| t.status == STATUS_RUNNING);

@@ -1621,6 +1621,8 @@ export interface WorksheetState extends WorksheetSummary {
   content: WorksheetContent;
   jobs: WsJob[];
   running: boolean;
+  /** 最近一次產生的步驟（docs/API.md「產生進度」）；在進度功能之前產生的、或還沒產生過是 null；舊的伺服器沒有這一欄 */
+  progress?: RunProgress | null;
   /** 有上一版可以復原的區塊 id */
   undoable: string[];
   sop_sync: { linked: boolean; changes: number };
@@ -1636,6 +1638,31 @@ export interface WsJobsState {
   running: boolean;
   jobs: WsJob[];
   version_no: number;
+  /** 同 WorksheetState.progress；舊的伺服器沒有這一欄 */
+  progress?: RunProgress | null;
+}
+
+/** 產生進度的一步（docs/API.md「產生進度」） */
+export interface ProgressStep {
+  /** 同一次產生裡不變：read、tasks、bloom:remember、pictures、siop… */
+  key: string;
+  /** 給老師看的繁體中文：讀教材、寫逐段任務… */
+  label: string;
+  status: "pending" | "running" | "done" | "failed";
+  /** 進行中的補充，例如「重試中」 */
+  note?: string;
+  /** 由好幾件組成的一步做了幾件（配圖中 3／6） */
+  count?: { done: number; total: number };
+  /** 失敗的一步：頁面原本就會顯示的錯誤文字 */
+  message?: string;
+}
+
+/** 一次產生的進度：依序的步驟、正在做哪一步、結果 */
+export interface RunProgress {
+  steps: ProgressStep[];
+  /** 正在做的那一步（兩部分同時進行時是第一個）；結束後是 null */
+  current: number | null;
+  status: "running" | "done" | "failed";
 }
 
 export interface CreateWorksheetRequest {
@@ -2241,6 +2268,8 @@ export interface PrepTurn {
    * 才有這一欄；還沒有檢核（這一輪還在跑、失敗了，或是在檢核功能之前做的）是 null。其他種類與舊的伺服器沒有這一欄
    */
   siop_check?: SiopCheck | null;
+  /** 這一輪的步驟（docs/API.md「產生進度」）；找教學資源、直接問 AI 與進度功能之前的輪次是 null；舊的伺服器沒有這一欄 */
+  progress?: RunProgress | null;
 }
 
 /** 對話的出題選項：之後在對話裡做的每一份學習單都帶入（settings 的同名欄位）。 */
@@ -2316,6 +2345,14 @@ export interface ObjectiveDraftRequest {
   request?: string;
   /** 「換一組」：上一組的句子，不要重複 */
   avoid?: string[];
+  /** 頁面自己取的鍵（8–64 個英數、- 或 _），等待時用 GET /api/objective-drafts/progress/:key 看進度 */
+  progress_id?: string;
+}
+
+/** GET /api/objective-drafts/progress/:key */
+export interface ObjectiveDraftProgress {
+  /** 還沒開始、別人的鍵、或結束很久之後是 null */
+  progress: RunProgress | null;
 }
 
 export type ObjectiveCategory = "strategy" | "function" | "structure" | "vocabulary";

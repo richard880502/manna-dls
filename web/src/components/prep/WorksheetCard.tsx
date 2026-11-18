@@ -230,6 +230,16 @@ export function WorksheetCard({
     ) : null;
   }
 
+  // The steps are listed in the page's 「進度」 panel (by the bottom bar); a turn without them (an
+  // older server) shows the job rows here as before.
+  if (running && turn.progress) {
+    return (
+      <p className="manna-label prep-working" role="status">
+        <span className="star is-working" aria-hidden="true" />
+        Manna 正在產生這份學習單…
+      </p>
+    );
+  }
   if (running) return <ProgressPanel jobs={jobs} />;
 
   async function exportAs(format: WsExportFormat) {

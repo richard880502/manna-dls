@@ -120,6 +120,7 @@ import type {
   PrepSession,
   PrepSessionList,
   CreatePrepSessionRequest,
+  ObjectiveDraftProgress,
   ObjectiveDraftRequest,
   ObjectiveDraftResult,
   UpdatePrepSessionRequest,
@@ -506,6 +507,9 @@ export const api = {
   createPrepSession: (body: CreatePrepSessionRequest) => post<PrepSession>("/prep-sessions", body),
   /** 兩個目標都沒寫時，產生前先請 Manna 草擬（SIOP G2、G3） */
   draftObjectives: (body: ObjectiveDraftRequest) => post<ObjectiveDraftResult>("/objective-drafts", body),
+  /** 草擬目標進行中的步驟（用送出時的 progress_id） */
+  objectiveDraftProgress: (key: string) =>
+    get<ObjectiveDraftProgress>(`/objective-drafts/progress/${encodeURIComponent(key)}`),
   getPrepSession: (id: number) => get<PrepSession>(`/prep-sessions/${id}`),
   updatePrepSession: (id: number, body: UpdatePrepSessionRequest) =>
     request<PrepSession>("PATCH", `/prep-sessions/${id}`, { json: body }),

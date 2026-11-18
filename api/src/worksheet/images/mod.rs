@@ -621,13 +621,13 @@ pub async fn states(state: &AppState, worksheet_id: i64) -> sqlx::Result<Workshe
 
 /// Gives every slot of the enabled blocks of `content` that has never had a picture its first
 /// row, and starts the jobs. Called once a generation or a regenerated block has been saved.
-/// Returns how many pictures were queued.
+/// Returns the rows of the pictures queued.
 pub async fn enqueue(
     state: &AppState,
     worksheet_id: i64,
     teacher_id: i64,
     content: &Content,
-) -> AppResult<usize> {
+) -> AppResult<Vec<i64>> {
     let wanted: Vec<(&Block, &ImageSlot)> = content
         .blocks
         .iter()
@@ -635,7 +635,7 @@ pub async fn enqueue(
         .flat_map(|b| b.image_slots.iter().map(move |s| (b, s)))
         .collect();
     if wanted.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     let config = state.images.config();
     let mut tx = state.db.begin().await?;
@@ -722,18 +722,23 @@ pub async fn enqueue(
     for (id, run) in &queued {
         job::spawn(state, *id, *run);
     }
-    Ok(queued.len())
+    Ok(queued.into_iter().map(|(id, _)| id).collect())
 }
 
-/// [`enqueue`] where a failure must not undo what was saved before it: logged instead.
+/// [`enqueue`] where a failure must not undo what was saved before it: logged instead (and
+/// nothing queued).
 pub async fn enqueue_logged(
     state: &AppState,
     worksheet_id: i64,
     teacher_id: i64,
     content: &Content,
-) {
-    if let Err(e) = enqueue(state, worksheet_id, teacher_id, content).await {
-        tracing::error!(worksheet_id, error = %e, "could not queue the worksheet's pictures");
+) -> Vec<i64> {
+    match enqueue(state, worksheet_id, teacher_id, content).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!(worksheet_id, error = %e, "could not queue the worksheet's pictures");
+            Vec::new()
+        }
     }
 }
 

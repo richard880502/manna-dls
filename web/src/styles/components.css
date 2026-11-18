@@ -745,3 +745,134 @@ summary {
   line-height: 1.65;
   white-space: pre-wrap;
 }
+
+/* ---------- 進度: the steps of a run (docs/API.md「產生進度」) ---------- */
+.run-progress {
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-sheet);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: var(--leading-ui);
+}
+
+.run-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.run-progress-title {
+  font-weight: var(--weight-strong);
+}
+
+.run-progress-close {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  margin-right: calc(-1 * var(--space-2xs));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.run-progress-close:hover {
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+}
+
+/* A long list scrolls inside the panel, so the panel never takes the page over. */
+.run-progress-steps {
+  max-height: min(40vh, 16rem);
+  margin-top: var(--space-2xs);
+  overflow-y: auto;
+  list-style: none;
+}
+
+.run-progress-step {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-xs);
+  padding: var(--space-3xs) 0;
+}
+
+/* One line per step. */
+.run-progress-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-progress-mark {
+  justify-self: center;
+  width: 0.5rem;
+  height: 0.5rem;
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-pill);
+}
+
+.run-progress-step.is-done {
+  color: var(--color-muted);
+}
+
+.run-progress-step.is-done .run-progress-mark {
+  border-color: var(--color-muted);
+  background: var(--color-muted);
+}
+
+.run-progress-step.is-running {
+  font-weight: var(--weight-strong);
+}
+
+.run-progress-step.is-running .run-progress-mark {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-color: var(--color-progress-now);
+  background: var(--color-progress-now);
+}
+
+.run-progress-note {
+  color: var(--color-warn-ink);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+  white-space: nowrap;
+}
+
+.run-progress-step.is-failed {
+  color: var(--color-error);
+}
+
+.run-progress-step.is-failed .run-progress-mark {
+  border-color: var(--color-error);
+  background: var(--color-error);
+}
+
+.run-progress-message {
+  grid-column: 2 / -1;
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .run-progress-step.is-running .run-progress-mark {
+    animation: manna-working 1.6s var(--ease-in-out) infinite;
+  }
+}
+
+@media (max-width: 47.5rem) {
+  .run-progress-steps {
+    max-height: min(30vh, 12rem);
+  }
+}

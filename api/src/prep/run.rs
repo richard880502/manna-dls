@@ -14,6 +14,7 @@
 //! material only ever logged as its length and a hash.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -34,6 +35,7 @@ use crate::checks::{self as base_checks, CheckResult};
 use crate::curriculum::{self, CurriculumItem};
 use crate::error::{AppError, AppResult};
 use crate::materials::store as material_store;
+use crate::progress::{self, Sink, Step, Tracker};
 use crate::prompts;
 use crate::retrieval::{self, CurriculumFilter, KbItem};
 use crate::routes::worksheets::{create_worksheet, run_input, CreateOverrides, CreateWorksheet};
@@ -117,12 +119,14 @@ pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
             _ => {}
         }
     }
+    // The steps the turn runs itself are shown from the start (docs/API.md「產生進度」).
+    let tracker = open_progress(state, &input).await;
     if kind == KIND_KIT {
         let worksheet_error = start_worksheet(state, &input)
             .await
             .err()
             .map(|e| worksheet_failure(&input, &e));
-        spawn_kit(state, input, worksheet_error);
+        spawn_kit(state, input, worksheet_error, tracker);
         return Ok(());
     }
     if is_worksheet_kind(kind) {
@@ -132,8 +136,42 @@ pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
         }
         return Ok(());
     }
-    spawn(state, input);
+    spawn(state, input, tracker);
     Ok(())
+}
+
+// ---------------------------------------------------------------- progress (docs/API.md「產生進度」)
+
+pub const L_READ_WORKSHEET: &str = "讀學習單";
+pub const L_REVISE: &str = "照你的指示修改";
+pub const L_SAVE: &str = "存成新版本";
+const REVISE: &str = "revise";
+const SAVE: &str = "save";
+
+/// The steps a turn of `kind` runs itself. `None` for the kinds whose work is their worksheet's
+/// generation (the worksheet keeps its own steps) and for the short ones (找教學資源、直接問 AI).
+pub fn own_steps(kind: &str) -> Option<Vec<Step>> {
+    match kind {
+        KIND_ACTIVITY | KIND_KIT => Some(vec![
+            Step::new(progress::READ, progress::L_READ),
+            Step::new(progress::CURRICULUM, progress::L_CURRICULUM),
+            Step::new(progress::PLAN, progress::L_PLAN),
+        ]),
+        KIND_REVISE => Some(vec![
+            Step::new(progress::READ, L_READ_WORKSHEET),
+            Step::new(REVISE, L_REVISE),
+            Step::new(SAVE, L_SAVE),
+        ]),
+        _ => None,
+    }
+}
+
+/// Starts the progress of a turn's own steps (a tracker that writes nothing for the others).
+async fn open_progress(state: &AppState, input: &TurnInput) -> Arc<Tracker> {
+    match own_steps(&input.turn.kind) {
+        Some(steps) => Tracker::open(Sink::Turn(state.db.clone(), input.turn.id), 0, steps).await,
+        None => Tracker::off(),
+    }
 }
 
 /// What the teacher is told when a turn's worksheet could not be made or started.
@@ -174,16 +212,20 @@ fn settle(turn_id: i64, joined: Result<AppResult<Outcome>, tokio::task::JoinErro
     }
 }
 
-fn spawn(state: &AppState, input: TurnInput) {
+fn spawn(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
     let state = state.clone();
     let turn_id = input.turn.id;
     tokio::spawn(async move {
         // The work runs in its own task so that a panic there still closes the turn.
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { run(&state, &input).await })
+            let tracker = tracker.clone();
+            tokio::spawn(async move { run(&state, &input, &tracker).await })
         };
         let outcome = settle(turn_id, work.await);
+        tracker
+            .finish(outcome.as_ref().err().map(String::as_str))
+            .await;
         match store::finish(&state.db, turn_id, outcome).await {
             Ok(Some(check)) => super::selfcheck::spawn(&state, check),
             Ok(None) => {}
@@ -195,15 +237,24 @@ fn spawn(state: &AppState, input: TurnInput) {
 /// The activity plan of a kit. Its outcome is recorded on the turn, which is closed now when
 /// the worksheet could not start (`worksheet_error`) or has already finished generating, and
 /// otherwise by the next [`store::refresh`] after the generation.
-fn spawn_kit(state: &AppState, input: TurnInput, worksheet_error: Option<String>) {
+fn spawn_kit(
+    state: &AppState,
+    input: TurnInput,
+    worksheet_error: Option<String>,
+    tracker: Arc<Tracker>,
+) {
     let state = state.clone();
     let turn_id = input.turn.id;
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { activity(&state, &input).await })
+            let tracker = tracker.clone();
+            tokio::spawn(async move { activity(&state, &input, &tracker).await })
         };
         let outcome = settle(turn_id, work.await);
+        tracker
+            .finish(outcome.as_ref().err().map(String::as_str))
+            .await;
         let closed = match worksheet_error {
             Some(w) => store::close_kit_without_worksheet(&state.db, turn_id, &outcome, &w)
                 .await
@@ -307,12 +358,12 @@ fn spawn_after_template(state: &AppState, input: TurnInput, template_id: i64) {
     });
 }
 
-async fn run(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
+async fn run(state: &AppState, input: &TurnInput, progress: &Arc<Tracker>) -> AppResult<Outcome> {
     match input.turn.kind.as_str() {
-        KIND_ACTIVITY => activity(state, input).await,
+        KIND_ACTIVITY => activity(state, input, progress).await,
         KIND_RESOURCES => resources(state, input).await,
         KIND_ASK => ask(state, input).await,
-        KIND_REVISE => revise(state, input).await,
+        KIND_REVISE => revise(state, input, progress).await,
         other => Err(AppError::Internal(anyhow::anyhow!(
             "prep turn kind {other} is not run in the background"
         ))),
@@ -440,6 +491,8 @@ pub(crate) struct Call {
     pub(crate) temperature: f32,
     /// Logged with every attempt (ids, never text).
     pub(crate) trace: Value,
+    /// The step of a run's progress the call is (its retry is said there as 「重試中」).
+    pub(crate) progress: Option<(Arc<Tracker>, &'static str)>,
 }
 
 /// The output of an attempt after the server's checks: what can be used, and what to tell the
@@ -494,6 +547,11 @@ where
     let mut first: Option<(T, i64, Value)> = None;
     let mut on_first = Some(on_first);
     for attempt_no in 1..=2 {
+        if attempt_no == 2 {
+            if let Some((tracker, key)) = &c.progress {
+                tracker.note(key, Some(progress::NOTE_RETRY)).await;
+            }
+        }
         let temperature = c.temperature + RETRY_TEMPERATURE_STEP * (attempt_no - 1) as f32;
         let snapshot = json!({
             "inputs": logged,
@@ -599,14 +657,20 @@ pub(crate) async fn nothing(_: i64) -> AppResult<()> {
 
 // ---------------------------------------------------------------- 規劃教學活動
 
-async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
+async fn activity(
+    state: &AppState,
+    input: &TurnInput,
+    progress: &Arc<Tracker>,
+) -> AppResult<Outcome> {
     let db = &state.db;
     let session = &input.session;
     let Some(m) = material(db, session).await? else {
         return Ok(Err(MSG_MATERIAL_GONE.to_string()));
     };
     let (profile, class_snapshot) = class_profile(state, session).await?;
+    progress.done(progress::READ).await;
     // The same retrieval as the SOP objectives, over the material.
+    progress.start(progress::CURRICULUM).await;
     let query = clip_chars(&format!("{}\n{}", m.title, m.text()), 4000);
     let (items, trace) = curriculum::items_for_track_hybrid(
         db,
@@ -616,6 +680,7 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         CURRICULUM_TOP,
     )
     .await?;
+    progress.done(progress::CURRICULUM).await;
     let candidates: Vec<CurriculumRef> = items.iter().map(curriculum_ref).collect();
     let codes: Vec<String> = candidates.iter().map(|c| c.code.clone()).collect();
     let teacher = TeacherObjectives::of(&session.options.0);
@@ -660,8 +725,10 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         max_tokens: ACTIVITY_MAX_TOKENS,
         temperature: BASE_TEMPERATURE,
         trace: trace_of(input, Some(&class_snapshot), Some(&codes)),
+        progress: Some((progress.clone(), progress::PLAN)),
     };
     let track = input.track.clone();
+    progress.start(progress::PLAN).await;
     let result = call(
         state,
         session.teacher_id,
@@ -692,6 +759,10 @@ async fn activity(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         },
     )
     .await?;
+    match &result {
+        Ok(_) => progress.done(progress::PLAN).await,
+        Err(message) => progress.fail(progress::PLAN, message).await,
+    }
     Ok(result.map(|(plan, id): (ActivityPlan, i64)| (Some(json!(plan)), Some(id))))
 }
 
@@ -1042,6 +1113,7 @@ async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         max_tokens: ASK_MAX_TOKENS,
         temperature: BASE_TEMPERATURE,
         trace: trace_of(input, Some(&class_snapshot), Some(&codes)),
+        progress: None,
     };
     let track = input.track.clone();
     let trace = found.trace.clone();
@@ -1311,7 +1383,13 @@ fn same_content(a: &Block, b: &Block) -> bool {
     a.title == b.title && a.instructions == b.instructions && items(a) == items(b)
 }
 
-async fn revise(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
+/// A failed step ends the turn: the step that was running when it returns is the one that
+/// failed (`spawn` settles the progress with the turn's error).
+async fn revise(
+    state: &AppState,
+    input: &TurnInput,
+    progress: &Arc<Tracker>,
+) -> AppResult<Outcome> {
     let db = &state.db;
     let session = &input.session;
     let Some(worksheet_id) = input.worksheet_id else {
@@ -1323,6 +1401,7 @@ async fn revise(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         Err(e) => return Err(e),
     };
     let content = ws_store::latest(db, worksheet_id).await?.content;
+    progress.done(progress::READ).await;
     let labels = labels(&ws, &content);
     let blocks = blocks_for_model(&content, &labels);
     let block_ids: Vec<String> = content
@@ -1366,7 +1445,9 @@ async fn revise(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         max_tokens: REVISE_MAX_TOKENS,
         temperature: BASE_TEMPERATURE,
         trace: trace_of(input, None, None),
+        progress: Some((progress.clone(), REVISE)),
     };
+    progress.start(REVISE).await;
     let result = call(
         state,
         session.teacher_id,
@@ -1379,6 +1460,8 @@ async fn revise(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         Ok(r) => r,
         Err(message) => return Ok(Err(message)),
     };
+    progress.done(REVISE).await;
+    progress.start(SAVE).await;
     apply_revision(state, input, &ws, plan, interaction_id).await
 }
 

@@ -57,7 +57,7 @@ import {
   type BlockRevise,
 } from "./BlockRevise";
 import { LessonLinkControls } from "./LessonLink";
-import { ProgressPanel, RunOutcome } from "./OptionsView";
+import { RunOutcome, WorksheetRunProgress } from "./OptionsView";
 import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
 import type { WorksheetController } from "./useWorksheet";
@@ -942,7 +942,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
         </Link>
       </div>
 
-      {state.running && <ProgressPanel jobs={state.jobs} />}
+      <WorksheetRunProgress state={state} />
       {!state.running && <RunOutcome jobs={state.jobs} />}
       <ErrorText message={ws.actionError} />
 

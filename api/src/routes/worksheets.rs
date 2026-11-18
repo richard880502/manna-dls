@@ -19,6 +19,7 @@ use serde_json::json;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::store::{self as material_store, LinkTarget};
+use crate::progress::Progress;
 use crate::routes::{
     double_option, log_usage, owned_class, owned_lesson, owned_unit, resolved_profile,
 };
@@ -70,6 +71,9 @@ pub struct WorksheetState {
     pub content: Content,
     pub jobs: Vec<Job>,
     pub running: bool,
+    /// The steps of the latest run (docs/API.md「產生進度」); `null` for a run made before they
+    /// were kept, or a worksheet never generated.
+    pub progress: Option<Progress>,
     pub undoable: Vec<String>,
     pub sop_sync: SopSyncState,
     pub template: Option<TemplateRef>,
@@ -133,6 +137,7 @@ pub(crate) async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetSt
         .ok_or_else(|| AppError::not_found("找不到這份學習單。"))?;
     let latest = store::latest(db, id).await?;
     let (jobs, running) = ws_ai::jobs(state, id).await?;
+    let progress = ws_ai::progress(state, id, &jobs, running).await?;
     let sop_sync = match lesson_sop_diff(state, &ws, &latest.content).await? {
         Some((_, _, changes)) => SopSyncState {
             linked: true,
@@ -167,6 +172,7 @@ pub(crate) async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetSt
         undoable: store::undoable(db, id).await?,
         jobs,
         running,
+        progress,
         sop_sync,
         material: ws.material,
         settings: ws.settings,
@@ -780,6 +786,8 @@ pub struct JobsState {
     pub running: bool,
     pub jobs: Vec<Job>,
     pub version_no: i32,
+    /// As in the worksheet state.
+    pub progress: Option<Progress>,
 }
 
 pub async fn jobs(
@@ -790,10 +798,12 @@ pub async fn jobs(
     store::owned(&state.db, id, teacher.id()).await?;
     let (jobs, running) = ws_ai::jobs(&state, id).await?;
     let version_no = store::latest(&state.db, id).await?.version_no;
+    let progress = ws_ai::progress(&state, id, &jobs, running).await?;
     Ok(Json(JobsState {
         running,
         jobs,
         version_no,
+        progress,
     }))
 }
 

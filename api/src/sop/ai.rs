@@ -383,6 +383,10 @@ pub(crate) async fn attempt(
     if state.ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_SLOW") {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
+    // A run whose progress a test watches step by step (docs/API.md「產生進度」).
+    if state.ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_PACED") {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
     let start = Instant::now();
     let response = state.ai.complete(req).await;
     let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);

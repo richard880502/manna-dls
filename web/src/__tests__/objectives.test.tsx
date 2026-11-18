@@ -148,7 +148,12 @@ describe("建立: 內容目標與語言目標", () => {
     await user.click(generate());
 
     const drafts = panel();
-    expect(api.lastBody("POST", DRAFTS)).toEqual({ kind: "comprehension", material: { title: "", text: EXEMPLAR_TEXT } });
+    // The page's own key for asking how far the drafting is (docs/API.md「產生進度」).
+    expect(api.lastBody("POST", DRAFTS)).toEqual({
+      kind: "comprehension",
+      material: { title: "", text: EXEMPLAR_TEXT },
+      progress_id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+    });
     expect(await drafts.findByText(content.text)).toBeInTheDocument();
     expect(drafts.getByText(content.zh)).toBeInTheDocument();
     expect(drafts.getByText(`怎麼檢核：${content.check_zh}`)).toBeInTheDocument();
@@ -301,6 +306,7 @@ describe("首頁: a tool from the quick box drafts objectives first", () => {
       kind: "activity",
       material: { title: "", text: "Bees help plants." },
       request: "多一點討論",
+      progress_id: expect.any(String),
     });
     await user.click(panel().getByRole("button", { name: "全部採用並產生" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
