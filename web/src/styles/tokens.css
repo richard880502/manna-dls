@@ -131,6 +131,7 @@
   --bottom-nav-h: 0rem; /* no bottom navigation any more; kept so older rules still compute */
   --container: 65rem; /* 1040: list pages */
   --container-wide: 75rem; /* 1200: working pages with two columns */
+  --container-gallery: 80rem; /* 1280: 我的作品, a wall of cards (four across at 1280) */
   --container-console: 55rem; /* 880: the in-class console */
   --gutter: 2.5rem;
   --card-pad: var(--space-lg);

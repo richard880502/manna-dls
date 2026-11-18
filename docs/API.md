@@ -1118,6 +1118,7 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/checks/:check_id/suggest` | `{ action, words }` | `WsVocabSuggestions`（見「詞彙級別檢查：處理超出級別的字」） |
 | POST | `/api/worksheets/:id/checks/:check_id/apply` | `WsVocabApplyRequest` | `WsVocabApplied` |
 | GET | `/api/worksheets/:id/export` | `?format=docx\|pdf&level=&audience=` | 檔案本體（`Content-Disposition: attachment`）。`level` 不在這份學習單的版本裡 → 400 |
+| GET | `/api/worksheets/:id/thumbnail` | – | 學生版第 1 頁的預覽圖（JPEG，寬 480 px），給「我的作品」的卡片。見「我的作品：卡片預覽」 |
 
 ## 兩個入口
 
@@ -1835,6 +1836,8 @@ interface PrepSessionSummary {
   class: { id: number; name: string } | null;
   template: { id: number; title: string } | null;
   turn_count: number; last_kind: PrepKind | null; updated_at: string; created_at: string;
+  preview_worksheet: { id: number; version_no: number } | null;   // 卡片預覽：見「我的作品：卡片預覽」
+  preview_text: string | null;                                    // 同上（≤200 字）
 }
 interface PrepTurn {
   id: number; seq: number; kind: PrepKind; request: string;
@@ -3400,3 +3403,30 @@ interface RunProgress {
 ## 測試用假模型
 
 教材文字裡放 `FAKE_PACED`：每一次呼叫先等 400 ms（在 `sop::ai::attempt`），測試可以一步一步看到進度（`api/tests/progress.rs`）。
+
+# 我的作品：卡片預覽
+
+`/prep`（我的作品）預設是卡片格狀：每張卡片上方是一張 A4 直式的預覽框。沒有資料表變動。
+
+## 對話列表多兩個欄位
+
+`GET /api/prep-sessions`（和 `GET /api/prep-sessions/:id` 的 `PrepSessionSummary` 部分）每個對話多：
+
+- `preview_worksheet: { id, version_no } | null`：這個對話最近一個做出學習單的輪次的學習單（沒有被刪除的），與它最新的版本；沒有學習單（課堂活動、問 Manna、找教學資源）→ `null`。卡片用它的 `id` 去要預覽圖；`version_no` 讓前端在版本變了時換掉網址參數。
+- `preview_text: string | null`：最後一輪的幾行字，卡片沒有學習單圖片、或圖片載入失敗時用（≤200 字，行與行之間 `\n`）：課堂活動與教學套件是計畫的標題與前 3 個步驟（`1. …`）；問 Manna 是老師的問題，接著回答的開頭；其他是老師的要求（沒有要求時是按鈕名稱）。輪次還在跑或失敗時沒有計畫／回答，就只有要求。
+
+只有一個查詢：`prep_sessions` 左接兩個 `LATERAL` 子查詢（各自 `LIMIT 1`，走 `prep_turns (session_id, seq)` 的唯一索引），沒有 N+1。舊的客戶端會忽略這兩個欄位。單獨存在的學習單（沒有對話）用 `GET /api/worksheets` 既有的資料，卡片直接要 `/api/worksheets/:id/thumbnail`；它沒有文字預覽，失敗時卡片顯示標題。
+
+## `GET /api/worksheets/:id/thumbnail`
+
+學生版第 1 頁的預覽圖：最新版本、預設程度（這份學習單的第一個程度）、學生版，**含圖片**；走和 PDF 匯出同一條路（`export::pdf_with_images`，配上圖庫），再用 `pdftoppm` 取第 1 頁、縮到寬 480 px 的 JPEG（和教材預覽圖同一組函式，`state.thumb_slots` 限制同時進行的份數）。
+
+- 只有學習單的主人看得到（別人的或不存在 → 404，同其他學習單端點）。
+- **這不是匯出**：不寫 `worksheet_exported`，也不寫任何其他使用記錄。
+- 學習單還沒產生，或這一刻還有產生工作在跑 → **409**（「這份學習單還沒產生…」「這份學習單還在產生中…」）。卡片這時顯示文字預覽（或標題），**不會重試**。伺服器沒有中文字型而學習單有中文 → 409。
+- 沒有 `pdftoppm`、沒有檔案儲存空間 → 503，訊息同教材預覽圖；轉不出圖 → 404（「這份檔案轉不成預覽圖…」）。
+- **快取鍵**（檔案儲存空間）：`thumbs/worksheets/<id>/v<version_no>-p<完成的圖片數>-<最新一張圖的 id>-<標題與教材文字的雜湊前 8 碼>-w480.jpg`。圖片是產生之後才陸續完成的（不會產生新版本），換圖、拿掉圖、改標題或教材文字也不產生新版本，所以鍵除了版本，還帶這個「印出來的頁面可能變了」的指紋；任何一項變了就是新的鍵、重新轉一次。
+- **驗證**：`ETag: "w<id>-v<version_no>-<指紋>-w480"`，`Cache-Control: private, max-age=0, must-revalidate`，`Vary: Authorization`；`If-None-Match` 相符 → 304（不轉圖、不讀儲存空間）。每次都問一次，沒變就 304。
+- **刪除**：刪除學習單（`DELETE /api/worksheets/:id`）時，盡力刪掉「目前狀態」的那一張預覽圖；失敗只記警告（`removing a worksheet preview failed`），不擋刪除。**舊版本、舊指紋的預覽圖不會清掉**（儲存空間沒有列出前綴的功能，它們也只是幾十 KB）。
+
+測試：`api/tests/mywork_previews.rs`（沒有 poppler 的機器上，需要圖片的部分改查 503；CI 會裝 poppler 並檢查圖片）。

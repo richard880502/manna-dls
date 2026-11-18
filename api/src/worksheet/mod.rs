@@ -24,6 +24,7 @@ pub mod store;
 pub mod sync;
 pub mod task_words;
 pub mod template;
+pub mod thumbnail;
 pub mod tiered;
 pub mod vocab;
 pub mod vocab_actions;

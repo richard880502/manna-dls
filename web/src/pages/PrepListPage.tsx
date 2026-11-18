@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { PrepKind, PrepSessionSummary, WorksheetSummary } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { WorkCard, WorkCardSkeleton, type WorkCardData } from "../components/mywork/WorkCard";
 import { TOOL_NAME } from "../lib/create";
 import { NEXT_LABEL, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
@@ -44,24 +45,104 @@ const KIND_TAG: Record<PrepKind, string> = {
   revise: "學習單",
 };
 
+/** 卡片 (the default) or 清單; the choice is kept on this browser. */
+type View = "cards" | "list";
+const VIEW_KEY = "manna.mywork.view";
+const VIEWS: { key: View; label: string }[] = [
+  { key: "cards", label: "卡片" },
+  { key: "list", label: "清單" },
+];
+
+function loadView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "list" ? "list" : "cards";
+  } catch {
+    return "cards";
+  }
+}
+
+function saveView(view: View) {
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Private windows and blocked storage: the choice just is not kept.
+  }
+}
+
 type Item =
   | { type: "session"; key: string; at: string; filter: Filter | null; session: PrepSessionSummary }
   | { type: "worksheet"; key: string; at: string; filter: Filter | null; worksheet: WorksheetSummary };
+
+/**
+ * What tells a session from another of the same name, besides its type and date: the material
+ * (only when it is not just the title again), or the topic when there is no material, and the
+ * class.
+ */
+function sessionDetail(s: PrepSessionSummary): string[] {
+  const title = sessionTitle(s);
+  const material = s.material ? s.material.title.trim() || "未命名教材" : null;
+  let about: string | null = null;
+  if (material !== null) {
+    if (material !== title) about = `教材：${material}`;
+  } else if (s.topic && s.topic.trim() !== title) {
+    about = `主題：${s.topic}`;
+  }
+  return [about, s.class ? s.class.name : null].filter((p): p is string => Boolean(p));
+}
+
+function worksheetDetail(w: WorksheetSummary): string[] {
+  return [
+    w.lesson ? `${w.lesson.unit_title} / ${w.lesson.title}` : null,
+    w.generated ? (w.levels.length > 0 ? w.levels.map((l) => LEVEL_LABEL[l]).join("、") : "已產生") : "還沒產生",
+  ].filter((p): p is string => Boolean(p));
+}
+
+const worksheetName = (w: WorksheetSummary) => w.title || "未命名的學習單";
+
+/** What a card shows of an item. */
+function cardOf(item: Item): WorkCardData {
+  if (item.type === "session") {
+    const s = item.session;
+    return {
+      title: sessionTitle(s),
+      href: `/prep/${s.id}`,
+      tag: s.last_kind ? KIND_TAG[s.last_kind] : null,
+      detail: sessionDetail(s).join(" · "),
+      when: formatDateTime(s.updated_at),
+      worksheet: s.preview_worksheet ?? null,
+      text: s.preview_text ?? null,
+    };
+  }
+  const w = item.worksheet;
+  return {
+    title: worksheetName(w),
+    href: `/worksheets/${w.id}`,
+    tag: TOOL_NAME.worksheet,
+    detail: worksheetDetail(w).join(" · "),
+    when: formatDateTime(w.updated_at),
+    // Only a generated worksheet has a first page.
+    worksheet: w.generated ? { id: w.id, version_no: w.version_no } : null,
+    text: null,
+  };
+}
 
 const time = (iso: string) => {
   const t = Date.parse(iso);
   return Number.isNaN(t) ? 0 : t;
 };
 
-/** 我的作品: every prep session and every worksheet made outside one, newest first, in one list. */
+/** 我的作品: every prep session and every worksheet made outside one, newest first, as cards or a list. */
 export function PrepListPage() {
   const [params, setParams] = useSearchParams();
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
   const [worksheets, setWorksheets] = useState<WorksheetSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Bumped by 再試一次: the lists are asked for again. */
+  const [attempt, setAttempt] = useState(0);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  /** After a delete the row (and the focused button) is gone: focus goes to the list. */
+  const [view, setView] = useState<View>(loadView);
+  /** After a delete the card (and the focused button) is gone: focus goes to the list. */
   const listRef = useRef<HTMLUListElement>(null);
 
   const typeParam = params.get("type");
@@ -79,7 +160,7 @@ export function PrepListPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [attempt]);
 
   const items = useMemo<Item[] | null>(() => {
     if (sessions === null || worksheets === null) return null;
@@ -98,8 +179,18 @@ export function PrepListPage() {
   const count = (f: Filter) => (items ? items.filter((i) => f === "all" || i.filter === f).length : 0);
   const shown = items?.filter((i) => filter === "all" || i.filter === filter) ?? [];
 
+  function retry() {
+    setError(null);
+    setAttempt((n) => n + 1);
+  }
+
   function choose(f: Filter) {
     setParams(f === "all" ? {} : { type: f });
+  }
+
+  function chooseView(v: View) {
+    setView(v);
+    saveView(v);
   }
 
   async function remove(id: number) {
@@ -112,6 +203,26 @@ export function PrepListPage() {
     } catch (err) {
       setDeleteError(errorMessage(err));
     }
+  }
+
+  /** The delete controls of a standalone worksheet: the same in both views. */
+  function deleteControl(w: WorksheetSummary) {
+    return (
+      <DeleteControl
+        name={worksheetName(w)}
+        confirming={confirming === w.id}
+        error={confirming === w.id ? deleteError : null}
+        onAsk={() => {
+          setDeleteError(null);
+          setConfirming(w.id);
+        }}
+        onCancel={() => {
+          setDeleteError(null);
+          setConfirming(null);
+        }}
+        onConfirm={() => void remove(w.id)}
+      />
+    );
   }
 
   return (
@@ -127,7 +238,26 @@ export function PrepListPage() {
       </div>
 
       <ErrorText message={error} />
-      {items === null && !error && <Loading />}
+      {error && (
+        <p>
+          <button type="button" className="text-link" onClick={retry}>
+            再試一次
+          </button>
+        </p>
+      )}
+      {items === null && !error && view === "list" && <Loading />}
+      {items === null && !error && view === "cards" && (
+        <>
+          <p className="sr-only" role="status">
+            載入中…
+          </p>
+          <ul className="work-grid" aria-hidden="true">
+            {Array.from({ length: 8 }, (_, i) => (
+              <WorkCardSkeleton key={i} />
+            ))}
+          </ul>
+        </>
+      )}
       {items !== null && items.length === 0 && (
         <p className="empty-line">
           還沒有作品。到<Link to="/">首頁</Link>放進一篇課文，就會出現在這裡。
@@ -135,41 +265,54 @@ export function PrepListPage() {
       )}
       {items !== null && items.length > 0 && (
         <>
-          <div className="lib-chips" role="group" aria-label="作品類型">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                className="lib-chip"
-                aria-pressed={filter === f.key}
-                onClick={() => choose(f.key)}
-              >
-                {f.label} <span className="lib-chip-count">{count(f.key)}</span>
-              </button>
-            ))}
+          <div className="mywork-bar">
+            <div className="lib-chips" role="group" aria-label="作品類型">
+              {FILTERS.map((f) => (
+                <button
+                  key={f.key}
+                  type="button"
+                  className="lib-chip"
+                  aria-pressed={filter === f.key}
+                  onClick={() => choose(f.key)}
+                >
+                  {f.label} <span className="lib-chip-count">{count(f.key)}</span>
+                </button>
+              ))}
+            </div>
+            <div className="view-switch" role="group" aria-label="檢視方式">
+              {VIEWS.map((v) => (
+                <button key={v.key} type="button" aria-pressed={view === v.key} onClick={() => chooseView(v.key)}>
+                  {v.label}
+                </button>
+              ))}
+            </div>
           </div>
-          {shown.length === 0 && <p className="empty-line">這個類型還沒有作品。</p>}
-          {shown.length > 0 && (
-            <ul className="rows" aria-label="我的作品" ref={listRef} tabIndex={-1}>
+          {shown.length === 0 && (
+            <p className="empty-line mywork-empty">
+              這個類型還沒有作品。
+              <button type="button" className="text-link" onClick={() => choose("all")}>
+                看全部
+              </button>
+            </p>
+          )}
+          {shown.length > 0 && view === "cards" && (
+            <ul className="work-grid" aria-label="我的作品" ref={listRef} tabIndex={-1}>
+              {shown.map((item) => (
+                <WorkCard
+                  key={item.key}
+                  data={cardOf(item)}
+                  tools={item.type === "worksheet" ? deleteControl(item.worksheet) : undefined}
+                />
+              ))}
+            </ul>
+          )}
+          {shown.length > 0 && view === "list" && (
+            <ul className="rows mywork-rows" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) =>
                 item.type === "session" ? (
                   <SessionRow key={item.key} s={item.session} />
                 ) : (
-                  <WorksheetRow
-                    key={item.key}
-                    w={item.worksheet}
-                    confirming={confirming === item.worksheet.id}
-                    error={confirming === item.worksheet.id ? deleteError : null}
-                    onAsk={() => {
-                      setDeleteError(null);
-                      setConfirming(item.worksheet.id);
-                    }}
-                    onCancel={() => {
-                      setDeleteError(null);
-                      setConfirming(null);
-                    }}
-                    onConfirm={() => void remove(item.worksheet.id)}
-                  />
+                  <WorksheetRow key={item.key} w={item.worksheet} tools={deleteControl(item.worksheet)} />
                 ),
               )}
             </ul>
@@ -189,40 +332,51 @@ function SessionRow({ s }: { s: PrepSessionSummary }) {
         </h3>
         <p className="meta">
           {s.last_kind && <span className="mywork-tag">{KIND_TAG[s.last_kind]}</span>}
-          {[
-            s.material ? `教材：${s.material.title.trim() || "未命名教材"}` : s.topic ? `主題：${s.topic}` : null,
-            s.class ? s.class.name : null,
-            formatDateTime(s.updated_at),
-          ]
-            .filter(Boolean)
-            .join(" · ")}
+          {[...sessionDetail(s), formatDateTime(s.updated_at)].filter(Boolean).join(" · ")}
         </p>
       </div>
     </li>
   );
 }
 
-function WorksheetRow({
-  w,
+function WorksheetRow({ w, tools }: { w: WorksheetSummary; tools: ReactNode }) {
+  return (
+    <li className="row">
+      <div>
+        <h3>
+          <Link to={`/worksheets/${w.id}`}>{worksheetName(w)}</Link>
+        </h3>
+        <p className="meta">
+          <span className="mywork-tag">{TOOL_NAME.worksheet}</span>
+          {[...worksheetDetail(w), formatDateTime(w.updated_at)].filter(Boolean).join(" · ")}
+        </p>
+      </div>
+      <div className="row-tools">{tools}</div>
+    </li>
+  );
+}
+
+/** 刪除 with its confirmation, in place; a failed delete is said right beside it. */
+function DeleteControl({
+  name,
   confirming,
   error,
   onAsk,
   onCancel,
   onConfirm,
 }: {
-  w: WorksheetSummary;
+  name: string;
   confirming: boolean;
-  /** A failed delete, said in this row. */
+  /** A failed delete. */
   error: string | null;
   onAsk: () => void;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const name = w.title || "未命名的學習單";
   // The confirmation replaces 刪除 in place: focus goes to the safe 不刪, and back to 刪除 after.
   const keepRef = useRef<HTMLButtonElement>(null);
   const askRef = useRef<HTMLButtonElement>(null);
-  /** Set by 不刪: only then does focus go back to 刪除 (another row's 刪除 keeps its own focus). */
+  /** Set by 不刪: only then does focus go back to 刪除 (another card's 刪除 keeps its own focus). */
   const backToAsk = useRef(false);
   useEffect(() => {
     if (confirming) keepRef.current?.focus();
@@ -232,48 +386,31 @@ function WorksheetRow({
     }
   }, [confirming]);
   return (
-    <li className="row">
-      <div>
-        <h3>
-          <Link to={`/worksheets/${w.id}`}>{name}</Link>
-        </h3>
-        <p className="meta">
-          <span className="mywork-tag">{TOOL_NAME.worksheet}</span>
-          {[
-            w.lesson ? `${w.lesson.unit_title} / ${w.lesson.title}` : null,
-            w.generated ? (w.levels.length > 0 ? w.levels.map((l) => LEVEL_LABEL[l]).join("、") : "已產生") : "還沒產生",
-            formatDateTime(w.updated_at),
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-        </p>
-      </div>
-      <div className="row-tools">
-        {confirming ? (
-          <span role="group" aria-label="確認刪除">
-            確定刪除？
-            <button type="button" className="text-link is-danger" onClick={onConfirm}>
-              確定刪除
-            </button>
-            <button
-              ref={keepRef}
-              type="button"
-              className="text-link is-plain"
-              onClick={() => {
-                backToAsk.current = true;
-                onCancel();
-              }}
-            >
-              不刪
-            </button>
-          </span>
-        ) : (
-          <button ref={askRef} type="button" className="text-link is-plain" aria-label={`刪除 ${name}`} onClick={onAsk}>
-            刪除
+    <>
+      {confirming ? (
+        <span role="group" aria-label="確認刪除">
+          確定刪除？
+          <button type="button" className="text-link is-danger" onClick={onConfirm}>
+            確定刪除
           </button>
-        )}
-        <ErrorText message={error} />
-      </div>
-    </li>
+          <button
+            ref={keepRef}
+            type="button"
+            className="text-link is-plain"
+            onClick={() => {
+              backToAsk.current = true;
+              onCancel();
+            }}
+          >
+            不刪
+          </button>
+        </span>
+      ) : (
+        <button ref={askRef} type="button" className="text-link is-plain" aria-label={`刪除 ${name}`} onClick={onAsk}>
+          刪除
+        </button>
+      )}
+      <ErrorText message={error} />
+    </>
   );
 }

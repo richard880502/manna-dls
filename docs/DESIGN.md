@@ -73,7 +73,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 
 - **Top bar** (`.top`, 56px, sticky under the demo banner): the star and 「Manna」, the three destinations (班級, 學習單, 教材), and at the right the account links (知識庫管理 for the project lead and knowledge-base managers, 後台管理 for the project lead, 「研究編號 · 備課偏好」, 登出). Under 760px the three destinations move to a fixed bar at the bottom (60px) and the research ID drops out of the top bar.
 - A page that takes over the bar renders into its slot (`TopBarSlot`): during a lesson the bar shows only 「上課中 · 已同步」 and 「結束本節課」, and the bottom bar is gone, so nothing invites a stray tap.
-- **Frames** (`.workspace`): list pages 1040px; working pages with two columns (lesson, 單元想法, 課後補寫, admin) 1200px; the in-class console 880px; single-column text pages 800px.
+- **Frames** (`.workspace`): list pages 1040px; working pages with two columns (lesson, 單元想法, 課後補寫, admin) 1200px; the in-class console 880px; single-column text pages 800px; 我的作品 1280px (`--container-gallery`: a wall of cards, at least 240px each; its list view stays 800px wide).
 - **Breakpoints:** 760px (shell, rows, single column), 1100px (the lesson page's side column goes under the main one), plus the older 75rem / 60rem / 40rem inside screens not rebuilt yet.
 
 ## Components

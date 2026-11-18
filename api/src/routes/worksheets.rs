@@ -34,6 +34,7 @@ use crate::worksheet::sync::{self, Preview};
 use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
 use crate::worksheet::template::prefill_settings;
 use crate::worksheet::template::store as tpl_store;
+use crate::worksheet::thumbnail;
 use crate::worksheet::vocab::{self, VocabCheck};
 use crate::worksheet::{
     auto_filename, auto_title, safe_filename, suggest_direct, suggest_from_sop, Audience, Brief,
@@ -552,8 +553,10 @@ pub async fn delete(
     teacher: AuthTeacher,
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
-    store::owned(&state.db, id, teacher.id()).await?;
+    let ws = store::owned(&state.db, id, teacher.id()).await?;
     store::soft_delete(&state.db, id).await?;
+    // The kept preview goes too; a failure there never undoes or blocks the delete.
+    thumbnail::forget(&state, &ws).await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -864,7 +867,7 @@ pub async fn undo_block(
 
 // ---------------------------------------------------------------- sheets and versions
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct SheetQuery {
     pub level: Option<String>,
     pub audience: Option<String>,
@@ -1005,6 +1008,68 @@ pub async fn export(
         bytes,
     )
         .into_response())
+}
+
+/// `GET /api/worksheets/:id/thumbnail`: page 1 of the student PDF (default level, pictures
+/// included) as a 480 px wide JPEG, for the cards of 我的作品. A preview, not an export: no
+/// usage log. 409 while the worksheet is being made. `Cache-Control: private, max-age=0,
+/// must-revalidate` + an `ETag` of the state the picture shows (304 on `If-None-Match`).
+pub async fn thumbnail(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    let db = &state.db;
+    let ws = store::owned(db, id, teacher.id()).await?;
+    if !ws.generated {
+        return Err(AppError::Conflict(thumbnail::MSG_NOT_GENERATED.to_string()));
+    }
+    let (_, running) = ws_ai::jobs(&state, id).await?;
+    if running {
+        return Err(AppError::Conflict(thumbnail::MSG_RUNNING.to_string()));
+    }
+    let latest = store::latest(db, id).await?;
+    let fingerprint = thumbnail::fingerprint(db, &ws).await?;
+    let etag = thumbnail::etag(id, latest.version_no, &fingerprint);
+    let response = Response::builder()
+        .header(CACHE_CONTROL, "private, max-age=0, must-revalidate")
+        .header(ETAG, &etag)
+        .header(VARY, "Authorization");
+    if crate::routes::library::etag_matches(
+        headers.get(IF_NONE_MATCH).and_then(|v| v.to_str().ok()),
+        &etag,
+    ) {
+        return response
+            .status(StatusCode::NOT_MODIFIED)
+            .body(Body::empty())
+            .map_err(|e| AppError::Internal(e.into()));
+    }
+    let key = thumbnail::cache_key(id, latest.version_no, &fingerprint);
+    let bytes = thumbnail::get_or_render(&state, &key, || async {
+        let q = SheetQuery::default();
+        let sheet = sheet_with_images(&state, &ws, &latest.content, &q).await?;
+        let bank = images::bank_for(&state, id, &sheet).await?;
+        let made = tokio::task::spawn_blocking(move || export::pdf_with_images(&sheet, &bank))
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+        match made {
+            Ok(bytes) => Ok(bytes),
+            Err(ExportError::NoCjkFont) => Err(AppError::Conflict(
+                "這份學習單裡有中文，但伺服器沒有中文字型，做不出預覽圖。".to_string(),
+            )),
+            Err(ExportError::Other(e)) => Err(AppError::Internal(e)),
+        }
+    })
+    .await?;
+    response
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, thumbnail::CONTENT_TYPE)
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox")
+        .body(Body::from(bytes))
+        .map_err(|e| AppError::Internal(e.into()))
 }
 
 // ---------------------------------------------------------------- pictures
