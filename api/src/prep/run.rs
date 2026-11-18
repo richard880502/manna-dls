@@ -1349,6 +1349,11 @@ fn revised_block(
                     .filter(|i| i.prompt.trim() == it.prompt.trim())
                     .map(|i| i.tiers.clone())
                     .unwrap_or_default(),
+                // The same for the teacher's table: a new prompt names its own columns.
+                table: replaced
+                    .filter(|i| i.prompt.trim() == it.prompt.trim())
+                    .and_then(|i| i.table.clone()),
+                kept_options: Vec::new(),
             }
         })
         .collect();

@@ -854,6 +854,8 @@ fn level_block(
                 .filter(|t| levels.contains(&t.level))
                 .cloned()
                 .collect(),
+            table: None,
+            kept_options: Vec::new(),
         })
         .collect();
     let mut block = Block {

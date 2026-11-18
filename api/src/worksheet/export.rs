@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
-use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport};
+use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport, SheetTable};
 use super::tiered::{student_version_name, SupportKind};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
 use crate::retrieval::is_cjk;
@@ -76,11 +76,23 @@ fn option_letter(i: usize) -> char {
     (b'A' + (i % 26) as u8) as char
 }
 
-fn boxed(item: &SheetItem) -> Option<&'static str> {
-    match item.answer_format.as_deref() {
-        Some(f) if f == FMT_TABLE => Some("table"),
-        Some(f) if f == FMT_ORGANIZER => Some("box"),
-        _ => None,
+/// Where a question is answered: a table (表格整理), a box (圖像組織) or answer lines.
+enum AnswerSpace {
+    Table(SheetTable),
+    Box,
+    Lines(u8),
+}
+
+fn answer_space(item: &SheetItem) -> AnswerSpace {
+    match (&item.table, item.answer_format.as_deref()) {
+        (Some(t), _) => AnswerSpace::Table(t.clone()),
+        // A sheet assembled before tables had their own size: the grid it always printed.
+        (None, Some(f)) if f == FMT_TABLE => AnswerSpace::Table(SheetTable {
+            columns: vec![String::new(); 2],
+            rows: super::TABLE_ROWS,
+        }),
+        (None, Some(f)) if f == FMT_ORGANIZER => AnswerSpace::Box,
+        _ => AnswerSpace::Lines(item.lines),
     }
 }
 
@@ -370,25 +382,25 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
             },
         ));
     }
-    match boxed(it) {
-        Some("table") => out.push_str(&table(
-            &[DOCX_WIDTH / 2 - 200, DOCX_WIDTH / 2 - 200],
-            &[
-                vec![String::new(), String::new()],
-                vec![String::new(), String::new()],
-                vec![String::new(), String::new()],
-            ],
-            Some(520),
-            false,
-        )),
-        Some(_) => out.push_str(&table(
+    match answer_space(it) {
+        AnswerSpace::Table(t) => {
+            let n = t.columns.len().max(1);
+            let width = (DOCX_WIDTH - 400) / n as u32;
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            if t.has_headings() {
+                rows.push(t.columns.clone());
+            }
+            rows.extend((0..t.rows).map(|_| vec![String::new(); n]));
+            out.push_str(&table(&vec![width; n], &rows, Some(520), t.has_headings()));
+        }
+        AnswerSpace::Box => out.push_str(&table(
             &[DOCX_WIDTH - 400],
             &[vec![String::new()]],
             Some(2000),
             false,
         )),
-        None => {
-            for _ in 0..it.lines {
+        AnswerSpace::Lines(lines) => {
+            for _ in 0..lines {
                 out.push_str(&para(
                     &[run(" ", RunStyle::default())],
                     &ParaStyle {
@@ -1617,6 +1629,64 @@ impl<'a> Layout<'a> {
         }
     }
 
+    /// A 表格整理 table: the headings in bold in the first row (when there are any), then
+    /// `rows` empty rows of `row_h`.
+    fn answer_table(&mut self, indent: f32, t: &SheetTable, row_h: f32) {
+        let cols = t.columns.len().max(1);
+        if !t.has_headings() {
+            self.grid(indent, cols, t.rows.into(), row_h);
+            return;
+        }
+        let size = 10.0;
+        let pad = 3.0;
+        let cell_w = (CONTENT_W - indent) / cols as f32;
+        let heads: Vec<Vec<String>> = t
+            .columns
+            .iter()
+            .map(|c| self.wrap(c, Weight::Bold, size, cell_w - 2.0 * pad))
+            .collect();
+        let head_lines = heads.iter().map(Vec::len).max().unwrap_or(1).max(1);
+        let head_h = head_lines as f32 * Self::line_height(size) + 2.0 * pad;
+        // The headings stay with their rows.
+        self.ensure(head_h + row_h * f32::from(t.rows) + 8.0);
+        let x = MARGIN + indent;
+        let top = self.y + 4.0;
+        let style = Style {
+            weight: Weight::Bold,
+            size,
+            ..Style::body()
+        };
+        for (ci, lines) in heads.iter().enumerate() {
+            self.y = top + pad;
+            for line in lines {
+                self.draw_line(line, x + cell_w * ci as f32 + pad, style);
+                self.y += Self::line_height(size);
+            }
+        }
+        self.y = top;
+        let h = head_h;
+        self.ops().push(Op::Rect {
+            x,
+            y: top,
+            w: cell_w * cols as f32,
+            h,
+        });
+        for c in 1..cols {
+            let cx = x + cell_w * c as f32;
+            self.ops().push(Op::Line {
+                x1: cx,
+                y1: top,
+                x2: cx,
+                y2: top + h,
+                width: 0.6,
+                color: RULE,
+            });
+        }
+        // The empty rows right under the headings (the grid adds its own gap above).
+        self.y = top + h - 4.0;
+        self.grid(indent, cols, t.rows.into(), row_h);
+    }
+
     fn grid(&mut self, indent: f32, cols: usize, rows: usize, row_h: f32) {
         let h = row_h * rows as f32;
         self.ensure(h + 8.0);
@@ -1729,10 +1799,10 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
             Weight::Bold,
         );
     }
-    match boxed(it) {
-        Some("table") => l.grid(indent, 2, 3, 26.0),
-        Some(_) => l.grid(indent, 1, 1, 96.0),
-        None => l.answer_lines(it.lines, indent),
+    match answer_space(it) {
+        AnswerSpace::Table(t) => l.answer_table(indent, &t, 26.0),
+        AnswerSpace::Box => l.grid(indent, 1, 1, 96.0),
+        AnswerSpace::Lines(n) => l.answer_lines(n, indent),
     }
     if teacher {
         let gold = Style {
@@ -1994,6 +2064,7 @@ fn printed_text(sheet: &Sheet) -> String {
             }
             out.extend(it.scoring.iter().cloned());
             out.extend(it.options.iter().cloned());
+            out.extend(it.table.iter().flat_map(|t| t.columns.iter().cloned()));
             out.extend(it.answer.iter().cloned());
             out.extend(it.evidence.iter().cloned());
         }
@@ -2196,6 +2267,10 @@ mod tests {
                         prompt: format!("Question {no}: why did the neighbours laugh at the idea of a free umbrella stand outside the station on rainy mornings?"),
                         options: if no == 2 { vec!["Yes".into(), "No".into()] } else { vec![] },
                         lines: 3,
+                        table: (no % 3 == 0).then(|| SheetTable {
+                            columns: if no == 3 { vec!["Who?".into(), "What happened?".into(), "Why?".into()] } else { vec![String::new(); 2] },
+                            rows: 3,
+                        }),
                         answer: teacher.then(|| "Because they thought every umbrella would be gone.".to_string()),
                         evidence: teacher.then(|| "They were sure every umbrella would be gone.".to_string()),
                         bloom: None,
@@ -2228,6 +2303,30 @@ mod tests {
         std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
             .unwrap();
         assert!(xml.contains("Answer: ") && xml.contains("先找出關鍵句"));
+    }
+
+    #[test]
+    fn a_table_prints_its_headings_over_empty_rows() {
+        let xml = document(docx(&sheet(Audience::Student)).unwrap());
+        // Question 3 names its columns: one heading row in bold, then three empty rows.
+        for h in ["Who?", "What happened?", "Why?"] {
+            let cell = format!("<w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">{h}</w:t>");
+            assert!(xml.contains(&cell), "{h}");
+        }
+        let three = (DOCX_WIDTH - 400) / 3;
+        assert_eq!(
+            xml.matches(&format!("<w:gridCol w:w=\"{three}\"/>"))
+                .count(),
+            3
+        );
+        // A table without headings prints only its empty rows, in two columns.
+        let two = (DOCX_WIDTH - 400) / 2;
+        assert!(xml.matches(&format!("<w:gridCol w:w=\"{two}\"/>")).count() >= 2);
+        // Choices still print for a question that has them.
+        assert!(xml.contains("(A) Yes"));
+        // The PDF draws it too (English only: no CJK font needed).
+        let pdf = pdf(&sheet(Audience::Student)).unwrap();
+        assert!(pdf.starts_with(b"%PDF-"));
     }
 
     fn document(bytes: Vec<u8>) -> String {

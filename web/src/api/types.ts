@@ -1434,6 +1434,20 @@ export interface WsItem {
    * 舊資料沒有這個鍵。
    */
   tiers?: WsItemTier[];
+  /**
+   * 表格整理：學生要填的表格（欄名與空白列數）。沒有這個鍵時用題目裡列出的欄（"…: Who? / Why?"），
+   * 沒有列出就是兩個沒有欄名的欄、3 列。換成別的作答方式時留著，只在表格整理印出。
+   */
+  table?: WsItemTable | null;
+  /** 改成是非題時收起來的選項（True／False 取代了它們）；改回選擇題或配對題時放回去。不會印出。 */
+  kept_options?: string[];
+}
+
+export interface WsItemTable {
+  /** 1–6 欄；有任何欄名時第一列印欄名 */
+  columns: string[];
+  /** 欄名下方的空白列數，1–12 */
+  rows: number;
 }
 
 /** 支持的形式，由多到少：預填克漏字 → 字庫 → 句型框架 → 句首 → 不給支持（SIOP T3） */
@@ -1955,8 +1969,11 @@ export interface WsSheetBlock {
     no: number;
     answer_format: string | null;
     prompt: string;
+    /** 只有選擇題、是非題、配對題（與沒有作答方式的舊題目）印選項，空白的不印 */
     options: string[];
     lines: number;
+    /** 只有表格整理：要印的表格（有欄名時第一列是欄名） */
+    table?: WsItemTable;
     answer?: string;
     evidence?: string;
     /** 只有教師版 */

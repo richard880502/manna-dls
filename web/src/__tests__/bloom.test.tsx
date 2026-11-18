@@ -344,7 +344,15 @@ describe("worksheet editor: Bloom chip, distribution and hint", () => {
   });
 
   it("the hint is editable on each item, labelled as printed only in 基礎版", async () => {
-    const api = mockApi(routes(generated()));
+    // A worksheet with 基礎版: every question in it offers its hint.
+    const withBasic = generated();
+    withBasic.levels = ["basic", "standard"];
+    withBasic.content.levels = ["basic", "standard"];
+    withBasic.content.blocks = withBasic.content.blocks.map((b) => ({
+      ...b,
+      items: b.items.map((it) => ({ ...it, levels: ["basic", "standard"] as WsItem["levels"] })),
+    }));
+    const api = mockApi(routes(withBasic));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
     const hint = await screen.findByRole("textbox", { name: "提示（只印在基礎版） 1" });
@@ -355,6 +363,19 @@ describe("worksheet editor: Bloom chip, distribution and hint", () => {
       hint: "Look at the first sentence.",
       origin: "ai_edited",
     });
+  });
+
+  it("a worksheet without 基礎版 offers no empty hint (it would never print) and says so of a written one", async () => {
+    const only = generated();
+    only.content.blocks[0] = { ...only.content.blocks[0]!, items: [{ ...only.content.blocks[0]!.items[0]!, hint: "Who did it?" }, only.content.blocks[0]!.items[1]!] };
+    mockApi(routes(only));
+    renderApp("/worksheets/5");
+    await screen.findByRole("textbox", { name: "題目 1" });
+    expect(screen.queryByText("提示（只印在基礎版）")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "提示（只印在基礎版；這題不在基礎版，不會印出） 1" }),
+    ).toHaveValue("Who did it?");
+    expect(screen.getAllByRole("textbox", { name: /^提示/ })).toHaveLength(1);
   });
 
   it("the teacher view shows each block's Bloom line", async () => {

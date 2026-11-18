@@ -608,6 +608,15 @@ pub struct Item {
     /// 差異化學習單: the question's support, answer and scoring note per version (T3–T6); empty
     /// for every other question, which prints `hint` and `answer` as before.
     pub tiers: Vec<ItemTier>,
+    /// 表格整理: the table students fill in. `None` (every generated question): the table its
+    /// prompt names ([`ItemTable::for_prompt`]). Kept when the format changes; printed only for
+    /// 表格整理.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<ItemTable>,
+    /// Choices set aside when the teacher made the question a 是非題 (True／False took their
+    /// place): changing it back to 選擇題 or 配對題 brings them back. Never printed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kept_options: Vec<String>,
 }
 
 impl Item {
@@ -615,6 +624,80 @@ impl Item {
     pub fn tier(&self, level: Level) -> Option<&ItemTier> {
         self.tiers.iter().find(|t| t.level == level)
     }
+
+    /// The table a 表格整理 question prints: its own, or the one its prompt names.
+    pub fn table_or_default(&self) -> ItemTable {
+        self.table
+            .clone()
+            .unwrap_or_else(|| ItemTable::for_prompt(&self.prompt))
+    }
+}
+
+/// Whether a question of this format prints its `options` (choices to pick from): 選擇題, 是非題,
+/// 配對題, and a question without a format (older data). Every other format keeps the options it
+/// may have (the teacher can switch back) without printing them.
+pub fn uses_choices(format: Option<&str>) -> bool {
+    match format {
+        None => true,
+        Some(f) => [FMT_CHOICE, FMT_TRUE_FALSE, FMT_MATCHING].contains(&f),
+    }
+}
+
+pub const MAX_TABLE_COLUMNS: usize = 6;
+pub const MAX_TABLE_ROWS: u8 = 12;
+/// Empty rows under the headings of a table that has no size of its own (what the sheet has
+/// always printed).
+pub const TABLE_ROWS: u8 = 3;
+const TABLE_COLUMN_CHARS: usize = 40;
+
+/// The answer table of a 表格整理 question: the column headings (printed as the first row when
+/// any is filled in) and the number of empty rows for the answers.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ItemTable {
+    #[serde(default)]
+    pub columns: Vec<String>,
+    #[serde(default = "table_rows")]
+    pub rows: u8,
+}
+
+fn table_rows() -> u8 {
+    TABLE_ROWS
+}
+
+impl ItemTable {
+    /// The table of a question that has none of its own. The generator names the columns in the
+    /// prompt (「Complete the table: Who? / What happened? / Why?」); without such a list, two
+    /// columns without headings (the grid the sheet has always printed).
+    pub fn for_prompt(prompt: &str) -> Self {
+        Self {
+            columns: columns_from_prompt(prompt).unwrap_or_else(|| vec![String::new(); 2]),
+            rows: TABLE_ROWS,
+        }
+    }
+}
+
+/// The columns a prompt lists after its last colon, separated by 「/」 or 「|」: two to six short
+/// headings, else `None`. A closing 「(Question 3)」 is not part of the list. The editor reads
+/// prompts the same way (`columnsFromPrompt` in web/src/lib/worksheet.ts).
+pub fn columns_from_prompt(prompt: &str) -> Option<Vec<String>> {
+    let mut s = prompt.trim();
+    if s.ends_with(')') {
+        if let Some(i) = s.rfind('(') {
+            s = s[..i].trim_end();
+        }
+    }
+    let (_, list) = s.rsplit_once([':', '：'])?;
+    let parts: Vec<String> = list
+        .split(['/', '|', '／'])
+        .map(|p| p.trim().trim_end_matches(['.', '。']).trim().to_string())
+        .collect();
+    let fits = (2..=MAX_TABLE_COLUMNS).contains(&parts.len())
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.chars().count() <= TABLE_COLUMN_CHARS
+                && p.split_whitespace().count() <= 6
+        });
+    fits.then_some(parts)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -918,11 +1001,22 @@ impl Content {
                 check_text("依據", &i.evidence)?;
                 check_text("提示", &i.hint)?;
                 check_tiers(&mut i.tiers)?;
-                if i.options.len() > 12 {
+                if i.options.len() > 12 || i.kept_options.len() > 12 {
                     return Err("一題最多 12 個選項。".to_string());
                 }
-                for o in &i.options {
+                for o in i.options.iter().chain(&i.kept_options) {
                     check_text("選項", o)?;
+                }
+                if let Some(t) = &i.table {
+                    if t.columns.is_empty() || t.columns.len() > MAX_TABLE_COLUMNS {
+                        return Err(format!("表格要有 1 到 {MAX_TABLE_COLUMNS} 欄。"));
+                    }
+                    if !(1..=MAX_TABLE_ROWS).contains(&t.rows) {
+                        return Err(format!("表格要有 1 到 {MAX_TABLE_ROWS} 列。"));
+                    }
+                    if t.columns.iter().any(|c| c.chars().count() > 200) {
+                        return Err("表格的欄名最多 200 字。".to_string());
+                    }
                 }
                 if let Some(f) = &i.answer_format {
                     if !ANSWER_FORMATS.contains(&f.as_str()) {
@@ -1462,5 +1556,77 @@ mod tests {
     fn file_names_are_safe() {
         assert_eq!(safe_filename("a/b:c?.docx"), "a b c .docx");
         assert_eq!(safe_filename("  "), "學習單");
+    }
+
+    // The editor reads prompts the same way: web/src/__tests__/editorControls.test.tsx has
+    // these cases too.
+    #[test]
+    fn a_table_takes_its_columns_from_the_prompt() {
+        let cols = |p: &str| columns_from_prompt(p);
+        assert_eq!(
+            cols("Complete the table for P1: Who? / What happened? / Why? (Question 2)"),
+            Some(labels(&["Who?", "What happened?", "Why?"]))
+        );
+        assert_eq!(
+            cols("Fill in the chart： Cause | Effect."),
+            Some(labels(&["Cause", "Effect"]))
+        );
+        for none in [
+            "Complete the table about his/her day.",
+            "Complete the table: Cause",
+            "Compare them: what the neighbors expected before the stand opened / what really happened after a month",
+            "Complete the table: a / b / c / d / e / f / g",
+            "Complete the table: Who? / / Why?",
+            "",
+        ] {
+            assert_eq!(cols(none), None, "{none}");
+        }
+        assert_eq!(
+            ItemTable::for_prompt("Complete the table."),
+            ItemTable {
+                columns: labels(&["", ""]),
+                rows: TABLE_ROWS
+            }
+        );
+        assert!(uses_choices(None) && uses_choices(Some(FMT_TRUE_FALSE)));
+        assert!(!uses_choices(Some(FMT_SHORT)) && !uses_choices(Some(FMT_BLANK)));
+    }
+
+    #[test]
+    fn a_saved_table_and_kept_choices_are_checked() {
+        let with = |table: Option<ItemTable>, kept: Vec<String>| Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                items: vec![Item {
+                    id: "i1".into(),
+                    answer_format: Some(FMT_TABLE.into()),
+                    table,
+                    kept_options: kept,
+                    ..Item::default()
+                }],
+                ..Block::default()
+            }],
+            ..Content::default()
+        };
+        let table = |n: usize, rows: u8| {
+            Some(ItemTable {
+                columns: vec!["Who?".to_string(); n],
+                rows,
+            })
+        };
+        assert!(with(table(3, 3), labels(&["A", "B"])).normalise().is_ok());
+        assert!(with(None, Vec::new()).normalise().is_ok());
+        for bad in [table(0, 3), table(7, 3), table(2, 0), table(2, 13)] {
+            assert!(with(bad, Vec::new()).normalise().is_err());
+        }
+        assert!(with(None, vec!["x".to_string(); 13]).normalise().is_err());
+        // Old rows (no `table`, no `kept_options`) read as before, and the new keys are only
+        // written when they hold something.
+        let old: Item = serde_json::from_str(r#"{"id":"i1","answer_format":"表格整理"}"#).unwrap();
+        assert_eq!((old.table, old.kept_options.len()), (None, 0));
+        let json = serde_json::to_string(&Item::default()).unwrap();
+        assert!(!json.contains("table") && !json.contains("kept_options"));
+        let t: ItemTable = serde_json::from_str(r#"{"columns":["A"]}"#).unwrap();
+        assert_eq!(t.rows, TABLE_ROWS);
     }
 }

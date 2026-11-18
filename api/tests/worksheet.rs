@@ -1150,6 +1150,104 @@ async fn export_returns_docx_and_pdf_for_both_audiences() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
 }
 
+/// The editor's answer formats (a table with its own columns, choices kept by a format that does
+/// not print them) are saved with the content, checked, and printed the same way in the
+/// projection and the exports.
+#[tokio::test]
+async fn an_edited_answer_format_is_saved_projected_and_exported() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(&app, &t, &passage("")).await["id"].as_i64().unwrap();
+    let mut s = empty_settings();
+    s["levels"] = json!(["standard"]);
+    put_settings(&app, &t, id, s).await;
+    let state = generate(&app, &t, id).await;
+    let mut content = state["content"].clone();
+    let b = blocks(&state)
+        .iter()
+        .position(|b| {
+            b["kind"] == "activity" && b["items"].as_array().is_some_and(|i| i.len() >= 2)
+        })
+        .expect("an activity block with two questions");
+    let items = content["blocks"][b]["items"].as_array_mut().unwrap();
+    items[0]["answer_format"] = json!("表格整理");
+    items[0]["prompt"] = json!("Complete the table about the stand.");
+    items[0]["table"] = json!({ "columns": ["Problem", "Solution"], "rows": 4 });
+    items[1]["answer_format"] = json!("簡答題");
+    items[1]["options"] = json!(["Kept choice A", "Kept choice B"]);
+    let base = state["version_no"].as_i64().unwrap();
+
+    // A save from an older version is refused; from the latest it is stored.
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": base - 1 }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": base }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, reloaded) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
+    let saved = &reloaded["content"]["blocks"][b]["items"];
+    assert_eq!(
+        saved[0]["table"],
+        json!({ "columns": ["Problem", "Solution"], "rows": 4 })
+    );
+    assert_eq!(
+        saved[1]["options"],
+        json!(["Kept choice A", "Kept choice B"])
+    );
+
+    let sheet = sheet(&app, &t, id, "standard", "student").await;
+    let printed_block = sheet["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|pb| pb["id"] == content["blocks"][b]["id"])
+        .unwrap();
+    let items = &printed_block["items"];
+    assert_eq!(
+        items[0]["table"],
+        json!({ "columns": ["Problem", "Solution"], "rows": 4 })
+    );
+    assert_eq!(items[0]["lines"], 0);
+    assert_eq!(items[1]["options"], json!([]));
+    assert!(items[1].get("table").is_none());
+
+    let (s, _, _, bytes) = raw_get(
+        &app,
+        &format!("/api/worksheets/{id}/export?format=docx&level=standard&audience=student"),
+        &t,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    assert!(xml.contains(">Problem<") && xml.contains(">Solution<"));
+    assert!(!xml.contains("Kept choice A"));
+
+    // A table outside the limits is refused with the teacher's words.
+    let mut bad = reloaded["content"].clone();
+    bad["blocks"][b]["items"][0]["table"] = json!({ "columns": [], "rows": 3 });
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": bad, "base_version_no": reloaded["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+}
+
 #[tokio::test]
 async fn worksheets_belong_to_their_teacher() {
     let app = test_app!();

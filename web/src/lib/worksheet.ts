@@ -11,6 +11,7 @@ import type {
   WsBlock,
   WsBlockKind,
   WsItem,
+  WsItemTable,
   WsJobStep,
   WsLevel,
   WsOrigin,
@@ -219,7 +220,18 @@ export function editedOrigin(origin: WsOrigin): WsOrigin {
 
 export const isFromManna = (origin: WsOrigin) => origin !== "teacher";
 
-export function newItem(levels: WsLevel[]): WsItem {
+/** The form each version of a new 差異化學習單 question starts with (the most each version may use). */
+const NEW_TIER_KIND: Record<WsLevel, WsSupportKind> = {
+  basic: "sentence_frame",
+  standard: "sentence_starter",
+  advanced: "none",
+};
+
+/**
+ * A question the teacher adds. In a 差異化學習單 (`tiered`) it has its part in every version, so
+ * the version's support form can be chosen and filled in like the generated ones.
+ */
+export function newItem(levels: WsLevel[], tiered = false): WsItem {
   return {
     id: newId("i"),
     answer_format: "簡答題",
@@ -232,6 +244,308 @@ export function newItem(levels: WsLevel[]): WsItem {
     origin: "teacher",
     bloom: null,
     hint: "",
+    ...(tiered
+      ? {
+          tiers: levels.map((level) => ({
+            level,
+            support_kind: NEW_TIER_KIND[level],
+            model_sentence: "",
+            support: [],
+            word_bank: [],
+            answer: "",
+            scoring: "",
+          })),
+        }
+      : {}),
+  };
+}
+
+// ---------------------------------------------------------------- answer formats (§5.3)
+
+/** The formats that print their `options` (the server's `uses_choices`); a question without a
+ * format (older data) prints them too. Every other format keeps them, unprinted. */
+const CHOICE_FORMATS = new Set(["選擇題", "是非題", "配對題"]);
+export const usesChoices = (format: string | null) => format === null || CHOICE_FORMATS.has(format);
+
+export const TRUE_FALSE = ["True", "False"] as const;
+/** Empty choices a format starts with when the question has none: the generator writes four
+ * options for 選擇題 and at least three for 配對題. */
+const STARTING_CHOICES: Record<string, number> = { 選擇題: 4, 配對題: 3 };
+
+const isTrueFalse = (options: readonly string[]) =>
+  options.length === 2 &&
+  options[0]?.trim().toLowerCase() === "true" &&
+  options[1]?.trim().toLowerCase() === "false";
+const allBlank = (list: readonly string[]) => list.every((o) => o.trim() === "");
+
+/**
+ * The question in another answer format, keeping what still fits and setting aside what does not
+ * (never dropping it):
+ * - 選擇題／配對題 take the choices the question has; one without any (or with only True／False)
+ *   gets back the choices set aside for a 是非題, else empty ones to fill in;
+ * - 是非題 prints True／False; other choices are set aside in `kept_options`;
+ * - every other format keeps the choices unprinted, ready for a switch back;
+ * - 表格整理 needs no data of its own: [`tableOf`] gives the table the prompt names until the
+ *   teacher edits it. A table the question has is kept whatever the format.
+ * The prompt, answer, evidence, hint and versions are never touched.
+ */
+export function withAnswerFormat(item: WsItem, format: string | null): WsItem {
+  const next: WsItem = { ...item, answer_format: format };
+  const kept = item.kept_options ?? [];
+  if (format === "是非題") {
+    if (!isTrueFalse(item.options)) {
+      next.options = [...TRUE_FALSE];
+      if (!allBlank(item.options)) next.kept_options = item.options;
+    }
+  } else if (format !== null && format in STARTING_CHOICES) {
+    if (allBlank(item.options) || isTrueFalse(item.options)) {
+      next.options = kept.length > 0 ? kept : Array.from({ length: STARTING_CHOICES[format] ?? 4 }, () => "");
+      if (kept.length > 0) next.kept_options = [];
+    }
+  }
+  return next;
+}
+
+export const TABLE_ROWS = 3;
+export const MAX_TABLE_COLUMNS = 6;
+export const MAX_TABLE_ROWS = 12;
+
+/**
+ * The columns a prompt lists after its last colon, separated by 「/」 or 「|」 (the generator's way:
+ * "Complete the table: Who? / What happened? / Why?"): two to six short headings, else null. A
+ * closing "(Question 3)" is not part of the list. The same rule as the server's
+ * `columns_from_prompt`, so the editor shows the table that prints.
+ */
+export function columnsFromPrompt(prompt: string): string[] | null {
+  let s = prompt.trim();
+  if (s.endsWith(")")) {
+    const open = s.lastIndexOf("(");
+    if (open >= 0) s = s.slice(0, open).trimEnd();
+  }
+  const colon = Math.max(s.lastIndexOf(":"), s.lastIndexOf("："));
+  if (colon < 0) return null;
+  const parts = s
+    .slice(colon + 1)
+    .split(/[/|／]/)
+    .map((p) => p.trim().replace(/[.。]+$/, "").trim());
+  const fits =
+    parts.length >= 2 &&
+    parts.length <= MAX_TABLE_COLUMNS &&
+    parts.every((p) => p !== "" && [...p].length <= 40 && p.split(/\s+/).length <= 6);
+  return fits ? parts : null;
+}
+
+/** The table a 表格整理 question prints: its own, else the one its prompt names, else two columns
+ * without headings and three rows (what the sheet has always printed). */
+export function tableOf(item: Pick<WsItem, "table" | "prompt">): WsItemTable {
+  return item.table ?? { columns: columnsFromPrompt(item.prompt) ?? ["", ""], rows: TABLE_ROWS };
+}
+
+// ---------------------------------------------------------------- 差異化學習單 support (T3, T4)
+
+/** Words a sentence frame keeps: the frame of the sentence (pronouns, be and the helping verbs,
+ * linking and question words, prepositions, the verbs of an opinion, comparison words). The rest
+ * are what the student writes. */
+const FRAME_WORDS = new Set(
+  (
+    "i you he she it we they me him us them my your his her its our their this that these those " +
+    "am is are was were be been being do does did have has had will would can could should shall may might must " +
+    "not don't doesn't didn't can't won't isn't aren't wasn't weren't " +
+    "and but or so because although though however therefore when while if since after before then " +
+    "first next finally also than as like how why what who whom whose where which " +
+    "to of in on at for with from by about into " +
+    "think thinks thought feel feels felt believe believes believed agree agrees disagree disagrees " +
+    "more less most both same different similar"
+  ).split(" "),
+);
+const ARTICLES = new Set(["a", "an", "the"]);
+/** Words a sentence starter does not end on. */
+const STARTER_TAIL = new Set([
+  ...ARTICLES,
+  ..."my your his her its our their this these those to of in on at for with from by about into".split(" "),
+]);
+
+/** A word of a sentence with the punctuation around it. */
+interface Token {
+  lead: string;
+  core: string;
+  trail: string;
+}
+
+function tokensOf(text: string): Token[] {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t !== "")
+    .map((t) => {
+      const m = /^([^\p{L}\p{N}]*)(.*?)([^\p{L}\p{N}]*)$/u.exec(t);
+      return { lead: m?.[1] ?? "", core: m?.[2] ?? t, trail: m?.[3] ?? "" };
+    });
+}
+
+const lower = (s: string) => s.toLowerCase();
+const isArticle = (t: Token | undefined) => t !== undefined && ARTICLES.has(lower(t.core));
+/** A word the student writes (not part of the frame). */
+const isContent = (t: Token | undefined) =>
+  t !== undefined && /[\p{L}\p{N}]/u.test(t.core) && !FRAME_WORDS.has(lower(t.core)) && !isArticle(t);
+
+/** Which blank each word goes into (`null`: printed as it is). */
+type Blanks = Array<number | null>;
+/** Punctuation after a word that ends a blank (a full stop does not: 「Mrs. Lin」 is one blank). */
+const ENDS_BLANK = /[,;:!?()"“”‘’—–]/;
+
+/** The printed blanks: the words each 「___」 stands for (consecutive words of the same blank). */
+function runsOf(toks: Token[], blanks: Blanks): number[][] {
+  const runs: number[][] = [];
+  toks.forEach((_, i) => {
+    const b = blanks[i] ?? null;
+    if (b === null) return;
+    const run = runs[runs.length - 1];
+    if (run && run[run.length - 1] === i - 1 && blanks[i - 1] === b && !ENDS_BLANK.test(toks[i - 1]?.trail ?? "")) {
+      run.push(i);
+    } else runs.push([i]);
+  });
+  return runs;
+}
+
+/** The sentence with each blank as one 「___」, keeping the punctuation around it. */
+function render(toks: Token[], blanks: Blanks): string {
+  const runs = new Map(runsOf(toks, blanks).map((run) => [run[0], run[run.length - 1] ?? run[0]]));
+  const out: string[] = [];
+  for (let i = 0; i < toks.length; ) {
+    const t = toks[i] as Token;
+    const end = runs.get(i);
+    if (end === undefined) {
+      out.push(`${t.lead}${t.core}${t.trail}`);
+      i += 1;
+    } else {
+      out.push(`${t.lead}___${toks[end]?.trail ?? ""}`);
+      i = end + 1;
+    }
+  }
+  return out.join(" ");
+}
+
+/** What the blanks took out, one entry per blank (without a leading article). */
+function takenOut(toks: Token[], blanks: Blanks): string[] {
+  return uniqueWords(
+    runsOf(toks, blanks).map((run) => {
+      let words = run.map((i) => toks[i] as Token);
+      while (words.length > 1 && isArticle(words[0])) words = words.slice(1);
+      if (words.every((t) => isArticle(t))) return "";
+      return words.map((t, k) => (k === words.length - 1 ? t.core : `${t.core}${t.trail}`)).join(" ");
+    }),
+  );
+}
+
+const uniqueWords = (words: readonly string[]) => {
+  const seen = new Set<string>();
+  return words.filter((w) => {
+    const k = lower(w);
+    if (w === "" || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+};
+
+/** Every occurrence of a word-bank entry (a word or a phrase) as a blank of its own. */
+function bankBlanks(toks: Token[], bank: readonly string[]): Blanks {
+  const blanks: Blanks = toks.map(() => null);
+  const entries = bank
+    .map((w) => tokensOf(w).map((t) => lower(t.core)))
+    .filter((e) => e.length > 0 && e.every((w) => w !== ""))
+    .sort((a, b) => b.length - a.length);
+  let next = 0;
+  for (let i = 0; i < toks.length; ) {
+    const entry = entries.find((e) => e.every((w, k) => lower(toks[i + k]?.core ?? "") === w));
+    if (!entry) {
+      i += 1;
+      continue;
+    }
+    for (let k = 0; k < entry.length; k += 1) blanks[i + k] = next;
+    next += 1;
+    i += entry.length;
+  }
+  return blanks;
+}
+
+/** A cloze's own key words when the bank names none of the sentence's words: its longest content
+ * words, one for every three (one to three), each a blank of its own. */
+function keyWordBlanks(toks: Token[]): Blanks {
+  const content = toks.map((t, i) => ({ t, i })).filter(({ t }) => isContent(t));
+  const n = Math.min(3, Math.max(1, Math.round(content.length / 3)));
+  const keys = content
+    .sort((a, b) => [...b.t.core].length - [...a.t.core].length || a.i - b.i)
+    .slice(0, n)
+    .map(({ i }) => i);
+  return toks.map((_, i) => (keys.includes(i) ? i : null));
+}
+
+/** A starter: the opening words up to the first content word from the third word on (at most
+ * six), not ending on an article or a preposition, then 「…」. */
+function starterOf(toks: Token[]): string {
+  let end = toks.findIndex((t, i) => i >= 2 && isContent(t));
+  if (end < 0) end = Math.max(1, toks.length - 1);
+  let words = toks.slice(0, Math.min(end, 6));
+  while (words.length > 1 && STARTER_TAIL.has(lower(words[words.length - 1]?.core ?? ""))) words = words.slice(0, -1);
+  if (words.length < 2 && toks.length > 2) words = toks.slice(0, 2);
+  const last = words.length - 1;
+  return `${words.map((t, i) => (i === last ? `${t.lead}${t.core}` : `${t.lead}${t.core}${t.trail}`)).join(" ")} …`;
+}
+
+export type SupportBuild =
+  | { ok: true; support: string[]; word_bank: string[] }
+  /** model_sentence: the form is cut from a model sentence the version does not have; words: a
+   * word bank without words and without a model sentence to take them from. */
+  | { ok: false; missing: "model_sentence" | "words" };
+
+/**
+ * One version's support in another form, made from its model sentence and word bank
+ * (docs/SIOP_DESIGN_RULES.md T3, T4). Deterministic: the same sentence and bank always give the
+ * same lines. The editor stores the result in the version, so the preview, the printed sheet and
+ * the exports print exactly these lines; the teacher can still change them by hand.
+ * - 預填克漏字 (most support): the model sentence with each word-bank entry blanked; when the bank
+ *   names none of its words, its one to three longest words, which join the bank.
+ * - 字庫: the bank, over the answer lines (from the model sentence's words when the bank is empty).
+ * - 句型框架: the model sentence with the target words blanked, keeping its frame (pronouns, the
+ *   helping verbs, linking, question and comparison words, prepositions, think／feel): the bank's
+ *   words and every other word, each run one 「___」. With no bank, what was taken out makes it (T4).
+ * - 句首: the opening words of the model sentence. The bank stays (a starter does not print it).
+ * - 不給支持: nothing to make (null); the lines stay, unprinted.
+ */
+export function buildSupport(
+  kind: WsSupportKind,
+  modelSentence: string,
+  wordBank: readonly string[],
+): SupportBuild | null {
+  if (kind === "none") return null;
+  const bank = uniqueWords(wordBank.map((w) => w.trim()));
+  const toks = tokensOf(modelSentence);
+  if (kind === "word_bank") {
+    const words = bank.length > 0 ? bank : uniqueWords(toks.filter(isContent).map((t) => t.core)).slice(0, 8);
+    return words.length > 0 ? { ok: true, support: [], word_bank: words } : { ok: false, missing: "words" };
+  }
+  if (toks.length === 0) return { ok: false, missing: "model_sentence" };
+  if (kind === "sentence_starter") return { ok: true, support: [starterOf(toks)], word_bank: bank };
+  const fromBank = bankBlanks(toks, bank);
+  const cloze = (): SupportBuild => {
+    if (fromBank.some((b) => b !== null)) return { ok: true, support: [render(toks, fromBank)], word_bank: bank };
+    const keys = keyWordBlanks(toks);
+    return { ok: true, support: [render(toks, keys)], word_bank: uniqueWords([...takenOut(toks, keys), ...bank]) };
+  };
+  if (kind === "cloze") return cloze();
+  // 句型框架: one blank for each run of words the student writes; an article goes with its noun.
+  const frame: Blanks = toks.map((t, i) =>
+    fromBank[i] !== null || isContent(t) || (isArticle(t) && (isContent(toks[i + 1]) || (fromBank[i + 1] ?? null) !== null))
+      ? 0
+      : null,
+  );
+  // A sentence with nothing of a frame to keep (or nothing to blank) is cut like a cloze.
+  if (frame.every((b) => b !== null) || frame.every((b) => b === null)) return cloze();
+  return {
+    ok: true,
+    support: [render(toks, frame)],
+    word_bank: bank.length > 0 ? bank : takenOut(toks, frame).slice(0, 10),
   };
 }
 
@@ -256,14 +570,16 @@ export function newBlock(levels: WsLevel[]): WsBlock {
   };
 }
 
-/** Open answer formats get writing lines; how many depends on the version (docs/API.md). */
-const OPEN_FORMATS = new Set(["簡答題", "段落寫作", "表格整理", "圖像組織"]);
 const LINES: Record<WsLevel, number> = { basic: 2, standard: 3, advanced: 4 };
 
+/**
+ * Writing lines under a question, as the server prints them (`answer_lines`): 簡答題 (and a
+ * question without a format) by the version, 段落寫作 two more. The other formats are answered
+ * on the choices, in the blanks, in the table (表格整理) or in the box (圖像組織).
+ */
 export function answerLines(item: Pick<WsItem, "answer_format">, level: WsLevel): number {
-  if (item.answer_format === null || OPEN_FORMATS.has(item.answer_format)) {
-    return item.answer_format === "段落寫作" ? LINES[level] + 2 : LINES[level];
-  }
+  if (item.answer_format === null || item.answer_format === "簡答題") return LINES[level];
+  if (item.answer_format === "段落寫作") return LINES[level] + 2;
   return 0;
 }
 

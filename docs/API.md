@@ -997,7 +997,20 @@ interface WsItem {
   purpose: ExitKind | null;      // 只有 Exit ticket 的題目有
   levels: WsLevel[];             // 這一題出現在哪些版本（核心題＝全部版本）
   origin: WsOrigin;
+  table?: { columns: string[]; rows: number } | null;  // 表格整理的表格：1–6 欄、欄名下 1–12 列空白列；沒有時見下
+  kept_options?: string[];       // 改成是非題時收起來的選項（≤12）；不印，改回選擇題或配對題時編輯器放回去
 }
+```
+
+**作答方式怎麼印**（投影、預覽、DOCX、PDF 一致；編輯器照同樣的規則畫）：
+
+- `options` 只在**選擇題、是非題、配對題**（與沒有作答方式的舊題目）印出，空白的選項不印；其他作答方式的題目若還有選項，留在資料裡但不印（教師換回去時就回來）。
+- **表格整理**印成表格：題目的 `table`；沒有時用題目最後一個冒號後以「/」或「|」分開的 2–6 個短欄名（生成器的寫法：`Complete the table: Who? / What happened? / Why?`，結尾的 `(Question 3)` 不算），再沒有就是兩欄、沒有欄名；列數預設 3。有任何欄名時第一列印欄名。投影的題目多一個 `table: { columns, rows }`（只有表格整理有），作答行數是 0。
+- **圖像組織**印一個作答框；**簡答題**依版本印 2／3／4 行，**段落寫作**再多 2 行；其他作答方式不印作答線。
+- 編輯器換作答方式時保留題目、答案、依據、提示與各版本的支持：換成是非題 → 選項變成 True／False，原本的選項放進 `kept_options`；換成選擇題／配對題且沒有選項（或只有 True／False）→ 放回 `kept_options`，沒有就給 4／3 個空白選項；`table` 不論作答方式都留著。
+- 存檔檢查：`table` 要有 1–6 欄、1–12 列，欄名最多 200 字；`kept_options` 與 `options` 一樣最多 12 個。
+
+```ts
 interface WsScaffold {
   id: string; type: WsScaffoldType;
   kind: string;                  // 規格 §3 的例子名稱，例如 句型框架、字詞表、圖像組織、清楚的分步指示及完成順序
@@ -1073,6 +1086,7 @@ interface WsSheet {
     vocabulary: Array<{ word: string; level: number | null; definition: string }>;
     supports: Array<{ type: WsScaffoldType; kind: string; content: string }>;
     items: Array<{ no: number; answer_format: string | null; prompt: string; options: string[]; lines: number;
+                   table?: { columns: string[]; rows: number };   // 只有表格整理
                    answer?: string; evidence?: string }>;   // 學生版沒有 answer 與 evidence 這兩個鍵
     teacher_notes?: string;                                 // 學生版沒有這個鍵
   }>;
@@ -2154,6 +2168,8 @@ interface WsItemTier {
   同一題由基礎版到進階版**嚴格遞減**。
 - 支持不可以**指出答案位置**（「Look at paragraph 2.」「Read the second paragraph again.」「The answer is in line 3.」、`[P2]`、「第 2 段」），也不可以把題目改簡單（題目三版共用，只寫一次）。一般版與進階版的支持不可以寫出完整答案。
 - **句型框架**（T4）：先寫範句（`model_sentence`），再把目標字詞換成 `___`，挖掉的字詞是 `word_bank`；程度越低句構越簡單。克漏字同樣從範句挖空。
+- **句首不印字庫**（T3：字庫比句首的支持多）：`support_kind = sentence_starter` 時投影的 `support.word_bank` 一律是 `[]`；版本裡的 `word_bank` 留著（換回別的形式時用得到）。
+- **編輯器換支持形式**：由這個版本的 `model_sentence` 與 `word_bank` 依固定規則做出新的支持（`web/src/lib/worksheet.ts` 的 `buildSupport`，同樣的輸入一定得到同樣的結果），寫進 `support`／`word_bank` 後照常自動儲存，所以預覽、列印與匯出印的都是存下來的這幾行；教師之後仍可以手改。預填克漏字＝範句挖掉字庫裡的字（字庫沒有範句裡的字時挖掉最長的 1–3 個實詞，加進字庫）；字庫＝只印字庫（沒有字庫時取範句的實詞）加作答線；句型框架＝範句保留代名詞、助動詞、連接詞、疑問詞、介系詞、think／feel 等框架字，其餘每一段換成一個 `___`（沒有字庫時挖掉的字詞成為字庫）；句首＝範句開頭幾個字加「…」。版本沒有範句（克漏字、句型框架、句首）或字庫與範句都沒有（字庫）時，形式照換、原本的支持不動，編輯器說明原因；教師可以在編輯器寫範句後按「依範句重做」。同一次編輯中換回先前用過的形式，會放回那個形式原本的那幾行。
 - **答案**（T6）：每個版本各有 `answer` 與 `scoring`。基礎版可接受片語；一般版與進階版要 1–2 個完整句。題目本身的 `answer` 是進階版的答案（給 Bloom 判斷與舊的流程用）。
 - **轉折詞**（T5）：每個層次的區塊依語言功能給轉折詞，基礎版最基本的幾個，一般版再加，進階版再加較正式的（例如 first, next, then → previously, subsequently）。印成各版本自己的字詞表鷹架（`kind = "字詞表"`，`levels` 只有那個版本），內容「Linking words for giving reasons: because, so, since」。
 - **改寫文本**（T8）：任何版本印出「調整文本」（Simplified text）鷹架時，同一區的原文段落也一起印（投影的 `original_text`，先印原文，再印簡化文本當輔助）。這條規則對所有學習單都適用；差異化學習單的產生本身不寫改寫文本。
