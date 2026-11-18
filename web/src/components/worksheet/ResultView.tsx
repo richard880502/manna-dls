@@ -63,6 +63,8 @@ import {
   type BlockRevise,
 } from "./BlockRevise";
 import { LessonLinkControls } from "./LessonLink";
+import { OrganizerEditor } from "./Organizer";
+import { printedOrganizer } from "../../lib/organizer";
 import { RunOutcome, WorksheetRunProgress } from "./OptionsView";
 import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
@@ -704,6 +706,7 @@ function BlockSection({
           const hint = item.hint ?? "";
           const hintLabel = hintPrints ? "提示（只印在基礎版）" : "提示（只印在基礎版；這題不在基礎版，不會印出）";
           const changeItem = (change: (it: WsItem) => WsItem) => patchItem(item.id, change);
+          const organizer = printedOrganizer(item);
           return (
             <li key={item.id} value={no}>
               <SheetText
@@ -739,7 +742,22 @@ function BlockSection({
                   </div>
                 )
               )}
-              <WritingArea item={item} no={no} lines={lines} disabled={locked} onChange={changeItem} />
+              {/* 圖像組織 with an organizer: the chart, edited in place; every other format (and an
+                  organizer question without one, which prints a box) answers as ItemAnswer draws it. */}
+              {organizer ? (
+                <OrganizerEditor
+                  org={organizer}
+                  no={no}
+                  level={level}
+                  levels={levels}
+                  perVersion={differentiated}
+                  teacher={teacher}
+                  disabled={locked}
+                  onChange={(org) => changeItem((it) => ({ ...it, organizer: org }))}
+                />
+              ) : (
+                <WritingArea item={item} no={no} lines={lines} disabled={locked} onChange={changeItem} />
+              )}
               {teacher && (
                 <div className="ws-answer" lang="zh-Hant">
                   {/* A 差異化學習單 question has its answer per version (in TierEditor). */}

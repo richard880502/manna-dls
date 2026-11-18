@@ -3,6 +3,8 @@ import type { WsSheet, WsSheetBlock } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL, studentVersionName, versionLabel } from "../../lib/worksheet";
 import { BloomChip } from "../worksheet/Bloom";
+import { OrganizerView } from "../worksheet/Organizer";
+import { organizerText } from "../../lib/organizer";
 import { SlotPicture, viewOfSheetImage, type PictureActions } from "../worksheet/SlotPicture";
 import { SectionTools } from "./SectionTools";
 
@@ -34,6 +36,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
       if (it.support.kind !== "word_bank" && it.support.word_bank.length > 0)
         lines.push(`   Word bank: ${it.support.word_bank.join(" / ")}`);
     }
+    if (it.organizer) lines.push(...organizerText(it.organizer));
     if (it.answer) lines.push(`   參考答案：${it.answer}`);
     if (it.scoring) lines.push(`   評分說明：${it.scoring}`);
   });
@@ -253,8 +256,12 @@ export function SheetPreview({
                         </tbody>
                       </table>
                     )}
-                    {it.answer_format === "圖像組織" && (
-                      <div className="ws-organizer" role="img" aria-label={`圖像組織作答框 ${it.no}`} />
+                    {it.organizer ? (
+                      <OrganizerView org={it.organizer} />
+                    ) : (
+                      it.answer_format === "圖像組織" && (
+                        <div className="ws-organizer" role="img" aria-label={`圖像組織作答框 ${it.no}`} />
+                      )
                     )}
                     {!teacher &&
                       Array.from({ length: it.lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}

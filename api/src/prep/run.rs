@@ -1354,6 +1354,13 @@ fn revised_block(
                     .filter(|i| i.prompt.trim() == it.prompt.trim())
                     .and_then(|i| i.table.clone()),
                 kept_options: Vec::new(),
+                // The revision's schema has no organizer: a question that stays 圖像組織 keeps
+                // the one it had.
+                organizer: it.organizer.clone().or_else(|| {
+                    replaced
+                        .filter(|i| i.answer_format.as_deref() == Some(it.answer_format.as_str()))
+                        .and_then(|i| i.organizer.clone())
+                }),
             }
         })
         .collect();
@@ -1695,6 +1702,7 @@ mod tests {
                     options: vec![],
                     answer: "To help people.".into(),
                     bloom: None,
+                    organizer: None,
                 }],
             }],
         }
@@ -1756,6 +1764,7 @@ mod tests {
                     answer: "Because.".into(),
                     evidence: None,
                     bloom: None,
+                    organizer: None,
                 })
                 .collect(),
             scaffold: String::new(),
@@ -1829,6 +1838,7 @@ mod tests {
                     answer: "Because.".into(),
                     evidence: None,
                     bloom: None,
+                    organizer: None,
                 })
                 .collect(),
             scaffold: String::new(),

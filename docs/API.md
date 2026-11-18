@@ -2258,6 +2258,116 @@ prompt key：`worksheet_tiered_level`（第 1 版）、`worksheet_bloom_level`�
 
 ---
 
+# 圖像組織（Graphic organizers）
+
+作答方式是「圖像組織」的題目可以帶一張**由程式畫的圖表**（不是 AI 產圖）：模型只選類型、寫標題與每一格的參考答案；伺服器檢查後在編輯器預覽、DOCX、PDF 用同一份投影畫出來。學生拿到空白或部分預填的圖表，教師版印出參考答案。依據：docs/SIOP_DESIGN_RULES.md Q2（教學鷹架：圖表組織）、A4（應用活動：完成圖表組織）、T3（基礎版支持最多）。Migration：`0029_graphic_organizers.sql`。
+
+## 八種類型與版面
+
+| `type` | 名稱 | 版面（family） | sections | 每格 cells |
+|---|---|---|---|---|
+| `t_chart` | T 字表 | columns：有標題的欄，一列一格 | 正好 2 | ≤ 6 |
+| `kwl` | KWL 表 | columns | 正好 3（What I Know／What I Want to Know／What I Learned） | ≤ 6 |
+| `venn` | 文氏圖 | venn：兩個交疊的圓（只屬於 A／兩者都有／只屬於 B） | 正好 3 | ≤ 5 |
+| `sequence` | 順序鏈 | chain：編號方框加箭頭，一列三個 | 3–6 | ≤ 2 |
+| `cause_effect` | 因果鏈 | chain | 2–6 | ≤ 2 |
+| `problem_solution` | 問題與解決 | chain | 2–4 | ≤ 2 |
+| `story_map` | 故事地圖 | rows：左欄標題、右欄作答（Setting／Characters／Problem／Events／Solution） | 正好 5 | ≤ 4 |
+| `mind_map` | 心智圖 | web：中心詞在中間，分支在上下 | 3–6 | ≤ 3 |
+
+選這八種：它們是 SIOP 教學鷹架與應用活動提到、高中英文閱讀學習單實際會用的圖表（比較、排序、因果、問題解決、記敘結構、讀前讀後、概念網）。魚骨圖、有分支的流程圖、有日期的時間軸、矩陣沒有收：需要自由版面或兩個以上的維度，表格類的需求已有「表格整理」。
+
+## 資料
+
+```ts
+interface WsItem {
+  // …
+  organizer?: WsOrganizer | null;   // 只在 answer_format 是「圖像組織」時印出；舊題目沒有這個鍵 → 印空白方框
+}
+interface WsOrganizer {
+  type: WsOrganizerType;            // 上表八種之一（存檔時不是這八種 → 400）
+  title: string;                    // 印在圖表上方；"" 不印（≤ 200 字）
+  center: string;                   // 只有 mind_map 用（≤ 100 字）
+  sections: Array<{                 // ≤ 6
+    label: string;                  // 欄標題、方框標題或分支（≤ 100 字）
+    cells: Array<{                  // ≤ 6
+      answer: string;               // 參考答案，只在教師版（≤ 300 字）
+      given: string;                // 預填時學生版印的文字（≤ 300 字）
+      prefilled: WsLevel[];         // 學生版印 given 的版本；[] 不預填。伺服器排成版本順序
+    }>;
+  }>;
+}
+```
+
+- `PUT /api/worksheets/:id` 檢查上面的上限，超過回 400（「一個圖像組織最多 6 格。」等）。存檔不檢查各類型的最少格數（老師可以暫時刪到少於最少），也不調整格數；格數依類型調整只發生在模型的輸出與編輯器換類型時。
+- 作答方式換成別的時 `organizer` 留著但不印（換回圖像組織就回來）。
+
+## 投影（`GET …/sheet`、匯出）
+
+`items[].organizer`（只有印出圖表的題目有）：
+
+```ts
+{ type, name /* "T-chart"… */, title, center,
+  sections: [{ label, cells: [{ given: string /* 預填的字，空白格 "" */, answer?: string /* 只有教師版，空白格的參考答案 */ }] }] }
+```
+
+- 學生版：這個版本預填的格子印 `given`，其他格子空白（作答線或空格）；沒有 `answer`。
+- 教師版：預填的格子一樣印 `given`；空白格印 `answer`（教師用的金色）。
+- 有圖表的題目 `lines = 0`（圖表取代作答線）。題目層級的 `answer`（評分重點）照舊印在圖表下方。
+- 沒有 `organizer` 的圖像組織題目（舊學習單）照舊印一個空白方框。
+
+**DOCX**：Word 原生表格（固定欄寬，可以在 Word 裡改）。columns 與 rows 是表格；chain 是「方框｜→｜方框｜→｜方框」的表格，方框標題前加編號；**venn 用三欄表格近似**（A｜Both｜B，欄標題加底色），因為 Word 的圖形加文字在不同版本的 Word 裡位置不穩、也不好編輯；mind_map 是 3 欄的表格，中心格加底色，分支在上下兩列，中間的列放 ↖ ↑ ↗／↙ ↓ ↘ 箭頭。
+**PDF**：真的畫線：columns／rows 是格線（可以在列之間換頁），chain 是方框加箭頭，venn 是兩個橢圓、三區文字，mind_map 是方框與從中心拉出的線。標題和圖表的第一部分一起換頁。
+**編輯器與對話頁預覽**：同樣的版面（CSS grid＋SVG）；手機寬度時順序鏈改成直排、箭頭朝下。
+
+## 模型輸出
+
+四個提示詞的 schema 多一個 `organizer`，放在 `options` 後面、`answer` 前面；其他作答方式的題目填 `null`（`anyOf: [organizer, null]`）：
+
+| prompt key | 新版本 | schema 何時有 `organizer` |
+|---|---|---|
+| `worksheet_tasks` | 4 | 一律（模型可以選任何作答方式） |
+| `worksheet_bloom_level` | 3 | 這個層次能用的作答方式有圖像組織時 |
+| `worksheet_tiered_level` | 2 | 同上；格子用 `prefill_in` |
+| `worksheet_template_section` | 3 | 版型這一區的作答方式有圖像組織（或沒有指定）時 |
+
+（版本號是「目前最新版 + 1」，上表是 main 上的情形。新版本＝前一版全文＋一段圖像組織的規則。）
+
+```
+organizer: { type: enum(八種), title: ≤80, center: ≤60,
+             sections: [2–6] { label: ≤40, cells: [1–6] { answer: ≤120, prefilled: boolean } } }
+差異化學習單的 cell：{ answer: ≤120, prefill_in: "none" | "basic" | "basic_standard" | "all" }
+```
+
+伺服器的整理（都不會多花一次修正呼叫，記在 `check_results.repairs`，檢查名 `organizer_wellformed`）：
+
+- 不在八種裡的 `type` → 改成容得下輸出的類型：有 `center` → mind_map；2 格以下 → t_chart；其他 → sequence。
+- 格數超過類型的上限 → 刪掉後面的；不到下限 → 補空的格子；格子裡的空格超過上限 → 刪掉後面的；沒有標題的格子用類型的預設標題；`center` 只留給 mind_map。
+- 每一段文字壓成一行、去掉 Markdown、截到上限。
+- 預填的格子印它的答案（`given = answer`）；答案是空的格子不預填。`prefilled: true` → 三個版本都預填；`prefill_in` → 對應的版本（一定包含基礎版，所以基礎版的預填最多）。
+- 每個版本至少留一格給學生寫：某個版本每一格都預填時，預填版本最少的那一格（同樣少時取最後一格）改成不預填。
+- 不是圖像組織的題目帶了 `organizer` → 拿掉。圖像組織的題目沒有 `organizer` → 照舊印空白方框。
+- 完整學習單（`worksheet_tasks`）的圖表含中文 → `english_only` 不通過（會修正一次），拿掉圖表印成方框。照版型的區塊依版型的指示語言，不檢查。
+- 修改學習單（`worksheet_block_revise`、`revise`）的 schema 沒有 `organizer`：題目保留原本的圖表。
+
+## 編輯器
+
+- 圖像組織的題目在題目下方畫出圖表，標題、中心詞、每一格的標題與空格都直接在圖上改；「圖表類型」可以換（老師寫的標題留著，還是預設標題的跟著換成新類型的預設，格數依新類型調整）；「加一格」「刪除這一格」「＋空格」「×」在類型的範圍內。
+- 學生版的檢視改預填的文字，每一格有「預填」勾選：差異化學習單的題目只改目前的版本，其他題目改全部版本；勾起來時空的預填文字先填入參考答案。教師版的檢視改參考答案。
+- 作答方式換成圖像組織、題目還沒有圖表時，自動建立一張 T 字表（Topic A／Topic B，可以改）。舊的圖像組織題目顯示「這一題印成空白方框。改成圖表」。
+
+## SIOP 自我檢核
+
+`render_worksheet` 在圖像組織題目下多一行：`圖像組織：因果鏈（cause_effect）｜標題：…｜Cause：It rained.〔預填：基礎版〕｜Effect：…`，第 4 項（補充教材）與第 14 項（鷹架）看得到類型、標題與預填的格子。
+
+## 測試用假模型
+
+每一題圖像組織依題號輪流用八種類型（`fake_organizer`）：標題依類型、答案取自段落的字、第一格預填（差異化學習單：第一格三版都預填，第二格只有基礎版）。`FAKE_ORG_BAD`：完整學習單與閱讀理解題的圖表類型是 `fishbone`、8 格各 3 個空格、全部預填（伺服器改成順序鏈、6 格各 2 個空格、留一格給學生寫）。
+
+## 試用真模型
+
+gemma 可能：把 `organizer` 寫給不是圖像組織的題目（會被拿掉）、圖像組織題目給 `null`（印方框）、把好幾格寫在同一個字串、預填太多格（程式留一格）、選和題目不搭的類型（例如說明文用 story_map）。看 `ai_interactions` 的 `check_results.repairs` 中 `organizer_wellformed` 的紀錄。
+
 # Phase 2.8：照我的學習單做
 
 以下為**新增**；既有端點只多了選填欄位與回應欄位。Migration `0016_mimic.sql`。

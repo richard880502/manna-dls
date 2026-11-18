@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::bloom::{Bloom, RawBloomCheck, RawBloomLevel, HINT_CHARS, REASON_CHARS};
+use super::organizer::{self, Organizer, RawOrganizer};
 use super::schemas::{
     RawBlock, RawExit, RawExitItem, RawItem, RawScaffoldSet, RawScaffolds, RawTasks, RawWarmup,
     TARGET_WARMUP, TIER_CHALLENGE, TIER_CORE, TIER_SUPPORT,
@@ -185,22 +186,24 @@ pub struct TasksCtx<'a> {
     pub only: Option<&'a [i64]>,
 }
 
-const TASK_CHECKS: [&str; 9] = [
+const TASK_CHECKS: [&str; 10] = [
     "labels_from_spec_sets",
     "english_only",
     "evidence_verbatim",
     "items_wellformed",
+    "organizer_wellformed",
     "answer_not_in_prompt",
     "objective_refs_valid",
     "all_paragraphs_covered",
     "blocks_in_paragraph_order",
     "at_least_3_info_functions",
 ];
-const TASK_CHECKS_WITH_BUDGET: [&str; 11] = [
+const TASK_CHECKS_WITH_BUDGET: [&str; 12] = [
     "labels_from_spec_sets",
     "english_only",
     "evidence_verbatim",
     "items_wellformed",
+    "organizer_wellformed",
     "answer_not_in_prompt",
     "objective_refs_valid",
     "all_paragraphs_covered",
@@ -336,6 +339,59 @@ fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
         }
         _ => Ok(()),
     }
+}
+
+/// 圖像組織: a question's organizer, cleaned ([`organizer::from_raw`]); `None` for a question of
+/// another format (an organizer it carries is dropped) and for an organizer question without
+/// one, which prints an empty box as before. Nothing here costs a repair call except Chinese in
+/// an organizer where students may only read English (`english`): the organizer is dropped.
+/// `asked`: the schema asked for an organizer (a missing one is reported).
+fn organizer_of(
+    format: &str,
+    raw: Option<&RawOrganizer>,
+    iname: &str,
+    (tiered, english, asked): (bool, bool, bool),
+    t: &mut Tally,
+) -> Option<Organizer> {
+    if format != super::FMT_ORGANIZER {
+        if raw.is_some_and(|r| !r.sections.is_empty()) {
+            t.fixed(
+                "organizer_wellformed",
+                format!("{iname}（{format}）不是圖像組織，organizer 要填 null。"),
+                "拿掉 organizer",
+            );
+        }
+        return None;
+    }
+    let Some(raw) = raw.filter(|r| !r.sections.is_empty()) else {
+        if asked {
+            t.fixed(
+                "organizer_wellformed",
+                format!(
+                    "{iname}（圖像組織）沒有 organizer；要選一種類型，寫出每一格的標題與參考答案。"
+                ),
+                "印成空白方框",
+            );
+        }
+        return None;
+    };
+    let (org, fixes) = organizer::from_raw(raw, tiered);
+    for (problem, repair) in fixes {
+        t.fixed(
+            "organizer_wellformed",
+            format!("{iname}：{problem}"),
+            repair,
+        );
+    }
+    if english && !organizer::english(&org) {
+        t.fail(
+            "english_only",
+            format!("{iname} 的圖像組織含有中文；學生看得到的欄位只能用英文。"),
+            "拿掉圖像組織，印成空白方框",
+        );
+        return None;
+    }
+    Some(org)
 }
 
 fn paragraph_label(nos: &[i64]) -> String {
@@ -532,6 +588,14 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 );
                 continue;
             }
+            item.organizer = organizer_of(
+                &item.answer_format,
+                it.organizer.as_ref(),
+                &iname,
+                (false, true, true),
+                &mut t,
+            )
+            .map(|o| RawOrganizer::from(&o));
             // Evidence is only a note for the teacher: one that is not verbatim is cut down to
             // its longest verbatim piece, or dropped, in code (as the SOP analysis drops it).
             // It never costs the step a repair call on its own.
@@ -1297,6 +1361,8 @@ pub struct CleanSectionItem {
     /// The Bloom level the model gave the item (template blocks, prompt version 2); `None`
     /// when it gave none or a value outside the six.
     pub bloom: Option<Bloom>,
+    /// 圖像組織: the cleaned organizer (`None` for other formats and when none was written).
+    pub organizer: Option<Organizer>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1307,9 +1373,10 @@ pub struct CleanSection {
     pub items: Vec<CleanSectionItem>,
 }
 
-const SECTION_CHECKS: [&str; 7] = [
+const SECTION_CHECKS: [&str; 8] = [
     "labels_from_spec_sets",
     "items_wellformed",
+    "organizer_wellformed",
     "answer_not_in_prompt",
     "item_count_within_template",
     "has_items",
@@ -1569,10 +1636,19 @@ fn section_item(
         evidence: None,
         // A label outside the fixed set (a provider that ignores the schema) is dropped.
         bloom: it.bloom.as_deref().and_then(Bloom::parse),
+        organizer: None,
     };
     if !item_checks(&mut item, iname, t) {
         return None;
     }
+    // A template may be in Chinese; a revision (no organizer in its schema) keeps the stored one.
+    item.organizer = organizer_of(
+        &item.answer_format,
+        it.organizer.as_ref(),
+        iname,
+        (false, false, false),
+        t,
+    );
     if ctx.needs_external {
         let texts = std::iter::once(&item.prompt).chain(item.options.iter());
         if texts.into_iter().any(|x| names_a_resource(x)) {
@@ -1597,9 +1673,10 @@ fn section_item(
 
 // ---------------------------------------------------------------- one block revised (逐區修改)
 
-const REVISION_CHECKS: [&str; 5] = [
+const REVISION_CHECKS: [&str; 6] = [
     "labels_from_spec_sets",
     "items_wellformed",
+    "organizer_wellformed",
     "answer_not_in_prompt",
     "no_invented_material",
     "syllables_match_dictionary",
@@ -1726,9 +1803,10 @@ pub struct CleanBloomLevel {
     pub items: Vec<CleanBloomItem>,
 }
 
-const BLOOM_CHECKS: [&str; 8] = [
+const BLOOM_CHECKS: [&str; 9] = [
     "labels_from_spec_sets",
     "items_wellformed",
+    "organizer_wellformed",
     "answer_not_in_prompt",
     "evidence_verbatim",
     "item_count_within_plan",
@@ -1737,9 +1815,10 @@ const BLOOM_CHECKS: [&str; 8] = [
     "steps_written",
 ];
 
-const TIERED_CHECKS: [&str; 13] = [
+const TIERED_CHECKS: [&str; 14] = [
     "labels_from_spec_sets",
     "items_wellformed",
+    "organizer_wellformed",
     "answer_not_in_prompt",
     "evidence_verbatim",
     "item_count_within_plan",
@@ -1761,6 +1840,9 @@ struct SharedRaw<'a> {
     answer: &'a str,
     evidence: &'a str,
     paragraph_ids: &'a [String],
+    organizer: Option<&'a RawOrganizer>,
+    /// 差異化學習單: cells are pre-filled per version.
+    tiered: bool,
 }
 
 /// The checks of a question's shared part, the way a template block is checked (the level's
@@ -1796,6 +1878,7 @@ fn shared_item(
         evidence: None,
         // The level is the call's, not the item's (see `CleanBloomItem`).
         bloom: None,
+        organizer: None,
     };
     if item.answer_format == FMT_TRUE_FALSE && item.options.is_empty() {
         item.options = vec!["True".to_string(), "False".to_string()];
@@ -1865,6 +1948,17 @@ fn shared_item(
     {
         return None;
     }
+    item.organizer = organizer_of(
+        &item.answer_format,
+        raw.organizer,
+        iname,
+        (
+            raw.tiered,
+            false,
+            ctx.formats.contains(&super::FMT_ORGANIZER),
+        ),
+        t,
+    );
     let mut paragraph_nos: Vec<usize> = raw
         .paragraph_ids
         .iter()
@@ -1943,6 +2037,8 @@ pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<Cle
             answer: &it.answer,
             evidence: &it.evidence,
             paragraph_ids: &it.paragraph_ids,
+            organizer: it.organizer.as_ref(),
+            tiered: false,
         };
         let Some((item, paragraph_nos)) = shared_item(shared, &iname, ctx, &mut t) else {
             continue;
@@ -2234,6 +2330,8 @@ pub fn evaluate_tiered_level(raw: &RawTieredLevel, ctx: &BloomCtx<'_>) -> Eval<C
             answer: &it.advanced.answer,
             evidence: &it.evidence,
             paragraph_ids: &it.paragraph_ids,
+            organizer: it.organizer.as_ref(),
+            tiered: true,
         };
         let Some((item, paragraph_nos)) = shared_item(shared, &iname, ctx, &mut t) else {
             continue;
@@ -2397,6 +2495,7 @@ mod tests {
             options: options.iter().map(|o| o.to_string()).collect(),
             answer: answer.into(),
             bloom: None,
+            organizer: None,
         }
     }
 
@@ -2596,6 +2695,7 @@ mod tests {
             tier: "core".into(),
             prompt_en: prompt.into(),
             options: vec![],
+            organizer: None,
             answer_en: answer.into(),
             evidence: None,
             bloom: None,
@@ -2671,6 +2771,47 @@ mod tests {
         let blocks = e.output.unwrap();
         assert_eq!(blocks[2].block_id, "B3");
         assert_eq!(blocks[2].items[0].item_id, "B3-1");
+    }
+
+    #[test]
+    fn task_organizers_are_cleaned_and_english_only() {
+        use crate::worksheet::organizer::{RawOrgCell, RawOrgSection};
+        let p = paragraphs();
+        let org = |label: &str| RawOrganizer {
+            kind: "t_chart".into(),
+            title: String::new(),
+            center: "not a mind map".into(),
+            sections: [label, "After"]
+                .iter()
+                .map(|l| RawOrgSection {
+                    label: l.to_string(),
+                    cells: vec![RawOrgCell {
+                        answer: "rain".into(),
+                        ..RawOrgCell::default()
+                    }],
+                })
+                .collect(),
+        };
+        let with = |format: &str, label: &str| {
+            let mut it = item(format, "Complete the chart.", "Answers vary.");
+            it.organizer = Some(org(label));
+            RawTasks {
+                blocks: staged(vec![block(&[1, 2, 3], "整理資訊", vec![it])]),
+            }
+        };
+        let e = evaluate_tasks(&with("圖像組織", "Before"), &tasks_ctx(&p, &[]));
+        assert!(!failed(&e.results).contains(&"english_only"));
+        let kept = e.output.unwrap()[0].items[0].organizer.clone().unwrap();
+        assert_eq!(kept.kind, "t_chart");
+        assert!(kept.center.is_empty(), "the centre is only for a mind map");
+        // Chinese in an organizer: a repair call, and the organizer is dropped (a box prints).
+        let e = evaluate_tasks(&with("圖像組織", "之前"), &tasks_ctx(&p, &[]));
+        assert!(failed(&e.results).contains(&"english_only"));
+        assert!(e.output.unwrap()[0].items[0].organizer.is_none());
+        // An organizer on another format is dropped without a repair call.
+        let e = evaluate_tasks(&with("簡答題", "Before"), &tasks_ctx(&p, &[]));
+        assert!(!failed(&e.results).contains(&"organizer_wellformed"));
+        assert!(e.output.unwrap()[0].items[0].organizer.is_none());
     }
 
     #[test]
@@ -3274,6 +3415,7 @@ mod tests {
             evidence: evidence.into(),
             paragraph_ids: vec!["P2".into(), "P9".into()],
             hint: "Look at paragraph 2.".into(),
+            organizer: None,
         }
     }
 
@@ -3435,6 +3577,7 @@ mod tests {
             prompt: prompt.into(),
             evidence: P2.into(),
             paragraph_ids: vec!["P2".into()],
+            organizer: None,
             advanced: version(
                 "none",
                 "",

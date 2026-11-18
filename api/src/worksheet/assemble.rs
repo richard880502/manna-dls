@@ -279,6 +279,10 @@ pub fn activity_block(
                 tiers: Vec::new(),
                 table: None,
                 kept_options: Vec::new(),
+                organizer: it
+                    .organizer
+                    .as_ref()
+                    .map(|o| super::organizer::from_raw(o, false).0),
             })
         })
         .collect();
@@ -516,6 +520,11 @@ pub struct SheetItem {
     /// 差異化學習單, teacher version only: how to score this version's answer (評分說明).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scoring: Option<String>,
+    /// 圖像組織: the organizer this version prints (the student's empty or partly pre-filled, the
+    /// teacher's with the answers), drawn instead of answer lines; absent for every other
+    /// question and for an organizer question without one (which prints an empty box).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organizer: Option<super::organizer::SheetOrganizer>,
 }
 
 /// The answer table of a 表格整理 question as printed: a heading row (when any heading is
@@ -762,6 +771,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 // A 差異化學習單 question: this version's support, answer and scoring note.
                 let tier = i.tier(level);
                 let answer = tier.map_or(i.answer.trim(), |t| t.answer.trim());
+                let organizer = i.printed_organizer().map(|o| o.project(level, teacher));
                 SheetItem {
                     id: i.id.clone(),
                     no,
@@ -794,6 +804,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     scoring: tier
                         .filter(|t| teacher && !t.scoring.trim().is_empty())
                         .map(|t| t.scoring.trim().to_string()),
+                    organizer,
                 }
             })
             .collect::<Vec<SheetItem>>();
@@ -956,6 +967,11 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
             }
             if let Some(h) = &it.hint {
                 push(format!("{name} · 第 {} 題提示", it.no), h);
+            }
+            if let Some(o) = &it.organizer {
+                for text in o.texts() {
+                    push(format!("{name} · 第 {} 題圖像組織", it.no), text);
+                }
             }
             if let Some(s) = &it.support {
                 for line in &s.lines {

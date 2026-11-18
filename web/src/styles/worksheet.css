@@ -1724,3 +1724,280 @@ button.bloom-seg:focus-visible {
     display: none;
   }
 }
+
+/* ---------- 圖像組織: drawn like the DOCX and PDF (api/src/worksheet/export/organizer.rs) ---------- */
+.ws-org {
+  margin: var(--space-xs) 0 var(--space-sm);
+  font-family: var(--font-print);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+.ws-org-title {
+  margin-bottom: var(--space-2xs);
+  font-weight: 700;
+}
+
+.ws-org-box,
+.ws-org-head,
+.ws-org-cell.is-grid,
+.ws-org-row-cells {
+  min-width: 0;
+  padding: 0.3125rem 0.4375rem;
+  border: 1px solid var(--color-ink-2);
+  background: var(--color-sheet);
+}
+
+.ws-org-label,
+.ws-org-head {
+  font-weight: 700;
+}
+
+.ws-org-head {
+  background: var(--color-paper-2);
+  text-align: center;
+}
+
+.ws-org-head.is-row {
+  text-align: left;
+}
+
+.ws-org-given {
+  display: block;
+}
+
+.ws-org-key,
+.ws .ws-text.ws-org-key {
+  display: block;
+  color: var(--color-manna-ink);
+  font-style: italic;
+}
+
+.ws-org-blank {
+  display: block;
+  height: 1.6em;
+  border-bottom: var(--rule-hair) solid var(--color-field-edge);
+}
+
+/* Headed columns (T-chart, KWL): one row per cell; collapsed borders. */
+.ws-org-columns {
+  display: grid;
+  margin-left: 1px;
+}
+
+.ws-org-columns > * {
+  margin: 0 0 -1px -1px;
+}
+
+.ws-org-cell.is-grid {
+  min-height: 2.6em;
+}
+
+/* Labelled rows (story map). */
+.ws-org-rows {
+  display: grid;
+  grid-template-columns: minmax(6rem, 28%) minmax(0, 1fr);
+  margin-left: 1px;
+}
+
+.ws-org-rows > * {
+  margin: 0 0 -1px -1px;
+}
+
+/* Numbered boxes, three to a row, with arrows (sequence, cause → effect, problem → solution). */
+.ws-org-chain {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.ws-org-chain-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1.5rem minmax(0, 1fr) 1.5rem minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.ws-org-arrow {
+  align-self: center;
+  color: var(--color-ink-2);
+  font-size: 1.25rem;
+  text-align: center;
+}
+
+.ws-org-no {
+  margin-right: 0.125rem;
+}
+
+.ws-org-chain .ws-org-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.125rem;
+}
+
+/* Two overlapping circles (Venn): only A | both | only B, the labels above. */
+.ws-org-venn-labels,
+.ws-org-venn-body {
+  display: grid;
+  grid-template-columns: 30fr 20fr 30fr;
+  column-gap: 4%;
+  padding: 0 5%;
+  text-align: center;
+}
+
+.ws-org-venn-body {
+  position: relative;
+  min-height: 9rem;
+  align-items: center;
+  padding-block: 1.5rem;
+}
+
+.ws-org-venn-circles {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--color-ink-2);
+  stroke-width: 1.2;
+  overflow: visible;
+}
+
+.ws-org-venn-circles ellipse,
+.ws-org-web-lines line {
+  vector-effect: non-scaling-stroke;
+}
+
+.ws-org-venn-region {
+  position: relative;
+  min-width: 0;
+  text-align: left;
+}
+
+/* A centre with branches above and below (mind map). */
+.ws-org-web-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+.ws-org-web .ws-org-label {
+  text-align: center;
+}
+
+.ws-org-box.is-centre {
+  align-self: center;
+  border: 3px double var(--color-ink-2);
+  background: var(--color-manna-wash);
+  text-align: center;
+}
+
+.ws-org-web-lines {
+  display: block;
+  width: 100%;
+  height: 1.5rem;
+  stroke: var(--color-ink-2);
+  stroke-width: 1;
+}
+
+/* The editor: the type, add a section, and per-cell tools (never printed). */
+.ws-org-editor {
+  margin-top: var(--space-2xs);
+}
+
+.ws-org-tools,
+.ws-org-missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2xs) var(--space-sm);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+.ws-org-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.ws-org-tools select {
+  width: auto;
+  min-height: var(--control-h-sm);
+  padding-block: 0;
+  font-size: var(--text-sm);
+}
+
+.ws-org-edit-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-org-edit-cell .ws-org-cell-tools {
+  align-self: flex-end;
+}
+
+.ws-org-cell-tools,
+.ws-org-section-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.ws-org-cell-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+}
+
+.ws-org-section-tools {
+  margin-top: 0.25rem;
+}
+
+.ws .ws-text.is-org-label {
+  font-weight: 700;
+}
+
+.ws-org-columns .ws-text.is-org-label,
+.ws-org-web .ws-org-label .ws-text,
+.ws-org-box.is-centre .ws-text {
+  text-align: center;
+}
+
+/* Phone width: chains stack with downward arrows; the web and the circles use smaller text. */
+@media (max-width: 30rem) {
+  .ws-org-chain-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ws-org-arrow {
+    transform: rotate(90deg);
+  }
+
+  .ws-org {
+    font-size: 0.8125rem;
+  }
+
+  .ws-org-venn-labels,
+  .ws-org-venn-body {
+    padding-inline: 3%;
+  }
+
+  .ws-org-rows {
+    grid-template-columns: minmax(5rem, 34%) minmax(0, 1fr);
+  }
+}
+
+@media print {
+  .ws-org-tools,
+  .ws-org-cell-tools,
+  .ws-org-section-tools,
+  .ws-org-missing {
+    display: none;
+  }
+}

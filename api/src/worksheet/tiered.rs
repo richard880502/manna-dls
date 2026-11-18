@@ -280,6 +280,9 @@ pub struct RawTieredItem {
     pub evidence: String,
     #[serde(default)]
     pub paragraph_ids: Vec<String>,
+    /// 圖像組織 (prompt version 2): the organizer, its cells pre-filled per version.
+    #[serde(default)]
+    pub organizer: Option<super::organizer::RawOrganizer>,
     #[serde(default)]
     pub advanced: RawVersion,
     #[serde(default)]
@@ -342,23 +345,34 @@ fn version_schema(level: Level) -> Value {
 pub fn level_schema(formats: &[&str], paragraph_codes: &[String], count: usize) -> Value {
     let codes: Vec<&str> = paragraph_codes.iter().map(String::as_str).collect();
     let count = count.max(1);
+    let mut item = vec![
+        ("answer_format", enum_of(formats)),
+        ("prompt", s_max(super::bloom::PROMPT_CHARS)),
+        ("evidence", s_max(super::bloom::EVIDENCE_CHARS)),
+        (
+            "paragraph_ids",
+            json!({
+                "type": "array", "items": enum_of(&codes),
+                "maxItems": super::bloom::PARAGRAPHS_PER_ITEM
+            }),
+        ),
+    ];
+    // 圖像組織 allowed: the organizer before the versions, which then only add or take away
+    // pre-filled cells and support.
+    if formats.contains(&FMT_ORGANIZER) {
+        item.push(("organizer", super::organizer::schema(true)));
+    }
+    item.extend([
+        ("advanced", version_schema(Level::Advanced)),
+        ("standard", version_schema(Level::Standard)),
+        ("basic", version_schema(Level::Basic)),
+    ]);
     obj(vec![
         (
             "items",
             json!({
                 "type": "array",
-                "items": obj(vec![
-                    ("answer_format", enum_of(formats)),
-                    ("prompt", s_max(super::bloom::PROMPT_CHARS)),
-                    ("evidence", s_max(super::bloom::EVIDENCE_CHARS)),
-                    ("paragraph_ids", json!({
-                        "type": "array", "items": enum_of(&codes),
-                        "maxItems": super::bloom::PARAGRAPHS_PER_ITEM
-                    })),
-                    ("advanced", version_schema(Level::Advanced)),
-                    ("standard", version_schema(Level::Standard)),
-                    ("basic", version_schema(Level::Basic)),
-                ]),
+                "items": obj(item),
                 "minItems": count,
                 "maxItems": count
             }),
@@ -564,5 +578,27 @@ mod tests {
             }
         }
         capped(&s);
+        // With 圖像組織 allowed: the organizer (cells pre-filled per version) before the versions.
+        let o = level_schema(
+            &[FMT_TABLE, FMT_ORGANIZER],
+            &super::super::bloom::paragraph_codes(2),
+            1,
+        );
+        let item = &o["properties"]["items"]["items"]["properties"];
+        let keys: Vec<&str> = item
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys[4], "organizer");
+        assert_eq!(keys[5], "advanced");
+        let org = &item["organizer"]["anyOf"][0];
+        capped(org);
+        assert!(
+            org["properties"]["sections"]["items"]["properties"]["cells"]["items"]["properties"]
+                .get("prefill_in")
+                .is_some()
+        );
     }
 }

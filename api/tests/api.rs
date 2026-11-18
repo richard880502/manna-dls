@@ -1265,8 +1265,10 @@ async fn admin_prompts_imports_and_permissions() {
         // and objective_draft v1, worksheet_exit_ticket v2 and worksheet_tasks v3 since
         // 0022_siop_objectives.sql, siop_selfcheck v1 since 0024_siop_selfcheck.sql,
         // worksheet_bloom_level v2 and worksheet_tiered_level v1 since 0025_siop_differentiated.sql.
-        // worksheet_image_slots v2 since 0026_images_always_drawn.sql.
-        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 3, 2, 1, 2, 1, 1]
+        // worksheet_image_slots v2 since 0026_images_always_drawn.sql. worksheet_bloom_level v3,
+        // worksheet_tasks v4, worksheet_template_section v3 and worksheet_tiered_level v2 since
+        // 0029_graphic_organizers.sql.
+        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 3, 2, 2, 1, 4, 2, 1, 3, 2, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

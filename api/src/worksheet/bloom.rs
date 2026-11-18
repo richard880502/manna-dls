@@ -427,6 +427,9 @@ pub struct RawBloomItem {
     pub paragraph_ids: Vec<String>,
     #[serde(default)]
     pub hint: String,
+    /// 圖像組織 (prompt version 3): the organizer; `null` for the other formats.
+    #[serde(default)]
+    pub organizer: Option<super::organizer::RawOrganizer>,
 }
 
 /// The questions of one level, then the block's written steps (R5, prompt version 2) and an
@@ -459,27 +462,37 @@ pub struct RawBloomCheck {
 /// Exactly `count` questions of the given formats, then the block's steps (2–5, one array item
 /// per step: gemma ends a string where it wants a line break) and an optional example. Every
 /// string and array is capped: the gateway enforces the caps while decoding, which stops
-/// repetition runaways.
+/// repetition runaways. When 圖像組織 is one of the formats, every question has an `organizer`
+/// after its options (`null` unless it is an organizer question); otherwise there is none.
 pub fn level_schema(formats: &[&str], paragraph_codes: &[String], count: usize) -> Value {
     use super::tiered::{EXAMPLE_CHARS, MAX_STEPS, MIN_STEPS, STEP_CHARS};
     let codes: Vec<&str> = paragraph_codes.iter().map(String::as_str).collect();
     let count = count.max(1);
+    let mut item = vec![
+        ("answer_format", enum_of(formats)),
+        ("prompt", s_max(PROMPT_CHARS)),
+        ("options", strings_max(OPTIONS, OPTION_CHARS)),
+    ];
+    if formats.contains(&FMT_ORGANIZER) {
+        item.push(("organizer", super::organizer::schema(false)));
+    }
+    item.extend([
+        ("answer", s_max(ANSWER_CHARS)),
+        ("evidence", s_max(EVIDENCE_CHARS)),
+        (
+            "paragraph_ids",
+            json!({
+                "type": "array", "items": enum_of(&codes), "maxItems": PARAGRAPHS_PER_ITEM
+            }),
+        ),
+        ("hint", s_max(HINT_CHARS)),
+    ]);
     obj(vec![
         (
             "items",
             json!({
                 "type": "array",
-                "items": obj(vec![
-                    ("answer_format", enum_of(formats)),
-                    ("prompt", s_max(PROMPT_CHARS)),
-                    ("options", strings_max(OPTIONS, OPTION_CHARS)),
-                    ("answer", s_max(ANSWER_CHARS)),
-                    ("evidence", s_max(EVIDENCE_CHARS)),
-                    ("paragraph_ids", json!({
-                        "type": "array", "items": enum_of(&codes), "maxItems": PARAGRAPHS_PER_ITEM
-                    })),
-                    ("hint", s_max(HINT_CHARS)),
-                ]),
+                "items": obj(item),
                 "minItems": count,
                 "maxItems": count
             }),
@@ -701,6 +714,21 @@ mod tests {
             }
         }
         capped(&s);
+        assert!(items["items"]["properties"].get("organizer").is_none());
+        // With 圖像組織 allowed, an organizer after the options (capped in turn).
+        let o = level_schema(&[FMT_TABLE, FMT_ORGANIZER], &paragraph_codes(2), 2);
+        let props = &o["properties"]["items"]["items"]["properties"];
+        let keys: Vec<&str> = props
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            &keys[..5],
+            ["answer_format", "prompt", "options", "organizer", "answer"]
+        );
+        capped(&props["organizer"]["anyOf"][0]);
         let c = check_schema(&["Q1".to_string(), "Q2".to_string()]);
         capped(&c);
         assert_eq!(c["properties"]["items"]["maxItems"], 2);

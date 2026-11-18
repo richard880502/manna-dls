@@ -31,6 +31,9 @@ pub struct RawItem {
     pub tier: String,
     pub prompt_en: String,
     pub options: Vec<String>,
+    /// 圖像組織 (prompt version 4): the organizer to draw; `null` for the other formats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organizer: Option<super::organizer::RawOrganizer>,
     pub answer_en: String,
     pub evidence: Option<String>,
     /// The item's Bloom level (prompt version 2); checked against the fixed set.
@@ -108,12 +111,14 @@ pub fn tasks_schema() -> Value {
                                     "tier": enum_of(&[TIER_CORE, TIER_SUPPORT, TIER_CHALLENGE]),
                                     "prompt_en": { "type": "string" },
                                     "options": strings(),
+                                    "organizer": super::organizer::schema(false),
                                     "answer_en": { "type": "string" },
                                     "evidence": nullable_string(),
                                     "bloom": enum_of(&blooms)
                                 },
                                 "required": ["item_id", "answer_format", "tier", "prompt_en",
-                                             "options", "answer_en", "evidence", "bloom"],
+                                             "options", "organizer", "answer_en", "evidence",
+                                             "bloom"],
                                 "additionalProperties": false
                             }
                         },
@@ -338,5 +343,28 @@ mod tests {
             .to_string()
             .contains("清楚的分步指示及完成順序"));
         assert!(exit_schema().to_string().contains("蒐集問題"));
+    }
+
+    #[test]
+    fn tasks_items_carry_a_nullable_organizer_after_the_options() {
+        let s = tasks_schema();
+        let item = &s["properties"]["blocks"]["items"]["properties"]["items"]["items"];
+        let keys: Vec<&str> = item["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let at = |k: &str| keys.iter().position(|x| *x == k).unwrap();
+        assert_eq!(at("organizer"), at("options") + 1);
+        assert!(at("organizer") < at("answer_en"));
+        assert!(item["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("organizer")));
+        assert_eq!(
+            item["properties"]["organizer"]["anyOf"][1]["type"],
+            json!("null")
+        );
     }
 }
