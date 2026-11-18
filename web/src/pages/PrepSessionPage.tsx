@@ -499,29 +499,6 @@ function PrepSessionView({ id }: { id: number }) {
 
       <form className="prep-bottom" onSubmit={(e) => void sendDraft(e)}>
         <ErrorText message={sendError} />
-        {hasWorksheet(session) && (
-          <div className="ws-seg prep-bar-mode" role="radiogroup" aria-label="要改學習單還是問問題">
-            {(
-              [
-                ["revise", "改學習單"],
-                ["ask", "問 Manna"],
-              ] as const
-            ).map(([mode, label]) => (
-              <label key={mode}>
-                <input
-                  type="radio"
-                  name={`${ids}-mode`}
-                  checked={barMode === mode}
-                  onChange={() => {
-                    setBarMode(mode);
-                    if (mode === "ask") setTarget(null);
-                  }}
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-        )}
         {target && (
           <p className="prep-target" role="status">
             <span className="prep-target-chip">
@@ -538,14 +515,16 @@ function PrepSessionView({ id }: { id: number }) {
             <span className="field-hint">只改這一區；Manna 改好後先給你看，按「採用」才會寫入學習單。</span>
           </p>
         )}
-        <div className="prep-bottom-row">
+        {/* One rounded box, like the chat composers teachers already know: the text on top, the
+            mode switch bottom-left, the send button bottom-right. */}
+        <div className="prep-composer" data-disabled={locked || undefined}>
           <label className="sr-only" htmlFor={`${ids}-draft`}>
             給 Manna 的話
           </label>
           <textarea
             id={`${ids}-draft`}
             ref={draftRef}
-            rows={2}
+            rows={3}
             maxLength={2000}
             value={draft}
             disabled={locked}
@@ -561,9 +540,52 @@ function PrepSessionView({ id }: { id: number }) {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
           />
-          <button type="submit" className="primary-button" disabled={locked || draft.trim() === ""}>
-            送出
-          </button>
+          <div className="prep-composer-tools">
+            {hasWorksheet(session) && (
+              <div className="ws-seg prep-bar-mode" role="radiogroup" aria-label="要改學習單還是問問題">
+                {(
+                  [
+                    ["revise", "改學習單"],
+                    ["ask", "問 Manna"],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <label key={mode}>
+                    <input
+                      type="radio"
+                      name={`${ids}-mode`}
+                      checked={barMode === mode}
+                      onChange={() => {
+                        setBarMode(mode);
+                        if (mode === "ask") setTarget(null);
+                      }}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <span className="prep-composer-hint" aria-hidden="true">
+              Enter 送出・Shift＋Enter 換行
+            </span>
+            <button
+              type="submit"
+              className="prep-send"
+              aria-label="送出"
+              title="送出（Enter）"
+              disabled={locked || draft.trim() === ""}
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+                <path
+                  d="M12 19V5M5.5 11.5 12 5l6.5 6.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
         <RunProgressSlot
           progress={lastTurn?.progress}
