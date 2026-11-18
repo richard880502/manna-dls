@@ -17,10 +17,12 @@ use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde_json::json;
 
 use super::{
-    close, empty_message, expire_stale, mark_held, open_run, replace_block, run_step, spawn_run,
-    Run, RunInput, StepCall, StepInfo, StepResult, STEP_TEMPLATE,
+    close, empty_message, expire_stale, mark_held, open_progress, open_run, pictures_step,
+    replace_block, run_step, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult,
+    STEP_TEMPLATE,
 };
 use crate::error::{AppError, AppResult};
+use crate::progress::Step;
 use crate::routes::{log_usage, or_blank};
 use crate::worksheet::assemble::scaffold_levels;
 use crate::worksheet::checks::{evaluate_section, CleanSection, Eval, SectionCtx};
@@ -46,7 +48,13 @@ const SECTION: StepInfo = StepInfo {
     schema_name: SECTION_SCHEMA_NAME,
     phase: "正在依版型產生區塊",
     repair_phase: "有區塊沒有通過檢查，正在重試",
+    progress: STEP_TEMPLATE,
+    // The blocks are written side by side: the step counts them instead.
+    retry_note: false,
 };
+
+pub const L_TEMPLATE: &str = "照版型寫各區塊";
+pub const L_TEMPLATE_AGAIN: &str = "照版型重寫這一區";
 
 /// Output budget of one block (probe gen2: 2500).
 pub const SECTION_MAX_TOKENS: u32 = 2500;
@@ -445,9 +453,15 @@ pub(super) async fn start_generation(
         return Ok(());
     };
     let job_id = ids[STEP_TEMPLATE];
+    let steps = [
+        Some(Step::new(STEP_TEMPLATE, L_TEMPLATE)),
+        pictures_step(state),
+    ];
+    let tracker = open_progress(state, worksheet_id, run_no, steps.into_iter().flatten()).await;
     let state2 = state.clone();
-    spawn_run(state, worksheet_id, run_no, async move {
-        let run = Run::new(&state2, input, run_no, Some(job_id)).await?;
+    let progress = tracker.clone();
+    spawn_run(state, worksheet_id, run_no, tracker, async move {
+        let run = Run::new(&state2, input, run_no, Some(job_id), progress).await?;
         generate(&run, job_id, &tpl).await
     });
     Ok(())
@@ -490,6 +504,7 @@ async fn make_block(
         },
     )
     .await?;
+    run.progress.bump(STEP_TEMPLATE).await;
     Ok(match result {
         StepResult::Shown {
             interaction_id,
@@ -553,6 +568,7 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
         .map(|t| tpl.content.sections[t.section].item_count.max(0) as usize)
         .sum();
     chosen.item_budget = budget;
+    run.progress.count(STEP_TEMPLATE, 0, total).await;
     let done: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
     let levels = &levels;
     let done = &done;
@@ -582,6 +598,10 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
         ("版型", format!("{}（第 {} 版）", tpl.title, tpl.version_no)),
         ("要產生的區塊", format!("{total} 個")),
     ]);
+    match (failures.len() == total, &message) {
+        (true, Some(m)) => run.progress.fail(STEP_TEMPLATE, m).await,
+        _ => run.progress.done(STEP_TEMPLATE).await,
+    }
     mark_held(db, job_id, outcome, message.as_deref(), None, &context).await?;
     let failed = failures.len();
     let blocks: Vec<Block> = made.into_iter().map(|(b, _)| b).collect();
@@ -609,7 +629,7 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
     let saved = store::save_content(db, ws.id, &content, "generate").await?;
     store::set_generated(db, ws.id).await?;
     // The blocks passed their checks and are saved: their pictures are made in the background.
-    images::enqueue_logged(&run.state, ws.id, ws.teacher_id, &content).await;
+    super::queue_pictures(run, &content).await;
     log_usage(
         db,
         ws.teacher_id,
@@ -649,9 +669,15 @@ pub(super) async fn start_block(
         return Ok(());
     };
     let job_id = ids[STEP_TEMPLATE];
+    let steps = [
+        Some(Step::new(STEP_TEMPLATE, L_TEMPLATE_AGAIN)),
+        pictures_step(state),
+    ];
+    let tracker = open_progress(state, worksheet_id, run_no, steps.into_iter().flatten()).await;
     let state2 = state.clone();
-    spawn_run(state, worksheet_id, run_no, async move {
-        let run = Run::new(&state2, input, run_no, Some(job_id)).await?;
+    let progress = tracker.clone();
+    spawn_run(state, worksheet_id, run_no, tracker, async move {
+        let run = Run::new(&state2, input, run_no, Some(job_id), progress).await?;
         regenerate(&run, job_id, old, &tpl, section).await
     });
     Ok(())
@@ -711,7 +737,8 @@ async fn regenerate(
     )
     .await?;
     let context = run.context(&[("版型", format!("{}（第 {} 版）", tpl.title, tpl.version_no))]);
-    let Ok((out, interaction_id)) = close(run, job_id, result, &context).await? else {
+    let Ok((out, interaction_id)) = close(run, job_id, STEP_TEMPLATE, result, &context).await?
+    else {
         return Ok(());
     };
     let block = section_block(

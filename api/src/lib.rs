@@ -17,6 +17,7 @@ pub mod materials;
 pub mod objectives;
 pub mod preferences;
 pub mod prep;
+pub mod progress;
 pub mod prompts;
 pub mod record;
 pub mod retrieval;
@@ -68,6 +69,8 @@ pub struct AppState {
     pub thumb_slots: Arc<tokio::sync::Semaphore>,
     /// Pictures on worksheets: the provider and the server-wide request slots.
     pub images: Arc<worksheet::images::Images>,
+    /// Progress of the runs a page waits for in one request (drafting objectives).
+    pub progress: Arc<progress::Registry>,
 }
 
 impl AppState {
@@ -93,6 +96,7 @@ impl AppState {
                 materials::thumbnail::MAX_CONCURRENT_RENDERS,
             )),
             images,
+            progress: Arc::default(),
         }
     }
 }

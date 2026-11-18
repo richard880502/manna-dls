@@ -48,6 +48,8 @@
   --color-warn-rule: #e0b878;
   --color-error: #a13a2c;
   --color-error-wash: #fbe9e5;
+  /* The step being worked on in the 進度 panel (an orange dot; 3.6:1 on paper as a mark). */
+  --color-progress-now: #d0640f;
 
   /* ---------- type ---------- */
   --font-display: "Noto Serif TC Variable", "Noto Serif TC", "Songti TC", "PMingLiU", Georgia, serif;

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import type { ExitKind, WorksheetSettings, WsJob, WsLevel, WsOutput } from "../../api/types";
+import type { ExitKind, WorksheetSettings, WorksheetState, WsJob, WsLevel, WsOutput } from "../../api/types";
 import {
   OUTPUTS,
   OUTPUT_LABEL,
@@ -32,6 +32,8 @@ import {
 } from "../../lib/worksheet";
 import { hasObjectives, isFromFields, syncedObjectives } from "../../lib/objectives";
 import { AiContextPanel } from "../AiContextPanel";
+import { RunProgressPanel, useRunPanel } from "../RunProgress";
+import { PROGRESS_WORDS } from "../../lib/progress";
 import { ErrorText } from "../common";
 import { ObjectiveFields } from "../objectives/ObjectiveFields";
 import { BloomSettings } from "./BloomSettings";
@@ -114,6 +116,25 @@ export function ProgressPanel({ jobs }: { jobs: WsJob[] }) {
       </p>
     </div>
   );
+}
+
+/**
+ * While a run goes on: its steps (「進度」, docs/API.md「產生進度」), which stay a moment once done
+ * and stay when a step failed. A run without steps (an older server or run) shows the job rows as
+ * before; a closed panel leaves a working line while the run goes on.
+ */
+export function WorksheetRunProgress({ state }: { state: Pick<WorksheetState, "id" | "jobs" | "running" | "progress"> }) {
+  const progress = state.progress ?? null;
+  const runNo = state.jobs[0]?.run_no;
+  const panel = useRunPanel(progress, runNo === undefined ? null : `${state.id}:${runNo}`);
+  if (!progress) return state.running ? <ProgressPanel jobs={state.jobs} /> : null;
+  if (panel.visible) return <RunProgressPanel progress={progress} onClose={panel.close} className="ws-progress" />;
+  return state.running ? (
+    <p className="manna-label ws-progress" role="status">
+      <span className="star is-working" aria-hidden="true" />
+      {PROGRESS_WORDS.stillWorking}
+    </p>
+  ) : null;
 }
 
 export function jobStateText(job: WsJob): string {
@@ -545,7 +566,7 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
       )}
 
       {running ? (
-        <ProgressPanel jobs={state.jobs} />
+        <WorksheetRunProgress state={state} />
       ) : fullWorksheet ? (
         <div className="ws-gen-bar">
           <label className="ws-time" htmlFor={`${ids}-minutes`}>

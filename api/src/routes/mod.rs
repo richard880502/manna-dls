@@ -253,6 +253,10 @@ pub fn api_router() -> Router<AppState> {
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
         // 內容目標與語言目標的草擬（SIOP G2、G3）
         .route("/objective-drafts", post(objectives::draft))
+        .route(
+            "/objective-drafts/progress/{progress_id}",
+            get(objectives::draft_progress),
+        )
         .route("/scaffold-events", post(feedback::scaffold_event))
         .route("/teacher-cases", get(feedback::teacher_cases))
         // Teach & Record (Phase 1.2)

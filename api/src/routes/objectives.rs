@@ -5,14 +5,15 @@
 
 use axum::extract::State;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::auth::AuthTeacher;
-use crate::error::{ApiJson, AppError, AppResult};
+use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::materials::{ocr, store as material_store};
 use crate::objectives::draft::{self, DraftInput, DraftResult};
 use crate::prep::is_bare_label;
+use crate::progress::{self, Progress, Sink, Tracker};
 use crate::routes::{clip_chars, log_usage, owned_class};
 use crate::sop::{store as sop_store, MAX_MATERIAL_CHARS};
 use crate::worksheet::material::SOURCE_LIBRARY;
@@ -31,6 +32,8 @@ pub const KINDS: [&str; 6] = [
 ];
 const MSG_KIND: &str = "kind 需為 comprehension、tiered、activity、kit 或 worksheet。";
 const MSG_NEEDS_MATERIAL: &str = "草擬目標需要教材：請上傳檔案、從教材庫選，或貼上課文。";
+const MSG_PROGRESS_ID: &str = "progress_id 需為 8–64 個英文字母、數字、- 或 _。";
+const MSG_DRAFT_ERROR: &str = "草擬目標時發生錯誤。你可以自己寫，或直接產生。";
 const MAX_REQUEST_CHARS: usize = 2000;
 /// Lines of an earlier draft to write other than (「換一組」).
 const AVOID_MAX: usize = 8;
@@ -60,6 +63,10 @@ pub struct DraftObjectives {
     pub request: Option<String>,
     #[serde(default)]
     pub avoid: Vec<String>,
+    /// The page's own key for asking how far the drafting is
+    /// (`GET /api/objective-drafts/progress/:progress_id`).
+    #[serde(default)]
+    pub progress_id: Option<String>,
 }
 
 async fn material_of(
@@ -119,6 +126,11 @@ pub async fn draft(
     } else {
         request.to_string()
     };
+    if let Some(key) = &req.progress_id {
+        if !progress::valid_key(key) {
+            return Err(AppError::bad_request(MSG_PROGRESS_ID));
+        }
+    }
     if let Some(class_id) = req.class_id {
         owned_class(db, class_id, teacher.id()).await?;
     }
@@ -131,6 +143,13 @@ pub async fn draft(
         .take(AVOID_MAX)
         .collect();
     let paragraphs = material.paragraphs.len();
+    let tracker = match &req.progress_id {
+        Some(key) => {
+            let sink = Sink::Memory(state.progress.clone(), teacher.id(), key.clone());
+            Tracker::open(sink, 0, draft::steps()).await
+        }
+        None => Tracker::off(),
+    };
     let result = draft::run(
         &state,
         DraftInput {
@@ -142,8 +161,16 @@ pub async fn draft(
             request,
             avoid: avoid.clone(),
         },
+        tracker.clone(),
     )
-    .await?;
+    .await;
+    let failure = match &result {
+        Ok(r) if r.status == "shown" => None,
+        Ok(r) => Some(r.message.clone().unwrap_or_default()),
+        Err(_) => Some(MSG_DRAFT_ERROR.to_string()),
+    };
+    tracker.finish(failure.as_deref()).await;
+    let result = result?;
     log_usage(
         db,
         teacher.id(),
@@ -157,4 +184,28 @@ pub async fn draft(
     )
     .await?;
     Ok(Json(result))
+}
+
+#[derive(Debug, Serialize)]
+pub struct DraftProgress {
+    /// `null` before the drafting started, for another teacher's key, and a while after it
+    /// ended.
+    pub progress: Option<Progress>,
+}
+
+/// `GET /api/objective-drafts/progress/:progress_id`: how far the drafting with this key is
+/// (docs/API.md「產生進度」). Kept in memory while the page waits.
+pub async fn draft_progress(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(key): ApiPath<String>,
+) -> AppResult<Json<DraftProgress>> {
+    if !progress::valid_key(&key) {
+        return Err(AppError::bad_request(MSG_PROGRESS_ID));
+    }
+    let progress = state
+        .progress
+        .get(teacher.id(), &key)
+        .and_then(|s| Progress::of(s.steps, !s.finished));
+    Ok(Json(DraftProgress { progress }))
 }

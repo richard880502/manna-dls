@@ -13,6 +13,7 @@
 //! everything stays editable by hand.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
@@ -40,6 +41,7 @@ use crate::ai::LlmRequest;
 use crate::checks::{self as base_checks, CheckResult};
 use crate::error::{AppError, AppResult};
 use crate::materials::detect;
+use crate::progress::{self, Progress, Sink, Step, Stored, Tracker};
 use crate::prompts;
 use crate::routes::{clip_chars, log_usage, or_blank, scaffold_id, track_label};
 use crate::sop::ai::{
@@ -103,6 +105,11 @@ struct StepInfo {
     schema_name: &'static str,
     phase: &'static str,
     repair_phase: &'static str,
+    /// The step of the run's progress this call belongs to (docs/API.md「產生進度」).
+    progress: &'static str,
+    /// Whether the repair call is shown as 「重試中」 on that step (not for calls that run side
+    /// by side in one step).
+    retry_note: bool,
 }
 
 const TASKS: StepInfo = StepInfo {
@@ -112,6 +119,8 @@ const TASKS: StepInfo = StepInfo {
     schema_name: schemas::TASKS_SCHEMA_NAME,
     phase: "正在依段落設計問題與任務",
     repair_phase: "有幾題沒有通過檢查，正在修正",
+    progress: STEP_TASKS,
+    retry_note: true,
 };
 const WARMUP: StepInfo = StepInfo {
     key: "worksheet_warmup",
@@ -120,6 +129,8 @@ const WARMUP: StepInfo = StepInfo {
     schema_name: schemas::WARMUP_SCHEMA_NAME,
     phase: "正在設計暖身活動與關鍵字彙",
     repair_phase: "正在修正暖身活動",
+    progress: STEP_WARMUP,
+    retry_note: true,
 };
 const SCAFFOLDS: StepInfo = StepInfo {
     key: "worksheet_scaffolds",
@@ -128,6 +139,8 @@ const SCAFFOLDS: StepInfo = StepInfo {
     schema_name: schemas::SCAFFOLDS_SCHEMA_NAME,
     phase: "正在為每個區塊安排鷹架",
     repair_phase: "正在修正鷹架",
+    progress: STEP_SCAFFOLDS,
+    retry_note: true,
 };
 const EXIT: StepInfo = StepInfo {
     key: "worksheet_exit_ticket",
@@ -136,6 +149,8 @@ const EXIT: StepInfo = StepInfo {
     schema_name: schemas::EXIT_SCHEMA_NAME,
     phase: "正在設計 Exit ticket",
     repair_phase: "正在修正 Exit ticket",
+    progress: STEP_EXIT,
+    retry_note: true,
 };
 
 // ---------------------------------------------------------------- jobs
@@ -190,6 +205,129 @@ pub async fn jobs(state: &AppState, worksheet_id: i64) -> sqlx::Result<(Vec<Job>
     .await?;
     let running = jobs.iter().any(|j| j.status != "done");
     Ok((jobs, running))
+}
+
+// ---------------------------------------------------------------- progress (docs/API.md「產生進度」)
+
+pub const L_TASKS: &str = "寫逐段任務";
+pub const L_WARMUP: &str = "寫暖身";
+pub const L_SCAFFOLDS: &str = "寫鷹架";
+pub const L_EXIT: &str = "寫 Exit ticket";
+pub const L_TASKS_AGAIN: &str = "重寫這一區的任務";
+pub const L_WARMUP_AGAIN: &str = "重寫暖身";
+pub const L_EXIT_AGAIN: &str = "重寫 Exit ticket";
+
+/// Whether a run may draw pictures: its blocks can ask for picture slots and the pictures can
+/// be stored. (Whether they do is known later: the step goes when nothing is queued.)
+fn may_draw(state: &AppState) -> bool {
+    state.images.enabled() && state.storage.is_some()
+}
+
+/// The pictures step, when the run may draw pictures.
+fn pictures_step(state: &AppState) -> Option<Step> {
+    may_draw(state).then(|| Step::new(progress::PICTURES, progress::L_PICTURES))
+}
+
+/// Starts the progress of run `run_no` of a worksheet: reading the material, then `steps`.
+async fn open_progress(
+    state: &AppState,
+    worksheet_id: i64,
+    run_no: i32,
+    steps: impl IntoIterator<Item = Step>,
+) -> Arc<Tracker> {
+    let mut list = vec![Step::new(progress::READ, progress::L_READ)];
+    list.extend(steps);
+    Tracker::open(
+        Sink::Worksheet(state.db.clone(), worksheet_id),
+        run_no,
+        list,
+    )
+    .await
+}
+
+/// The steps of the worksheet's run `run_no` and whether its work is still going: as stored,
+/// a run that died with the server (its jobs closed, its steps never settled) settled as
+/// failed, and the pictures read from the rows the run queued. `None` when the run has no
+/// stored steps (it was made before they were kept, or a later run replaced them).
+pub async fn run_steps(
+    state: &AppState,
+    worksheet_id: i64,
+    run_no: i32,
+    running: bool,
+) -> sqlx::Result<Option<(Vec<Step>, bool)>> {
+    let db = &state.db;
+    let raw: Option<Option<Value>> =
+        sqlx::query_scalar("SELECT progress FROM worksheets WHERE id = $1")
+            .bind(worksheet_id)
+            .fetch_optional(db)
+            .await?;
+    let Some(mut stored) = raw
+        .flatten()
+        .and_then(|v| serde_json::from_value::<Stored>(v).ok())
+    else {
+        return Ok(None);
+    };
+    if stored.run_no != run_no || stored.steps.is_empty() {
+        return Ok(None);
+    }
+    if !running && !stored.finished {
+        stored.settle(Some(MSG_STALE));
+    }
+    let mut open = running;
+    if stored.finished && !stored.pictures.is_empty() {
+        let mut drawing = pictures_drawing(db, worksheet_id, &stored.pictures).await?;
+        if drawing > 0 {
+            // Pictures that died with the server are closed first.
+            super::images::expire_stale(state, worksheet_id).await?;
+            drawing = pictures_drawing(db, worksheet_id, &stored.pictures).await?;
+        }
+        let total = stored.pictures.len();
+        let done = total.saturating_sub(usize::try_from(drawing).unwrap_or(0));
+        if let Some(step) = stored
+            .steps
+            .iter_mut()
+            .find(|s| s.key == progress::PICTURES)
+        {
+            step.count = Some(progress::Count { done, total });
+            if done < total {
+                step.status = progress::StepStatus::Running;
+                step.label = progress::L_PICTURES_RUNNING.to_string();
+                open = true;
+            } else {
+                step.status = progress::StepStatus::Done;
+                step.label = progress::L_PICTURES.to_string();
+            }
+        }
+    }
+    Ok(Some((stored.steps, open)))
+}
+
+/// How many of the run's pictures are still queued or being drawn.
+async fn pictures_drawing(db: &PgPool, worksheet_id: i64, ids: &[i64]) -> sqlx::Result<i64> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM worksheet_images
+          WHERE worksheet_id = $1 AND id = ANY($2) AND status IN ('queued', 'running')",
+    )
+    .bind(worksheet_id)
+    .bind(ids)
+    .fetch_one(db)
+    .await
+}
+
+/// `progress` of the worksheet state and of `GET …/jobs`: the latest run's (`jobs` and
+/// `running` as [`jobs`] returned them).
+pub async fn progress(
+    state: &AppState,
+    worksheet_id: i64,
+    jobs: &[Job],
+    running: bool,
+) -> sqlx::Result<Option<Progress>> {
+    let Some(run_no) = jobs.first().map(|j| j.run_no) else {
+        return Ok(None);
+    };
+    Ok(run_steps(state, worksheet_id, run_no, running)
+        .await?
+        .and_then(|(steps, open)| Progress::of(steps, open)))
 }
 
 /// Opens a run: one queued job per step. `None` when a run is already in progress (the caller
@@ -305,18 +443,26 @@ async fn mark_held(
 }
 
 /// Starts the background task of a run. Whatever is still open when the work returns, fails or
-/// panics is closed as an error, so the page never waits for ever.
-fn spawn_run<F>(state: &AppState, worksheet_id: i64, run_no: i32, work: F)
+/// panics is closed as an error, so the page never waits for ever. The run's progress is
+/// settled first, so a page that sees the jobs closed sees the steps as they ended.
+fn spawn_run<F>(state: &AppState, worksheet_id: i64, run_no: i32, tracker: Arc<Tracker>, work: F)
 where
     F: std::future::Future<Output = AppResult<()>> + Send + 'static,
 {
     let db = state.db.clone();
     tokio::spawn(async move {
-        match tokio::spawn(work).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => tracing::error!(worksheet_id, run_no, error = %e, "worksheet run failed"),
-            Err(e) => tracing::error!(worksheet_id, run_no, error = %e, "worksheet run panicked"),
-        }
+        let failure = match tokio::spawn(work).await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => {
+                tracing::error!(worksheet_id, run_no, error = %e, "worksheet run failed");
+                Some(pipeline::MSG_ERROR)
+            }
+            Err(e) => {
+                tracing::error!(worksheet_id, run_no, error = %e, "worksheet run panicked");
+                Some(pipeline::MSG_ERROR)
+            }
+        };
+        tracker.finish(failure).await;
         // A step that has its outcome is finished now; one that never got one failed.
         let held = sqlx::query(
             "UPDATE worksheet_jobs SET status = 'done', phase = '', finished_at = now()
@@ -384,14 +530,18 @@ struct Run {
     /// The picture-slot rules appended to the steps that write blocks ("" while pictures are
     /// off: those steps then ask for no `image_slots`, as before).
     slot_rules: String,
+    /// The run's steps as the teacher reads them (docs/API.md「產生進度」).
+    progress: Arc<Tracker>,
 }
 
 impl Run {
+    /// Reads what the run works with (the progress' 「讀教材」, done when this returns).
     async fn new(
         state: &AppState,
         input: RunInput,
         run_no: i32,
         hold: Option<i64>,
+        progress: Arc<Tracker>,
     ) -> AppResult<Self> {
         let earlier: i64 = sqlx::query_scalar(
             "SELECT COUNT(DISTINCT run_no) FROM worksheet_jobs WHERE worksheet_id = $1 AND run_no < $2",
@@ -462,7 +612,13 @@ impl Run {
         .filter(|b| !b.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
+        // No picture rules: no block asks for a picture, so none is drawn.
+        if slot_rules.is_empty() {
+            progress.skip(progress::PICTURES).await;
+        }
+        progress.done(progress::READ).await;
         Ok(Self {
+            progress,
             slot_rules,
             ai_notes,
             ai_notes_count: notes.len() + ws_notes.len(),
@@ -809,6 +965,7 @@ where
     let state = &run.state;
     let db = run.db();
     mark_running(db, job_id, info.phase).await?;
+    run.progress.start(info.progress).await;
     if !state.ai.enabled() {
         return Ok(failed("disabled", None));
     }
@@ -938,6 +1095,11 @@ where
 
     // ---- repair call: the same task with what failed, and a changed request
     mark_running(db, job_id, info.repair_phase).await?;
+    if info.retry_note {
+        run.progress
+            .note(info.progress, Some(progress::NOTE_RETRY))
+            .await;
+    }
     let note = format!(
         "\n\n【重要：這是第二次請求】上一次的輸出沒有通過平台的檢查。請修正下列問題後，重新輸出完整的 JSON：\n{}",
         problems
@@ -998,10 +1160,12 @@ where
     Ok(failed(outcome, Some(a2.id)))
 }
 
-/// Closes the job of a step and hands back its output (or why there is none).
+/// Closes the job of a step and its step of the progress (`key`), and hands back its output
+/// (or why there is none).
 async fn close<T>(
     run: &Run,
     job_id: i64,
+    key: &str,
     result: StepResult<T>,
     context: &[AiContextItem],
 ) -> AppResult<Result<(T, i64), String>> {
@@ -1010,6 +1174,7 @@ async fn close<T>(
             interaction_id,
             output,
         } => {
+            run.progress.done(key).await;
             if run.hold == Some(job_id) {
                 mark_held(
                     run.db(),
@@ -1039,6 +1204,7 @@ async fn close<T>(
             reason,
         } => {
             let message = format!("{reason}，這一步沒有產生成功；你可以繼續手動完成。");
+            run.progress.fail(key, &message).await;
             if run.hold == Some(job_id) {
                 mark_held(
                     run.db(),
@@ -1240,7 +1406,7 @@ async fn step_tasks(
         },
     )
     .await?;
-    close(run, job_id, result, &context).await
+    close(run, job_id, TASKS.progress, result, &context).await
 }
 
 fn tasks_summary(blocks: &[RawBlock]) -> String {
@@ -1362,7 +1528,7 @@ async fn step_warmup(
         },
     )
     .await?;
-    close(run, job_id, result, &context).await
+    close(run, job_id, WARMUP.progress, result, &context).await
 }
 
 /// One block as the scaffolds step sees it.
@@ -1482,7 +1648,7 @@ async fn step_scaffolds(
         },
     )
     .await?;
-    close(run, job_id, result, &context).await
+    close(run, job_id, SCAFFOLDS.progress, result, &context).await
 }
 
 async fn step_exit(
@@ -1544,7 +1710,7 @@ async fn step_exit(
         },
     )
     .await?;
-    close(run, job_id, result, &context).await
+    close(run, job_id, EXIT.progress, result, &context).await
 }
 
 // ---------------------------------------------------------------- a whole generation
@@ -1628,13 +1794,39 @@ pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()
     else {
         return Ok(());
     };
+    // The warm-up is written when it is ticked, or when nothing is (the usual set has it).
+    let settings = &input.worksheet.settings;
+    let warmup = settings.generation.is_empty() || settings.wants(GEN_WARMUP);
+    let tracker = open_progress(
+        state,
+        worksheet_id,
+        run_no,
+        [
+            Some(Step::new(STEP_TASKS, L_TASKS)),
+            warmup.then(|| Step::new(STEP_WARMUP, L_WARMUP)),
+            Some(Step::new(STEP_SCAFFOLDS, L_SCAFFOLDS)),
+            Some(Step::new(STEP_EXIT, L_EXIT)),
+            pictures_step(state),
+        ]
+        .into_iter()
+        .flatten(),
+    )
+    .await;
     let state2 = state.clone();
-    spawn_run(state, worksheet_id, run_no, async move {
+    let progress = tracker.clone();
+    spawn_run(state, worksheet_id, run_no, tracker, async move {
         let hold = ids.get(STEP_EXIT).copied();
-        let run = Run::new(&state2, input, run_no, hold).await?;
+        let run = Run::new(&state2, input, run_no, hold, progress).await?;
         generate(&run, &ids).await
     });
     Ok(())
+}
+
+/// Records the pictures a saved version queued (their step of the progress is read from them).
+async fn queue_pictures(run: &Run, content: &Content) {
+    let ws = &run.input.worksheet;
+    let ids = super::images::enqueue_logged(&run.state, ws.id, ws.teacher_id, content).await;
+    run.progress.pictures(ids).await;
 }
 
 async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()> {
@@ -1648,6 +1840,9 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         &run.input.class_profile,
         run.hard_share,
     );
+    if !chosen.settings.wants(GEN_WARMUP) {
+        run.progress.skip(STEP_WARMUP).await;
+    }
     let levels = chosen.settings.levels.clone();
     let ticked = assemble::selected_kinds(&chosen.settings);
     let objective_ids = run.objective_ids();
@@ -1743,6 +1938,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
             &[],
         )
         .await?;
+        run.progress.skip(STEP_SCAFFOLDS).await;
         Vec::new()
     } else {
         match step_scaffolds(run, jobs[STEP_SCAFFOLDS], &chosen, &targets, &all_answers).await? {
@@ -1842,7 +2038,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let saved = store::save_content(db, ws.id, &content, "generate").await?;
     store::set_generated(db, ws.id).await?;
     // The blocks passed their checks and are saved: their pictures are made in the background.
-    super::images::enqueue_logged(&run.state, ws.id, ws.teacher_id, &content).await;
+    queue_pictures(run, &content).await;
     log_usage(
         db,
         ws.teacher_id,
@@ -1919,11 +2115,29 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
     else {
         return Ok(());
     };
+    // Only an activity block asks for picture slots.
+    let plan: Vec<Step> = match block.kind {
+        BlockKind::Activity => [
+            Some(Step::new(STEP_TASKS, L_TASKS_AGAIN)),
+            Some(Step::new(STEP_SCAFFOLDS, L_SCAFFOLDS)),
+            pictures_step(state),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
+        BlockKind::Warmup => vec![
+            Step::new(STEP_WARMUP, L_WARMUP_AGAIN),
+            Step::new(STEP_SCAFFOLDS, L_SCAFFOLDS),
+        ],
+        BlockKind::ExitTicket => vec![Step::new(STEP_EXIT, L_EXIT_AGAIN)],
+    };
+    let tracker = open_progress(state, worksheet_id, run_no, plan).await;
     let last_step = steps.last().copied();
     let state2 = state.clone();
-    spawn_run(state, worksheet_id, run_no, async move {
+    let progress = tracker.clone();
+    spawn_run(state, worksheet_id, run_no, tracker, async move {
         let hold = last_step.and_then(|s| ids.get(s)).copied();
-        let run = Run::new(&state2, input, run_no, hold).await?;
+        let run = Run::new(&state2, input, run_no, hold, progress).await?;
         regenerate(&run, &ids, block).await
     });
     Ok(())
@@ -2124,7 +2338,7 @@ async fn replace_block(
     })?;
     store::push_history(db, ws.id, &previous, Some(interaction_id)).await?;
     let saved = store::save_content(db, ws.id, &next, "regenerate").await?;
-    super::images::enqueue_logged(&run.state, ws.id, ws.teacher_id, &next).await;
+    queue_pictures(run, &next).await;
     log_usage(
         db,
         ws.teacher_id,

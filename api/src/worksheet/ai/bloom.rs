@@ -18,16 +18,18 @@
 //! Regenerating one of those blocks re-runs its level call and judges that block only.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde_json::json;
 
 use super::{
-    close, empty_message, expire_stale, mark_done, mark_held, open_run, replace_block, run_step,
-    skip, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult, STEP_BLOOM, STEP_BLOOM_CHECK,
+    close, empty_message, expire_stale, mark_done, mark_held, open_progress, open_run,
+    replace_block, run_step, skip, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult,
+    STEP_BLOOM, STEP_BLOOM_CHECK,
 };
 use crate::error::{AppError, AppResult};
+use crate::progress::{Step, Tracker};
 use crate::routes::{clip_chars, log_usage, or_blank, track_label};
 use crate::worksheet::assemble::{auto_steps, letter};
 use crate::worksheet::bloom::{
@@ -52,7 +54,13 @@ const SCAFFOLD_LEVEL: &str = "SC-WS-BLOOM";
 const SCAFFOLD_TIERED: &str = "SC-WS-TIERED";
 const SCAFFOLD_CHECK: &str = "SC-WS-BLOOM-CHECK";
 
-const fn level_step(phase: &'static str, repair_phase: &'static str) -> StepInfo {
+/// `progress`: the level's step of the run's progress (`bloom:<level>`); the calls that rewrite
+/// questions the judge rated as another level belong to the judge's step.
+const fn level_step(
+    progress: &'static str,
+    phase: &'static str,
+    repair_phase: &'static str,
+) -> StepInfo {
     StepInfo {
         key: KEY_LEVEL,
         module: KEY_LEVEL,
@@ -60,10 +68,16 @@ const fn level_step(phase: &'static str, repair_phase: &'static str) -> StepInfo
         schema_name: LEVEL_SCHEMA_NAME,
         phase,
         repair_phase,
+        progress,
+        retry_note: true,
     }
 }
 
-const fn tiered_step(phase: &'static str, repair_phase: &'static str) -> StepInfo {
+const fn tiered_step(
+    progress: &'static str,
+    phase: &'static str,
+    repair_phase: &'static str,
+) -> StepInfo {
     StepInfo {
         key: KEY_TIERED,
         module: KEY_TIERED,
@@ -71,32 +85,67 @@ const fn tiered_step(phase: &'static str, repair_phase: &'static str) -> StepInf
         schema_name: tiered::LEVEL_SCHEMA_NAME,
         phase,
         repair_phase,
+        progress,
+        retry_note: true,
+    }
+}
+
+/// The step of a level in the run's progress.
+pub(super) fn level_key(b: Bloom) -> &'static str {
+    LEVEL_KEYS[b.rank()]
+}
+
+const LEVEL_KEYS: [&str; 6] = [
+    "bloom:remember",
+    "bloom:understand",
+    "bloom:apply",
+    "bloom:analyze",
+    "bloom:evaluate",
+    "bloom:create",
+];
+
+pub const L_CHECK: &str = "判斷 Bloom 層次";
+const NOTE_REDO: &str = "重出層次不符的題目";
+const NOTE_RECHECK: &str = "再判斷一次";
+
+/// What the teacher reads for a level's step (`again`: one block regenerated).
+fn level_label(output: Output, b: Bloom, again: bool) -> String {
+    let verb = if again { "重出" } else { "出" };
+    match output {
+        Output::Tiered => format!("{verb}『{}』題與三版支持", b.label()),
+        _ => format!("{verb}『{}』題", b.label()),
     }
 }
 
 /// One per level, in Bloom order: the phase names the level being written.
 const LEVEL_STEPS: [StepInfo; 6] = [
     level_step(
+        "bloom:remember",
         "正在出『記憶』層次的題目",
         "『記憶』層次有題目沒有通過檢查，正在修正",
     ),
     level_step(
+        "bloom:understand",
         "正在出『理解』層次的題目",
         "『理解』層次有題目沒有通過檢查，正在修正",
     ),
     level_step(
+        "bloom:apply",
         "正在出『應用』層次的題目",
         "『應用』層次有題目沒有通過檢查，正在修正",
     ),
     level_step(
+        "bloom:analyze",
         "正在出『分析』層次的題目",
         "『分析』層次有題目沒有通過檢查，正在修正",
     ),
     level_step(
+        "bloom:evaluate",
         "正在出『評鑑』層次的題目",
         "『評鑑』層次有題目沒有通過檢查，正在修正",
     ),
     level_step(
+        "bloom:create",
         "正在出『創造』層次的題目",
         "『創造』層次有題目沒有通過檢查，正在修正",
     ),
@@ -105,26 +154,32 @@ const LEVEL_STEPS: [StepInfo; 6] = [
 /// The same call, rewriting the questions the judge rated as another level.
 const REDO_STEPS: [StepInfo; 6] = [
     level_step(
+        "bloom_check",
         "正在重出層次不符的『記憶』題目",
         "正在修正重出的『記憶』題目",
     ),
     level_step(
+        "bloom_check",
         "正在重出層次不符的『理解』題目",
         "正在修正重出的『理解』題目",
     ),
     level_step(
+        "bloom_check",
         "正在重出層次不符的『應用』題目",
         "正在修正重出的『應用』題目",
     ),
     level_step(
+        "bloom_check",
         "正在重出層次不符的『分析』題目",
         "正在修正重出的『分析』題目",
     ),
     level_step(
+        "bloom_check",
         "正在重出層次不符的『評鑑』題目",
         "正在修正重出的『評鑑』題目",
     ),
     level_step(
+        "bloom_check",
         "正在重出層次不符的『創造』題目",
         "正在修正重出的『創造』題目",
     ),
@@ -133,26 +188,32 @@ const REDO_STEPS: [StepInfo; 6] = [
 /// 差異化學習單: one per level, in Bloom order.
 const TIERED_STEPS: [StepInfo; 6] = [
     tiered_step(
+        "bloom:remember",
         "正在出『記憶』層次的題目與三個版本的支持",
         "『記憶』層次有題目沒有通過檢查，正在修正",
     ),
     tiered_step(
+        "bloom:understand",
         "正在出『理解』層次的題目與三個版本的支持",
         "『理解』層次有題目沒有通過檢查，正在修正",
     ),
     tiered_step(
+        "bloom:apply",
         "正在出『應用』層次的題目與三個版本的支持",
         "『應用』層次有題目沒有通過檢查，正在修正",
     ),
     tiered_step(
+        "bloom:analyze",
         "正在出『分析』層次的題目與三個版本的支持",
         "『分析』層次有題目沒有通過檢查，正在修正",
     ),
     tiered_step(
+        "bloom:evaluate",
         "正在出『評鑑』層次的題目與三個版本的支持",
         "『評鑑』層次有題目沒有通過檢查，正在修正",
     ),
     tiered_step(
+        "bloom:create",
         "正在出『創造』層次的題目與三個版本的支持",
         "『創造』層次有題目沒有通過檢查，正在修正",
     ),
@@ -160,26 +221,32 @@ const TIERED_STEPS: [StepInfo; 6] = [
 
 const TIERED_REDO_STEPS: [StepInfo; 6] = [
     tiered_step(
+        "bloom_check",
         "正在重出層次不符的『記憶』題目",
         "正在修正重出的『記憶』題目",
     ),
     tiered_step(
+        "bloom_check",
         "正在重出層次不符的『理解』題目",
         "正在修正重出的『理解』題目",
     ),
     tiered_step(
+        "bloom_check",
         "正在重出層次不符的『應用』題目",
         "正在修正重出的『應用』題目",
     ),
     tiered_step(
+        "bloom_check",
         "正在重出層次不符的『分析』題目",
         "正在修正重出的『分析』題目",
     ),
     tiered_step(
+        "bloom_check",
         "正在重出層次不符的『評鑑』題目",
         "正在修正重出的『評鑑』題目",
     ),
     tiered_step(
+        "bloom_check",
         "正在重出層次不符的『創造』題目",
         "正在修正重出的『創造』題目",
     ),
@@ -210,6 +277,8 @@ const CHECK: StepInfo = StepInfo {
     schema_name: CHECK_SCHEMA_NAME,
     phase: "正在檢查題目的 Bloom 層次",
     repair_phase: "正在重新檢查題目的 Bloom 層次",
+    progress: STEP_BLOOM_CHECK,
+    retry_note: true,
 };
 
 const SKIPPED: &str = "前一步沒有成功，所以沒有執行。";
@@ -615,6 +684,7 @@ async fn judge_and_fix(
             .collect();
         let note = redo_note(b, &pairs);
         let formats = formats_for(output, b, selected_formats);
+        run.progress.note(STEP_BLOOM_CHECK, Some(NOTE_REDO)).await;
         let result = level_call(
             run,
             job_id,
@@ -647,6 +717,9 @@ async fn judge_and_fix(
     if !redone.is_empty() {
         let questions: Vec<(Bloom, CleanBloomItem)> =
             redone.iter().map(|r| question(drafts, *r)).collect();
+        run.progress
+            .note(STEP_BLOOM_CHECK, Some(NOTE_RECHECK))
+            .await;
         // A second judgement that fails leaves the new questions with their target.
         if let StepResult::Shown { output, .. } = check_call(run, job_id, &questions).await? {
             for j in output {
@@ -884,13 +957,50 @@ pub(super) async fn start_generation(state: &AppState, input: RunInput) -> AppRe
     else {
         return Ok(());
     };
+    // One step per level, in the order they are written, then the judge.
+    let output = input.worksheet.settings.output;
+    let steps: Vec<Step> = bl::plan(&input.worksheet.settings)
+        .into_iter()
+        .map(|(b, _)| Step::new(level_key(b), &level_label(output, b, false)))
+        .chain([Step::new(STEP_BLOOM_CHECK, L_CHECK)])
+        .collect();
+    let tracker = open_progress(state, worksheet_id, run_no, steps).await;
     let state2 = state.clone();
-    spawn_run(state, worksheet_id, run_no, async move {
+    let progress = tracker.clone();
+    spawn_run(state, worksheet_id, run_no, tracker, async move {
         let hold = ids.get(STEP_BLOOM_CHECK).copied();
-        let run = Run::new(&state2, input, run_no, hold).await?;
+        let run = Run::new(&state2, input, run_no, hold, progress).await?;
         generate(&run, &ids).await
     });
     Ok(())
+}
+
+/// The judge's step of the run's progress, as the judge ended.
+async fn record_check(progress: &Arc<Tracker>, checked: &Checked) {
+    match checked.outcome {
+        "shown" => progress.done(STEP_BLOOM_CHECK).await,
+        "skipped" => progress.skip(STEP_BLOOM_CHECK).await,
+        _ => {
+            progress
+                .fail(
+                    STEP_BLOOM_CHECK,
+                    checked.message.as_deref().unwrap_or_default(),
+                )
+                .await
+        }
+    }
+}
+
+/// A level's step of the run's progress, as its call ended.
+async fn record_level(progress: &Arc<Tracker>, draft: &LevelDraft) {
+    let key = level_key(draft.bloom);
+    match &draft.failure {
+        None => progress.done(key).await,
+        Some(reason) => {
+            let what = format!("『{}』層次的題目", draft.bloom.label());
+            progress.fail(key, &empty_message(&what, reason)).await
+        }
+    }
 }
 
 async fn make_level(
@@ -929,7 +1039,7 @@ async fn make_level(
         },
     )
     .await?;
-    Ok(match result {
+    let draft = match result {
         StepResult::Shown { output, .. } => {
             let draft = LevelDraft::from_output(b, output);
             if let Ok(mut d) = done.lock() {
@@ -938,7 +1048,9 @@ async fn make_level(
             draft
         }
         StepResult::Failed { reason, .. } => LevelDraft::failed(b, reason),
-    })
+    };
+    record_level(&run.progress, &draft).await;
+    Ok(draft)
 }
 
 /// The number of the first question of each draft (questions numbered through the sheet).
@@ -1001,6 +1113,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let first_no = first_numbers(&drafts, 1);
     let checked =
         judge_and_fix(run, check_job, output, &mut drafts, &first_no, formats, &[]).await?;
+    record_check(&run.progress, &checked).await;
     let context = run.context(&[(
         "要檢查的題目",
         format!("{} 題", drafts.iter().map(|d| d.items.len()).sum::<usize>()),
@@ -1131,10 +1244,21 @@ pub(super) async fn start_block(
     else {
         return Ok(());
     };
+    let output = input
+        .content
+        .chosen
+        .as_ref()
+        .map_or(input.worksheet.settings.output, |c| c.settings.output);
+    let steps = [
+        Step::new(level_key(level), &level_label(output, level, true)),
+        Step::new(STEP_BLOOM_CHECK, L_CHECK),
+    ];
+    let tracker = open_progress(state, worksheet_id, run_no, steps).await;
     let state2 = state.clone();
-    spawn_run(state, worksheet_id, run_no, async move {
+    let progress = tracker.clone();
+    spawn_run(state, worksheet_id, run_no, tracker, async move {
         let hold = ids.get(STEP_BLOOM_CHECK).copied();
-        let run = Run::new(&state2, input, run_no, hold).await?;
+        let run = Run::new(&state2, input, run_no, hold, progress).await?;
         regenerate(&run, &ids, old, level).await
     });
     Ok(())
@@ -1195,7 +1319,9 @@ async fn regenerate(
     )
     .await?;
     let context = run.context(&[("Bloom 層次", b.label().to_string())]);
-    let Ok((out, interaction_id)) = close(run, jobs[STEP_BLOOM], result, &context).await? else {
+    let Ok((out, interaction_id)) =
+        close(run, jobs[STEP_BLOOM], level_key(b), result, &context).await?
+    else {
         skip(db, jobs.get(STEP_BLOOM_CHECK), SKIPPED).await?;
         return Ok(());
     };
@@ -1219,6 +1345,7 @@ async fn regenerate(
         &others,
     )
     .await?;
+    record_check(&run.progress, &checked).await;
     let context = run.context(&[("要檢查的題目", format!("{} 題", drafts[0].items.len()))]);
     mark_held(
         db,

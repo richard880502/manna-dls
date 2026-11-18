@@ -20,6 +20,7 @@
 //! which drafts were kept back and why. The material is logged as its length and a hash.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -35,6 +36,7 @@ use crate::ai::LlmRequest;
 use crate::checks::{self as base_checks, CheckResult};
 use crate::curriculum::{self, CurriculumItem};
 use crate::error::AppResult;
+use crate::progress::{self, Step, Tracker};
 use crate::prompts;
 use crate::retrieval;
 use crate::routes::{clip_chars, or_blank, scaffold_id, track_label};
@@ -140,6 +142,8 @@ struct Spec {
     fake_context: Value,
     max_tokens: u32,
     trace: Value,
+    /// The step of the progress this call is (its retry is said there as 「重試中」).
+    progress: Option<(Arc<Tracker>, &'static str)>,
 }
 
 enum Called<T> {
@@ -188,6 +192,11 @@ where
     let mut note = String::new();
     let mut first: Option<(T, i64)> = None;
     for attempt_no in 1..=2 {
+        if attempt_no == 2 {
+            if let Some((tracker, key)) = &s.progress {
+                tracker.note(key, Some(progress::NOTE_RETRY)).await;
+            }
+        }
         let temperature = BASE_TEMPERATURE + RETRY_TEMPERATURE_STEP * (attempt_no - 1) as f32;
         let snapshot = json!({
             "inputs": logged,
@@ -488,6 +497,34 @@ struct Ctx<'a> {
     query: String,
     trace: retrieval::Trace,
     class_snapshot: Value,
+    progress: Arc<Tracker>,
+}
+
+// ---------------------------------------------------------------- progress (docs/API.md「產生進度」)
+
+const DRAFT: &str = "draft";
+const CHECK: &str = "check";
+const DRAFT_AGAIN: &str = "draft2";
+const CHECK_AGAIN: &str = "check2";
+
+/// The steps of drafting objectives, as the generator page shows them while it waits.
+pub fn steps() -> Vec<Step> {
+    vec![
+        Step::new(progress::READ, progress::L_READ),
+        Step::new(progress::CURRICULUM, progress::L_CURRICULUM),
+        Step::new(DRAFT, "草擬學習目標"),
+        Step::new(CHECK, "檢查目標"),
+    ]
+}
+
+/// What a failed call says (the same words as the result's `message`).
+fn failed_message(status: &str) -> &'static str {
+    match status {
+        "timeout" => MSG_TIMEOUT,
+        "error" => MSG_ERROR,
+        "disabled" => MSG_DISABLED,
+        _ => MSG_NONE,
+    }
 }
 
 /// One round: the draft (retried once inside when the rules leave a group empty, `retry_rules`)
@@ -500,6 +537,16 @@ async fn round(
 ) -> AppResult<Result<Round, (&'static str, Option<i64>)>> {
     let input = ctx.input;
     let db = &state.db;
+    let (draft_key, check_key) = if no == 1 {
+        (DRAFT, CHECK)
+    } else {
+        ctx.progress
+            .add(Step::new(DRAFT_AGAIN, "重新草擬沒通過的目標"))
+            .await;
+        ctx.progress.add(Step::new(CHECK_AGAIN, "再檢查一次")).await;
+        (DRAFT_AGAIN, CHECK_AGAIN)
+    };
+    ctx.progress.start(draft_key).await;
     let mut vars = ctx.vars.clone();
     vars.insert("redo_note", redo.clone().unwrap_or_default());
     let strategy_first = ctx.strategy_first;
@@ -529,6 +576,7 @@ async fn round(
             "kind": input.kind, "round": no, "class_context": ctx.class_snapshot,
             "curriculum_codes": ctx.codes, "strategy_first": strategy_first,
         }),
+        progress: Some((ctx.progress.clone(), draft_key)),
     };
     let logged_query = clip_chars(&prompts::redacted("草擬目標的教材", &ctx.query), 2000);
     let drafted = call(
@@ -570,8 +618,13 @@ async fn round(
     .await?;
     let (rules, draft_id) = match drafted {
         Called::Shown { output, id } => (output, id),
-        Called::Failed { status, id } => return Ok(Err((status, id))),
+        Called::Failed { status, id } => {
+            ctx.progress.fail(draft_key, failed_message(status)).await;
+            return Ok(Err((status, id)));
+        }
     };
+    ctx.progress.done(draft_key).await;
+    ctx.progress.start(check_key).await;
 
     // ---- the judge: every draft on its own (R3)
     let codes: Vec<String> = rules.drafts.iter().map(|d| d.code.clone()).collect();
@@ -608,6 +661,7 @@ async fn round(
         }),
         max_tokens: CHECK_MAX_TOKENS,
         trace: json!({ "kind": input.kind, "round": no, "draft_interaction_id": draft_id }),
+        progress: Some((ctx.progress.clone(), check_key)),
     };
     let drafts = rules.drafts.clone();
     let judged = call(
@@ -635,6 +689,7 @@ async fn round(
     };
     match judged {
         Called::Shown { output, .. } => {
+            ctx.progress.done(check_key).await;
             let (shown, hidden) = passing(&r.rules.drafts, &output);
             r.shown = shown;
             r.hidden = hidden;
@@ -642,6 +697,7 @@ async fn round(
         }
         // G3: what was not judged is not shown.
         Called::Failed { status, .. } => {
+            ctx.progress.fail(check_key, failed_message(status)).await;
             r.hidden = r
                 .rules
                 .drafts
@@ -682,7 +738,14 @@ fn redo_note(r: &Round) -> String {
 }
 
 /// Drafts the objectives (G2) and shows only the ones that pass R1 and R3 (G3).
-pub async fn run(state: &AppState, input: DraftInput) -> AppResult<DraftResult> {
+///
+/// `progress` hears every step change (docs/API.md「產生進度」); the caller settles it with the
+/// result.
+pub async fn run(
+    state: &AppState,
+    input: DraftInput,
+    progress: Arc<Tracker>,
+) -> AppResult<DraftResult> {
     let db = &state.db;
     let profile =
         crate::routes::resolved_profile(db, input.teacher_id, input.class_id, "", "").await?;
@@ -698,6 +761,8 @@ pub async fn run(state: &AppState, input: DraftInput) -> AppResult<DraftResult> 
     if !state.ai.enabled() {
         return Ok(DraftResult::failed("disabled", None, context.into_vec()));
     }
+    progress.done(progress::READ).await;
+    progress.start(progress::CURRICULUM).await;
     let (items, trace) = curriculum::items_for_track_hybrid(
         db,
         &state.embedder,
@@ -706,6 +771,7 @@ pub async fn run(state: &AppState, input: DraftInput) -> AppResult<DraftResult> 
         CURRICULUM_TOP,
     )
     .await?;
+    progress.done(progress::CURRICULUM).await;
     let codes: Vec<String> = items.iter().map(|i| i.item_code.clone()).collect();
     if !items.is_empty() {
         context.add("可對應的課綱條目", &format!("{} 條", items.len()));
@@ -757,6 +823,7 @@ pub async fn run(state: &AppState, input: DraftInput) -> AppResult<DraftResult> 
         query,
         trace,
         class_snapshot: profile.snapshot(),
+        progress,
     };
 
     let first = match round(state, &ctx, 1, None).await? {

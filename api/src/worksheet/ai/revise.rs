@@ -559,6 +559,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             "round": round, "comment_ids": notes.iter().map(|n| n.id).collect::<Vec<_>>(),
             "scope_open": scope.open, "material_source": material.source,
         }),
+        progress: None,
     };
 
     let passage: String = material

@@ -1127,6 +1127,7 @@ async fn run(state: &AppState, check_id: i64) -> AppResult<Outcome> {
             "run_no": run_no,
             "worksheet": page.worksheet.map(|(id, v)| json!({ "id": id, "version_no": v })),
         }),
+        progress: None,
     };
     let result = run::call(
         state,

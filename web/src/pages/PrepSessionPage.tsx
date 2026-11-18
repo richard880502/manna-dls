@@ -9,6 +9,7 @@ import type {
   WsTemplateSummary,
 } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { RunProgressSlot } from "../components/RunProgress";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
@@ -113,9 +114,12 @@ function PrepSessionView({ id }: { id: number }) {
     };
   }, [id, apply]);
 
-  // While a turn runs, ask again every couple of seconds; stop as soon as nothing runs.
+  // While a turn runs, ask again every couple of seconds; stop as soon as nothing runs. The last
+  // turn's progress may stay open a little longer (its pictures, its SIOP 自我檢核): follow it too.
+  const lastTurn = session?.turns[session.turns.length - 1];
+  const following = !!session?.running || lastTurn?.progress?.status === "running";
   useEffect(() => {
-    if (!session?.running) return undefined;
+    if (!following) return undefined;
     let alive = true;
     const timer = setTimeout(() => {
       api
@@ -127,7 +131,7 @@ function PrepSessionView({ id }: { id: number }) {
       alive = false;
       clearTimeout(timer);
     };
-  }, [id, session, apply]);
+  }, [id, session, following, apply]);
 
   useEffect(() => {
     if (arrived === null) return;
@@ -561,12 +565,20 @@ function PrepSessionView({ id }: { id: number }) {
             送出
           </button>
         </div>
-        {running && (
-          <p className="manna-label prep-bottom-status" role="status">
-            <span className="star is-working" aria-hidden="true" />
-            {WORKING_LINE}
-          </p>
-        )}
+        <RunProgressSlot
+          progress={lastTurn?.progress}
+          runKey={lastTurn ? String(lastTurn.id) : null}
+          error={lastTurn?.error}
+          className="prep-progress"
+          fallback={
+            running && (
+              <p className="manna-label prep-bottom-status" role="status">
+                <span className="star is-working" aria-hidden="true" />
+                {WORKING_LINE}
+              </p>
+            )
+          }
+        />
         <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
 
