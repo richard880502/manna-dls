@@ -722,10 +722,28 @@ describe("備課對話 (session page)", () => {
     expect(within(blockB).getByRole("button", { name: "複製區塊 B 活動" })).toBeInTheDocument();
     await user.click(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/ai/62/decision")).toEqual({ decision: "skip", thumbs: "up" }));
-    expect(screen.getByRole("link", { name: "開啟編輯器" })).toHaveAttribute("href", "/worksheets/11");
+    expect(screen.getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
+    expect(screen.queryByRole("link", { name: "開啟編輯器" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "詞彙檢查" })).toHaveAttribute("href", "/worksheets/11/check");
-    expect(screen.getByRole("button", { name: "匯出 DOCX" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "匯出 PDF" })).toBeEnabled();
+    // One 匯出 menu, not two look-alike links; the file is named in the menu, whichever version is shown.
+    expect(screen.queryByRole("button", { name: "匯出 DOCX" })).not.toBeInTheDocument();
+    const exportButton = screen.getByRole("button", { name: /匯出/ });
+    expect(exportButton).toBeEnabled();
+    expect(exportButton).toHaveAttribute("aria-haspopup", "menu");
+    await user.click(exportButton);
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      "學生版 Word",
+      "學生版 PDF",
+      "教師版 Word",
+      "教師版 PDF",
+    ]);
+    // The student version is shown, and 教師版 PDF still asks for the teacher file of this level.
+    await user.click(screen.getByRole("menuitem", { name: "教師版 PDF" }));
+    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/export")).toHaveLength(1));
+    const exportUrl = api.callsTo("GET", "/api/worksheets/11/export")[0]!.url;
+    expect(new URLSearchParams(exportUrl.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");
+    // (The mock has no file to give: the failure is said.)
+    expect(await screen.findByText("測試未定義：GET /api/worksheets/11/export")).toBeInTheDocument();
     expect(screen.getByLabelText("版本")).toHaveTextContent("第 3 版，共 3 版");
     // 教師版 asks for the teacher projection.
     await user.click(screen.getByRole("radio", { name: "教師版" }));

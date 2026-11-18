@@ -346,10 +346,13 @@
   margin-bottom: var(--space-sm);
 }
 
-.prep-export {
+/* Right side of the toolbar: quiet links, then the one button (匯出). */
+.prep-ws-actions {
   display: inline-flex;
   flex-wrap: wrap;
-  gap: var(--space-md);
+  align-items: center;
+  gap: var(--space-sm) var(--space-lg);
+  margin-left: auto;
 }
 
 .prep-version {

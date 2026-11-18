@@ -1,11 +1,9 @@
 import { useId, useState } from "react";
 import { Link } from "react-router";
-import { api, errorMessage } from "../../api/client";
 import type {
   WorksheetContent,
   WsAudience,
   WsBlock,
-  WsExportFormat,
   WsItem,
   WsItemTier,
   WsLevel,
@@ -48,7 +46,6 @@ import {
   type BloomFilter,
 } from "../../lib/bloom";
 import { NOTES_HINT, holdsBlock, type SheetSelection } from "../../lib/blockRevise";
-import { saveBlob } from "../../lib/download";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { BloomDistribution, BloomSelect } from "./Bloom";
@@ -62,6 +59,7 @@ import {
   useBlockRevise,
   type BlockRevise,
 } from "./BlockRevise";
+import { ExportMenu } from "./ExportMenu";
 import { LessonLinkControls } from "./LessonLink";
 import { OrganizerEditor } from "./Organizer";
 import { printedOrganizer } from "../../lib/organizer";
@@ -888,57 +886,28 @@ function BlockSection({
 function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) {
   const code = versionCode(ws.state?.content.levels ?? [], level, ws.state?.content.student_order);
   const ids = useId();
-  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const state = ws.state;
   if (!state) return null;
 
-  async function run(format: WsExportFormat, audience: WsAudience) {
-    const key = `${audience}-${format}`;
-    setBusy(key);
-    setError(null);
-    try {
-      const failed = await ws.flush();
-      if (failed) throw new Error(failed);
-      const { blob, filename } = await api.exportWorksheet(state!.id, { format, level, audience });
-      saveBlob(blob, filename);
-    } catch (err) {
-      setError(err instanceof Error && !("status" in err) ? `沒有匯出：${err.message}` : errorMessage(err));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  const combos: Array<[WsAudience, WsExportFormat]> = [
-    ["student", "docx"],
-    ["student", "pdf"],
-    ["teacher", "docx"],
-    ["teacher", "pdf"],
-  ];
   return (
-    <section className="ws-export" aria-labelledby={`${ids}-h`}>
-      <h2 id={`${ids}-h`}>匯出</h2>
-      <p className="quiet-note">
-        匯出目前這個分頁（{LEVEL_LABEL[level]}）。DOCX 可以再用 Word 編輯；參考答案只在教師參考版。
-        {code && `學生版印成「${studentVersionName(code)}」，不印程度名稱。`}
-      </p>
-      <div className="actions">
-        {combos.map(([audience, format]) => (
-          <button
-            key={`${audience}-${format}`}
-            type="button"
-            className="secondary-button"
-            disabled={busy !== null || state.running}
-            onClick={() => void run(format, audience)}
-          >
-            {busy === `${audience}-${format}` ? "匯出中…" : `${AUDIENCE_LABEL[audience]} ${format.toUpperCase()}`}
-          </button>
-        ))}
+    <section className="ws-export" aria-label="匯出設定">
+      {code && <p className="quiet-note">學生版印成「{studentVersionName(code)}」，不印程度名稱。</p>}
+      <div className="ws-export-row">
+        <ExportMenu
+          worksheetId={state.id}
+          level={level}
+          levelLabel={(state.content.levels?.length ?? 0) > 1 ? LEVEL_LABEL[level] : null}
+          disabled={state.running}
+          beforeExport={() => ws.flush()}
+          onError={setError}
+          footnote="Word 可再編輯；參考答案只在教師版。"
+        />
+        <label className="ws-filename" htmlFor={`${ids}-fn`}>
+          檔名
+          <input id={`${ids}-fn`} type="text" value={state.filename} onChange={(e) => ws.setFilename(e.target.value)} />
+        </label>
       </div>
-      <label className="ws-filename" htmlFor={`${ids}-fn`}>
-        檔名
-        <input id={`${ids}-fn`} type="text" value={state.filename} onChange={(e) => ws.setFilename(e.target.value)} />
-      </label>
       <ErrorText message={error} />
     </section>
   );

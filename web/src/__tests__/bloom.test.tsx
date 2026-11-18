@@ -680,7 +680,7 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     expect(within(preview).getByText("Why did the neighbors laugh?")).toBeInTheDocument();
     // The student version has no tags.
     expect(preview.querySelector(".bloom-chip")).toBeNull();
-    expect(within(result).getByRole("link", { name: "開啟編輯器" })).toHaveAttribute("href", "/worksheets/11");
+    expect(within(result).getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
 
     // The read-only distribution of the version shown (no buttons).
     const bar = await within(result).findByRole("img", { name: /Bloom 層次分布（一般版）/ });
