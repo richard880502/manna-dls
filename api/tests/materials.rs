@@ -571,10 +571,56 @@ async fn uploads_enforce_type_content_size_and_quota() {
         "the object name says nothing about the file"
     );
 
-    // The same file again is recognised.
+    // The same file again (same purpose, her own library): not stored twice, the one she has is
+    // given back and said so (e.g. a worksheet sample uploaded again is simply read again).
     let (s, v) = upload(&app, &t, "copy.png", &png(2000)).await;
-    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["id"], image["id"]);
+    assert_eq!(v["reused"], true);
     assert_eq!(dir.files().len(), 1);
+    assert!(
+        image.get("reused").is_none(),
+        "a new upload has no `reused`"
+    );
+    // The same file for another purpose (as a worksheet sample) is stored as its own row.
+    let (s, sample) = app
+        .post_multipart(
+            "/api/materials/upload",
+            Some(&t),
+            &[
+                Part::Text("purpose", "worksheet_sample"),
+                Part::File("file", "copy.png", &png(2000)),
+            ],
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{sample}");
+    assert_ne!(sample["id"], image["id"]);
+    assert_eq!(sample["purpose"], "worksheet_sample");
+    assert!(sample.get("reused").is_none());
+    assert_eq!(dir.files().len(), 2);
+    // … and that one, uploaded again as a sample, is reused too.
+    let (s, again) = app
+        .post_multipart(
+            "/api/materials/upload",
+            Some(&t),
+            &[
+                Part::Text("purpose", "worksheet_sample"),
+                Part::File("file", "copy.png", &png(2000)),
+            ],
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{again}");
+    assert_eq!(
+        (again["id"].clone(), again["reused"].clone()),
+        (sample["id"].clone(), json!(true))
+    );
+    assert_eq!(dir.files().len(), 2);
+    // (The sample row is removed again so the quota numbers below stay as they were.)
+    sqlx::query("DELETE FROM materials WHERE id = $1")
+        .bind(sample["id"].as_i64().unwrap())
+        .execute(&app.db)
+        .await
+        .unwrap();
 
     // Quota: pretend the teacher has used all but 1,000 bytes of the gigabyte.
     sqlx::query(

@@ -211,7 +211,7 @@ pub async fn upload(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     mut form: Multipart,
-) -> AppResult<Json<MaterialDetail>> {
+) -> AppResult<Json<serde_json::Value>> {
     teacher.require(Capability::UseMaterials)?;
     if state.storage.is_none() {
         return Err(store::storage_missing());
@@ -259,7 +259,7 @@ pub async fn upload(
     if let Some(lesson_id) = lesson_id {
         owned_lesson(&state.db, lesson_id, teacher.id()).await?;
     }
-    let row = store::create_upload(
+    let uploaded = store::create_upload(
         &state,
         teacher.id(),
         Upload {
@@ -272,11 +272,20 @@ pub async fn upload(
         &store::accept_any,
     )
     .await?;
+    let row = uploaded.row;
     link_new(&state, teacher.id(), row.id, lesson_id).await?;
     // Read the answer before OCR starts: a fast job could otherwise finish first.
     let detail = store::detail(&state.db, row.clone(), teacher.id()).await?;
-    ocr::spawn_for(&state, &row);
-    Ok(Json(detail))
+    if !uploaded.reused {
+        ocr::spawn_for(&state, &row);
+    }
+    // The same file she already had (for this purpose): that one again, said so.
+    let mut body = serde_json::to_value(&detail)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("material detail: {e}")))?;
+    if uploaded.reused {
+        body["reused"] = serde_json::Value::Bool(true);
+    }
+    Ok(Json(body))
 }
 
 /// Reads the `file` field of an upload form: its name and bytes. The size is checked against

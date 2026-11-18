@@ -710,17 +710,31 @@ pub fn accept_any(_: Kind, _: &Extracted) -> AppResult<()> {
     Ok(())
 }
 
+/// What an upload became: a new row, or (a file the teacher already has in her library for the
+/// same purpose) that row again.
+#[derive(Debug, Clone)]
+pub struct Uploaded {
+    pub row: MaterialRow,
+    /// The same file was already there: nothing was stored, `row` is the existing one.
+    pub reused: bool,
+}
+
 /// Stores an uploaded file: type and size checks, quota (the teacher's for a personal row, the
 /// platform library's for a platform row), SHA-256, text extraction, `accept` (a caller's check
 /// of the extracted text, e.g. that a worksheet sample has text), then the object and the row.
 /// Nothing is left behind when a step fails.
+///
+/// The same file again: in the teacher's own library for the same purpose it is not stored twice,
+/// the existing row is returned (`reused`), so uploading a worksheet sample again simply reads it
+/// again; for another purpose (a 教材 she now uploads as a sample, or the other way round) it is
+/// stored as a new row. The platform library refuses a file it already has (409).
 pub async fn create_upload(
     state: &AppState,
     teacher_id: i64,
     upload: Upload<'_>,
     placement: &Placement,
     accept: &(dyn Fn(Kind, &Extracted) -> AppResult<()> + Sync),
-) -> AppResult<MaterialRow> {
+) -> AppResult<Uploaded> {
     let Upload {
         filename,
         title,
@@ -800,19 +814,35 @@ pub async fn create_upload(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("extraction task failed: {e}")))?
     };
-    // The same file twice in one library: the teacher's own, or the platform's.
-    let existing: Option<String> = sqlx::query_scalar(
-        "SELECT title FROM materials
+    // The same file twice in one library: the teacher's own, or the platform's. One with the same
+    // purpose first.
+    let existing: Option<(i64, String, String)> = sqlx::query_as(
+        "SELECT id, title, purpose FROM materials
           WHERE sha256 = $2 AND storage_key IS NOT NULL
             AND CASE WHEN $3 = 'platform' THEN scope = 'platform'
                      ELSE scope = 'personal' AND teacher_id = $1 END
+          ORDER BY (purpose = $4) DESC, id DESC
           LIMIT 1",
     )
     .bind(teacher_id)
     .bind(&sha256)
     .bind(placement.scope)
+    .bind(placement.purpose)
     .fetch_optional(db)
     .await?;
+    let existing = match existing {
+        // Her own copy for the same purpose: use it again.
+        Some((id, _, purpose)) if !placement.is_platform() && purpose == placement.purpose => {
+            if let Some(row) = by_id(db, id).await? {
+                return Ok(Uploaded { row, reused: true });
+            }
+            None
+        }
+        // Her own copy for another purpose: stored again, as this purpose.
+        Some(_) if !placement.is_platform() => None,
+        Some((_, title, _)) => Some(title),
+        None => None,
+    };
     if let Some(existing) = existing {
         return Err(AppError::Conflict(format!(
             "這個檔案已經在{}裡了（{}）。",
@@ -925,7 +955,7 @@ pub async fn create_upload(
     }
     .await;
     match inserted {
-        Ok(row) => Ok(row),
+        Ok(row) => Ok(Uploaded { row, reused: false }),
         Err(e) => {
             // The row is what makes the object reachable and deletable: without it, remove it.
             if let Err(cleanup) = storage.delete(&key).await {
