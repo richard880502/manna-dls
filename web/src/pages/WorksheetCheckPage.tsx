@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { VocabularyListed, WorksheetState, WsLevel, WsVocabCheck } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { VocabActions, appliedSummary } from "../components/worksheet/VocabActions";
 import { LEVEL_LABEL, formatDateTime, percent } from "../lib/worksheet";
 
 const DEFAULT_TARGET = 4;
@@ -39,6 +40,7 @@ export function WorksheetCheckPage() {
   const [target, setTarget] = useState(DEFAULT_TARGET);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [applied, setApplied] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -77,6 +79,7 @@ export function WorksheetCheckPage() {
     if (!level) return;
     setRunning(true);
     setError(null);
+    setApplied(null);
     try {
       const result = await api.checkWorksheetVocabulary(id, level, target);
       setChecks((prev) => [result, ...prev.filter((c) => c.level !== result.level)]);
@@ -209,8 +212,25 @@ export function WorksheetCheckPage() {
 
           <section className="section" aria-labelledby={`${ids}-above`}>
             <h2 id={`${ids}-above`}>超出目標級別的詞</h2>
+            {applied && (
+              <p className="notice" role="status">
+                {applied} <Link to={`/worksheets/${id}`}>回學習單看看</Link>
+              </p>
+            )}
             {a.above_target.length === 0 ? (
               <p className="empty-line">沒有超出第 {a.target_level} 級的詞（未收錄的詞不在此列，請看下方）。</p>
+            ) : (check.words?.length ?? 0) > 0 && !check.stale ? (
+              <VocabActions
+                key={check.id}
+                worksheetId={id}
+                check={check}
+                levels={levels}
+                onApplied={(result) => {
+                  setState(result.worksheet);
+                  setChecks((prev) => [result.check, ...prev.filter((c) => c.level !== result.check.level)]);
+                  setApplied(appliedSummary(result));
+                }}
+              />
             ) : (
               <table className="ws-plain">
                 <thead>

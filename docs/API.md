@@ -1108,13 +1108,15 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/blocks/:block_id/regenerate` | `{}` | 202 `WorksheetState`：只重新產生這一個區塊 |
 | POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生之前的那一版；沒有上一版 → 409 |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
-| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」） |
+| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
 | POST | `/api/worksheets/:id/sop-sync` | `{ confirm: true, keys: string[], sop_version_no }` | `{ sop_version_no, applied }`。沒有 `confirm: true` → 400；課例在預覽之後改過 → 409 |
 | PUT | `/api/worksheets/:id/link` | `{ lesson_id: number \| null }` | `WorksheetState`：連結既有課例或取消連結（不改課例內容） |
 | POST | `/api/worksheets/:id/save-as-lesson` | `{ unit_id, title }` | `WorksheetState`：在這個單元建立新課例，把教材、目標與任務寫成它的第一版 SOP，並連結 |
 | POST | `/api/worksheets/:id/checks/vocabulary` | `{ level, target_level? }` | `WsVocabCheck`。詞彙表未匯入 → 409 |
 | GET | `/api/worksheets/:id/checks` | – | `WsVocabCheck[]`：每個版本最近一次的結果 |
+| POST | `/api/worksheets/:id/checks/:check_id/suggest` | `{ action, words }` | `WsVocabSuggestions`（見「詞彙級別檢查：處理超出級別的字」） |
+| POST | `/api/worksheets/:id/checks/:check_id/apply` | `WsVocabApplyRequest` | `WsVocabApplied` |
 | GET | `/api/worksheets/:id/export` | `?format=docx\|pdf&level=&audience=` | 檔案本體（`Content-Disposition: attachment`）。`level` 不在這份學習單的版本裡 → 400 |
 
 ## 兩個入口
@@ -1198,6 +1200,158 @@ interface WsVocabCheck {
 
 分析的文字是**學生版**（該版本實際印出的字）。沒有模型呼叫；級別、版本、分母與限制全部來自 Phase 2.0 的 `vocabulary::analyze`。結果連同學習單版本存進 `worksheet_checks`；之後學習單有新版本，舊結果以 `stale = true` 回傳。這是備課輔助，不是官方評定（`analysis.disclaimer`）。
 
+## 詞彙級別檢查：處理超出級別的字
+
+教師回饋：「針對超出級別的字，讓老師選要提供單字意思，還是換字？」每個超出目標級別的字，教師選一種處理方式：
+
+- **提供字義**（`gloss`）：保留原字，在這一區最後的 **Glossary** 印出「字 (詞性) 中文意思 — 簡短英文解釋」。
+- **換字**（`replace`）：題目、選項、作答指示裡**有這個字的每一句**，由模型整句改寫一次（避開這個字、意思不變、只改那個字附近），伺服器逐句檢查；教師看到每一句「改寫前 → 改寫後」，可以逐句取消，套用時照畫面上的句子寫入。
+- **不處理**（`leave`）：例如專有名詞，或這節課要教的字。記在這個版本的檢查結果裡，下次分析仍標「已標記不處理」。
+- 一次選全部：「全部提供字義」「可以換的全部換字」「全部不處理」「照建議選」。
+
+### 設計決定
+
+- **字義印在哪裡**：每一區最後的 Glossary（表格：Word／Meaning），在題目之後、教師備註之前；學生版與教師版都印，編輯器、備課對話的預覽、DOCX、PDF 一致。不用括號內嵌：會拉長題目與選項（選項長短不一、中文字義可能洩漏答案），也改動分析的文字；不用註腳：DOCX 與 PDF 的產生器都沒有註腳機制，而 Glossary 沿用既有的「Key words」表格與區塊框。Glossary 不計入詞彙級別分析（它解釋字，不是閱讀量）。
+- **字義從哪裡來**：大考中心參考詞彙表只有字、級別與詞性，**沒有中文意思**，所以用一次有上限的模型呼叫（所選的字一次送出，最多 20 個）。詞性以詞彙表為準（模型給的不在詞彙表列的詞性裡時改用詞彙表的）；中文意思一定要有中文；英文解釋用到超出目標級別的字（常常就是這個字本身）時由程式拿掉。
+- **課文不換字**：學習單的閱讀文本（教材）本身不在學習單內容裡，也不在分析範圍，永遠不會被改。換字也不動：字詞表（這節課要教的字，預設「不處理」）、字庫（字詞表鷹架與題目的 word bank：它們是答案）、調整文本（改寫的課文，T8）、標題與學習目標、圖說、圖像組織的中心詞與格子（預填的示範與參考答案：它們是答案的內容），以及**引號內**的字（「What does "abandon" mean?」是在問這個字本身或引用課文）。這些地方的出現次數列在 `fixed`。圖像組織的標題與標籤（欄名、列名、框名）和表格欄位一樣可以換字。分析讀的是學生版印出的圖像組織：標題、中心詞、標籤與這個版本預填的格子（參考答案只印在教師版，不分析）。課文也有的字（`in_material`）預設建議「提供字義」：換掉題目裡的字，學生回課文就對不上。
+- **為什麼整句改寫**：最早的做法是逐字形替換（abandoned → left），用真實模型（gemma）測試時造出不通的英文：「according to the text」→「as said to the text」（according 換了、to 留著）、「might accidentally hurt」→「might by mistake hurt」、「the most accurate summary」→「the most correct short report」。字形替換看不到句子，所以改成把整句交給模型改寫，再由伺服器檢查改寫的範圍與用字，教師逐句確認。
+- **版本範圍**：分析是逐版本的。換字改的是這個版本印出的文字；題目與作答指示是幾個版本共用的（T1、T2：同一題在各版問同一件事，只差在支持），所以共用的題目其他版本也會一起改，畫面上有說明；只屬於別的版本的題目、鷹架與分層支持不會動。字義預設只加在分析的版本（例如只給基礎版，對應 T8「難字的意思直接寫在文中」與 V1–V3：關鍵字要少），也可以選「所有印出這個字的版本」。每個版本的字義放在那個版本**第一個印出這個字的區塊**。
+
+### 端點
+
+| 方法 | 路徑 | 請求 | 回應 |
+|---|---|---|---|
+| POST | `/api/worksheets/:id/checks/:check_id/suggest` | `{ action: "gloss" \| "replace", words: string[] }`（`words` 是這次檢查 `words[].base`，1–20 個） | `WsVocabSuggestions`。這次檢查已經過期（學習單之後改過）→ 409；字不在這次檢查裡、`replace` 了一個沒有可換位置的字、這些字一共超過 40 句 → 400 |
+| POST | `/api/worksheets/:id/checks/:check_id/apply` | `WsVocabApplyRequest` | `WsVocabApplied`（含 `worksheet: WorksheetState` 與重新分析的 `check`）。`base_version_no` 不是最新版本或檢查已過期 → 409（「請重新分析」）；學習單正在產生 → 409；句子和學習單現在的文字對不上 → 409；改寫句沒通過檢查、這一句還有沒選換字的字、選了換字卻沒勾任何一句 → 400 |
+
+```ts
+interface WsVocabCheck {            // 既有的檢查結果多了 words（舊的結果沒有，重新分析就有）
+  …;
+  words?: WsOverLevelWord[];        // 依 analysis.above_target 的順序（級別高的在前）
+}
+interface WsOverLevelWord {
+  base: string; level: number;
+  pos: string;                      // 詞彙表印的詞性，"v."、"n./v."；沒有時 ""
+  count: number;
+  forms: string[];                  // 學習單裡的字形（小寫），依出現順序
+  replaceable: number;              // 換字會改到的次數
+  fixed: string[];                  // 換字不會動的地方與原因，例如 "A 活動 · 字詞表：字詞表（這節課要教的字）"、"A 活動 · 第 2 題（引號內）"
+  in_material: boolean;             // 課文也有
+  key_word: boolean;                // 字詞表裡的字
+  glossed: string | null;           // 這個版本已經附上的中文意思
+  kept: boolean;                    // 教師之前選了不處理
+  suggested: "gloss" | "replace" | "leave"; reason: string;
+  contexts: string[];               // 最多 3 個上下文（送給模型）
+}
+interface WsVocabSuggestions {
+  action: "gloss" | "replace";
+  status: "shown" | "blocked" | "timeout" | "error" | "disabled";   // shown：至少一個字（一句）有建議
+  message: string | null;           // 例如「有 1 句這次沒有可用的改寫…，這些地方不會改。」
+  interaction_id: number | null;    // 最後一次呼叫
+  words: Array<{                    // 依請求的順序
+    base: string;
+    interaction_id: number | null;  // 寫出這個字建議的那一次呼叫（第二次呼叫補上的是第二次的 id）
+    gloss: { pos: string; meaning_zh: string; definition_en: string } | null;
+    replacement: string | null;     // 換字：改寫句主要用來代替它的字（提示；在目標級別以內）
+    places: string[];               // 換字：有這個字的句子（places[].id）
+    notes: string[];                // 程式拿掉的建議與原因（超出級別、不在詞彙表、英文解釋太難、句子都沒有可用的改寫）
+  }>;
+  places: Array<{                   // 只有換字：每一句，依學習單的順序；兩個所選的字在同一句時是同一筆
+    id: string;                     // "p1"、"p2"…（只在這次回應裡唯一）
+    field: { block: string;
+             part: "title" | "instructions" | "step" | "support" | "prompt" | "option"
+                 | "table_heading" | "organizer_title" | "organizer_label" | "hint" | "tier_support";
+             id?: string;           // 鷹架或題目的 id
+             index?: number };      // 第幾個步驟／選項／欄位／圖像組織的格（section）／支持（從 0）
+    place: string;                  // 「A 活動 · 第 1 題」
+    start: number; end: number;     // original 在那段文字裡的位置（字元）
+    original: string;               // 原句
+    bases: string[];                // 這一句要避開的字
+    rewritten: string | null;       // 改寫後的整句；沒有通過檢查時是 null（這一句不會改）
+    interaction_id: number | null;
+    problem: string | null;         // 為什麼沒有可用的改寫
+  }>;
+}
+interface WsVocabApplyRequest {
+  base_version_no: number;          // check.version_no
+  gloss_scope?: "level" | "all";    // 預設 level
+  words: Array<{
+    base: string; action: "gloss" | "replace" | "leave";
+    gloss?: { pos?: string; meaning_zh: string; definition_en?: string };     // gloss 必填 meaning_zh（教師可以改，也可以不經模型自己寫）
+    interaction_id?: number | null; // 這個字的建議來自哪一次呼叫（記 teacher_decisions）
+    offered?: number;               // 換字：教師看到幾句有改寫（全部套用＝adopt，取消了幾句＝revise）
+  }>;
+  rewrites?: Array<{                // 換字：教師勾選的句子，照畫面上的樣子
+    field: …; start: number; end: number; original: string; rewritten: string; bases: string[];
+  }>;
+}
+interface WsVocabApplied {
+  version_no: number | null;        // 新版本；只有「不處理」時學習單不變，是 null
+  glossed: string[]; left: string[];
+  replaced: Array<{ base: string; sentences: number; left: number }>;  // sentences：改寫了幾句；left：本來可以換、但沒改（取消或沒有改寫）的句子
+  check: WsVocabCheck;              // 套用後重新分析（同一個版本、同一個目標級別）
+  worksheet: WorksheetState;
+}
+```
+
+**學習單內容多了 `blocks[].glosses`**（只增不改；沒有時沒有這個欄位，編輯器存檔時原樣送回）：
+
+```ts
+interface WsGloss { word: string; pos: string; meaning_zh: string; definition_en: string;
+                    levels: WsLevel[]; origin: "teacher" | "ai" | "ai_edited"; }
+// WsSheetBlock.glosses?: Array<{ word, pos, meaning_zh, definition_en }>   這個版本要印的，印在區塊最後
+```
+
+儲存時驗證：每區最多 30 筆，`word` ≤60、`pos` ≤20、`meaning_zh` ≤60（必填）、`definition_en` ≤200，同一區同一個字只能一筆，沒有任何版本的那一筆拿掉。編輯器在 Glossary 每一筆旁有「移除」（只從目前顯示的版本拿掉）。重新產生區塊時 Glossary 不保留（字可能已經不在了；「復原上一版」可以拿回來），逐區修改的「採用」會保留。
+
+### 套用
+
+換字的每一句先檢查：`field` 指向這個版本印出、而且換字可以改的文字，`start..end` 的文字和 `original` 完全一樣（否則 409），`rewritten` 再跑一次下面的改寫檢查（不通過 400），句子裡每個要避開的字都選了換字。同一段文字的幾句從後往前換，不能重疊。
+
+一個交易裡：鎖住學習單 → 確認最新版本仍是 `base_version_no` → 每個改到的區塊先存進 `worksheet_block_history`（附上那個字的建議呼叫，教師「復原上一版」時記一筆 `teacher_decisions` reject）→ 新版本（`cause = "vocabulary"`）→ 決定與紀錄。之後用同一個版本與目標級別重新分析，回傳新的結果：換掉的字不見了，提供字義的字標「已提供字義」，不處理的標「已標記不處理」。所以「復原上一版」照常逐區可用，`base_version_no` 的 409 也和編輯器一致。
+
+### 模型呼叫
+
+| action | prompt key／`ai_interactions.module` | 鷹架 | schema | `max_tokens` |
+|---|---|---|---|---|
+| `gloss` | `worksheet_vocab_gloss` | `SC-WS-VOCAB` | `glosses`：每字一筆（min = max = 字數），依序 `word`（enum：所問的字）、`pos`（≤12）、`meaning_zh`（≤30）、`definition_en`（≤120） | 300 + 120 × 字數 |
+| `replace` | `worksheet_vocab_replace` | `SC-WS-VOCAB` | 先 `words`：每字一筆，依序 `word`（enum）、`replacement`（≤40，主要的代替字，只當提示）；再 `sentences`：每句一筆（min = max = 句數），依序 `id`（enum：p1…）、`rewritten`（≤ 原句長度 + 60） | 300 + 40 × 字數 + Σ(40 + 句長 ÷ 2)，最多 8000 |
+
+- 每個字一筆陣列項目（gemma 想換行時會提早結束字串）；字串與陣列都有上限；欄位依寫出順序。
+- 送出的是字、級別、詞彙表詞性、學習單裡的字形與最多 3 個上下文；換字再加上每一句（id、位置、要避開的字、原句）。不送整篇課文；輸入快照裡上下文與句子只留字數與雜湊。
+- **句子怎麼切**：換字可以改的每一段文字（區塊標題、作答指示、步驟、鷹架、題目、選項、表格欄位、圖像組織標題與標籤、提示、分層支持），從這個字往前找到上一個句尾（. ! ? 後面接空白）或換行，往後到自己的句尾（含後面的引號、括號）或換行；選項這類沒有句號的就是整段。引號內的出現不算。
+- 第一次呼叫沒交出某些字、或那些字的建議全部不合格（超出級別、不在詞彙表、缺字形）→ 再呼叫一次（temperature +0.4，附上問題），只補上缺的字；兩次都有的以第一次為準。同一份學習單再次請求建議時 temperature 依次數遞增，提示也註明第幾次（閘道會快取相同的請求）。
+- **改寫檢查**（`check_rewrite`，建議時與套用時各跑一次）：
+  - 一行英文、和原句不同；要避開的字不能再出現（引號內的除外）。
+  - 每個**新加**的字都要在詞彙表、在目標級別以內（含片語與連字號詞的每個部分）；原句本來就有的字（包括未收錄的字、專有名詞、其他超出級別而沒選換字的字）可以留著。
+  - 改動要局部：以字為單位比對（LCS），每個要避開的字最多改掉原句 2 個字、加入 3 個字（另加 1）；每一段改動都要在這個字前後 3 個字以內。整句改寫、改到遠處的句子不採用。
+  - 不通過的句子在 `places[].problem` 說明，第二次呼叫只補上缺的；兩次都沒有的句子不改。
+
+### 教師的決定（研究用）
+
+- 有模型建議的字寫 `teacher_decisions`（`ai_interaction_id` = 這個字的 `interaction_id`，`item_index` = 模型輸出中這個字的位置）：照建議 → `adopt`（換字：教師看到的改寫句全部套用，`reason_note` 記「換字 abandon（套用 3／3 句）」）；改了中文意思、或換字取消了幾句 → `revise`（`revised_content` 是改後的字義，或套用的句子以「 / 」連起來）；請了建議卻改選別的處理方式或不處理 → `reject`。不必另外呼叫 `POST /api/ai/:id/decision`。
+- 每次套用寫一筆 `usage_logs`：`worksheet_vocabulary_applied`，payload `{ worksheet_id, check_id, level, target_level, base_version_no, version_no, gloss_scope, words: [{ base, level, action, … }] }`（只有字與選擇，不含學習單文字）。沒有模型呼叫的選擇（不處理、自己寫的字義）只在這裡。
+
+### 假模型標記
+
+| 標記（出現在送出的上下文裡） | 效果 |
+|---|---|
+| `FAKE_VOCAB_OVER` | 每個字的提示字是詞彙表外的字 → 被拿掉並寫在 `notes`；第一句的改寫用了第 6 級的字 → 不採用 |
+| `FAKE_VOCAB_WHOLE` | 第一句改寫成另一句話 → 改動太多，不採用 |
+| `FAKE_VOCAB_HARD_DEF` | 英文解釋用到這個字本身 → 英文解釋被拿掉 |
+| `FAKE_VOCAB_MISSING` | 第一次呼叫少最後一個字（字義）或最後一句（換字），第二次補上 |
+
+假模型的改寫：先整個換片語（according to → based on、an enormous → a huge），再換字形（abandoned → left…）。
+
+### 真實模型可能的困難（給測試 gemma 的人）
+
+- 局部改寫：模型可能把整句重寫或順手改別的字，這些會被「改動太多／改到較遠的地方」拿掉；局部規則（每個字改 2 加 3、前後 3 個字）是依目前的例子定的，真實測試後可能要調。
+- 語序：「accidentally hurt」→「hurt … by mistake」需要把片語移到句尾，這在規則內（插入點在 3 個字以內）；更遠的移動會被拒絕，那一句就不改。
+- 意思漂移：「accurate summary」→「correct short report」這類在級別上合格、改動也小，伺服器擋不住，只能靠教師逐句看改寫前後時取消。
+- 在目標級別（例如第 4 級）以內找到意思相同的說法不一定做得到，常見結果是句子沒有可用的改寫；這時改用提供字義。
+- 中文意思要符合上下文的詞義（例如 bank 是銀行還是河岸）；詞彙表不分詞義，伺服器只能檢查有沒有中文。
+- 英文解釋常常用到這個字本身或更難的字，會被拿掉，只剩中文。
+
 ## 匯出
 
 `GET …/export` 由後端即時產生並串流回瀏覽器（不經物件儲存）：
@@ -1225,7 +1379,7 @@ interface WsVocabCheck {
 
 ## usage_logs 新事件
 
-`worksheet_created`、`worksheet_generated`、`worksheet_block_regenerated`、`worksheet_block_undone`、`worksheet_sop_synced`、`worksheet_linked`、`worksheet_vocabulary_checked`、`worksheet_exported`（payload 只有 id、版本、格式等，不含內容）。
+`worksheet_created`、`worksheet_generated`、`worksheet_block_regenerated`、`worksheet_block_undone`、`worksheet_sop_synced`、`worksheet_linked`、`worksheet_vocabulary_checked`、`worksheet_vocabulary_applied`、`worksheet_exported`（payload 只有 id、版本、格式等，不含內容）。
 
 ## 前端
 

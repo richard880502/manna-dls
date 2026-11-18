@@ -98,7 +98,10 @@ import type {
   WsExportQuery,
   WsJobsState,
   WsLevel,
+  WsVocabApplied,
+  WsVocabApplyRequest,
   WsVocabCheck,
+  WsVocabSuggestions,
   CreateWsTemplateRequest,
   UpdateWsTemplateRequest,
   WsTemplateDetail,
@@ -466,6 +469,12 @@ export const api = {
       ...(targetLevel !== undefined ? { target_level: targetLevel } : {}),
     }),
   worksheetChecks: (id: number) => get<WsVocabCheck[]>(`/worksheets/${id}/checks`),
+  /** 超出級別的字：一次呼叫寫出所選字的字義（gloss）或換字（replace）建議；最多 20 個字 */
+  suggestWorksheetVocab: (id: number, checkId: number, action: "gloss" | "replace", words: string[]) =>
+    post<WsVocabSuggestions>(`/worksheets/${id}/checks/${checkId}/suggest`, { action, words }),
+  /** 套用老師的選擇：寫成新版本並重新分析；分析之後學習單改過 → 409 */
+  applyWorksheetVocab: (id: number, checkId: number, body: WsVocabApplyRequest) =>
+    post<WsVocabApplied>(`/worksheets/${id}/checks/${checkId}/apply`, body),
   /** 後端即時產生的檔案；回傳 Blob 與檔名 */
   /** 學生版／教師版的投影（唯讀預覽用）；不給 level 時伺服器用第一個版本 */
   worksheetSheet: (id: number, audience: WsAudience, level?: WsLevel) =>

@@ -26,6 +26,7 @@ pub mod task_words;
 pub mod template;
 pub mod tiered;
 pub mod vocab;
+pub mod vocab_actions;
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -764,7 +765,36 @@ pub struct Block {
     /// (SIOP Q4). Blocks made before (and of the other outputs) have none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub practice: Option<Practice>,
+    /// 詞彙級別檢查「提供字義」: meanings of words above the teacher's target level, printed in a
+    /// Glossary box at the end of the block, each in the versions it lists. Kept by every edit
+    /// that copies the block; absent from the JSON when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub glosses: Vec<Gloss>,
 }
+
+/// One entry of a block's Glossary (詞彙級別檢查「提供字義」): a word above the target level
+/// kept in the text, with its meaning. Not part of what the vocabulary check analyses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct Gloss {
+    /// The dictionary form, as printed (e.g. `abandon`).
+    pub word: String,
+    /// Part of speech in this context, as the word list writes it (`v.`, `adj.`); may be "".
+    pub pos: String,
+    /// The Chinese meaning in this context (required).
+    pub meaning_zh: String,
+    /// A short English definition within the target level; may be "".
+    pub definition_en: String,
+    /// The versions that print it.
+    pub levels: Vec<Level>,
+    pub origin: Origin,
+}
+
+pub const MAX_GLOSSES: usize = 30;
+pub const GLOSS_WORD_CHARS: usize = 60;
+pub const GLOSS_POS_CHARS: usize = 20;
+pub const GLOSS_MEANING_CHARS: usize = 60;
+pub const GLOSS_DEFINITION_CHARS: usize = 200;
 
 /// SIOP Q4: the order of the per-paragraph tasks of the 完整學習單, from the teacher showing
 /// how to the students doing it alone (a student who is stuck goes back a step).
@@ -868,6 +898,7 @@ impl Default for Block {
             bloom: None,
             image_slots: Vec::new(),
             practice: None,
+            glosses: Vec::new(),
         }
     }
 }
@@ -959,6 +990,39 @@ fn check_tiers(tiers: &mut [ItemTier]) -> Result<(), String> {
         check_text("評分說明", &t.scoring)?;
     }
     tiers.sort_by_key(|t| t.level);
+    Ok(())
+}
+
+/// A block's Glossary: within the limits, every entry with a word and a meaning, one entry per
+/// word, levels in canonical order (an entry printed in no version is dropped).
+fn check_glosses(glosses: &mut Vec<Gloss>) -> Result<(), String> {
+    if glosses.len() > MAX_GLOSSES {
+        return Err(format!("一個區塊的字義註解最多 {MAX_GLOSSES} 個。"));
+    }
+    let mut seen = HashSet::new();
+    for g in glosses.iter_mut() {
+        g.word = g.word.trim().to_string();
+        g.pos = g.pos.trim().to_string();
+        g.meaning_zh = g.meaning_zh.trim().to_string();
+        g.definition_en = g.definition_en.trim().to_string();
+        if g.word.is_empty() || g.meaning_zh.is_empty() {
+            return Err("字義註解要有字和中文意思。".to_string());
+        }
+        if g.word.chars().count() > GLOSS_WORD_CHARS
+            || g.pos.chars().count() > GLOSS_POS_CHARS
+            || g.meaning_zh.chars().count() > GLOSS_MEANING_CHARS
+            || g.definition_en.chars().count() > GLOSS_DEFINITION_CHARS
+        {
+            return Err(format!(
+                "字義註解太長了（中文意思最多 {GLOSS_MEANING_CHARS} 字，英文解釋最多 {GLOSS_DEFINITION_CHARS} 字）。"
+            ));
+        }
+        if !seen.insert(g.word.to_lowercase()) {
+            return Err(format!("字義註解「{}」重複。", g.word));
+        }
+        g.levels = normalise_levels(&g.levels);
+    }
+    glosses.retain(|g| !g.levels.is_empty());
     Ok(())
 }
 
@@ -1067,6 +1131,7 @@ impl Content {
                 check_text("字詞解釋", &v.definition)?;
                 check_text("字詞例句", &v.context)?;
             }
+            check_glosses(&mut b.glosses)?;
         }
         if let Some(chosen) = &mut self.chosen {
             chosen.settings = chosen.settings.normalised()?;

@@ -161,6 +161,19 @@ impl Lexicon {
         self.levels.is_empty()
     }
 
+    /// The parts of speech the list prints for a (lower-cased) word, e.g. `v.` or `n./v.`;
+    /// "" when it has none.
+    pub fn listed_pos(&self, word: &str) -> String {
+        let mut out: Vec<&str> = Vec::new();
+        for pos in self.pos.get(word).into_iter().flatten() {
+            let pos = pos.trim();
+            if !pos.is_empty() && !out.contains(&pos) {
+                out.push(pos);
+            }
+        }
+        out.join("/")
+    }
+
     /// (lowest listed level, listed at more than one level)
     fn level(&self, word: &str) -> Option<(u8, bool)> {
         let levels = self.levels.get(word)?;
