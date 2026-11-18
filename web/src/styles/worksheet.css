@@ -750,7 +750,8 @@
   position: absolute;
   top: calc(100% + var(--space-xs));
   right: 0;
-  z-index: 20;
+  /* Above the prep page's sticky composer (--z-sticky), below the sticky nav. */
+  z-index: calc(var(--z-sticky) + 50);
   display: flex;
   flex-direction: column;
   min-width: 11rem;
