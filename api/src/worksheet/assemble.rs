@@ -15,11 +15,11 @@ use super::schemas::{
 };
 use super::tiered::{self, SupportKind};
 use super::{
-    info_function_from_label, Audience, Block, BlockKind, Bloom, Content, Item, Level, Material,
-    Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES, FMT_BLANK,
-    FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE,
-    GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS,
-    KIND_WORD_LIST,
+    info_function_from_label, uses_choices, Audience, Block, BlockKind, Bloom, Content, Item,
+    Level, Material, Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES,
+    FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE,
+    GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING,
+    KIND_STEPS, KIND_WORD_LIST,
 };
 use crate::sop::ExitKind;
 
@@ -277,6 +277,8 @@ pub fn activity_block(
                 bloom: it.bloom.as_deref().and_then(Bloom::parse),
                 hint: String::new(),
                 tiers: Vec::new(),
+                table: None,
+                kept_options: Vec::new(),
             })
         })
         .collect();
@@ -487,8 +489,13 @@ pub struct SheetItem {
     pub no: usize,
     pub answer_format: Option<String>,
     pub prompt: String,
+    /// The choices printed under the question: only for the formats that use them
+    /// ([`uses_choices`]), without empty ones.
     pub options: Vec<String>,
     pub lines: u8,
+    /// 表格整理 only: the table printed for the answer (absent for every other format).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<SheetTable>,
     /// Absent from the student version: the key itself is not serialised.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
@@ -511,6 +518,21 @@ pub struct SheetItem {
     pub scoring: Option<String>,
 }
 
+/// The answer table of a 表格整理 question as printed: a heading row (when any heading is
+/// filled in) over `rows` empty rows, one cell per column.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SheetTable {
+    pub columns: Vec<String>,
+    pub rows: u8,
+}
+
+impl SheetTable {
+    /// Whether the first row prints headings (a table without any prints only empty rows).
+    pub fn has_headings(&self) -> bool {
+        self.columns.iter().any(|c| !c.is_empty())
+    }
+}
+
 /// One version's support under a question of a 差異化學習單.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SheetItemSupport {
@@ -520,7 +542,8 @@ pub struct SheetItemSupport {
     /// The lines (a cloze or frame has 「___」 blanks).
     pub lines: Vec<String>,
     /// The word bank, in alphabetical order (a cloze's words in blank order would give the
-    /// answer away).
+    /// answer away). Never with a sentence starter (T3: a bank is more support than a starter);
+    /// a bank the version keeps from another form stays in the worksheet, unprinted.
     pub word_bank: Vec<String>,
 }
 
@@ -627,12 +650,15 @@ fn item_support(tier: &super::ItemTier) -> Option<SheetItemSupport> {
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())
         .collect();
-    let mut word_bank: Vec<String> = tier
-        .word_bank
-        .iter()
-        .map(|w| w.trim().to_string())
-        .filter(|w| !w.is_empty())
-        .collect();
+    let mut word_bank: Vec<String> = if tier.support_kind == SupportKind::SentenceStarter {
+        Vec::new()
+    } else {
+        tier.word_bank
+            .iter()
+            .map(|w| w.trim().to_string())
+            .filter(|w| !w.is_empty())
+            .collect()
+    };
     word_bank.sort_by_key(|w| w.to_lowercase());
     (!lines.is_empty() || !word_bank.is_empty()).then(|| SheetItemSupport {
         kind: tier.support_kind,
@@ -741,8 +767,23 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     no,
                     answer_format: i.answer_format.clone(),
                     prompt: i.prompt.trim().to_string(),
-                    options: i.options.clone(),
+                    options: if uses_choices(i.answer_format.as_deref()) {
+                        i.options
+                            .iter()
+                            .map(|o| o.trim().to_string())
+                            .filter(|o| !o.is_empty())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    },
                     lines: answer_lines(i.answer_format.as_deref(), level),
+                    table: (i.answer_format.as_deref() == Some(FMT_TABLE)).then(|| {
+                        let t = i.table_or_default();
+                        SheetTable {
+                            columns: t.columns.iter().map(|c| c.trim().to_string()).collect(),
+                            rows: t.rows,
+                        }
+                    }),
                     answer: (teacher && !answer.is_empty()).then(|| answer.to_string()),
                     evidence: (teacher && !i.evidence.trim().is_empty())
                         .then(|| i.evidence.trim().to_string()),
@@ -906,6 +947,12 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
             push(format!("{name} · 第 {} 題", it.no), &it.prompt);
             for o in &it.options {
                 push(format!("{name} · 第 {} 題選項", it.no), o);
+            }
+            if let Some(t) = &it.table {
+                push(
+                    format!("{name} · 第 {} 題表格", it.no),
+                    &t.columns.join(" "),
+                );
             }
             if let Some(h) = &it.hint {
                 push(format!("{name} · 第 {} 題提示", it.no), h);
@@ -1491,6 +1538,93 @@ mod tests {
         assert!(text_lines(&sheet)
             .iter()
             .any(|(_, text)| text == "reason, result, however"));
+    }
+
+    #[test]
+    fn each_format_prints_its_own_answer_space() {
+        let q = |id: &str, format: &str| Item {
+            id: id.into(),
+            answer_format: Some(format.into()),
+            prompt: "Complete the table: Who? / Why? (Question 1)".into(),
+            options: vec!["A choice".into(), " ".into(), "Another".into()],
+            levels: vec![Level::Standard],
+            ..Item::default()
+        };
+        let mut own = q("own", FMT_TABLE);
+        own.table = Some(crate::worksheet::ItemTable {
+            columns: vec![" Problem ".into(), "Solution".into(), String::new()],
+            rows: 5,
+        });
+        let mut legacy = q("legacy", "");
+        legacy.answer_format = None;
+        let c = Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                items: vec![
+                    q("choice", FMT_CHOICE),
+                    q("short", "簡答題"),
+                    q("table", FMT_TABLE),
+                    own,
+                    q("organizer", FMT_ORGANIZER),
+                    legacy,
+                ],
+                ..Block::default()
+            }],
+            levels: vec![Level::Standard],
+            ..Content::default()
+        };
+        let s = project("T", &c, Level::Standard, Audience::Student);
+        let items = &s.blocks[0].items;
+        // Choices print for the formats that use them (and for a question without a format),
+        // without the empty ones; the other formats keep them unprinted.
+        assert_eq!(items[0].options, ["A choice", "Another"]);
+        assert_eq!(items[5].options, ["A choice", "Another"]);
+        for it in &items[1..5] {
+            assert!(it.options.is_empty(), "{}", it.id);
+        }
+        // A table: the prompt's columns until the teacher sets her own; nothing else has one.
+        assert_eq!(
+            items[2].table,
+            Some(SheetTable {
+                columns: vec!["Who?".into(), "Why?".into()],
+                rows: crate::worksheet::TABLE_ROWS,
+            })
+        );
+        let t = items[3].table.as_ref().unwrap();
+        assert_eq!(t.columns, ["Problem", "Solution", ""]);
+        assert_eq!(t.rows, 5);
+        assert!(t.has_headings());
+        assert_eq!((items[2].lines, items[4].lines, items[1].lines), (0, 0, 3));
+        for i in [0, 1, 4, 5] {
+            assert_eq!(items[i].table, None);
+        }
+        assert!(text_lines(&s)
+            .iter()
+            .any(|(place, text)| place.ends_with("第 4 題表格") && text == "Problem Solution"));
+    }
+
+    #[test]
+    fn a_starter_never_prints_a_word_bank() {
+        let mut c = differentiated();
+        // 一般版 switched from a frame to a starter keeps its bank (for the way back) unprinted.
+        c.blocks[0].items[0].tiers[1].word_bank = vec!["umbrellas".into()];
+        let standard = project("T", &c, Level::Standard, Audience::Student);
+        let s = standard.blocks[0].items[0].support.as_ref().unwrap();
+        assert_eq!(s.kind, SupportKind::SentenceStarter);
+        assert!(s.word_bank.is_empty());
+        // A bank still prints with a frame, a cloze and a word bank.
+        for kind in [
+            SupportKind::SentenceFrame,
+            SupportKind::Cloze,
+            SupportKind::WordBank,
+        ] {
+            c.blocks[0].items[0].tiers[1].support_kind = kind;
+            let s = project("T", &c, Level::Standard, Audience::Student);
+            assert_eq!(
+                s.blocks[0].items[0].support.as_ref().unwrap().word_bank,
+                ["umbrellas"]
+            );
+        }
     }
 
     #[test]

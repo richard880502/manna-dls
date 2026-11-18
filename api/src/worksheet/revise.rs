@@ -274,7 +274,10 @@ fn modified(old: &Item, c: &CleanSectionItem, block_bloom: Option<Bloom>) -> Ite
         return old.clone();
     }
     if item.prompt.trim() != old.prompt.trim() {
+        // A new prompt: the old versions' support and the old table (a new prompt names its own
+        // columns) no longer fit.
         item.tiers.clear();
+        item.table = None;
     }
     item.origin = Origin::Ai;
     item
@@ -413,6 +416,8 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                         bloom,
                         hint: String::new(),
                         tiers: Vec::new(),
+                        table: None,
+                        kept_options: Vec::new(),
                     });
                 }
                 None => dropped_new += 1,

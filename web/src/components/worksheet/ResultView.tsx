@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../../api/client";
 import type {
@@ -10,6 +10,7 @@ import type {
   WsItemTier,
   WsLevel,
   WsScaffold,
+  WsSupportKind,
 } from "../../api/types";
 import {
   ANSWER_FORMATS,
@@ -21,6 +22,8 @@ import {
   SCAFFOLD_TYPE_LABEL,
   SUPPORT_KINDS_FOR,
   SUPPORT_KIND_LABEL,
+  TIERED_FORMATS,
+  buildSupport,
   editedOrigin,
   isFromManna,
   moveBlock,
@@ -32,6 +35,7 @@ import {
   toggleIn,
   versionCode,
   versionLabel,
+  withAnswerFormat,
   type SheetBlock,
 } from "../../lib/worksheet";
 import {
@@ -48,6 +52,8 @@ import { saveBlob } from "../../lib/download";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { BloomDistribution, BloomSelect } from "./Bloom";
+import { ChoicesArea, WritingArea, promptPlaceholder } from "./ItemAnswer";
+import { SheetText } from "./SheetText";
 import {
   BlockReviseArea,
   LostNotes,
@@ -61,46 +67,6 @@ import { ProgressPanel, RunOutcome } from "./OptionsView";
 import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
 import type { WorksheetController } from "./useWorksheet";
-
-/** A text field that reads as text on the sheet and grows with what is typed. */
-function SheetText({
-  label,
-  value,
-  onChange,
-  disabled,
-  placeholder,
-  className = "",
-  lang = "en",
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-  disabled: boolean;
-  placeholder?: string;
-  className?: string;
-  lang?: string;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || !el.scrollHeight) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
-  return (
-    <textarea
-      ref={ref}
-      className={`ws-text ${className}`}
-      rows={1}
-      lang={lang}
-      aria-label={label}
-      value={value}
-      placeholder={placeholder}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
-}
 
 function LevelChips({
   name,
@@ -116,20 +82,26 @@ function LevelChips({
   onChange: (next: WsLevel[]) => void;
 }) {
   if (all.length < 2) return null;
+  // The last version cannot be unticked: in none of them, the question (or scaffold) would vanish
+  // from every tab with no way to get it back. 刪除 is the way to remove it.
+  const shownIn = all.filter((l) => value.includes(l));
   return (
     <span className="ws-levels" role="group" aria-label={`${name}出現的版本`}>
-      {all.map((level) => (
-        <label key={level}>
-          <input
-            type="checkbox"
-            checked={value.includes(level)}
-            disabled={disabled}
-            aria-label={`${name}出現在${LEVEL_LABEL[level]}`}
-            onChange={() => onChange(toggleIn(value, level, all))}
-          />
-          <span>{LEVEL_LABEL[level]}</span>
-        </label>
-      ))}
+      {all.map((level) => {
+        const last = shownIn.length === 1 && shownIn[0] === level;
+        return (
+          <label key={level} title={last ? "至少要留在一個版本；不要了請按「刪除」。" : undefined}>
+            <input
+              type="checkbox"
+              checked={value.includes(level)}
+              disabled={disabled || last}
+              aria-label={`${name}出現在${LEVEL_LABEL[level]}`}
+              onChange={() => onChange(toggleIn(value, level, all))}
+            />
+            <span>{LEVEL_LABEL[level]}</span>
+          </label>
+        );
+      })}
     </span>
   );
 }
@@ -139,39 +111,88 @@ const linesOf = (text: string) => text.split("\n").map((l) => l.trimStart());
 /** A word bank typed with commas (or 、). */
 const wordsOf = (text: string) => text.split(/[,、]/).map((w) => w.trimStart());
 
+/** What a version's support looked like in each form it had this session, so choosing a form
+ * again brings back its lines instead of making them anew (the word bank and model sentence are the
+ * version's, whatever the form). Keyed `item|level|kind`. */
+type SupportMemory = Map<string, string[]>;
+
+const SUPPORT_PLACEHOLDER: Record<WsSupportKind, string> = {
+  cloze: "The neighbors thought the ___ would be ___.",
+  word_bank: "Use two of these words. (optional)",
+  sentence_frame: "I think ___ because ___.",
+  sentence_starter: "The writer thinks that …",
+  none: "",
+};
+
+/** The forms that print a word bank (a starter does not, T3). */
+const PRINTS_BANK = new Set<WsSupportKind>(["cloze", "word_bank", "sentence_frame"]);
+
 /**
  * 差異化學習單: one question's part for the version shown — its support form, the lines printed
- * under the question and the word bank; in the teacher view also this version's answer and
- * scoring note.
+ * under the question, the word bank and the model sentence they are made from; in the teacher
+ * view also this version's answer and scoring note. Choosing another form makes its support from
+ * the model sentence and word bank ([`buildSupport`]); the lines stay editable.
  */
 function TierEditor({
+  itemId,
   tier,
   no,
   level,
   teacher,
   disabled,
+  memory,
   onChange,
 }: {
+  itemId: string;
   tier: WsItemTier;
   no: number;
   level: WsLevel;
   teacher: boolean;
   disabled: boolean;
+  memory: SupportMemory;
   onChange: (change: (t: WsItemTier) => WsItemTier) => void;
 }) {
   const kinds = SUPPORT_KINDS_FOR[level].includes(tier.support_kind)
     ? SUPPORT_KINDS_FOR[level]
     : [tier.support_kind, ...SUPPORT_KINDS_FOR[level]];
   const name = LEVEL_LABEL[level];
+  const kind = tier.support_kind;
+  /** Why the support of the form just chosen could not be made (shown for that version and form). */
+  const [unmade, setUnmade] = useState<{ level: WsLevel; kind: WsSupportKind; missing: "model_sentence" | "words" } | null>(
+    null,
+  );
+  const key = (k: WsSupportKind) => `${itemId}|${level}|${k}`;
+
+  /** Makes the support of `next` from the model sentence and bank; says so when it cannot. */
+  const make = (next: WsSupportKind) => {
+    const built = buildSupport(next, tier.model_sentence, tier.word_bank);
+    if (built && !built.ok) {
+      setUnmade({ level, kind: next, missing: built.missing });
+      onChange((t) => ({ ...t, support_kind: next }));
+      return;
+    }
+    setUnmade(null);
+    onChange((t) => (built ? { ...t, support_kind: next, support: built.support, word_bank: built.word_bank } : { ...t, support_kind: next }));
+  };
+  const choose = (next: WsSupportKind) => {
+    memory.set(key(kind), tier.support);
+    const before = next === "none" ? undefined : memory.get(key(next));
+    if (before) {
+      setUnmade(null);
+      onChange((t) => ({ ...t, support_kind: next, support: before }));
+    } else make(next);
+  };
+  const note = unmade && unmade.level === level && unmade.kind === kind ? unmade : null;
+
   return (
     <div className="ws-hint ws-tier" lang="zh-Hant" role="group" aria-label={`${name}的支持 ${no}`}>
       <span>
         {name}的支持
         <select
           aria-label={`支持形式 ${no}`}
-          value={tier.support_kind}
+          value={kind}
           disabled={disabled}
-          onChange={(e) => onChange((t) => ({ ...t, support_kind: e.target.value as WsItemTier["support_kind"] }))}
+          onChange={(e) => choose(e.target.value as WsSupportKind)}
         >
           {kinds.map((k) => (
             <option key={k} value={k}>
@@ -180,24 +201,62 @@ function TierEditor({
           ))}
         </select>
       </span>
-      {tier.support_kind !== "none" && (
-        <>
-          <SheetText
-            label={`支持 ${no}（每行一項）`}
-            value={tier.support.join("\n")}
-            placeholder="The writer thinks that ___ because ___."
-            disabled={disabled}
-            onChange={(text) => onChange((t) => ({ ...t, support: linesOf(text) }))}
-          />
-          <SheetText
-            label={`字庫 ${no}（用逗號分開）`}
-            value={tier.word_bank.join(", ")}
-            placeholder="Word bank"
-            disabled={disabled}
-            onChange={(text) => onChange((t) => ({ ...t, word_bank: wordsOf(text) }))}
-          />
-        </>
-      )}
+      <div className="ws-tier-body">
+        {kind === "none" ? (
+          <p className="quiet-note">不給支持：這個版本在題目下方只印作答處。</p>
+        ) : (
+          <>
+            <SheetText
+              label={`支持 ${no}（每行一項）`}
+              value={tier.support.join("\n")}
+              placeholder={SUPPORT_PLACEHOLDER[kind]}
+              disabled={disabled}
+              onChange={(text) => onChange((t) => ({ ...t, support: linesOf(text) }))}
+            />
+            {PRINTS_BANK.has(kind) ? (
+              <SheetText
+                label={`字庫 ${no}（用逗號分開）`}
+                value={tier.word_bank.join(", ")}
+                placeholder="Word bank"
+                disabled={disabled}
+                onChange={(text) => onChange((t) => ({ ...t, word_bank: wordsOf(text) }))}
+              />
+            ) : (
+              tier.word_bank.some((w) => w.trim() !== "") && (
+                <p className="quiet-note">字庫還留著，句首不印字庫：{tier.word_bank.join(", ")}</p>
+              )
+            )}
+          </>
+        )}
+        {note && (
+          <p className="ws-tier-note" role="status">
+            {note.missing === "model_sentence"
+              ? `這個版本沒有範句，沒辦法自動做成「${SUPPORT_KIND_LABEL[note.kind]}」；上面的支持照舊，可以直接改。也可以先寫範句，再按「依範句重做」。`
+              : "沒有字庫也沒有範句，沒辦法自動做成字庫；請在字庫寫幾個字詞（用逗號分開），或先寫範句再按「依範句重做」。"}
+          </p>
+        )}
+        {kind !== "none" && (
+          <div className="ws-tier-model">
+            <span>範句（不印出）</span>
+            <SheetText
+              label={`範句 ${no}（不印出）`}
+              value={tier.model_sentence}
+              placeholder="A complete model sentence"
+              disabled={disabled}
+              onChange={(model_sentence) => onChange((t) => ({ ...t, model_sentence }))}
+            />
+            <button
+              type="button"
+              className="text-link is-plain"
+              aria-label={`依範句重做支持 ${no}`}
+              disabled={disabled}
+              onClick={() => make(kind)}
+            >
+              依範句重做
+            </button>
+          </div>
+        )}
+      </div>
       {teacher && (
         <div className="ws-answer">
           <div className="ws-answer-row">
@@ -231,7 +290,10 @@ interface BlockProps {
   /** The version shown (a 差異化學習單 question edits this version's part). */
   level: WsLevel;
   index: number;
-  count: number;
+  /** Where 上移／下移 put the block: the place of the block shown before (after) it, so a move is
+   * always visible, also while the Bloom filter hides some blocks; null at either end. */
+  upTo: number | null;
+  downTo: number | null;
   audience: WsAudience;
   locked: boolean;
   dragging: string | null;
@@ -240,6 +302,9 @@ interface BlockProps {
   filter: BloomFilter;
   /** 逐區修改與註記 */
   revise: BlockRevise;
+  /** A 差異化學習單: a question added here gets its part in every version. */
+  tiered: boolean;
+  supportMemory: SupportMemory;
 }
 
 function BlockSection({
@@ -247,13 +312,16 @@ function BlockSection({
   view,
   level,
   index,
-  count,
+  upTo,
+  downTo,
   audience,
   locked: editorLocked,
   dragging,
   setDragging,
   filter,
   revise,
+  tiered,
+  supportMemory,
 }: BlockProps) {
   const { block, label } = view;
   // While Manna revises this block, or its proposal waits for 採用／放棄, the block stays as it is.
@@ -334,14 +402,19 @@ function BlockSection({
         >
           ⠿
         </span>
-        <button type="button" className="text-link is-plain" disabled={locked || index === 0} onClick={() => move(index - 1)}>
+        <button
+          type="button"
+          className="text-link is-plain"
+          disabled={locked || upTo === null}
+          onClick={() => upTo !== null && move(upTo)}
+        >
           上移
         </button>
         <button
           type="button"
           className="text-link is-plain"
-          disabled={locked || index === count - 1}
-          onClick={() => move(index + 1)}
+          disabled={locked || downTo === null}
+          onClick={() => downTo !== null && move(downTo)}
         >
           下移
         </button>
@@ -399,6 +472,7 @@ function BlockSection({
             <button
               type="button"
               className="text-link is-danger"
+              disabled={locked}
               onClick={() => ws.setContent((c) => ({ ...c, blocks: c.blocks.filter((b) => b.id !== block.id) }))}
             >
               確定刪除
@@ -619,53 +693,53 @@ function BlockSection({
 
       <ol className="ws-items">
         {shownItems.map(({ item, no, lines }) => {
-          const hasOptions =
-            item.options.length > 0 || ["選擇題", "是非題", "配對題"].includes(item.answer_format ?? "");
           const tier = item.tiers?.find((t) => t.level === level);
+          const differentiated = (item.tiers ?? []).length > 0;
+          // A 差異化學習單 question takes the open formats only (its support goes with them).
+          const formats: readonly string[] = differentiated
+            ? [...TIERED_FORMATS, ...(item.answer_format && !TIERED_FORMATS.some((f) => f === item.answer_format) ? [item.answer_format] : [])]
+            : ANSWER_FORMATS;
+          // The hint prints in 基礎版 only: offered where it can print, kept visible where it cannot.
+          const hintPrints = levels.includes("basic") && item.levels.includes("basic");
+          const hint = item.hint ?? "";
+          const hintLabel = hintPrints ? "提示（只印在基礎版）" : "提示（只印在基礎版；這題不在基礎版，不會印出）";
+          const changeItem = (change: (it: WsItem) => WsItem) => patchItem(item.id, change);
           return (
             <li key={item.id} value={no}>
               <SheetText
                 label={`題目 ${no}`}
                 value={item.prompt}
-                placeholder="Question"
+                placeholder={promptPlaceholder(item.answer_format)}
                 disabled={locked}
-                onChange={(prompt) => patchItem(item.id, (it) => ({ ...it, prompt }))}
+                onChange={(prompt) => changeItem((it) => ({ ...it, prompt }))}
               />
-              {hasOptions && (
-                <SheetText
-                  label={`選項 ${no}（每行一個）`}
-                  className="is-options"
-                  value={item.options.join("\n")}
-                  placeholder="One option per line"
-                  disabled={locked}
-                  onChange={(text) =>
-                    patchItem(item.id, (it) => ({ ...it, options: text.split("\n").map((o) => o.trimStart()) }))
-                  }
-                />
-              )}
+              <ChoicesArea item={item} no={no} disabled={locked} onChange={changeItem} />
               {tier ? (
                 <TierEditor
+                  itemId={item.id}
                   tier={tier}
                   no={no}
                   level={level}
                   teacher={teacher}
                   disabled={locked}
+                  memory={supportMemory}
                   onChange={(change) => patchTier(item.id, change)}
                 />
               ) : (
-                <div className="ws-hint" lang="zh-Hant">
-                  <span>提示（只印在基礎版）</span>
-                  <SheetText
-                    label={`提示（只印在基礎版） ${no}`}
-                    value={item.hint ?? ""}
-                    placeholder="Hint: …"
-                    disabled={locked}
-                    onChange={(hint) => patchItem(item.id, (it) => ({ ...it, hint }))}
-                  />
-                </div>
+                (hintPrints || hint.trim() !== "") && (
+                  <div className="ws-hint" lang="zh-Hant">
+                    <span>{hintLabel}</span>
+                    <SheetText
+                      label={`${hintLabel} ${no}`}
+                      value={hint}
+                      placeholder="Hint: …"
+                      disabled={locked}
+                      onChange={(text) => changeItem((it) => ({ ...it, hint: text }))}
+                    />
+                  </div>
+                )
               )}
-              {!teacher &&
-                Array.from({ length: lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
+              <WritingArea item={item} no={no} lines={lines} disabled={locked} onChange={changeItem} />
               {teacher && (
                 <div className="ws-answer" lang="zh-Hant">
                   {/* A 差異化學習單 question has its answer per version (in TierEditor). */}
@@ -676,7 +750,7 @@ function BlockSection({
                         label={`參考答案 ${no}`}
                         value={item.answer}
                         disabled={locked}
-                        onChange={(answer) => patchItem(item.id, (it) => ({ ...it, answer }))}
+                        onChange={(answer) => changeItem((it) => ({ ...it, answer }))}
                       />
                     </div>
                   )}
@@ -686,7 +760,7 @@ function BlockSection({
                       label={`依據 ${no}`}
                       value={item.evidence}
                       disabled={locked}
-                      onChange={(evidence) => patchItem(item.id, (it) => ({ ...it, evidence }))}
+                      onChange={(evidence) => changeItem((it) => ({ ...it, evidence }))}
                     />
                   </div>
                 </div>
@@ -698,12 +772,10 @@ function BlockSection({
                     aria-label={`作答方式 ${no}`}
                     value={item.answer_format ?? ""}
                     disabled={locked}
-                    onChange={(e) =>
-                      patchItem(item.id, (it) => ({ ...it, answer_format: e.target.value === "" ? null : e.target.value }))
-                    }
+                    onChange={(e) => changeItem((it) => withAnswerFormat(it, e.target.value === "" ? null : e.target.value))}
                   >
-                    <option value="">未指定</option>
-                    {ANSWER_FORMATS.map((f) => (
+                    {(!differentiated || item.answer_format === null) && <option value="">未指定</option>}
+                    {formats.map((f) => (
                       <option key={f} value={f}>
                         {f}
                       </option>
@@ -714,14 +786,14 @@ function BlockSection({
                   label={`Bloom 層次 ${no}`}
                   value={item.bloom}
                   disabled={locked}
-                  onChange={(bloom) => patchItem(item.id, (it) => ({ ...it, bloom }))}
+                  onChange={(bloom) => changeItem((it) => ({ ...it, bloom }))}
                 />
                 <LevelChips
                   name={`題目 ${no} `}
                   all={levels}
                   value={item.levels}
                   disabled={locked}
-                  onChange={(next) => patchItem(item.id, (it) => ({ ...it, levels: next }))}
+                  onChange={(next) => changeItem((it) => ({ ...it, levels: next }))}
                 />
                 <button
                   type="button"
@@ -753,7 +825,10 @@ function BlockSection({
           disabled={locked}
           // While filtering, a new item starts at the level shown, so it does not vanish.
           onClick={() =>
-            patch((b) => ({ ...b, items: [...b.items, { ...newItem(levels), bloom: isBloom(filter) ? filter : null }] }))
+            patch((b) => ({
+              ...b,
+              items: [...b.items, { ...newItem(levels, tiered), bloom: isBloom(filter) ? filter : null }],
+            }))
           }
         >
           加一題
@@ -875,6 +950,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
     beforeAction: ws.flush,
     onApplied: (done) => ws.adopt(done.worksheet),
   });
+  const [supportMemory] = useState<SupportMemory>(() => new Map());
 
   // The selected tab must be one of this worksheet's versions (they can change after a new run).
   const current: WsLevel = levels.includes(level) ? level : (levels[0] ?? "standard");
@@ -892,6 +968,17 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const filterCount =
     bloomFilter === null ? 0 : bloomFilter === "none" ? bloomTally.none : bloomTally.counts[bloomFilter];
   const filter: BloomFilter = filterCount > 0 ? bloomFilter : null;
+  const tiered =
+    state.settings.output === "tiered" || content.blocks.some((b) => b.items.some((i) => (i.tiers ?? []).length > 0));
+  // The blocks drawn (filtering by Bloom level keeps only those with an item at that level; a
+  // switched-off one is drawn as its line): 上移／下移 move past the neighbour that is drawn.
+  const drawn = content.blocks
+    .map((b, i) => ({ b, i }))
+    .filter(({ b }) => {
+      const view = views.get(b.id);
+      return filter === null || (view?.items.some(({ item }) => matchesFilter(item.bloom, filter)) ?? false);
+    })
+    .map(({ i }) => i);
   // T9: the student sheet carries a neutral code, never the level's name.
   const code = versionCode(levels, current, state?.content.student_order);
   const sheetName =
@@ -1091,13 +1178,16 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
               view={view}
               level={current}
               index={index}
-              count={content.blocks.length}
+              upTo={drawn[drawn.indexOf(index) - 1] ?? null}
+              downTo={drawn[drawn.indexOf(index) + 1] ?? null}
               audience={audience}
               locked={locked}
               dragging={dragging}
               setDragging={setDragging}
               filter={filter}
               revise={revise}
+              tiered={tiered}
+              supportMemory={supportMemory}
             />
           );
         })}
@@ -1110,7 +1200,12 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
             onClick={() =>
               ws.setContent((c) => {
                 const exit = c.blocks.findIndex((b) => b.kind === "exit_ticket");
-                const added = newBlock(c.levels);
+                // Its question has its versions (差異化學習單) and, while filtering, the level shown,
+                // so the new block does not vanish behind the filter.
+                const added = {
+                  ...newBlock(c.levels),
+                  items: [{ ...newItem(c.levels, tiered), bloom: isBloom(filter) ? filter : null }],
+                };
                 const blocks = [...c.blocks];
                 blocks.splice(exit < 0 ? blocks.length : exit, 0, added);
                 return { ...c, blocks };

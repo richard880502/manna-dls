@@ -25,6 +25,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
     const tag = isBloom(it.bloom) ? ` 〔Bloom：${BLOOM_LABEL[it.bloom]} ${BLOOM_EN[it.bloom]}〕` : "";
     lines.push(`${it.no}. ${it.prompt}${tag}`);
     it.options.forEach((o) => lines.push(`   ${o}`));
+    if (it.table?.columns.some((c) => c.trim() !== "")) lines.push(`   | ${it.table.columns.join(" | ")} |`);
     if (it.hint?.trim()) lines.push(`   Hint: ${it.hint}`);
     if (it.support) {
       const [first = "", ...rest] = it.support.lines;
@@ -224,6 +225,36 @@ export function SheetPreview({
                           </p>
                         )}
                       </div>
+                    )}
+                    {it.table && (
+                      <table className="ws-answer-grid" aria-label={`作答表格 ${it.no}`}>
+                        {it.table.columns.some((c) => c.trim() !== "") && (
+                          <thead>
+                            <tr>
+                              {it.table.columns.map((c, i) => (
+                                // oxlint-disable-next-line react/no-array-index-key -- columns in print order
+                                <th key={i} scope="col">
+                                  {c}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                        )}
+                        <tbody>
+                          {Array.from({ length: it.table.rows }, (_, r) => (
+                            // oxlint-disable-next-line react/no-array-index-key -- empty rows to write in
+                            <tr key={r}>
+                              {it.table?.columns.map((_, c) => (
+                                // oxlint-disable-next-line react/no-array-index-key, jsx-a11y/control-has-associated-label -- empty cells to write in
+                                <td key={c} />
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {it.answer_format === "圖像組織" && (
+                      <div className="ws-organizer" role="img" aria-label={`圖像組織作答框 ${it.no}`} />
                     )}
                     {!teacher &&
                       Array.from({ length: it.lines }, (_, i) => <span key={i} className="ws-line" aria-hidden="true" />)}
