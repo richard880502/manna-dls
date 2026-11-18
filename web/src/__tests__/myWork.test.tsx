@@ -404,10 +404,17 @@ describe("我的作品", () => {
 
   it("holds the place of the cards while the lists load, and says so to a screen reader", async () => {
     signIn();
-    mockApi(routes());
+    // Hold the sessions list open, so the page is surely still loading when it is looked at (an
+    // instant mock answer could finish before the first look and skip the skeleton).
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockApi(routes({ [SESSIONS]: () => held.then(() => ({ sessions })) }));
     renderApp("/prep");
-    expect(await screen.findByRole("status")).toHaveTextContent("載入中…");
-    expect(document.querySelectorAll(".work-card.is-skeleton").length).toBeGreaterThan(0);
+    await waitFor(() => expect(document.querySelectorAll(".work-card.is-skeleton").length).toBeGreaterThan(0));
+    expect(screen.getByRole("status")).toHaveTextContent("載入中…");
+    await act(async () => release());
     await screen.findByRole("list", { name: "我的作品" });
     expect(document.querySelector(".is-skeleton")).toBeNull();
   });
