@@ -13,7 +13,9 @@ const SIDEBAR_ID = "shell-sidebar";
 function frameClass(pathname: string): string {
   if (/^\/runs\/\d+\/?$/.test(pathname)) return " is-console";
   if (/^\/(lessons\/\d+|units\/\d+\/core|runs\/\d+\/review|admin|worksheets\/\d+)/.test(pathname)) return " is-wide";
-  if (pathname === "/preferences" || pathname === "/prep") return " is-narrow";
+  if (pathname === "/preferences") return " is-narrow";
+  // 我的作品 (cards or a list): the one page whose cards need a wider frame than the list pages.
+  if (pathname === "/prep") return " is-gallery";
   // 資源 (平台教材, 我的教材, 學習單範本): a grid of cards, three across on a wide screen; 知識庫 a
   // wall of smaller ones, four or five across.
   if (["/reference", "/materials", "/templates", "/knowledge"].includes(pathname)) return " is-wide";

@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { PrepKind, PrepSessionSummary, WorksheetSummary } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
-import { WorkCard, type WorkCardData } from "../components/mywork/WorkCard";
+import { WorkCard, WorkCardSkeleton, type WorkCardData } from "../components/mywork/WorkCard";
 import { TOOL_NAME } from "../lib/create";
 import { NEXT_LABEL, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
@@ -107,7 +107,8 @@ function cardOf(item: Item): WorkCardData {
       title: sessionTitle(s),
       href: `/prep/${s.id}`,
       tag: s.last_kind ? KIND_TAG[s.last_kind] : null,
-      meta: [formatDateTime(s.updated_at), ...sessionDetail(s)].filter(Boolean).join(" · "),
+      detail: sessionDetail(s).join(" · "),
+      when: formatDateTime(s.updated_at),
       worksheet: s.preview_worksheet ?? null,
       text: s.preview_text ?? null,
     };
@@ -117,7 +118,8 @@ function cardOf(item: Item): WorkCardData {
     title: worksheetName(w),
     href: `/worksheets/${w.id}`,
     tag: TOOL_NAME.worksheet,
-    meta: [formatDateTime(w.updated_at), ...worksheetDetail(w)].filter(Boolean).join(" · "),
+    detail: worksheetDetail(w).join(" · "),
+    when: formatDateTime(w.updated_at),
     // Only a generated worksheet has a first page.
     worksheet: w.generated ? { id: w.id, version_no: w.version_no } : null,
     text: null,
@@ -135,6 +137,8 @@ export function PrepListPage() {
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
   const [worksheets, setWorksheets] = useState<WorksheetSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Bumped by 再試一次: the lists are asked for again. */
+  const [attempt, setAttempt] = useState(0);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [view, setView] = useState<View>(loadView);
@@ -156,7 +160,7 @@ export function PrepListPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [attempt]);
 
   const items = useMemo<Item[] | null>(() => {
     if (sessions === null || worksheets === null) return null;
@@ -174,6 +178,11 @@ export function PrepListPage() {
 
   const count = (f: Filter) => (items ? items.filter((i) => f === "all" || i.filter === f).length : 0);
   const shown = items?.filter((i) => filter === "all" || i.filter === filter) ?? [];
+
+  function retry() {
+    setError(null);
+    setAttempt((n) => n + 1);
+  }
 
   function choose(f: Filter) {
     setParams(f === "all" ? {} : { type: f });
@@ -229,7 +238,26 @@ export function PrepListPage() {
       </div>
 
       <ErrorText message={error} />
-      {items === null && !error && <Loading />}
+      {error && (
+        <p>
+          <button type="button" className="text-link" onClick={retry}>
+            再試一次
+          </button>
+        </p>
+      )}
+      {items === null && !error && view === "list" && <Loading />}
+      {items === null && !error && view === "cards" && (
+        <>
+          <p className="sr-only" role="status">
+            載入中…
+          </p>
+          <ul className="work-grid" aria-hidden="true">
+            {Array.from({ length: 8 }, (_, i) => (
+              <WorkCardSkeleton key={i} />
+            ))}
+          </ul>
+        </>
+      )}
       {items !== null && items.length === 0 && (
         <p className="empty-line">
           還沒有作品。到<Link to="/">首頁</Link>放進一篇課文，就會出現在這裡。
@@ -259,7 +287,14 @@ export function PrepListPage() {
               ))}
             </div>
           </div>
-          {shown.length === 0 && <p className="empty-line">這個類型還沒有作品。</p>}
+          {shown.length === 0 && (
+            <p className="empty-line mywork-empty">
+              這個類型還沒有作品。
+              <button type="button" className="text-link" onClick={() => choose("all")}>
+                看全部
+              </button>
+            </p>
+          )}
           {shown.length > 0 && view === "cards" && (
             <ul className="work-grid" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) => (
@@ -272,7 +307,7 @@ export function PrepListPage() {
             </ul>
           )}
           {shown.length > 0 && view === "list" && (
-            <ul className="rows" aria-label="我的作品" ref={listRef} tabIndex={-1}>
+            <ul className="rows mywork-rows" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) =>
                 item.type === "session" ? (
                   <SessionRow key={item.key} s={item.session} />

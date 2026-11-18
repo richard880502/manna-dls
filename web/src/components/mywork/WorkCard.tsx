@@ -7,10 +7,12 @@ import "./mywork.css";
 export interface WorkCardData {
   title: string;
   href: string;
-  /** The type tag (「學習單」「課堂活動」…). */
+  /** The type tag (「學習單」「課堂活動」…): said on the preview, where the eye lands first. */
   tag: string | null;
-  /** The date, then whatever tells this work from another with the same title. */
-  meta: string;
+  /** What tells this work from another with the same title: its material or topic, its class. */
+  detail: string;
+  /** When it was last worked on. */
+  when: string;
   /** The worksheet whose first page is the preview; null: a text preview. */
   worksheet: { id: number; version_no: number } | null;
   /** The text preview: a plan's first lines, a question and its answer, the request. */
@@ -86,7 +88,7 @@ function useThumbnail(worksheet: WorkCardData["worksheet"]) {
  * The window onto the work: the top of its first page, or its first lines when there is no
  * page (or the page could not be had). Decoration: the title says what the card is.
  */
-function Preview({ data }: { data: WorkCardData }) {
+function Preview({ data, tagId }: { data: WorkCardData; tagId: string }) {
   const { ref, url, failed, fail } = useThumbnail(data.worksheet);
   const picture = data.worksheet !== null && !failed;
   let art: ReactNode;
@@ -114,13 +116,20 @@ function Preview({ data }: { data: WorkCardData }) {
   return (
     <div className={`work-thumb${picture ? " is-page" : " is-text"}`} ref={ref}>
       {art}
+      {data.tag && (
+        <span className="mywork-tag work-thumb-tag" id={tagId}>
+          {data.tag}
+        </span>
+      )}
     </div>
   );
 }
 
 /**
  * One piece of work: the whole card is one link to it. The link's name is the title alone (the
- * picture and the text preview are decoration; the type and the meta are its description). A
+ * picture and the text preview are decoration; the type, the detail and the date are its
+ * description). Top to bottom: the preview with its type, the title, what tells it from another
+ * of the same name, the date. A
  * button of its own, such as 刪除, goes in `tools`: outside the link, always visible.
  */
 export function WorkCard({ data, tools }: { data: WorkCardData; tools?: ReactNode }) {
@@ -131,22 +140,43 @@ export function WorkCard({ data, tools }: { data: WorkCardData; tools?: ReactNod
         className="work-card-link"
         to={data.href}
         aria-labelledby={`${ids}-title`}
-        aria-describedby={`${ids}-tag ${ids}-meta`}
+        aria-describedby={[data.tag && `${ids}-tag`, data.detail && `${ids}-detail`, `${ids}-when`]
+          .filter(Boolean)
+          .join(" ")}
       >
-        <Preview data={data} />
+        <Preview data={data} tagId={`${ids}-tag`} />
         <div className="work-card-body">
           <h3 className="work-card-title" id={`${ids}-title`} title={data.title}>
             {data.title}
           </h3>
-          <span className="work-card-tag" id={`${ids}-tag`}>
-            {data.tag && <span className="mywork-tag">{data.tag}</span>}
-          </span>
-          <span className="work-card-meta" id={`${ids}-meta`}>
-            {data.meta}
+          {data.detail && (
+            <span className="work-card-detail" id={`${ids}-detail`}>
+              {data.detail}
+            </span>
+          )}
+          <span className="work-card-when" id={`${ids}-when`}>
+            {data.when}
           </span>
         </div>
       </Link>
       {tools && <div className="work-card-tools">{tools}</div>}
+    </li>
+  );
+}
+
+/** What a card looks like while the list is on its way: the same box, so nothing moves when it lands. */
+export function WorkCardSkeleton() {
+  return (
+    <li className="work-card is-skeleton">
+      <div className="work-card-link">
+        <div className="work-thumb">
+          <span className="work-thumb-wait" />
+        </div>
+        <div className="work-card-body">
+          <span className="work-skeleton-line is-title" />
+          <span className="work-skeleton-line" />
+        </div>
+      </div>
     </li>
   );
 }

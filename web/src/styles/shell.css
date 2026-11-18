@@ -411,6 +411,11 @@
   max-width: 50rem;
 }
 
+/* 我的作品: the cards are the page, so they get the room (previews are unreadable at 185px). */
+.workspace.is-gallery {
+  max-width: var(--container-gallery);
+}
+
 .workspace.is-console {
   max-width: var(--container-console);
   padding-top: var(--space-xl);

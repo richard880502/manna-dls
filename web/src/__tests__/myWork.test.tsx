@@ -125,16 +125,21 @@ describe("我的作品", () => {
     expect(list().getByRole("link", { name: "獨立的學習單" })).toHaveAttribute("href", "/worksheets/21");
     expect(list().getByRole("link", { name: "最新的獨立學習單" })).toHaveAttribute("href", "/worksheets/23");
     expect(list().queryByText("屬於備課 7 的學習單")).not.toBeInTheDocument();
-    // The material is said only when it is not the title again; the class and the date are.
+    // The material is said only when it is not the title again; the class and the date are, each
+    // in its own place: the type on the preview, then the title, what tells it apart, the date.
     const first = within(card("The Umbrella Stand"));
-    expect(first.getByText(/^\d+\/15 \d+:\d+ · 高一 3 班$/)).toBeInTheDocument();
+    expect(first.getByText("高一 3 班")).toHaveClass("work-card-detail");
+    expect(first.getByText(/^\d+\/15 \d+:\d+$/)).toHaveClass("work-card-when");
     expect(first.queryByText(/教材：/)).not.toBeInTheDocument();
-    expect(first.getByText("完整學習單")).toBeInTheDocument();
-    expect(within(card("暖身遊戲")).getByText(/· 教材：The Umbrella Stand$/)).toBeInTheDocument();
+    expect(first.getByText("完整學習單")).toHaveClass("work-thumb-tag");
+    expect(within(card("暖身遊戲")).getByText("教材：The Umbrella Stand")).toHaveClass("work-card-detail");
     expect(within(card("環境保護")).queryByText(/主題：/)).not.toBeInTheDocument();
     expect(within(card("環境保護")).getByText("問 Manna")).toBeInTheDocument();
     expect(within(card("暖身遊戲")).getByText("課堂活動")).toBeInTheDocument();
-    expect(within(card("最新的獨立學習單")).getByText(/還沒產生/)).toBeInTheDocument();
+    expect(within(card("最新的獨立學習單")).getByText("還沒產生")).toBeInTheDocument();
+    // The link is described by the type, what tells it apart and the date.
+    const link = list().getByRole("link", { name: "The Umbrella Stand" });
+    expect(link).toHaveAccessibleDescription(/^完整學習單 高一 3 班 \d+\/15 \d+:\d+$/);
     // One primary action.
     expect(screen.getByRole("link", { name: "新的備課" })).toHaveAttribute("href", "/");
   });
@@ -379,11 +384,44 @@ describe("我的作品", () => {
     expect(screen.queryByRole("group", { name: "作品類型" })).not.toBeInTheDocument();
   });
 
-  it("shows the server's error", async () => {
+  it("shows the server's error, and asks again on 再試一次", async () => {
     signIn();
-    mockApi({ ...baseRoutes(), [SESSIONS]: respond(500, { error: { message: "伺服器出錯了" } }), [WORKSHEETS]: [] });
+    let fail = true;
+    mockApi({
+      ...baseRoutes(),
+      [SESSIONS]: () => (fail ? respond(500, { error: { message: "伺服器出錯了" } }) : { sessions }),
+      [WORKSHEETS]: worksheets,
+    });
+    const user = userEvent.setup();
     renderApp("/prep");
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("伺服器出錯了");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "再試一次" }));
+    await screen.findByRole("list", { name: "我的作品" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(titles()).toHaveLength(5);
+  });
+
+  it("holds the place of the cards while the lists load, and says so to a screen reader", async () => {
+    signIn();
+    mockApi(routes());
+    renderApp("/prep");
+    expect(await screen.findByRole("status")).toHaveTextContent("載入中…");
+    expect(document.querySelectorAll(".work-card.is-skeleton").length).toBeGreaterThan(0);
+    await screen.findByRole("list", { name: "我的作品" });
+    expect(document.querySelector(".is-skeleton")).toBeNull();
+  });
+
+  it("offers 看全部 when a type has nothing", async () => {
+    signIn();
+    mockApi(routes());
+    const user = userEvent.setup();
+    renderApp("/prep?type=activity");
+    await screen.findByRole("list", { name: "我的作品" });
+    await user.click(within(screen.getByRole("group", { name: "作品類型" })).getByRole("button", { name: /課堂活動/ }));
+    // 課堂活動 has one: pick the type with none instead.
+    await user.click(within(screen.getByRole("group", { name: "作品類型" })).getByRole("button", { name: /問 Manna/ }));
+    expect(titles()).toEqual(["環境保護"]);
   });
 
   it("/worksheets leads here", async () => {
