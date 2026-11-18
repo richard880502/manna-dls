@@ -9,7 +9,8 @@ import type {
   WsTemplateSummary,
 } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
-import { RunProgressSlot } from "../components/RunProgress";
+import { RunProgressPanel, useRunPanel } from "../components/RunProgress";
+import { TOOL_NAME } from "../lib/create";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
@@ -120,6 +121,9 @@ function PrepSessionView({ id }: { id: number }) {
   // turn's progress may stay open a little longer (its pictures, its SIOP 自我檢核): follow it too.
   const lastTurn = session?.turns[session.turns.length - 1];
   const following = !!session?.running || lastTurn?.progress?.status === "running";
+  // 「進度」 sits in the conversation, in the last turn's place, instead of its working line, and
+  // folds away once the run is done.
+  const lastPanel = useRunPanel(lastTurn?.progress, lastTurn ? String(lastTurn.id) : null);
   useEffect(() => {
     if (!following) return undefined;
     let alive = true;
@@ -259,12 +263,18 @@ function PrepSessionView({ id }: { id: number }) {
         ]
       : (templates ?? []);
 
+  /** Whether this turn's 「進度」 panel shows (then its own working lines stay quiet). */
+  function stepsShown(turn: PrepTurn) {
+    return turn.id === lastTurn?.id && lastPanel.visible && !!turn.progress;
+  }
+
   function worksheetCard(turn: PrepTurn) {
     const wsId = turn.worksheet?.id;
     const lastRevise = [...session!.turns].reverse().find((t) => t.kind === "revise" && targets.get(t.id) === wsId);
     return (
       <WorksheetCard
         turn={turn}
+        stepsShown={stepsShown(turn)}
         refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}`}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
@@ -291,7 +301,8 @@ function PrepSessionView({ id }: { id: number }) {
           {kitPlan ? (
             <ActivityCard plan={kitPlan} interactionId={turn.interaction_id} />
           ) : (
-            turn.status === "running" && (
+            turn.status === "running" &&
+            !stepsShown(turn) && (
               <p className="manna-label prep-working" role="status">
                 <span className="star is-working" aria-hidden="true" />
                 Manna 正在規劃教學活動…
@@ -300,7 +311,7 @@ function PrepSessionView({ id }: { id: number }) {
           )}
           {(turn.worksheet || turn.status === "running") && worksheetCard(turn)}
           {turn.status === "failed" && failed(turn)}
-          <SiopCheckPanel sessionId={id} turn={turn} />
+          <SiopCheckPanel sessionId={id} turn={turn} quiet={stepsShown(turn)} />
         </div>
       );
     }
@@ -309,12 +320,13 @@ function PrepSessionView({ id }: { id: number }) {
         <>
           {worksheetCard(turn)}
           {turn.status === "failed" && failed(turn)}
-          <SiopCheckPanel sessionId={id} turn={turn} />
+          <SiopCheckPanel sessionId={id} turn={turn} quiet={stepsShown(turn)} />
         </>
       );
     }
     if (turn.status === "failed") return failed(turn);
     if (turn.status === "running") {
+      if (stepsShown(turn)) return null;
       return (
         <p className="manna-label prep-working" role="status">
           <span className="star is-working" aria-hidden="true" />
@@ -327,7 +339,7 @@ function PrepSessionView({ id }: { id: number }) {
       return (
         <>
           <ActivityCard plan={plan} interactionId={turn.interaction_id} />
-          <SiopCheckPanel sessionId={id} turn={turn} />
+          <SiopCheckPanel sessionId={id} turn={turn} quiet={stepsShown(turn)} />
         </>
       );
     }
@@ -474,6 +486,14 @@ function PrepSessionView({ id }: { id: number }) {
               <span className="prep-bubble">{turn.request}</span>
             </p>
             <section className="prep-result" aria-label={`${KIND_LABEL[turn.kind]}（第 ${turn.seq} 則）`}>
+              {stepsShown(turn) && turn.progress && (
+                <RunProgressPanel
+                  progress={turn.progress}
+                  error={turn.error}
+                  onClose={lastPanel.close}
+                  className="prep-turn-progress"
+                />
+              )}
               {result(turn)}
             </section>
           </li>
@@ -492,7 +512,7 @@ function PrepSessionView({ id }: { id: number }) {
                 disabled={locked}
                 onClick={() => void send({ kind, request: NEXT_LABEL[kind] })}
               >
-                {NEXT_LABEL[kind]}
+                {kind === "worksheet" ? TOOL_NAME.worksheet : NEXT_LABEL[kind]}
               </button>
             ))}
           </div>
@@ -619,20 +639,6 @@ function PrepSessionView({ id }: { id: number }) {
             </button>
           </div>
         </div>
-        <RunProgressSlot
-          progress={lastTurn?.progress}
-          runKey={lastTurn ? String(lastTurn.id) : null}
-          error={lastTurn?.error}
-          className="prep-progress"
-          fallback={
-            running && (
-              <p className="manna-label prep-bottom-status" role="status">
-                <span className="star is-working" aria-hidden="true" />
-                {WORKING_LINE}
-              </p>
-            )
-          }
-        />
         <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
 

@@ -860,9 +860,10 @@ describe("備課對話 (session page)", () => {
       "差異化學習單",
       "課堂活動",
       "教學套件",
-      "學習單",
+      "完整學習單",
     ]);
-    await user.click(next.getByRole("button", { name: "學習單" }));
+    // The chip reads the tool's name; the request keeps the label the server knows.
+    await user.click(next.getByRole("button", { name: "完整學習單" }));
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(2));
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "worksheet", request: "學習單" });
   });
@@ -929,7 +930,7 @@ describe("備課對話 (session page)", () => {
     expect(bar).toHaveAttribute("placeholder", "Manna 正在處理…");
     expect(screen.getAllByText("Manna 正在處理…").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "送出" })).toBeDisabled();
-    expect(within(screen.getByRole("group", { name: "接下來可以" })).getByRole("button", { name: "學習單" })).toBeDisabled();
+    expect(within(screen.getByRole("group", { name: "接下來可以" })).getByRole("button", { name: "完整學習單" })).toBeDisabled();
   });
 
   it("polls while a turn runs and stops when running is false", async () => {

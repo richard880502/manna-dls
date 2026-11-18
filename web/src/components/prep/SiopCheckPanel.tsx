@@ -44,7 +44,16 @@ function ItemRow({ item }: { item: SiopCheckItem }) {
  * revised, can be run again. Nothing is shown for a turn kind without a check, a turn that is not
  * done, or a server that does not have the check (`siop_check` absent).
  */
-export function SiopCheckPanel({ sessionId, turn }: { sessionId: number; turn: PrepTurn }) {
+export function SiopCheckPanel({
+  sessionId,
+  turn,
+  quiet = false,
+}: {
+  sessionId: number;
+  turn: PrepTurn;
+  /** The turn's 「進度」 panel lists the 自我檢核 step: no working line of our own while it runs. */
+  quiet?: boolean;
+}) {
   const ids = useId();
   const [local, setLocal] = useState<SiopCheck | null>(null);
   /** Whether the teacher opened the results: a new run (重新檢核) shows open again when it is done. */
@@ -88,6 +97,8 @@ export function SiopCheckPanel({ sessionId, turn }: { sessionId: number; turn: P
       {label}
     </button>
   );
+
+  if (quiet && (!check || check.status === "running")) return null;
 
   let body;
   if (!check) {
