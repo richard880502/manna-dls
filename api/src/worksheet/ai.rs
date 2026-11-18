@@ -255,63 +255,109 @@ pub async fn run_steps(
     run_no: i32,
     running: bool,
 ) -> sqlx::Result<Option<(Vec<Step>, bool)>> {
-    let db = &state.db;
-    let raw: Option<Option<Value>> =
-        sqlx::query_scalar("SELECT progress FROM worksheets WHERE id = $1")
-            .bind(worksheet_id)
-            .fetch_optional(db)
-            .await?;
-    let Some(mut stored) = raw
-        .flatten()
-        .and_then(|v| serde_json::from_value::<Stored>(v).ok())
-    else {
-        return Ok(None);
-    };
-    if stored.run_no != run_no || stored.steps.is_empty() {
-        return Ok(None);
-    }
-    if !running && !stored.finished {
-        stored.settle(Some(MSG_STALE));
-    }
-    let mut open = running;
-    if stored.finished && !stored.pictures.is_empty() {
-        let mut drawing = pictures_drawing(db, worksheet_id, &stored.pictures).await?;
-        if drawing > 0 {
-            // Pictures that died with the server are closed first.
-            super::images::expire_stale(state, worksheet_id).await?;
-            drawing = pictures_drawing(db, worksheet_id, &stored.pictures).await?;
-        }
-        let total = stored.pictures.len();
-        let done = total.saturating_sub(usize::try_from(drawing).unwrap_or(0));
-        if let Some(step) = stored
-            .steps
-            .iter_mut()
-            .find(|s| s.key == progress::PICTURES)
-        {
-            step.count = Some(progress::Count { done, total });
-            if done < total {
-                step.status = progress::StepStatus::Running;
-                step.label = progress::L_PICTURES_RUNNING.to_string();
-                open = true;
-            } else {
-                step.status = progress::StepStatus::Done;
-                step.label = progress::L_PICTURES.to_string();
-            }
-        }
-    }
-    Ok(Some((stored.steps, open)))
+    let wanted = [RunRef {
+        worksheet_id,
+        run_no,
+        running,
+    }];
+    Ok(runs_steps(state, &wanted).await?.remove(&worksheet_id))
 }
 
-/// How many of the run's pictures are still queued or being drawn.
-async fn pictures_drawing(db: &PgPool, worksheet_id: i64, ids: &[i64]) -> sqlx::Result<i64> {
-    sqlx::query_scalar(
-        "SELECT COUNT(*) FROM worksheet_images
-          WHERE worksheet_id = $1 AND id = ANY($2) AND status IN ('queued', 'running')",
+/// One run whose steps are asked for: run `run_no` of a worksheet, and whether its jobs are
+/// still open.
+#[derive(Debug, Clone, Copy)]
+pub struct RunRef {
+    pub worksheet_id: i64,
+    pub run_no: i32,
+    pub running: bool,
+}
+
+/// [`run_steps`] for several worksheets at once, in at most two queries whatever their number
+/// (the stored steps, then the pictures still being drawn), so a page that polls many of them
+/// does not cost a query each. Worksheets without steps for their run are left out.
+pub async fn runs_steps(
+    state: &AppState,
+    wanted: &[RunRef],
+) -> sqlx::Result<HashMap<i64, (Vec<Step>, bool)>> {
+    let mut out = HashMap::new();
+    if wanted.is_empty() {
+        return Ok(out);
+    }
+    let db = &state.db;
+    let ids: Vec<i64> = wanted.iter().map(|w| w.worksheet_id).collect();
+    let rows: Vec<(i64, Value)> = sqlx::query_as(
+        "SELECT id, progress FROM worksheets WHERE id = ANY($1) AND progress IS NOT NULL",
     )
-    .bind(worksheet_id)
-    .bind(ids)
-    .fetch_one(db)
-    .await
+    .bind(&ids)
+    .fetch_all(db)
+    .await?;
+    let mut runs: Vec<(RunRef, Stored)> = Vec::new();
+    for (id, raw) in rows {
+        let Some(want) = wanted.iter().find(|w| w.worksheet_id == id) else {
+            continue;
+        };
+        let Ok(mut stored) = serde_json::from_value::<Stored>(raw) else {
+            continue;
+        };
+        if stored.run_no != want.run_no || stored.steps.is_empty() {
+            continue;
+        }
+        if !want.running && !stored.finished {
+            stored.settle(Some(MSG_STALE));
+        }
+        runs.push((*want, stored));
+    }
+    // The pictures of finished runs still queued or being drawn, by worksheet. A row open for
+    // longer than the picture jobs' stale limit (and held by no job here) died with the server:
+    // it counts as over (the pictures' own reads mark it failed), so nothing is written here.
+    let pictures: Vec<i64> = runs
+        .iter()
+        .filter(|(_, s)| s.finished)
+        .flat_map(|(_, s)| s.pictures.iter().copied())
+        .collect();
+    let drawing: HashMap<i64, i64> = if pictures.is_empty() {
+        HashMap::new()
+    } else {
+        sqlx::query_as::<_, (i64, i64)>(
+            "SELECT worksheet_id, COUNT(*) FROM worksheet_images
+              WHERE id = ANY($1) AND status IN ('queued', 'running')
+                AND (COALESCE(started_at, created_at) >= now() - make_interval(secs => $2::float8)
+                     OR id = ANY($3))
+              GROUP BY worksheet_id",
+        )
+        .bind(&pictures)
+        .bind(super::images::stale_after(state))
+        .bind(state.images.live_ids())
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .collect()
+    };
+    for (want, mut stored) in runs {
+        let mut open = want.running;
+        if stored.finished && !stored.pictures.is_empty() {
+            let total = stored.pictures.len();
+            let left = drawing.get(&want.worksheet_id).copied().unwrap_or(0);
+            let done = total.saturating_sub(usize::try_from(left).unwrap_or(0));
+            if let Some(step) = stored
+                .steps
+                .iter_mut()
+                .find(|s| s.key == progress::PICTURES)
+            {
+                step.count = Some(progress::Count { done, total });
+                if done < total {
+                    step.status = progress::StepStatus::Running;
+                    step.label = progress::L_PICTURES_RUNNING.to_string();
+                    open = true;
+                } else {
+                    step.status = progress::StepStatus::Done;
+                    step.label = progress::L_PICTURES.to_string();
+                }
+            }
+        }
+        out.insert(want.worksheet_id, (stored.steps, open));
+    }
+    Ok(out)
 }
 
 /// `progress` of the worksheet state and of `GET …/jobs`: the latest run's (`jobs` and

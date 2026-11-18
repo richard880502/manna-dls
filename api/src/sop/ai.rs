@@ -385,7 +385,7 @@ pub(crate) async fn attempt(
     }
     // A run whose progress a test watches step by step (docs/API.md「產生進度」).
     if state.ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_PACED") {
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(400)).await;
     }
     let start = Instant::now();
     let response = state.ai.complete(req).await;

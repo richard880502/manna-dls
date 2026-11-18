@@ -306,6 +306,8 @@ pub enum Sink {
 pub struct Tracker {
     sink: Sink,
     stored: tokio::sync::Mutex<Stored>,
+    /// Writes made so far (tests: one per step change, none for a change that changes nothing).
+    writes: std::sync::atomic::AtomicUsize,
 }
 
 impl Tracker {
@@ -314,6 +316,7 @@ impl Tracker {
         Arc::new(Self {
             sink: Sink::Off,
             stored: tokio::sync::Mutex::new(Stored::default()),
+            writes: Default::default(),
         })
     }
 
@@ -323,12 +326,15 @@ impl Tracker {
         let tracker = Arc::new(Self {
             sink,
             stored: tokio::sync::Mutex::new(stored.clone()),
+            writes: Default::default(),
         });
         tracker.write(&stored).await;
         tracker
     }
 
     async fn write(&self, stored: &Stored) {
+        self.writes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let result = match &self.sink {
             Sink::Off => Ok(()),
             Sink::Worksheet(db, id) => {
@@ -394,13 +400,16 @@ impl Tracker {
     /// The step failed; `message` is what the page already says about it.
     pub async fn fail(&self, key: &str, message: &str) {
         self.change(|s| match s.step_mut(key) {
-            Some(step) => {
+            Some(step)
+                if step.status != StepStatus::Failed
+                    || step.message.as_deref() != Some(message) =>
+            {
                 step.status = StepStatus::Failed;
                 step.note = None;
                 step.message = Some(message.to_string());
                 true
             }
-            None => false,
+            _ => false,
         })
         .await;
     }
@@ -433,11 +442,11 @@ impl Tracker {
     pub async fn bump(&self, key: &str) {
         self.change(
             |s| match s.step_mut(key).and_then(|step| step.count.as_mut()) {
-                Some(count) => {
-                    count.done = (count.done + 1).min(count.total);
+                Some(count) if count.done < count.total => {
+                    count.done += 1;
                     true
                 }
-                None => false,
+                _ => false,
             },
         )
         .await;
@@ -471,8 +480,13 @@ impl Tracker {
     }
 
     /// The pictures the run queued (their `worksheet_images` ids).
+    /// Nothing is written when there are none (the pictures step then goes when the run is
+    /// settled): how far they are is read from their rows, never written here.
     pub async fn pictures(&self, ids: Vec<i64>) {
         self.change(|s| {
+            if s.pictures == ids {
+                return false;
+            }
             s.pictures = ids;
             true
         })
@@ -489,6 +503,11 @@ impl Tracker {
             true
         })
         .await;
+    }
+
+    /// How many writes this run made (tests).
+    pub fn writes(&self) -> usize {
+        self.writes.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The steps as they are now (tests).
@@ -707,6 +726,37 @@ mod tests {
         let off = Tracker::off();
         off.start("read").await;
         assert_eq!(off.snapshot().await, Stored::default());
+    }
+
+    #[tokio::test]
+    async fn a_change_that_changes_nothing_writes_nothing() {
+        let registry = Arc::new(Registry::default());
+        let t = Tracker::open(
+            Sink::Memory(registry, 1, "abcdefgh".to_string()),
+            0,
+            vec![
+                Step::new("read", "讀教材"),
+                Step::new("template", "照版型寫各區塊"),
+            ],
+        )
+        .await;
+        assert_eq!(t.writes(), 1, "the steps as they start");
+        t.start("read").await; // already running
+        t.done("read").await;
+        t.done("read").await;
+        t.count("template", 0, 2).await;
+        t.count("template", 0, 2).await;
+        t.bump("template").await;
+        t.bump("template").await;
+        t.bump("template").await; // already 2／2
+        t.pictures(Vec::new()).await; // none queued
+        t.fail("template", "壞了").await;
+        t.fail("template", "壞了").await;
+        t.skip("nothing").await;
+        t.finish(None).await;
+        t.finish(None).await;
+        // open, done, count, bump, bump, fail, finish.
+        assert_eq!(t.writes(), 7);
     }
 
     #[test]

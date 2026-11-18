@@ -279,4 +279,26 @@ describe("the 備課對話", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: "進度" })).toBeNull());
     await act(async () => new Promise((r) => setTimeout(r, 80)));
   });
+
+  it("a turn long over comes without progress: no panel, and the turn shows as before", async () => {
+    signIn();
+    // The server only reads progress for turns still running or just over; older turns carry null.
+    const over = turn({ status: "done", finished_at: "2026-11-18T06:00:00Z", progress: null });
+    const polls = [
+      session(turn({ progress: activitySteps(["done", "done", "running"], 2, "running") })),
+      session(over),
+    ];
+    let n = 0;
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: () => polls[Math.min(n++, polls.length - 1)] });
+    renderApp("/prep/7");
+    await screen.findByRole("region", { name: "進度" });
+    await waitFor(() => expect(screen.queryByRole("region", { name: "進度" })).toBeNull());
+    expect(document.querySelector(".prep-bottom-status")).toBeNull();
+
+    // Loading a session whose turns are all over: nothing to show.
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session(over) });
+    renderApp("/prep/7");
+    await waitFor(() => expect(screen.getAllByRole("list", { name: "備課對話" }).length).toBeGreaterThan(0));
+    expect(screen.queryByRole("region", { name: "進度" })).toBeNull();
+  });
 });
