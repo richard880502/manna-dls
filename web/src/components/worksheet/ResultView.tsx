@@ -66,6 +66,7 @@ import { LessonLinkControls } from "./LessonLink";
 import { OrganizerEditor } from "./Organizer";
 import { printedOrganizer } from "../../lib/organizer";
 import { RunOutcome, WorksheetRunProgress } from "./OptionsView";
+import { GlossaryBox } from "./Glossary";
 import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
 import type { WorksheetController } from "./useWorksheet";
@@ -853,6 +854,19 @@ function BlockSection({
         </button>
       </p>
 
+      <GlossaryBox
+        glosses={(block.glosses ?? []).filter((g) => g.levels.includes(level))}
+        name={name}
+        disabled={locked}
+        onRemove={(word) =>
+          patch((b) => ({
+            ...b,
+            glosses: (b.glosses ?? [])
+              .map((g) => (g.word === word ? { ...g, levels: g.levels.filter((l) => l !== level) } : g))
+              .filter((g) => g.levels.length > 0),
+          }))
+        }
+      />
       {teacher && (
         <div className="ws-answer ws-notes" lang="zh-Hant">
           <div className="ws-answer-row">

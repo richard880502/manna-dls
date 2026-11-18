@@ -3,6 +3,7 @@ import type { WsSheet, WsSheetBlock } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL, studentVersionName, versionLabel } from "../../lib/worksheet";
 import { BloomChip } from "../worksheet/Bloom";
+import { GlossaryBox, glossText } from "../worksheet/Glossary";
 import { OrganizerView } from "../worksheet/Organizer";
 import { organizerText } from "../../lib/organizer";
 import { SlotPicture, viewOfSheetImage, type PictureActions } from "../worksheet/SlotPicture";
@@ -40,6 +41,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
     if (it.answer) lines.push(`   參考答案：${it.answer}`);
     if (it.scoring) lines.push(`   評分說明：${it.scoring}`);
   });
+  if (b.glosses?.length) lines.push("Glossary:", ...b.glosses.map((g) => `${g.word} ${glossText(g)}`));
   if (b.teacher_notes?.trim()) lines.push(`教師備註：${b.teacher_notes}`);
   return lines.filter((l) => l.trim() !== "").join("\n");
 }
@@ -291,6 +293,7 @@ export function SheetPreview({
                 ))}
               </ol>
             )}
+            <GlossaryBox glosses={b.glosses ?? []} name={name} />
             {teacher && b.teacher_notes?.trim() && (
               <div className="ws-answer ws-notes" lang="zh-Hant">
                 <div className="ws-answer-row">

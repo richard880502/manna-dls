@@ -107,6 +107,8 @@ fn answer_space(item: &SheetItem) -> AnswerSpace<'_> {
 const META_LINE: &str = "Class ________   No. ________   Name ____________________";
 /// Printed above the original paragraphs of a block that also has a simplified text (T8).
 const ORIGINAL_TEXT: &str = "Original text (read this first; the simplified text below is a help)";
+/// Heading of a block's Glossary (詞彙級別檢查「提供字義」), printed at the end of the block.
+pub const GLOSSARY: &str = "Glossary";
 
 /// The name line, with the version's neutral code when the worksheet has several: students see
 /// 「Version A」, never the level's name (T9).
@@ -835,6 +837,27 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
         }
         for it in &b.items {
             docx_item(&mut body, it, teacher);
+        }
+        if !b.glosses.is_empty() {
+            body.push_str(&para(
+                &[run(
+                    GLOSSARY,
+                    RunStyle {
+                        bold: true,
+                        ..RunStyle::default()
+                    },
+                )],
+                &ParaStyle {
+                    before: 160,
+                    keep_next: true,
+                    ..ParaStyle::default()
+                },
+            ));
+            let mut rows = vec![vec!["Word".to_string(), "Meaning".to_string()]];
+            for g in &b.glosses {
+                rows.push(vec![g.word.clone(), g.text()]);
+            }
+            body.push_str(&table(&[2600, DOCX_WIDTH - 2600], &rows, None, true));
         }
         if let Some(n) = &b.teacher_notes {
             body.push_str(&para(
@@ -2036,6 +2059,30 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         for it in &b.items {
             pdf_item(l, it, teacher);
         }
+        if !b.glosses.is_empty() {
+            l.ensure(40.0);
+            l.paragraph(
+                GLOSSARY,
+                Style {
+                    weight: Weight::Bold,
+                    before: 8.0,
+                    after: 2.0,
+                    ..body
+                },
+            );
+            for g in &b.glosses {
+                l.labelled(
+                    &format!("{} ", g.word),
+                    &g.text(),
+                    Style {
+                        indent: 8.0,
+                        after: 1.0,
+                        ..body
+                    },
+                    Weight::Bold,
+                );
+            }
+        }
         if let Some(n) = &b.teacher_notes {
             l.labelled(
                 "Teacher notes: ",
@@ -2095,6 +2142,10 @@ fn printed_text(sheet: &Sheet) -> String {
             out.extend(it.evidence.iter().cloned());
         }
         out.extend(b.teacher_notes.iter().cloned());
+        for g in &b.glosses {
+            out.push(g.word.clone());
+            out.push(g.text());
+        }
     }
     out.join("\n")
 }
@@ -2326,6 +2377,7 @@ mod tests {
                 bloom_summary: None,
                 images: Vec::new(),
                 original_text: vec![],
+                glosses: vec![],
             }],
         }
     }
@@ -2530,6 +2582,35 @@ mod tests {
             crate::worksheet::assemble::project("T", &single, Level::Standard, Audience::Student);
         assert_eq!(footer_label(&s), None);
         assert!(!document(docx(&s).unwrap()).contains("Version"));
+    }
+
+    #[test]
+    fn a_glossary_prints_at_the_end_of_its_block_in_docx_and_pdf() {
+        use crate::worksheet::assemble::SheetGloss;
+        let mut s = sheet(Audience::Student);
+        s.blocks[0].glosses = vec![SheetGloss {
+            word: "abandon".into(),
+            pos: "v.".into(),
+            meaning_zh: "拋棄".into(),
+            definition_en: "to leave and not come back".into(),
+        }];
+        let xml = document(docx(&s).unwrap());
+        let glossary = xml.find(GLOSSARY).expect("the Glossary heading");
+        assert!(
+            xml.find("Question 30").unwrap() < glossary,
+            "after the questions"
+        );
+        assert!(xml.contains("(v.) 拋棄 — to leave and not come back"));
+        // The PDF prints the same entries: they are part of what needs the CJK font.
+        assert!(printed_text(&s).contains("abandon\n(v.) 拋棄 — to leave and not come back"));
+        assert!(sheet_has_cjk(&s));
+        if pdf_supports_cjk() {
+            assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
+        } else {
+            assert!(matches!(pdf(&s), Err(ExportError::NoCjkFont)));
+        }
+        s.blocks[0].glosses.clear();
+        assert!(!document(docx(&s).unwrap()).contains(GLOSSARY));
     }
 
     #[test]

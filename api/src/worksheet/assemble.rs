@@ -582,6 +582,34 @@ pub struct SheetBlock {
     /// (T8: the rewrite is an aid, it never replaces the original). Empty otherwise.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub original_text: Vec<String>,
+    /// The block's Glossary in this version (詞彙級別檢查「提供字義」), printed at the end of the
+    /// block; absent when there is none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub glosses: Vec<SheetGloss>,
+}
+
+/// One printed Glossary entry: 「abandon (v.) 拋棄 — to leave and never come back」.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SheetGloss {
+    pub word: String,
+    pub pos: String,
+    pub meaning_zh: String,
+    pub definition_en: String,
+}
+
+impl SheetGloss {
+    /// The entry after its word: 「(v.) 拋棄 — to leave …」.
+    pub fn text(&self) -> String {
+        let mut out = String::new();
+        if !self.pos.is_empty() {
+            out.push_str(&format!("({}) ", self.pos));
+        }
+        out.push_str(&self.meaning_zh);
+        if !self.definition_en.is_empty() {
+            out.push_str(&format!(" — {}", self.definition_en));
+        }
+        out
+    }
 }
 
 /// One picture of a printed block: the picture, or an empty box for the teacher to fill.
@@ -868,6 +896,17 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             bloom_summary,
             images: Vec::new(),
             original_text: Vec::new(),
+            glosses: b
+                .glosses
+                .iter()
+                .filter(|g| shown(&g.levels) && !g.word.trim().is_empty())
+                .map(|g| SheetGloss {
+                    word: g.word.trim().to_string(),
+                    pos: g.pos.trim().to_string(),
+                    meaning_zh: g.meaning_zh.trim().to_string(),
+                    definition_en: g.definition_en.trim().to_string(),
+                })
+                .collect(),
         });
     }
     blocks.retain(has_content);
@@ -920,73 +959,183 @@ pub fn block_name(b: &SheetBlock) -> String {
     }
 }
 
-/// Every printed text of a sheet, one unit per line, with where it is (for the vocabulary
-/// check: positions are reported by line).
-pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
-    let mut lines: Vec<(String, String)> = Vec::new();
-    let mut push = |place: String, text: &str| {
+/// What kind of printed text a line of the vocabulary check is: says whether 換字 may change it
+/// (詞彙級別檢查: the questions, instructions and options may change; the title, the objectives,
+/// the key words, word banks, simplified texts and captions stay as they are).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UnitKind {
+    Title,
+    Objective,
+    BlockTitle,
+    Instructions,
+    Step,
+    /// 字詞表: the key words the lesson teaches.
+    KeyWord,
+    Support,
+    /// 調整文本: a rewrite of the reading text (T8).
+    SimplifiedText,
+    Caption,
+    Question,
+    Option,
+    /// 表格整理: a question's table column headings.
+    TableHeading,
+    /// 圖像組織: an organizer's title and its section labels (column headings, row labels, box
+    /// names): changed like the question they belong to, as table headings are.
+    OrganizerHeading,
+    /// 圖像組織: a mind map's centre word and the text pre-filled in a cell (and, in the teacher
+    /// version, a cell's answer): what the question is about and its answers, never changed.
+    OrganizerContent,
+    Hint,
+    ItemSupport,
+    /// A word bank (a question's, or a 字詞表 support): the words to answer with.
+    WordBank,
+}
+
+impl UnitKind {
+    /// Whether 換字 may change text of this kind.
+    pub fn replaceable(self) -> bool {
+        matches!(
+            self,
+            Self::BlockTitle
+                | Self::Instructions
+                | Self::Step
+                | Self::Support
+                | Self::Question
+                | Self::Option
+                | Self::TableHeading
+                | Self::OrganizerHeading
+                | Self::Hint
+                | Self::ItemSupport
+        )
+    }
+}
+
+/// One printed text of a sheet (for the vocabulary check).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextUnit {
+    /// Where it is, in the teacher's words: 「C 活動 · 第 4 題」.
+    pub place: String,
+    /// Line breaks inside the text become spaces.
+    pub text: String,
+    pub kind: UnitKind,
+}
+
+/// Every printed text of a sheet, one unit per line, with where it is and what kind of text it
+/// is. The Glossary is not part of it: it explains words, it is not reading load.
+pub fn text_units(sheet: &Sheet) -> Vec<TextUnit> {
+    let mut lines: Vec<TextUnit> = Vec::new();
+    let mut push = |place: String, text: &str, kind: UnitKind| {
         // One unit per line: line breaks inside a text become spaces.
         let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
         if !flat.is_empty() {
-            lines.push((place, flat));
+            lines.push(TextUnit {
+                place,
+                text: flat,
+                kind,
+            });
         }
     };
-    push("標題".to_string(), &sheet.title);
+    push("標題".to_string(), &sheet.title, UnitKind::Title);
     for (i, o) in sheet.objectives.iter().enumerate() {
-        push(format!("學習目標第 {} 項", i + 1), o);
+        push(format!("學習目標第 {} 項", i + 1), o, UnitKind::Objective);
     }
     for b in &sheet.blocks {
         let name = block_name(b);
-        push(format!("{name} · 標題"), &b.title);
-        push(format!("{name} · 作答指示"), &b.instructions);
+        push(format!("{name} · 標題"), &b.title, UnitKind::BlockTitle);
+        push(
+            format!("{name} · 作答指示"),
+            &b.instructions,
+            UnitKind::Instructions,
+        );
         for (i, s) in b.steps.iter().enumerate() {
-            push(format!("{name} · 步驟 {}", i + 1), s);
+            push(format!("{name} · 步驟 {}", i + 1), s, UnitKind::Step);
         }
         for v in &b.vocabulary {
             push(
                 format!("{name} · 字詞表"),
                 &format!("{} {}", v.word, v.definition),
+                UnitKind::KeyWord,
             );
         }
         for s in &b.supports {
-            push(format!("{name} · {}", s.kind), &s.content);
+            let kind = match s.kind.as_str() {
+                KIND_SIMPLIFIED => UnitKind::SimplifiedText,
+                // A word bank lists the words to answer with.
+                KIND_WORD_LIST => UnitKind::WordBank,
+                _ => UnitKind::Support,
+            };
+            push(format!("{name} · {}", s.kind), &s.content, kind);
         }
         for img in &b.images {
-            push(format!("{name} · 圖說"), &img.caption);
+            push(format!("{name} · 圖說"), &img.caption, UnitKind::Caption);
         }
         for it in &b.items {
-            push(format!("{name} · 第 {} 題", it.no), &it.prompt);
+            push(
+                format!("{name} · 第 {} 題", it.no),
+                &it.prompt,
+                UnitKind::Question,
+            );
             for o in &it.options {
-                push(format!("{name} · 第 {} 題選項", it.no), o);
+                push(format!("{name} · 第 {} 題選項", it.no), o, UnitKind::Option);
             }
             if let Some(t) = &it.table {
                 push(
                     format!("{name} · 第 {} 題表格", it.no),
                     &t.columns.join(" "),
+                    UnitKind::TableHeading,
                 );
             }
             if let Some(h) = &it.hint {
-                push(format!("{name} · 第 {} 題提示", it.no), h);
+                push(format!("{name} · 第 {} 題提示", it.no), h, UnitKind::Hint);
             }
             if let Some(o) = &it.organizer {
-                for text in o.texts() {
-                    push(format!("{name} · 第 {} 題圖像組織", it.no), text);
+                // In the order the organizer prints them (as `SheetOrganizer::texts`).
+                let place = format!("{name} · 第 {} 題圖像組織", it.no);
+                push(format!("{place}標題"), &o.title, UnitKind::OrganizerHeading);
+                push(
+                    format!("{place}中心詞"),
+                    &o.center,
+                    UnitKind::OrganizerContent,
+                );
+                for s in &o.sections {
+                    push(format!("{place}標籤"), &s.label, UnitKind::OrganizerHeading);
+                    for c in &s.cells {
+                        push(format!("{place}預填"), &c.given, UnitKind::OrganizerContent);
+                        if let Some(a) = &c.answer {
+                            push(format!("{place}答案"), a, UnitKind::OrganizerContent);
+                        }
+                    }
                 }
             }
             if let Some(s) = &it.support {
                 for line in &s.lines {
-                    push(format!("{name} · 第 {} 題支持", it.no), line);
+                    push(
+                        format!("{name} · 第 {} 題支持", it.no),
+                        line,
+                        UnitKind::ItemSupport,
+                    );
                 }
                 if !s.word_bank.is_empty() {
                     push(
                         format!("{name} · 第 {} 題字庫", it.no),
                         &s.word_bank.join(", "),
+                        UnitKind::WordBank,
                     );
                 }
             }
         }
     }
     lines
+}
+
+/// Every printed text of a sheet, one unit per line, with where it is (for the vocabulary
+/// check: positions are reported by line).
+pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
+    text_units(sheet)
+        .into_iter()
+        .map(|u| (u.place, u.text))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1141,6 +1290,39 @@ mod tests {
         assert_eq!(basic.blocks[1].items[1].lines, 4);
         assert_eq!(advanced.blocks[1].items[0].lines, 6);
         assert_eq!(advanced.blocks[1].items[1].lines, 0);
+    }
+
+    #[test]
+    fn glosses_print_in_their_versions_and_are_not_analysed() {
+        let mut c = content();
+        c.blocks[1].glosses = vec![crate::worksheet::Gloss {
+            word: "abandon".into(),
+            pos: "v.".into(),
+            meaning_zh: "拋棄".into(),
+            definition_en: String::new(),
+            levels: vec![Level::Basic],
+            origin: Origin::Ai,
+        }];
+        let basic = project("T", &c, Level::Basic, Audience::Student);
+        assert_eq!(basic.blocks[1].glosses[0].text(), "(v.) 拋棄");
+        let teacher = project("T", &c, Level::Basic, Audience::Teacher);
+        assert_eq!(teacher.blocks[1].glosses.len(), 1, "both audiences");
+        let standard = project("T", &c, Level::Standard, Audience::Student);
+        assert!(standard.blocks[1].glosses.is_empty());
+        assert!(!serde_json::to_string(&standard)
+            .unwrap()
+            .contains("glosses"));
+        assert!(text_units(&basic).iter().all(|u| !u.text.contains("拋棄")));
+        // What 換字 may change.
+        let kinds: Vec<UnitKind> = text_units(&basic).iter().map(|u| u.kind).collect();
+        assert_eq!(kinds[0], UnitKind::Title);
+        assert!(kinds.contains(&UnitKind::KeyWord) && kinds.contains(&UnitKind::Question));
+        assert!(!UnitKind::KeyWord.replaceable() && !UnitKind::WordBank.replaceable());
+        assert!(UnitKind::Question.replaceable() && UnitKind::Option.replaceable());
+        assert!(UnitKind::TableHeading.replaceable());
+        assert!(
+            UnitKind::OrganizerHeading.replaceable() && !UnitKind::OrganizerContent.replaceable()
+        );
     }
 
     #[test]

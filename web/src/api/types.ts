@@ -1558,6 +1558,21 @@ export interface WsBlock {
   practice?: WsPractice;
   /** 這一區需要的圖（最多 2 個；伺服器寫的，存檔時原樣送回）。沒有時沒有這個欄位。 */
   image_slots?: WsImageSlot[];
+  /** 詞彙級別檢查「提供字義」：印在這一區最後的 Glossary，各自標出印在哪些版本。沒有時沒有這個欄位；存檔時原樣送回。 */
+  glosses?: WsGloss[];
+}
+
+/** Glossary 的一筆（詞彙級別檢查「提供字義」） */
+export interface WsGloss {
+  /** 原形，例如 abandon */
+  word: string;
+  /** 詞性（v.、adj.…），可以是 "" */
+  pos: string;
+  meaning_zh: string;
+  /** 第 1 到目標級別以內的簡短英文解釋，可以是 "" */
+  definition_en: string;
+  levels: WsLevel[];
+  origin: WsOrigin;
 }
 
 // ---- 學習單的圖片（docs/API.md「學習單的圖片」）----
@@ -1804,6 +1819,145 @@ export interface WsVocabCheck {
   analysis: VocabularyAnalysis;
   /** analysis 中 position.line（從 1）對應的位置說明 */
   lines: string[];
+  /** 超出目標級別的字與可以怎麼處理；舊的結果沒有（重新分析就有） */
+  words?: WsOverLevelWord[];
+}
+
+export type WsVocabAction = "gloss" | "replace" | "leave";
+
+/** 一個超出目標級別的字（位置在 analysis.above_target 同一個 base） */
+export interface WsOverLevelWord {
+  base: string;
+  level: number;
+  /** 詞彙表印的詞性，例如 "v."、"n./v."；沒有時是 "" */
+  pos: string;
+  count: number;
+  /** 學習單裡的字形（小寫） */
+  forms: string[];
+  /** 換字會改到的次數（題目、選項、作答指示、鷹架…） */
+  replaceable: number;
+  /** 換字不會動的地方與原因 */
+  fixed: string[];
+  /** 課文也有這個字（課文本身不會改） */
+  in_material: boolean;
+  /** 字詞表裡的字（這節課要教的） */
+  key_word: boolean;
+  /** 這個版本已經附上的中文意思 */
+  glossed: string | null;
+  /** 老師之前選了不處理 */
+  kept: boolean;
+  suggested: WsVocabAction;
+  reason: string;
+  contexts: string[];
+}
+
+export interface WsVocabGlossText {
+  pos: string;
+  meaning_zh: string;
+  definition_en: string;
+}
+
+export interface WsVocabWordSuggestion {
+  base: string;
+  /** 寫出這個建議的那一次呼叫 */
+  interaction_id: number | null;
+  gloss: WsVocabGlossText | null;
+  /** 換字：改寫句主要用來代替它的字（提示；一定在目標級別以內） */
+  replacement: string | null;
+  /** 換字：有這個字的句子（WsVocabSuggestions.places 的 id） */
+  places: string[];
+  /** 程式拿掉了什麼（超出級別、改動太大…） */
+  notes: string[];
+}
+
+/** 換字改的是學習單裡的哪一段文字 */
+export interface WsVocabFieldKey {
+  block: string;
+  part:
+    | "title"
+    | "instructions"
+    | "step"
+    | "support"
+    | "prompt"
+    | "option"
+    | "table_heading"
+    | "organizer_title"
+    | "organizer_label"
+    | "hint"
+    | "tier_support";
+  id?: string;
+  index?: number;
+}
+
+/** 換字的一句：改寫前 → 改寫後 */
+export interface WsVocabPlace {
+  /** "p1"、"p2"…（同一次請求裡唯一） */
+  id: string;
+  field: WsVocabFieldKey;
+  /** 「A 活動 · 第 1 題」 */
+  place: string;
+  /** original 在那段文字裡的位置（字元） */
+  start: number;
+  end: number;
+  original: string;
+  /** 這一句要避開的字 */
+  bases: string[];
+  /** 改寫後的句子；沒有通過檢查時是 null */
+  rewritten: string | null;
+  interaction_id: number | null;
+  /** 為什麼沒有可用的改寫 */
+  problem: string | null;
+}
+
+export interface WsVocabSuggestions {
+  action: "gloss" | "replace";
+  status: "shown" | "blocked" | "timeout" | "error" | "disabled";
+  message: string | null;
+  interaction_id: number | null;
+  words: WsVocabWordSuggestion[];
+  /** 只有換字：每一句，依學習單的順序 */
+  places: WsVocabPlace[];
+}
+
+export interface WsVocabWordChoice {
+  base: string;
+  action: WsVocabAction;
+  gloss?: WsVocabGlossText;
+  interaction_id?: number | null;
+  /** 換字：老師看到幾句有改寫（全部套用＝採用，取消了幾句＝修改） */
+  offered?: number;
+}
+
+/** 老師勾選要套用的一句，照畫面上的樣子送出 */
+export interface WsVocabRewrite {
+  field: WsVocabFieldKey;
+  start: number;
+  end: number;
+  original: string;
+  rewritten: string;
+  bases: string[];
+}
+
+export interface WsVocabApplyRequest {
+  /** 這次分析的學習單版本（check.version_no） */
+  base_version_no: number;
+  /** level：只加在分析的版本；all：每個印出這個字的版本 */
+  gloss_scope?: "level" | "all";
+  words: WsVocabWordChoice[];
+  /** 換字：要寫進學習單的句子 */
+  rewrites?: WsVocabRewrite[];
+}
+
+export interface WsVocabApplied {
+  /** 新的學習單版本；只有「不處理」時是 null */
+  version_no: number | null;
+  glossed: string[];
+  /** sentences：改寫了幾句；left：還留著這個字、本來可以換的地方 */
+  replaced: { base: string; sentences: number; left: number }[];
+  left: string[];
+  /** 套用後重新分析的結果 */
+  check: WsVocabCheck;
+  worksheet: WorksheetState;
 }
 
 export type WsExportFormat = "docx" | "pdf";
@@ -2047,6 +2201,8 @@ export interface WsSheetBlock {
   images?: WsSheetImage[];
   /** 這個版本印了簡化文本（調整文本）時，同一區的原文段落（T8）；沒有時沒有這個鍵 */
   original_text?: string[];
+  /** 這個版本的 Glossary（詞彙級別檢查「提供字義」），印在這一區最後；沒有時沒有這個鍵 */
+  glosses?: Array<{ word: string; pos: string; meaning_zh: string; definition_en: string }>;
 }
 
 export interface WsVersionRow {

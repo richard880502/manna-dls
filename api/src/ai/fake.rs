@@ -131,6 +131,13 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
         Some("worksheet_bloom_check") => {
             crate::worksheet::fake::bloom_check(ctx, req.attempt, &|m| has(req, m))
         }
+        // 詞彙級別檢查：字義與換字 (see `worksheet::vocab_actions::fake`).
+        Some("worksheet_vocab_gloss") => {
+            crate::worksheet::vocab_actions::fake::gloss(ctx, req.attempt, &|m| has(req, m))
+        }
+        Some("worksheet_vocab_replace") => {
+            crate::worksheet::vocab_actions::fake::replace(ctx, req.attempt, &|m| has(req, m))
+        }
         // 逐區修改 (see `worksheet::fake`).
         Some("worksheet_block_revise") => {
             crate::worksheet::fake::block_revise(ctx, req.attempt, &|m| has(req, m))

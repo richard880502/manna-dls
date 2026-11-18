@@ -21,6 +21,7 @@ pub mod suggestions;
 pub mod templates;
 pub mod units;
 pub mod worksheet_revise;
+pub mod worksheet_vocab;
 pub mod worksheets;
 
 use axum::extract::{DefaultBodyLimit, State};
@@ -166,6 +167,15 @@ pub fn api_router() -> Router<AppState> {
             post(worksheets::check_vocabulary),
         )
         .route("/worksheets/{id}/checks", get(worksheets::checks))
+        // 詞彙級別檢查：處理超出級別的字
+        .route(
+            "/worksheets/{id}/checks/{check_id}/suggest",
+            post(worksheet_vocab::suggest),
+        )
+        .route(
+            "/worksheets/{id}/checks/{check_id}/apply",
+            post(worksheet_vocab::apply),
+        )
         .route("/worksheets/{id}/export", get(worksheets::export))
         // 學習單的圖片
         .route("/worksheets/{id}/images", get(worksheets::images_state))
