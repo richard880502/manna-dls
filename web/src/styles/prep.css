@@ -872,21 +872,92 @@
   background: var(--color-paper);
 }
 
-.prep-bottom-row {
+/* The composer: one rounded box holding the text, the mode switch and the send button, the way
+   chat composers look elsewhere. The box carries the border and the focus ring, not the textarea. */
+.prep-composer {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-field-edge);
+  border-radius: var(--radius-mark);
+  background: var(--color-field);
+}
+
+.prep-composer:focus-within {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--color-focus);
+}
+
+.prep-composer[data-disabled] {
+  background: var(--color-paper-2);
+}
+
+.prep-composer textarea {
+  width: 100%;
+  min-height: 3.5rem;
+  max-height: 12rem;
+  padding: var(--space-2xs) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  resize: none;
+}
+
+.prep-composer textarea:focus,
+.prep-composer textarea:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.prep-composer-tools {
+  display: flex;
+  align-items: center;
   gap: var(--space-xs);
 }
 
-.prep-bottom-row textarea {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  max-height: 10rem;
+.prep-composer-tools .prep-bar-mode {
+  margin-bottom: 0;
 }
 
-.prep-bottom-row .primary-button {
+.prep-composer-hint {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.prep-send {
+  display: inline-grid;
   flex: none;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  cursor: pointer;
+}
+
+.prep-send:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.prep-send:active:not(:disabled) {
+  background: var(--color-accent-press);
+}
+
+.prep-send:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.prep-send:disabled {
+  background: var(--color-paper-3);
+  color: var(--color-muted);
+  cursor: not-allowed;
 }
 
 .prep-bottom-status {
