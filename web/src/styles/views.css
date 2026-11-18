@@ -309,6 +309,11 @@
   font-size: var(--text-sm);
 }
 
+/* A failed action is said on its own line in the row it belongs to. */
+.row-tools .error-text {
+  flex-basis: 100%;
+}
+
 .num {
   display: inline-block;
   min-width: 1.6em;
@@ -962,4 +967,15 @@
   .live-log .event-control-buttons {
     margin-top: 0;
   }
+}
+
+/* 我的作品: the type tag that leads a row meta line. */
+.mywork-tag {
+  display: inline-block;
+  margin-right: var(--space-xs);
+  padding: 0 var(--space-xs);
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-pill);
+  color: var(--color-ink-2);
+  font-weight: var(--weight-strong);
 }

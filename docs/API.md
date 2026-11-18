@@ -543,7 +543,7 @@ interface LessonDetail { /* 原欄位… */ class_profile_source: ClassProfileSo
 - **班級是情境，不是欄位**：從班級進入單元或課例時，那一班就是這次的班級，只在麵包屑出現一次，頁面上沒有切換班級的欄位；存在瀏覽器的 sessionStorage（`manna.currentClass`）。從備課庫進入時清除；單元只有一個班級取用時自動視為該班。帶 `class_id` 的呼叫（課例、建議、CoRe 協助、教材候選）都用這個班級。
 - **班級只問一次**：從首頁或班級頁按「開始上課」直接帶該班的 `class_id`。只有從備課庫進到課例、而單元有多個班級取用時，按「開始上課」才跳出「這節課在哪一班上？」對話框（預設選這節課正在上的班，其次是還沒上過這一節的班）。單元沒有班級取用時照舊建立沒有班級的上課紀錄。伺服器不接受「多個班級取用卻不指定班級」（409），所以對話框沒有「不記在任何班級」的選項。
 - **上課紀錄** `/record`：所有上課紀錄依班級分組（含沒有班級的），只供補寫與回顧；不再從這裡開始上課。上課畫面與課後補寫頁顯示班級。
-- 已移除的頁面（`/reflect`、`/share`、`/profile`、`/community`）一律導回首頁；`/worksheets` 是「學習單產生器開發中」的說明頁，沒有任何功能。
+- 已移除的頁面（`/reflect`、`/share`、`/profile`、`/community`）一律導回首頁；`/worksheets`（清單）轉到 `/prep`「我的作品」。
 
 ---
 
@@ -1383,7 +1383,7 @@ interface WsGloss { word: string; pos: string; meaning_zh: string; definition_en
 
 ## 前端
 
-- `/worksheets`：做過的學習單清單＋「直接做一份」（貼上教材）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
+- `/prep`「我的作品」：一份清單，依 `updated_at` 新到舊，含每一次備課對話（連到 `/prep/:id`）和不屬於任何備課對話的獨立學習單（`prep_session_id` 為空，連到 `/worksheets/:id`，可刪除）；屬於備課對話的學習單不另列。上方篩選晶片「全部／學習單／課堂活動／問 Manna」（單選，記在 `?type=worksheet|activity|ask`；學習單包含 kind 為 worksheet、comprehension、tiered、kit、assessment、revise 的備課對話與獨立學習單）。`/worksheets`（清單）轉到 `/prep`；已沒有「直接做一份」的表單，新的學習單一律從首頁的備課開始（`POST /api/worksheets` 仍供課例頁「產生學習單」使用）。`/worksheets/:id`：還沒產生過→設定頁（教材在左、四個區塊在右）；產生過→結果頁（版本分頁、學生版／教師參考版、區塊工具）。`/worksheets/:id/check`：詞彙級別檢查。課例頁的「產生學習單」會建立並開啟一份連結這個課例的學習單。
 - 教材欄是一個可替換的插槽（`materialPane`）：這一版放唯讀的教材檢視；教材庫分支的 `MaterialViewer`（含註記）之後接在同一個位置。
 
 ---
@@ -2025,7 +2025,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ## usage_logs 新事件
 
-`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`、`entry`、`ui_version`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
 
 ## SIOP 自我檢核
 
@@ -2571,6 +2571,10 @@ interface PrepTurn {
 - `template`：`worksheet` 輪次照著做的版型（這一輪開始時對話的版型）與它**現在**的狀態；其他輪次、沒有用版型、或版型已刪除時是 `null`。`status = "extracting"` 時 `worksheet` 一定是 `null`。資料存在 `prep_turns.template_id`（刪除版型時變成 null；0016 之前做的輪次依學習單的 `template_id` 補上）。
 - `prep_session_created` 多 `template_material_id`。按鈕或工具名稱「照我的學習單做」也不算「教師的要求」。
 
+### `entry`（研究紀錄用）
+
+`POST /api/prep-sessions` 可帶 `entry?: "home" | "create"`：哪一頁開始這個對話（首頁的快速框、或 `/create/:tool`）。只寫進 `prep_session_created` 的 `entry`，並固定帶 `ui_version: 2`（導覽改版後的介面）。其他值（別的字串、別的型別）一律忽略，記成 `null`，不是錯誤；舊的客戶端不帶 `entry` 也照常。沒有資料表變動。
+
 ## 照版型產生：每一題的 Bloom 層次
 
 `worksheet_template_section` **第 2 版**（第 1 版保留）：
@@ -2602,7 +2606,7 @@ interface PrepTurn {
 
 以下為**新增或變更**；既有端點只多了選填欄位與回應欄位。Migration `0017_library_areas.sql`。
 
-教材與學習單分開：平台有兩個參考區「教材參考」（知識庫的課綱、詞彙表、歷屆學測／統測英文試題）與「學習單範本」；教師自己上傳的是「我的教材」，自己的學習單範例移到「我的範本」。挑選教材或範本用一個像商店的視窗：搜尋框、有數量的分類籤、篩選籤、卡片格。管理員（`pi`、`kb_manager`）上傳與管理平台的兩個區。
+教材與學習單分開：平台有兩個參考區「平台教材」（知識庫的課綱、詞彙表、歷屆學測／統測英文試題）與「學習單範本」；教師自己上傳的是「我的教材」，自己的學習單範例移到「我的範本」。挑選教材或範本用一個像商店的視窗：搜尋框、有數量的分類籤、篩選籤、卡片格。管理員（`pi`、`kb_manager`）上傳與管理平台的兩個區。
 
 **這一版沒有**：把考卷切成一篇篇文章（OCR）、自動匯入範例、推薦。分類與標籤先放好。
 
@@ -2612,7 +2616,7 @@ interface PrepTurn {
   - `scope`：`personal`（只有擁有者，和以前一樣）｜`platform`（所有教師可讀可用，只有 ManageKnowledge 能改或刪）。
   - `purpose`：`material`（教材）｜`worksheet_sample`（學習單範例，版型的來源）。範例不會出現在教材清單。
   - `category`：平台教材用固定清單（伺服器檢查）：
-    - 教材參考（`purpose = material`）：學測英文、統測英文、課綱、詞彙表、考試說明、其他。
+    - 平台教材（`purpose = material`）：學測英文、統測英文、課綱、詞彙表、考試說明、其他。
     - 範例與範本（`purpose = worksheet_sample`）：字彙、文法句型、閱讀理解、課文講義、自學講義、寫作、聽說、學習反思、其他。
     - 個人的教材通常是空字串。
   - `tags TEXT[]`：自由標籤（例如年度 `114`、`試題`、`參考答案`、`三民`）。每個 ≤20 字、每列最多 12 個；前後空白去掉、重複的去掉（保留第一次的寫法與順序）。超過 → 400。
@@ -2704,7 +2708,7 @@ type TemplateBrowse = BrowsePage<TemplateCard, { categories: Facet[]; tags: Face
 | Method | Path | 請求 | 回應 |
 |---|---|---|---|
 | GET | `/api/admin/library` | `kind=materials\|templates`（預設 materials）、`q`、`category`，另可用瀏覽的 `tag`、`file_type`、`lang`、`sort`、`cursor`、`limit` | `MaterialBrowse` 或 `TemplateBrowse`，卡片多 `uploaded_by`、`size_bytes`（範本另有 `error`）。教材是所有平台教材（不含範例）；範本是所有平台範本（任何狀態） |
-| POST | `/api/admin/library` | multipart：`file`（或 `text`，可配 `title`）、`title?`、`category`（教材參考清單，必填）、`tags?`（逗號分隔，`,`、`，`、`、` 都可以）、`source_note?` | `MaterialCard`（含管理欄位）。平台教材，`purpose = material`；擷取和教師上傳相同 |
+| POST | `/api/admin/library` | multipart：`file`（或 `text`，可配 `title`）、`title?`、`category`（平台教材清單，必填）、`tags?`（逗號分隔，`,`、`，`、`、` 都可以）、`source_note?` | `MaterialCard`（含管理欄位）。平台教材，`purpose = material`；擷取和教師上傳相同 |
 | POST | `/api/admin/library/templates` | multipart：`file`（或 `text`）、`title?`、`category?`（範本清單；空的 = 讀完後建議）、`tags?` | 202 `TemplateCard`（`status: "extracting"`，回應在抽取開始之前讀出）。建立平台範例教材（`purpose = worksheet_sample`）與平台範本，抽版型和 `POST /api/worksheet-templates` 相同 |
 | PATCH | `/api/admin/library/:id` | `{ title?, category?, tags? }`（`tags` 是陣列或逗號分隔字串） | `MaterialCard`。分類依那份教材的用途檢查；標題不可空白 |
 | DELETE | `/api/admin/library/:id` | – | `{ deleted, annotations, lessons }`（同教師刪除，真的刪除）。用它做的版型繼續可用，`source_material` 變成 null |

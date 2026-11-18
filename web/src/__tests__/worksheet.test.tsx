@@ -339,27 +339,6 @@ describe("options: the four blocks of spec §5", () => {
 });
 
 describe("entries", () => {
-  it("direct: paste material on 學習單, create, and land on the options", async () => {
-    const api = mockApi({
-      ...routes(wsState()),
-      "POST /api/worksheets": wsState(),
-    });
-    const user = userEvent.setup();
-    renderApp("/worksheets");
-    expect(await screen.findByText("還沒有學習單。做好的會列在這裡。")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "貼上文字" }));
-    await user.type(screen.getByRole("textbox", { name: /教材標題/ }), "The Umbrella Stand");
-    await user.type(screen.getByRole("textbox", { name: "貼上教材文字" }), P1);
-    await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));
-
-    expect(await screen.findByRole("heading", { name: "做一份學習單", level: 1 })).toBeInTheDocument();
-    expect(api.lastBody("POST", "/api/worksheets")).toEqual({ material: { title: "The Umbrella Stand", text: P1 } });
-    // The material sits beside the options, read-only.
-    const material = within(screen.getByRole("region", { name: "教材" }));
-    expect(material.getByText(P1)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "產生學習單" })).toBeEnabled();
-  });
-
   it("from a lesson: the lesson page creates a linked worksheet; what was carried over can be edited and removed", async () => {
     const fromLesson = wsState({
       lesson: { id: 7, title: "第 1 課：Not only… but also", unit_id: 1, unit_title: "倒裝句單元" },
@@ -491,7 +470,7 @@ describe("result editor", () => {
     expect(projectSheet(content, "standard", "student").blocks[0]?.label).toBe("A");
   });
 
-  it("answers, evidence and teacher notes exist only in 教師參考版", async () => {
+  it("answers, evidence and teacher notes exist only in 教師版", async () => {
     const api = mockApi(routes(generated()));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
@@ -502,7 +481,7 @@ describe("result editor", () => {
     expect(screen.queryByDisplayValue("先確認大意。")).not.toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain("A stranger once helped her.");
 
-    await user.click(toggle.getByRole("radio", { name: "教師參考版" }));
+    await user.click(toggle.getByRole("radio", { name: "教師版" }));
     const answer = screen.getByRole("textbox", { name: "參考答案 2" });
     expect(answer).toHaveValue("A stranger once helped her.");
     expect(screen.getByRole("textbox", { name: "依據 2" })).toHaveValue("A sign said");
@@ -594,24 +573,29 @@ describe("result editor", () => {
     expect(screen.getByDisplayValue("One question I still have:")).toBeInTheDocument();
   });
 
-  it("exports the current tab as DOCX or PDF, student or teacher version", async () => {
+  it("exports the current tab from one 匯出 menu: student or teacher version, Word or PDF", async () => {
     const api = mockApi(routes(generated()));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
-    const area = within(await screen.findByRole("region", { name: "匯出" }));
-    expect(area.getAllByRole("button").map((b) => b.textContent)).toEqual([
-      "學生版 DOCX",
-      "學生版 PDF",
-      "教師參考版 DOCX",
-      "教師參考版 PDF",
-    ]);
+    const button = await screen.findByRole("button", { name: /匯出/ });
+    expect(button).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.queryByRole("button", { name: "學生版 DOCX" })).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("tablist", { name: "版本" })).getByRole("tab", { name: "一般版" }));
-    await user.click(area.getByRole("button", { name: "教師參考版 PDF" }));
+    await user.click(button);
+    const menu = within(screen.getByRole("menu"));
+    expect(menu.getAllByRole("menuitem").map((b) => b.textContent)).toEqual([
+      "學生版 Word",
+      "學生版 PDF",
+      "教師版 Word",
+      "教師版 PDF",
+    ]);
+    expect(screen.getByRole("menu")).toHaveTextContent("匯出：一般版");
+    await user.click(menu.getByRole("menuitem", { name: "教師版 PDF" }));
     await waitFor(() => expect(api.callsTo("GET", `${WS}/export`)).toHaveLength(1));
     const url = api.callsTo("GET", `${WS}/export`)[0]!.url;
     expect(new URLSearchParams(url.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");
     // The mock has no file to give: the failure is said, not swallowed.
-    expect(await area.findByRole("alert")).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
   it("never writes to the lesson by itself: sync-back needs the preview and the confirm button", async () => {

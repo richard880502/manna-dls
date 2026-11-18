@@ -1,6 +1,6 @@
 // 備課對話 (prep sessions): the home page's quick box (Bloom contract, Addendum 1) with its keyword
 // chips, 附上文章 and its dialogs, the conversation page with a card per turn kind, the bottom bar,
-// polling, 工作區 (/prep), and where a session sits in the sidebar.
+// polling, and where a session sits in the sidebar.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -354,12 +354,12 @@ const sheetRoute = (call: MockCall) => sheet(new URL(call.url, "http://x").searc
 
 describe("首頁 (the quick box, the tools, the latest sessions)", () => {
   const box = () => screen.getByRole("textbox", { name: "給 Manna 的要求" });
-  const chips = () => within(screen.getByRole("group", { name: "要做什麼" }));
+  const chips = () => within(screen.getByRole("radiogroup", { name: "要做什麼" }));
   const pressed = () =>
     chips()
-      .getAllByRole("button")
-      .filter((b) => b.getAttribute("aria-pressed") === "true")
-      .map((b) => b.textContent);
+      .getAllByRole("radio")
+      .filter((b) => b.getAttribute("aria-checked") === "true")
+      .map((b) => b.querySelector(".tool-card-title")?.textContent);
 
   /** 附上文章 → 從教材挑選 → 選用, so the material shows as a chip in the box. */
   async function attachFromLibrary(user: ReturnType<typeof userEvent.setup>) {
@@ -383,7 +383,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const user = userEvent.setup();
     const { router } = renderApp("/");
     expect(await screen.findByRole("heading", { name: HOME, level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("附上一篇文章或教材，選要做什麼，Manna 依 Bloom 認知層次出題。")).toBeInTheDocument();
+    expect(screen.getByText("附上一篇文章或教材，選要做什麼，Manna 幫你做出來。")).toBeInTheDocument();
     expect(box()).toHaveAttribute("placeholder", "例如：B1 程度、8 題閱讀理解，記憶到評鑑都要有");
     expect(box()).toHaveAttribute("rows", "2");
 
@@ -393,6 +393,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await user.type(box(), "B1 程度，記憶到評鑑都要有{Enter}");
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
+      entry: "home",
       kind: "comprehension",
       request: "B1 程度，記憶到評鑑都要有",
       material_id: 5,
@@ -423,7 +424,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(pressed()).toEqual([]);
     await user.click(screen.getByRole("button", { name: "送出" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "ask", request: "怎麼教倒裝句比較不無聊？" });
+    expect(api.lastBody("POST", SESSIONS)).toEqual({ entry: "home", kind: "ask", request: "怎麼教倒裝句比較不無聊？" });
   });
 
   it("typed words pick a chip until the teacher picks one herself; the chips are single-select", async () => {
@@ -432,16 +433,19 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const user = userEvent.setup();
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
-    expect(chips().getAllByRole("button").map((b) => b.textContent)).toEqual([
-      "照我的學習單做",
-      "閱讀理解題",
-      "差異化學習單",
-      "課堂活動",
-      "教學套件",
-      "學習單",
+    expect(chips().getAllByRole("radio").map((b) => b.textContent)).toEqual([
+      "照我的學習單做上傳你以前的學習單，Manna 照它的樣式為新課文出題",
+      "閱讀理解題依 Bloom 六個層次出題，附答案與文本依據",
+      "差異化學習單同一篇文章，基礎／一般／進階三個版本",
+      "課堂活動引起動機到統整的一節課流程",
+      "教學套件活動流程＋差異化學習單＋教師版答案，一次下載",
+      "完整學習單完整學習單，可以照你的版型",
     ]);
-    // 照我的學習單做 leads, featured, but it is one of the single-select chips.
-    expect(chips().getByRole("button", { name: "照我的學習單做" })).toHaveClass("output-chip", "is-featured");
+    // One selector, no second list of the tools on the page.
+    expect(screen.queryByRole("region", { name: "Manna 可以幫你做" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "要做什麼" })).not.toBeInTheDocument();
+    // 照我的學習單做 leads, featured, but it is one of the single-select tiles.
+    expect(chips().getByRole("radio", { name: "照我的學習單做" })).toHaveClass("tool-tile", "is-featured");
     expect(pressed()).toEqual([]);
 
     for (const [words, chip] of [
@@ -449,7 +453,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
       ["要分層的題目", "差異化學習單"],
       ["一節課的教案", "課堂活動"],
       ["給我一個套件", "教學套件"],
-      ["一份學習單", "學習單"],
+      ["一份學習單", "完整學習單"],
       ["幫我出題", "閱讀理解題"],
       // 照我的學習單 is not just 學習單.
       ["照我的學習單出一份", "照我的學習單做"],
@@ -464,17 +468,55 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     }
 
     // A click wins over typed words, and only one chip is filled.
-    await user.click(chips().getByRole("button", { name: "教學套件" }));
+    await user.click(chips().getByRole("radio", { name: "教學套件" }));
     expect(pressed()).toEqual(["教學套件"]);
     await user.type(box(), "，要分層");
     expect(pressed()).toEqual(["教學套件"]);
-    await user.click(chips().getByRole("button", { name: "照我的學習單做" }));
+    await user.click(chips().getByRole("radio", { name: "照我的學習單做" }));
     expect(pressed()).toEqual(["照我的學習單做"]);
-    await user.click(chips().getByRole("button", { name: "教學套件" }));
+    await user.click(chips().getByRole("radio", { name: "教學套件" }));
     expect(pressed()).toEqual(["教學套件"]);
-    // Clicking the filled chip clears it; typed words no longer choose.
-    await user.click(chips().getByRole("button", { name: "教學套件" }));
-    expect(pressed()).toEqual([]);
+    // A tile stays chosen when clicked again (a radio does not clear); typed words no longer choose.
+    await user.click(chips().getByRole("radio", { name: "教學套件" }));
+    expect(pressed()).toEqual(["教學套件"]);
+  });
+
+  it("the tiles are one radiogroup: Tab enters on the first, the arrow keys move and choose", async () => {
+    signIn();
+    mockApi(baseRoutes());
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    const radios = chips().getAllByRole("radio");
+    // Nothing chosen: only the first tile is in the tab order.
+    expect(radios.map((r) => r.getAttribute("tabindex"))).toEqual(["0", "-1", "-1", "-1", "-1", "-1"]);
+    radios[0]!.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(radios[1]).toHaveFocus();
+    expect(pressed()).toEqual(["閱讀理解題"]);
+    expect(radios.map((r) => r.getAttribute("tabindex"))).toEqual(["-1", "0", "-1", "-1", "-1", "-1"]);
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    // It wraps round to the last tile.
+    expect(radios[5]).toHaveFocus();
+    expect(radios[5]).toHaveAttribute("aria-checked", "true");
+    expect(radios[1]).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("更多設定 goes to the full form for the chosen tool, with the attached material", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), "GET /api/materials": library(), "GET /api/browse/materials": browse() });
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    // Without a tool there is nothing to go to.
+    expect(screen.queryByRole("link", { name: /更多設定/ })).not.toBeInTheDocument();
+    await user.click(chips().getByRole("radio", { name: "課堂活動" }));
+    expect(screen.getByRole("link", { name: "更多設定（班級、題數、Bloom、題型）" })).toHaveAttribute("href", "/create/activity");
+    await attachFromLibrary(user);
+    expect(screen.getByRole("link", { name: /更多設定/ })).toHaveAttribute("href", "/create/activity?material=5");
+    await user.click(chips().getByRole("radio", { name: "照我的學習單做" }));
+    // 照我的學習單做 with only lesson text: the tool's own page (the sample is what its path carries).
+    expect(screen.getByRole("link", { name: /更多設定/ })).toHaveAttribute("href", "/create/mimic?material=5");
   });
 
   it("an output without a material says 先附上文章或教材 next to 附上文章 and sends nothing", async () => {
@@ -490,7 +532,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const { router } = renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
 
-    await user.click(chips().getByRole("button", { name: "學習單" }));
+    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
     await user.click(screen.getByRole("button", { name: "送出" }));
     const toolbar = screen.getByRole("button", { name: "附上文章" }).closest(".prompt-toolbar") as HTMLElement;
     expect(within(toolbar).getByRole("alert")).toHaveTextContent("先附上文章或教材");
@@ -501,7 +543,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     // Nothing typed: the chip's label is the request.
     await user.click(screen.getByRole("button", { name: "送出" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "worksheet", request: "學習單", material_id: 5 });
+    expect(api.lastBody("POST", SESSIONS)).toEqual({ entry: "home", kind: "worksheet", request: "學習單", material_id: 5 });
   });
 
   it("貼上文字 opens a dialog with a title and the text; the pasted material shows as a chip and goes along", async () => {
@@ -524,10 +566,11 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await user.click(dialog.getByRole("button", { name: "附上" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    await user.click(chips().getByRole("button", { name: "課堂活動" }));
+    await user.click(chips().getByRole("radio", { name: "課堂活動" }));
     await user.click(screen.getByRole("button", { name: "送出" }));
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
+      entry: "home",
       kind: "activity",
       request: "課堂活動",
       material: { title: "Umbrella", text: "Mrs. Lin put a stand outside." },
@@ -600,16 +643,6 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(screen.getAllByText(/請不要上傳學生作業/)).toHaveLength(1);
     expect(dialog.getByText(/請不要上傳學生作業/)).toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "關閉" }));
-
-    const tools = within(screen.getByRole("region", { name: "Manna 可以幫你做" }));
-    expect(tools.getAllByRole("link").map((a) => [a.getAttribute("href"), a.textContent])).toEqual([
-      ["/create/mimic", "照我的學習單做上傳你以前的學習單，Manna 照它的樣式為新課文出題"],
-      ["/create/comprehension", "閱讀理解題依 Bloom 六個層次出題，附答案與文本依據"],
-      ["/create/tiered", "差異化學習單同一篇文章，基礎／一般／進階三個版本"],
-      ["/create/activity", "課堂活動引起動機到統整的一節課流程"],
-      ["/create/kit", "教學套件活動流程＋差異化學習單＋教師版答案，一次下載"],
-      ["/create/worksheet", "完整學習單完整學習單，可以照你的版型"],
-    ]);
 
     const recent = within(await screen.findByRole("region", { name: "最近的備課" }));
     expect(recent.getAllByRole("link").filter((a) => a.textContent?.startsWith("備課"))).toHaveLength(5);
@@ -689,10 +722,28 @@ describe("備課對話 (session page)", () => {
     expect(within(blockB).getByRole("button", { name: "複製區塊 B 活動" })).toBeInTheDocument();
     await user.click(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/ai/62/decision")).toEqual({ decision: "skip", thumbs: "up" }));
-    expect(screen.getByRole("link", { name: "開啟編輯器" })).toHaveAttribute("href", "/worksheets/11");
+    expect(screen.getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
+    expect(screen.queryByRole("link", { name: "開啟編輯器" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "詞彙檢查" })).toHaveAttribute("href", "/worksheets/11/check");
-    expect(screen.getByRole("button", { name: "匯出 DOCX" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "匯出 PDF" })).toBeEnabled();
+    // One 匯出 menu, not two look-alike links; the file is named in the menu, whichever version is shown.
+    expect(screen.queryByRole("button", { name: "匯出 DOCX" })).not.toBeInTheDocument();
+    const exportButton = screen.getByRole("button", { name: /匯出/ });
+    expect(exportButton).toBeEnabled();
+    expect(exportButton).toHaveAttribute("aria-haspopup", "menu");
+    await user.click(exportButton);
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      "學生版 Word",
+      "學生版 PDF",
+      "教師版 Word",
+      "教師版 PDF",
+    ]);
+    // The student version is shown, and 教師版 PDF still asks for the teacher file of this level.
+    await user.click(screen.getByRole("menuitem", { name: "教師版 PDF" }));
+    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/export")).toHaveLength(1));
+    const exportUrl = api.callsTo("GET", "/api/worksheets/11/export")[0]!.url;
+    expect(new URLSearchParams(exportUrl.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");
+    // (The mock has no file to give: the failure is said.)
+    expect(await screen.findByText("測試未定義：GET /api/worksheets/11/export")).toBeInTheDocument();
     expect(screen.getByLabelText("版本")).toHaveTextContent("第 3 版，共 3 版");
     // 教師版 asks for the teacher projection.
     await user.click(screen.getByRole("radio", { name: "教師版" }));
@@ -931,40 +982,16 @@ describe("備課對話 (session page)", () => {
   });
 });
 
-// ---------------------------------------------------------------- 我的備課 (工作區) and the shell
+// ---------------------------------------------------------------- the shell (the list itself: myWork.test.tsx)
 
-describe("我的備課", () => {
-  it("lists the sessions with material, class, last step and date, and links to all worksheets", async () => {
-    signIn();
-    mockApi({
-      ...baseRoutes(),
-      [`GET ${SESSIONS}`]: {
-        sessions: [
-          summary({ id: 7, class: { id: 3, name: "高一 3 班" }, last_kind: "worksheet" }),
-          summary({ id: 8, title: "環境保護", material: null, topic: "環境保護", last_kind: "resources" }),
-        ],
-      },
-    });
-    renderApp("/prep");
-    expect(await screen.findByRole("heading", { name: "我的備課", level: 1 })).toBeInTheDocument();
-    const rows = within(await screen.findByRole("list", { name: "備課對話" }));
-    expect(rows.getByRole("link", { name: "The Umbrella Stand" })).toHaveAttribute("href", "/prep/7");
-    expect(rows.getByText(/教材：The Umbrella Stand · 高一 3 班 · 做學習單 · 11\/15/)).toBeInTheDocument();
-    expect(rows.getByRole("link", { name: "環境保護" })).toHaveAttribute("href", "/prep/8");
-    expect(rows.getByText(/主題：環境保護 · 找教學資源/)).toBeInTheDocument();
-    expect(within(screen.getByRole("main")).getByRole("link", { name: "所有學習單" })).toHaveAttribute("href", "/worksheets");
-    // In the sidebar it is 工作區.
-    const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
-    expect(nav.getByRole("link", { name: "工作區" })).toHaveAttribute("aria-current", "page");
-  });
-
-  it("a session counts as being inside 工作區 in the sidebar", async () => {
+describe("the shell around a session", () => {
+  it("a session counts as being inside 我的作品 in the sidebar", async () => {
     signIn();
     mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: plan })]) });
     renderApp("/prep/7");
     await screen.findByRole("heading", { name: "The Umbrella Stand", level: 1 });
     const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
-    expect(nav.getByRole("link", { name: "工作區" })).toHaveAttribute("aria-current", "true");
+    expect(nav.getByRole("link", { name: "我的作品" })).toHaveAttribute("aria-current", "true");
     expect(nav.getAllByRole("link").filter((a) => a.getAttribute("aria-current") === "page")).toHaveLength(0);
   });
 

@@ -1,7 +1,6 @@
 // 我的學習單版型 (docs/WORKSHEET_TEMPLATES_CONTRACT.md, "Frontend"; now 學習單範本's 我的範本 tab, library
 // contract): upload a worksheet, the cards with their state, polling while Manna reads), the template page
-// (edit, reorder, toggles, save as a new version, delete, failed and retry), 直接做一份 with a
-// template, and the 照我的版型 select on the worksheet settings view.
+// (edit, reorder, toggles, save as a new version, delete, failed and retry), and the 照我的版型 select on the worksheet settings view.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -504,91 +503,6 @@ const readyAndNot = {
     summary({ id: 13, title: "沒讀成的", status: "failed", version_no: null }),
   ],
 };
-
-describe("學習單: 直接做一份", () => {
-  it("uploads a file by default, follows a template, and creates with material_id and template_id", async () => {
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/worksheets": [],
-      "GET /api/materials": library(),
-      [`GET ${TEMPLATES}`]: readyAndNot,
-      "POST /api/materials/upload": materialDetail({ id: 6, title: "The Umbrella Stand" }),
-      "POST /api/worksheets": wsState(),
-      "GET /api/worksheets/5": wsState(),
-    });
-    const user = userEvent.setup({ applyAccept: false });
-    renderApp("/worksheets");
-    const upload = within(await screen.findByRole("region", { name: "上傳檔案" }));
-    expect(screen.getByRole("button", { name: "上傳檔案" })).toHaveAttribute("aria-pressed", "true");
-    // Only ready templates are offered; none is the default.
-    // The select appears once the template list has loaded.
-    const select = await screen.findByRole("combobox", { name: /照我的版型/ });
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["不使用版型", "L2 學習單版型（第 1 版）"]);
-    expect(select).toHaveValue("");
-
-    await user.upload(await upload.findByLabelText("選擇檔案"), new File(["PK"], "umbrella.docx"));
-    await user.click(upload.getByRole("button", { name: "上傳" }));
-    expect(await screen.findByText(/教材：「The Umbrella Stand」/)).toBeInTheDocument();
-    await user.selectOptions(select, "9");
-    await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));
-    expect(await screen.findByRole("heading", { name: "做一份學習單", level: 1 })).toBeInTheDocument();
-    expect(api.lastBody("POST", "/api/worksheets")).toEqual({ material_id: 6, template_id: 9 });
-  });
-
-  it("picks from the library without a template", async () => {
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/worksheets": [],
-      "GET /api/materials": library([material({ title: "Umbrella text" }), material({ id: 7, title: "圖片", kind: "image", text_status: "not_applicable" })]),
-      [`GET ${TEMPLATES}`]: readyAndNot,
-      "POST /api/worksheets": wsState(),
-      "GET /api/worksheets/5": wsState(),
-    });
-    const user = userEvent.setup();
-    renderApp("/worksheets");
-    await user.click(await screen.findByRole("button", { name: "從教材庫選" }));
-    const picker = within(await screen.findByRole("region", { name: "從教材庫選" }));
-    expect(picker.queryByRole("button", { name: "選用「圖片」" })).not.toBeInTheDocument();
-    await user.click(await picker.findByRole("button", { name: "選用「Umbrella text」" }));
-    await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));
-    await screen.findByRole("heading", { name: "做一份學習單", level: 1 });
-    expect(api.lastBody("POST", "/api/worksheets")).toEqual({ material_id: 5 });
-  });
-
-  it("pastes text with a template; asks for a material before creating from upload", async () => {
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/worksheets": [],
-      "GET /api/materials": library(),
-      [`GET ${TEMPLATES}`]: readyAndNot,
-      "POST /api/worksheets": wsState(),
-      "GET /api/worksheets/5": wsState(),
-    });
-    const user = userEvent.setup();
-    renderApp("/worksheets");
-    await screen.findByRole("region", { name: "上傳檔案" });
-    await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("請先上傳教材檔案。");
-    expect(api.callsTo("POST", "/api/worksheets")).toHaveLength(0);
-
-    await user.click(screen.getByRole("button", { name: "貼上文字" }));
-    await user.type(screen.getByRole("textbox", { name: "貼上教材文字" }), P1);
-    await user.selectOptions(screen.getByRole("combobox", { name: /照我的版型/ }), "9");
-    await user.click(screen.getByRole("button", { name: "下一步：設定學習單" }));
-    await screen.findByRole("heading", { name: "做一份學習單", level: 1 });
-    expect(api.lastBody("POST", "/api/worksheets")).toEqual({ material: { title: "", text: P1 }, template_id: 9 });
-  });
-
-  it("without templates there is no select, only a pointer to 學習單範本's 我的範本", async () => {
-    mockApi({ ...baseRoutes(), "GET /api/worksheets": [], "GET /api/materials": library() });
-    renderApp("/worksheets");
-    const pointer = await screen.findByText(
-      (_, el) => el?.tagName === "P" && (el.textContent ?? "").includes("到學習單範本上傳一份做過的學習單，就能建立版型"),
-    );
-    expect(within(pointer).getByRole("link", { name: "學習單範本" })).toHaveAttribute("href", "/templates?tab=mine");
-    expect(screen.queryByRole("combobox", { name: /照我的版型/ })).not.toBeInTheDocument();
-  });
-});
 
 // ---------------------------------------------------------------- the worksheet settings view
 

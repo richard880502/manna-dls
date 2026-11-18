@@ -23,12 +23,19 @@
   background: var(--color-field);
 }
 
+/* The quick box is the same rounded composer as the prep session's (.prep-composer): text on top,
+ * 附上 controls bottom-left, a round arrow bottom-right; the box carries the border and focus ring. */
 .compose-card.is-quick {
   margin-top: var(--space-lg);
-  box-shadow: var(--shadow-float);
+  border-color: var(--color-field-edge);
 }
 
-.compose-card:has(.prompt-input:focus-visible) {
+.compose-card.is-quick:focus-within {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--color-focus);
+}
+
+.compose-card:not(.is-quick):has(.prompt-input:focus-visible) {
   border-color: var(--color-accent);
   box-shadow:
     0 0 0 3px var(--color-accent-wash-2),
@@ -144,8 +151,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: var(--control-h);
-  height: var(--control-h);
+  width: 2.5rem;
+  height: 2.5rem;
   margin-left: auto;
   padding: 0;
   border: 0;
@@ -153,6 +160,11 @@
   background: var(--color-accent);
   color: var(--color-accent-ink);
   cursor: pointer;
+}
+
+.send-button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .send-button:disabled {
@@ -270,15 +282,7 @@
   font-weight: var(--weight-strong);
 }
 
-/* ================= output chips (quick box) and 題型 chips: single or multiple choice ================= */
-.output-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-xs);
-  margin-top: var(--space-md);
-}
-
+/* ================= 題型 chips (/create): single or multiple choice ================= */
 .format-chips {
   display: flex;
   flex-wrap: wrap;
@@ -304,20 +308,6 @@
 .output-chip.is-small {
   min-height: var(--control-h-sm);
   padding: 0 var(--space-sm);
-}
-
-/* 照我的學習單做 leads the chips in the teacher's ink, like its tool card; chosen, it fills as the others do. */
-.output-chip.is-featured {
-  gap: var(--space-2xs);
-  border-color: var(--color-accent-rule);
-  background: var(--color-accent-wash);
-  color: var(--color-accent-text);
-}
-
-.output-chip.is-featured .ui-icon {
-  flex: none;
-  width: 1.125rem;
-  height: 1.125rem;
 }
 
 .output-chip[aria-pressed="true"] {
@@ -366,39 +356,6 @@
   line-height: var(--leading-body);
 }
 
-.home-tools {
-  margin-top: var(--space-2xl);
-  padding-top: var(--space-xl);
-  border-top: var(--rule-hair) solid var(--color-rule);
-}
-
-.home-tools h2 {
-  margin-bottom: var(--space-md);
-  font-size: var(--text-lg);
-}
-
-.tool-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
-  gap: var(--space-sm);
-  list-style: none;
-}
-
-.tool-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: var(--space-sm);
-  row-gap: var(--space-3xs);
-  align-content: start;
-  height: 100%;
-  padding: var(--space-md);
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-card);
-  background: var(--color-field);
-  color: var(--color-ink);
-  text-decoration: none;
-}
-
 .tool-card-icon {
   display: grid;
   place-items: center;
@@ -430,23 +387,9 @@
   color: var(--color-ink-2);
 }
 
-/* 照我的學習單做 leads: the whole row, in the teacher's ink. */
-.tool-cards > .is-featured {
-  grid-column: 1 / -1;
-}
-
-.tool-card.is-featured {
-  border-color: var(--color-accent-rule);
-  background: var(--color-accent-wash);
-}
-
 .tool-card-icon.is-mimic {
   background: var(--color-accent);
   color: var(--color-accent-ink);
-}
-
-.tool-card.is-featured .tool-card-blurb {
-  color: var(--color-ink-2);
 }
 
 .tool-card-title {
@@ -460,11 +403,67 @@
   line-height: var(--leading-ui);
 }
 
+/* ---- the tool tiles: one radiogroup under the composer, three across ---- */
+.tool-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}
+
+.tool-tile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-sm);
+  row-gap: var(--space-3xs);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-card);
+  background: var(--color-field);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-tile:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Chosen: the teacher's ink, a clear frame and wash (not colour alone: the frame doubles). */
+.tool-tile[aria-checked="true"] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  background: var(--color-accent-wash);
+}
+
+.tool-tile.is-featured:not([aria-checked="true"]) {
+  border-color: var(--color-accent-rule);
+}
+
+.tool-tile:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tool-tile .tool-card-blurb {
+  color: var(--color-ink-2);
+}
+
 @media (hover: hover) {
-  .tool-card:hover {
+  .tool-tile:not(:disabled, [aria-checked="true"]):hover {
     border-color: var(--color-accent-rule);
     box-shadow: var(--shadow-float);
   }
+}
+
+.home-more {
+  margin-top: var(--space-sm);
+  text-align: center;
+  font-size: var(--text-sm);
 }
 
 .home-recent {
@@ -958,25 +957,44 @@
   max-width: var(--measure);
 }
 
-.objective-draft .soft-tag {
-  margin-left: var(--space-xs);
+/* 請 Manna 擬一組 sits on the first label's line. */
+.objective-fields-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--space-md);
 }
 
-.objective-draft-text {
+.objective-fields-head .text-link {
+  font-size: var(--text-sm);
   font-weight: var(--weight-strong);
-  overflow-wrap: anywhere;
+}
+
+/* The drafts under the two fields: Manna's gold, a panel of the card rather than a card of its own. */
+.objective-drafts.is-embedded {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md) var(--space-md);
+  border: var(--rule-hair) solid var(--color-manna-rule);
+  border-radius: var(--radius-card);
+}
+
+.objective-drafts.is-embedded h2 {
+  font-size: var(--text-md);
+}
+
+/* Manna's line in a box the teacher can write in: the gold is the well; the field keeps the
+ * field edge (a gold edge is 1.7:1 on the wash, below the 3:1 a field's boundary needs). */
+.objective-draft textarea {
+  width: 100%;
+  margin-top: var(--space-xs);
+  resize: vertical;
 }
 
 .objective-draft-zh {
   margin-top: var(--space-2xs);
   color: var(--color-ink-2);
   font-size: var(--text-sm);
-}
-
-.objective-draft-edit textarea {
-  width: 100%;
-  margin-top: var(--space-xs);
-  resize: vertical;
 }
 
 .objective-drafts-actions {

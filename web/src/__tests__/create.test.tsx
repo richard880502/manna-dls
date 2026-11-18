@@ -153,9 +153,9 @@ describe("建立: the generator", () => {
     const { router } = await open("/create/comprehension");
     expect(heading()).toHaveTextContent("來做一份 閱讀理解題");
     expect(screen.getByText(/Manna 依 Bloom 認知層次出閱讀理解題/)).toBeInTheDocument();
-    // The sidebar marks the tool.
+    // The sidebar has no tool links: 首頁 is the current item while creating.
     const nav = within(screen.getByRole("navigation", { name: "主要導覽" }));
-    expect(nav.getByRole("link", { name: "閱讀理解題" })).toHaveAttribute("aria-current", "page");
+    expect(nav.getByRole("link", { name: "首頁" })).toHaveAttribute("aria-current", "true");
 
     await user.type(screen.getByRole("textbox", { name: "內容目標（選填）" }), "I can explain why bees matter.");
     await user.type(article(), "Bees are busy.");
@@ -336,7 +336,7 @@ describe("建立: the generator", () => {
     await user.click(await screen.findByRole("button", { name: "選用「The Umbrella Stand」" }));
     await user.click(generate());
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ kind: "activity", request: "課堂活動", material_id: 5 });
+    expect(api.lastBody("POST", SESSIONS)).toEqual({ entry: "create", kind: "activity", request: "課堂活動", material_id: 5 });
   });
 
   it("閱讀理解題: objectives, class, Bloom counts, 題型 and the pasted text make the POST body", async () => {
@@ -379,6 +379,7 @@ describe("建立: the generator", () => {
     // The objectives go as objectives only (the request is the tool's label); no draft is asked
     // for when the teacher wrote them.
     expect(api.lastBody("POST", SESSIONS)).toEqual({
+      entry: "create",
       kind: "comprehension",
       request: "閱讀理解題",
       material: { title: "", text: "Bees are busy." },
@@ -445,7 +446,7 @@ describe("建立: the generator", () => {
     await user.click(screen.getByRole("button", { name: "用範例試試" }));
     await user.click(generate());
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
-    expect(api.lastBody("POST", SESSIONS)).toEqual({ ...body, material: { title: "", text: EXEMPLAR_TEXT } });
+    expect(api.lastBody("POST", SESSIONS)).toEqual({ entry: "create", ...body, material: { title: "", text: EXEMPLAR_TEXT } });
   });
 
   it("完整學習單 without templates points to 學習單範本's 我的範本", async () => {

@@ -5,7 +5,7 @@ import { PREVIEW, cardTitle, unusableReason, usableMaterial } from "../component
 import { MaterialViewer } from "../components/material/MaterialViewer";
 
 /**
- * 教材參考 (/reference): the knowledge base's materials (課綱, 詞彙表, past 學測／統測 papers…).
+ * 平台教材 (/reference): the knowledge base's materials (課綱, 詞彙表, past 學測／統測 papers…).
  * The material itself is read only; each card opens in the viewer (where the teacher's own notes,
  * which only she sees, work as on her own materials) and opens a tool with it (用這篇出題 ▾).
  */
@@ -15,7 +15,7 @@ export function ReferencePage() {
   return (
     <section className="library-page" aria-labelledby="reference-heading">
       <div className="page-head">
-        <h1 id="reference-heading">教材參考</h1>
+        <h1 id="reference-heading">平台教材</h1>
         <p className="lead">Manna 知識庫的課綱、詞彙表和歷屆學測、統測英文試題。每位老師都看得到，可以直接拿來出題。</p>
       </div>
       <MaterialBrowser

@@ -10,18 +10,6 @@
   color: var(--color-error);
 }
 
-/* ================= list page ================= */
-.ws-new-form {
-  display: grid;
-  gap: var(--space-xs);
-  max-width: var(--measure);
-  margin-top: var(--space-md);
-}
-
-.ws-new-form .actions {
-  margin-top: var(--space-sm);
-}
-
 /* ================= two columns: material | work ================= */
 .ws-split {
   display: grid;
@@ -741,12 +729,68 @@
   border-top: var(--rule-hair) solid var(--color-rule);
 }
 
-.ws-export h2 {
-  font-size: var(--text-lg);
+.ws-export-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-md) var(--space-lg);
 }
 
-.ws-export .actions {
-  margin-top: var(--space-sm);
+/* 匯出 menu (ExportMenu): a button with a caret and a small popup of the four files. */
+.export-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.export-caret {
+  font-size: 0.85em;
+}
+
+.export-popup {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  /* Above the prep page's sticky composer (--z-sticky), below the sticky nav. */
+  z-index: calc(var(--z-sticky) + 50);
+  display: flex;
+  flex-direction: column;
+  min-width: 11rem;
+  padding: var(--space-xs);
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-field);
+  box-shadow: 0 4px 16px var(--color-scrim);
+}
+
+.export-head,
+.export-foot {
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.export-foot {
+  max-width: 16rem;
+  white-space: normal;
+}
+
+.export-item {
+  display: block;
+  min-height: var(--control-h);
+  padding: 0 var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--color-ink);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.export-item:hover,
+.export-item:focus-visible {
+  background: var(--color-accent-wash);
 }
 
 .ws-filename {

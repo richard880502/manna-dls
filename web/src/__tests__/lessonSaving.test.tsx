@@ -165,7 +165,7 @@ describe("leaving the lesson page with unsaved changes (R2b)", () => {
     expect(screen.getByRole("textbox", { name: "題目" })).toHaveValue("還沒存的題目");
 
     // Escape stays too.
-    await user.click(navLink("工作區"));
+    await user.click(navLink("我的作品"));
     await screen.findByRole("alertdialog");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();

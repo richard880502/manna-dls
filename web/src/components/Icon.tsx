@@ -32,7 +32,7 @@ const PATHS = {
   paste: "M9 4h6v3H9zM7 5.5H5V21h14V5.5h-2",
   send: "M12 19V5m-6 6 6-6 6 6",
   sparkle: "M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M18 6l-2.5 2.5m-7 7L6 18",
-  // 教材參考: a bound book with a bookmark (the knowledge base's shelf).
+  // 平台教材: a bound book with a bookmark (the knowledge base's shelf).
   reference: "M5 5.5A2.5 2.5 0 0 1 7.5 3H19v14.5H7.5A2.5 2.5 0 0 0 5 20zm0 14.5A1.5 1.5 0 0 0 6.5 21H19M10 3v6.5l2-1.5 2 1.5V3",
   search: "M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20.5 20.5l-5-5",
   preview: "M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zm9.5 2.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z",

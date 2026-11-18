@@ -472,7 +472,7 @@ describe("the 備課對話 preview", () => {
     expect(within(preview).queryByText("AI 生成")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "教師版" }));
-    const teacher = await screen.findByRole("article", { name: "一般版 教師參考版" });
+    const teacher = await screen.findByRole("article", { name: "一般版 教師版" });
     expect(await within(teacher).findByText("請放一張圖：讓學生看出故事發生的城市")).toBeInTheDocument();
     expect(within(teacher).getByText("產圖逾時")).toBeInTheDocument();
     expect(within(teacher).getByText("AI 生成")).toBeInTheDocument();

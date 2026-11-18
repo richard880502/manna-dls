@@ -60,12 +60,12 @@ export function KnowledgePage() {
         <div className="page-head">
           <h1 id="kb-heading">知識庫</h1>
           <p className="lead">
-            這個頁面只開放給計畫主持人和負責知識庫的帳號。需要上傳教材或匯入課綱條目、詞彙表的話，請向計畫主持人申請權限。知識庫的教材在「教材參考」裡看得到。
+            這個頁面只開放給計畫主持人和負責知識庫的帳號。需要上傳教材或匯入課綱條目、詞彙表的話，請向計畫主持人申請權限。知識庫的教材在「平台教材」裡看得到。
           </p>
         </div>
         <p className="after-rows">
           <Link className="text-link" to="/reference">
-            到教材參考
+            到平台教材
           </Link>
         </p>
       </section>

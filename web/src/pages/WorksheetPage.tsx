@@ -47,7 +47,7 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
           <button type="button" className="text-link is-plain" onClick={ws.reload}>
             再試一次
           </button>
-          　<Link to="/worksheets">回學習單</Link>
+          　<Link to="/prep">回我的作品</Link>
         </p>
       </>
     );
@@ -74,7 +74,7 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
             </p>
           ) : null}
           <p className="crumbs">
-            <Link to="/worksheets">學習單</Link>
+            <Link to="/prep">我的作品</Link>
             {state.lesson && (
               <>
                 {" "}

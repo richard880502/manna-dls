@@ -87,7 +87,7 @@ const TEMPLATE_TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
 ];
 
 /**
- * 從教材挑選 (教材參考 | 我的教材) or 從範本挑選 (平台範本 | 我的範本): the browse UI in a large
+ * 從教材挑選 (平台教材 | 我的教材) or 從範本挑選 (平台範本 | 我的範本): the browse UI in a large
  * dialog (the whole screen on a phone). Choosing a card closes it; 預覽 and 看原檔 read the
  * material here, and Escape there goes back to the list (otherwise it closes the dialog).
  */

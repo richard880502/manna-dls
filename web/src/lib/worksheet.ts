@@ -59,7 +59,7 @@ export const VERSIONS_HEADING = "產生基礎版／一般版／進階版";
 
 export const LEVELS: readonly WsLevel[] = ["basic", "standard", "advanced"];
 export const LEVEL_LABEL: Record<WsLevel, string> = { basic: "基礎版", standard: "一般版", advanced: "進階版" };
-export const AUDIENCE_LABEL: Record<WsAudience, string> = { student: "學生版", teacher: "教師參考版" };
+export const AUDIENCE_LABEL: Record<WsAudience, string> = { student: "學生版", teacher: "教師版" };
 
 // ---------------------------------------------------------------- 差異化學習單 (docs/SIOP_DESIGN_RULES.md 三)
 

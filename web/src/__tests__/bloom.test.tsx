@@ -382,7 +382,7 @@ describe("worksheet editor: Bloom chip, distribution and hint", () => {
     mockApi(routes(generated()));
     const user = userEvent.setup();
     renderApp("/worksheets/5");
-    await user.click(await screen.findByRole("radio", { name: "教師參考版" }));
+    await user.click(await screen.findByRole("radio", { name: "教師版" }));
     expect(within(screen.getByRole("region", { name: "區塊 A" })).getByText("Bloom：記憶 1、理解 1")).toBeInTheDocument();
   });
 });
@@ -680,7 +680,7 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     expect(within(preview).getByText("Why did the neighbors laugh?")).toBeInTheDocument();
     // The student version has no tags.
     expect(preview.querySelector(".bloom-chip")).toBeNull();
-    expect(within(result).getByRole("link", { name: "開啟編輯器" })).toHaveAttribute("href", "/worksheets/11");
+    expect(within(result).getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
 
     // The read-only distribution of the version shown (no buttons).
     const bar = await within(result).findByRole("img", { name: /Bloom 層次分布（一般版）/ });
@@ -688,7 +688,7 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     expect(within(within(result).getByRole("group", { name: "Bloom 層次分布（一般版）" })).queryByRole("button")).toBeNull();
 
     await user.click(within(result).getByRole("radio", { name: "教師版" }));
-    const teacher = await within(result).findByRole("article", { name: /教師參考版/ });
+    const teacher = await within(result).findByRole("article", { name: /教師版/ });
     const blockB = within(teacher).getByRole("region", { name: "區塊 B 活動" });
     expect(within(blockB).getByText("分析")).toHaveAttribute("title", "Bloom：Analyze");
     expect(within(blockB).getByText("Bloom：分析 1")).toBeInTheDocument();

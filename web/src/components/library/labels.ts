@@ -1,4 +1,4 @@
-// 教材參考、我的教材、學習單範本 (library contract, "Frontend: teacher side"): the fixed lists, the
+// 平台教材、我的教材、學習單範本 (library contract, "Frontend: teacher side"): the fixed lists, the
 // filter chips and what a card says. The server validates the lists again; the labels are the
 // contract's, word for word.
 import type {
@@ -12,7 +12,7 @@ import type {
 import { OCR_NOT_YET, ocrOpen } from "../../lib/ocr";
 import type { IconName } from "../Icon";
 
-/** 教材參考's categories (platform materials), in this order. */
+/** 平台教材's categories (platform materials), in this order. */
 export const REFERENCE_CATEGORIES = ["學測英文", "統測英文", "課綱", "詞彙表", "考試說明", "其他"] as const;
 
 /** 學習單範本's categories (worksheet samples and templates), in this order. */
@@ -50,7 +50,7 @@ export const UPLOAD_SAMPLE = "上傳我的學習單";
 export type MaterialArea = MaterialBrowseQuery["area"];
 export type TemplateArea = TemplateBrowseQuery["area"];
 
-export const MATERIAL_AREA_LABEL: Record<MaterialArea, string> = { reference: "教材參考", mine: "我的教材" };
+export const MATERIAL_AREA_LABEL: Record<MaterialArea, string> = { reference: "平台教材", mine: "我的教材" };
 export const TEMPLATE_AREA_LABEL: Record<TemplateArea, string> = { platform: "平台範本", mine: "我的範本" };
 
 /** A filter chip under 「只看：」: its words, its icon and what it sets in the query. */

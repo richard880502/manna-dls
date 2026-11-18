@@ -1,4 +1,4 @@
-// 教材參考、我的教材、學習單範本 (library contract, "Frontend: teacher side"): the sidebar's 資源 and the
+// 平台教材、我的教材、學習單範本 (library contract, "Frontend: teacher side"): the sidebar's 資源 and the
 // old address, each page's browse calls (area, q, category, tags, 只看 filters, sort, cursor), the
 // cards (badges, meta, tags), the empty state, 用這篇出題, the picker (從教材挑選 / 從範本挑選: focus,
 // tabs, preview, Escape), ?material= and ?template= on the create pages, and a 平台範本's page
@@ -208,15 +208,15 @@ const card = (title: string) => within(screen.getByRole("article", { name: title
 
 // ---------------------------------------------------------------- the sidebar and old addresses
 
-describe("資源 in the sidebar", () => {
-  it("lists 教材參考, 我的教材 and 學習單範本 under 資源 instead of 教材庫 and 我的版型", async () => {
+describe("教材與範本 in the sidebar", () => {
+  it("lists 平台教材, 我的教材 and 學習單範本 under 教材與範本 instead of 教材庫 and 我的版型", async () => {
     mockApi(baseRoutes());
     renderApp("/");
     const nav = within(await screen.findByRole("navigation", { name: "主要導覽" }));
-    const resources = within(nav.getByRole("list", { name: "資源" }));
+    const resources = within(nav.getByRole("list", { name: "教材與範本" }));
     expect(resources.getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
-      ["教材參考", "/reference"],
       ["我的教材", "/materials"],
+      ["平台教材", "/reference"],
       ["學習單範本", "/templates"],
     ]);
     expect(nav.queryByRole("link", { name: "教材庫" })).not.toBeInTheDocument();
@@ -234,9 +234,9 @@ describe("資源 in the sidebar", () => {
   });
 });
 
-// ---------------------------------------------------------------- 教材參考
+// ---------------------------------------------------------------- 平台教材
 
-describe("教材參考 (/reference)", () => {
+describe("平台教材 (/reference)", () => {
   it("asks for area=reference, then follows the search, a category, tags, 只看 chips and the sort", async () => {
     const api = mockApi({
       ...baseRoutes(),
@@ -257,7 +257,7 @@ describe("教材參考 (/reference)", () => {
     });
     const user = userEvent.setup();
     renderApp("/reference");
-    expect(await screen.findByRole("heading", { name: "教材參考", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "平台教材", level: 1 })).toBeInTheDocument();
     await screen.findByRole("article", { name: paper.title });
     expect(browseCalls(api, MATERIALS)).toEqual([{ area: "reference" }]);
     expect(screen.getByText("共 13 份")).toBeInTheDocument();
@@ -267,7 +267,7 @@ describe("教材參考 (/reference)", () => {
     expect(chips.getAllByRole("button").map((b) => b.textContent)).toEqual(["全部 13", "學測英文 12", "課綱 1"]);
     expect(chips.getByRole("button", { name: "全部 13" })).toHaveAttribute("aria-pressed", "true");
 
-    await user.type(screen.getByRole("searchbox", { name: "搜尋教材參考" }), "bees");
+    await user.type(screen.getByRole("searchbox", { name: "搜尋平台教材" }), "bees");
     await waitFor(() => expect(lastBrowse(api, MATERIALS)).toEqual({ area: "reference", q: "bees" }));
 
     await user.click(chips.getByRole("button", { name: "學測英文 12" }));
@@ -364,11 +364,11 @@ describe("教材參考 (/reference)", () => {
     const user = userEvent.setup();
     renderApp("/reference");
     await screen.findByRole("article", { name: paper.title });
-    await user.type(screen.getByRole("searchbox", { name: "搜尋教材參考" }), "zzz{Enter}");
+    await user.type(screen.getByRole("searchbox", { name: "搜尋平台教材" }), "zzz{Enter}");
     expect(await screen.findByText(/^沒有符合的教材/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "清除條件" }));
     expect(await screen.findByRole("article", { name: paper.title })).toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: "搜尋教材參考" })).toHaveValue("");
+    expect(screen.getByRole("searchbox", { name: "搜尋平台教材" })).toHaveValue("");
     expect(lastBrowse(api, MATERIALS)).toEqual({ area: "reference" });
   });
 
@@ -460,7 +460,7 @@ describe("pre-selection from an address", () => {
 // ---------------------------------------------------------------- the picker
 
 describe("從教材挑選 (the picker)", () => {
-  it("opens with the search focused on 教材參考; 我的教材 asks area=mine; Escape closes and gives focus back", async () => {
+  it("opens with the search focused on 平台教材; 我的教材 asks area=mine; Escape closes and gives focus back", async () => {
     const api = mockApi({
       ...baseRoutes(),
       [`GET ${MATERIALS}`]: (call: MockCall) =>
@@ -471,8 +471,8 @@ describe("從教材挑選 (the picker)", () => {
     const open = await screen.findByRole("button", { name: "從教材挑選" });
     await user.click(open);
     const dialog = within(await screen.findByRole("dialog", { name: "從教材挑選" }));
-    expect(dialog.getByRole("searchbox", { name: "搜尋教材參考" })).toHaveFocus();
-    expect(dialog.getByRole("tab", { name: "教材參考" })).toHaveAttribute("aria-selected", "true");
+    expect(dialog.getByRole("searchbox", { name: "搜尋平台教材" })).toHaveFocus();
+    expect(dialog.getByRole("tab", { name: "平台教材" })).toHaveAttribute("aria-selected", "true");
     await dialog.findByRole("article", { name: paper.title });
 
     await user.click(dialog.getByRole("tab", { name: "我的教材" }));

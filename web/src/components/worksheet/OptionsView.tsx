@@ -606,8 +606,8 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
       <ErrorText message={ws.actionError} />
       <p className="quiet-note">
         {fullWorksheet
-          ? "會同時產生學生版和教師參考版。Exit ticket 預設放在最後，之後可以關掉。"
-          : "會同時產生學生版和教師參考版；教師參考版每一題都標出 Bloom 層次。"}
+          ? "會同時產生學生版和教師版。Exit ticket 預設放在最後，之後可以關掉。"
+          : "會同時產生學生版和教師版；教師版每一題都標出 Bloom 層次。"}
         {state.generated ? "再產生一次會換掉目前的區塊；之前的內容仍在版本紀錄裡。" : ""}
       </p>
     </div>

@@ -1,7 +1,7 @@
 // 教材與範本管理: the fixed lists and what a bulk upload fills in from a file's name and the folders
 // it came from (docs/API.md「Phase 2.9」, "Frontend: admin side"). The server validates again.
 
-/** 知識庫教材 (教材參考) categories; one is required. */
+/** 知識庫教材 (平台教材) categories; one is required. */
 export const MATERIAL_CATEGORIES = ["學測英文", "統測英文", "課綱", "詞彙表", "考試說明", "其他"] as const;
 /** 平台範本 (worksheet sample) categories; optional, "" = 自動判斷 (the server suggests one). */
 export const SAMPLE_CATEGORIES = [
@@ -44,7 +44,7 @@ export const TEMPLATE_EXTENSIONS = ["txt", "docx", "pdf"];
 export const adminLibraryConfig = { pollMs: 3000, concurrency: 2 };
 
 /**
- * Keyword → 教材參考 category, most specific first: a 考試說明 for 學測 is a 考試說明, and a
+ * Keyword → 平台教材 category, most specific first: a 考試說明 for 學測 is a 考試說明, and a
  * 詞彙表 kept in a 學測 folder is a 詞彙表.
  */
 const MATERIAL_CATEGORY_KEYWORDS: Array<[string, string[]]> = [
@@ -94,7 +94,7 @@ export function titleFromPath(path: string): string {
   return base.slice(0, MAX_TITLE_CHARS);
 }
 
-/** The 教材參考 category the path's words point to, or "" when none does. */
+/** The 平台教材 category the path's words point to, or "" when none does. */
 export function guessMaterialCategory(path: string): string {
   const text = segments(path).join("/");
   for (const [category, words] of MATERIAL_CATEGORY_KEYWORDS) {

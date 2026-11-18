@@ -6,7 +6,6 @@ import type {
   WorksheetImages,
   WorksheetState,
   WsAudience,
-  WsExportFormat,
   WsJob,
   WsLevel,
   WsSheet,
@@ -15,7 +14,6 @@ import type {
 import { tally } from "../../lib/bloom";
 import { NOTES_HINT, holdsBlock, placeOfSelection, selectionOnSheet, type SheetSelection } from "../../lib/blockRevise";
 import { clipQuote } from "../../lib/materials";
-import { saveBlob } from "../../lib/download";
 import { ocrPrepLine } from "../../lib/ocr";
 import { READING_SAMPLE_LINE, prepConfig } from "../../lib/prep";
 import { templateTitle } from "../../lib/templates";
@@ -23,6 +21,7 @@ import { LEVEL_LABEL, projectSheet } from "../../lib/worksheet";
 import { ErrorText, Loading } from "../common";
 import { OcrProgress } from "../material/Ocr";
 import { BloomDistribution } from "../worksheet/Bloom";
+import { ExportMenu } from "../worksheet/ExportMenu";
 import { BlockReviseArea, LostNotes, ReviseByNotesButton, useBlockRevise } from "../worksheet/BlockRevise";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { anyOpen } from "../worksheet/SlotPicture";
@@ -89,7 +88,6 @@ export function WorksheetCard({
   const [level, setLevel] = useState<WsLevel | null>(null);
   const [audience, setAudience] = useState<WsAudience>("student");
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState<WsExportFormat | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   // 逐區修改與註記: a new version after 採用 or 復原 is loaded again here.
   const [localKey, setLocalKey] = useState(0);
@@ -242,20 +240,6 @@ export function WorksheetCard({
   }
   if (running) return <ProgressPanel jobs={jobs} />;
 
-  async function exportAs(format: WsExportFormat) {
-    if (wsId === null || !sheet) return;
-    setExporting(format);
-    setExportError(null);
-    try {
-      const { blob, filename } = await api.exportWorksheet(wsId, { format, level: sheet.level, audience });
-      saveBlob(blob, filename);
-    } catch (err) {
-      setExportError(errorMessage(err));
-    } finally {
-      setExporting(null);
-    }
-  }
-
   const levels = state?.content.levels ?? [];
   const current = sheet?.level ?? level;
   const shownLevel = current ?? levels[0] ?? "standard";
@@ -349,35 +333,26 @@ export function WorksheetCard({
             </label>
           ))}
         </div>
-        <Link className="text-link" to={`/worksheets/${wsId}`}>
-          開啟編輯器
-        </Link>
-        <Link className="text-link is-plain" to={`/worksheets/${wsId}/check`}>
-          詞彙檢查
-        </Link>
-        <span className="prep-export">
-          <button
-            type="button"
-            className="text-link is-plain"
-            disabled={exporting !== null || !sheet}
-            onClick={() => void exportAs("docx")}
-          >
-            {exporting === "docx" ? "匯出中…" : "匯出 DOCX"}
-          </button>
-          <button
-            type="button"
-            className="text-link is-plain"
-            disabled={exporting !== null || !sheet}
-            onClick={() => void exportAs("pdf")}
-          >
-            {exporting === "pdf" ? "匯出中…" : "匯出 PDF"}
-          </button>
-        </span>
         {state && (
           <span className="prep-version" aria-label="版本">
             第 {state.version_no} 版，共 {Math.max(state.versions_count, state.version_no)} 版
           </span>
         )}
+        <div className="prep-ws-actions">
+          <Link className="text-link is-plain" to={`/worksheets/${wsId}`}>
+            直接編輯
+          </Link>
+          <Link className="text-link is-plain" to={`/worksheets/${wsId}/check`}>
+            詞彙檢查
+          </Link>
+          <ExportMenu
+            worksheetId={wsId}
+            level={shownLevel}
+            levelLabel={levels.length > 1 ? LEVEL_LABEL[shownLevel] : null}
+            disabled={!sheet}
+            onError={setExportError}
+          />
+        </div>
       </div>
 
       {levels.length > 1 && (

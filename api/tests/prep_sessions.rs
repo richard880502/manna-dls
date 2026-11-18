@@ -168,6 +168,44 @@ async fn a_worksheet_turn_makes_an_ordinary_worksheet_and_waits_for_it() {
 }
 
 #[tokio::test]
+async fn the_usage_log_records_which_page_started_a_session() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-ENTRY", "general").await;
+    let material = json!({ "title": "The Umbrella Stand", "text": passage("") });
+    // An unknown entry is ignored, never an error.
+    for entry in [json!("home"), json!("create"), json!("elsewhere"), json!(7)] {
+        create(
+            &app,
+            &t,
+            json!({ "kind": "comprehension", "material": material, "entry": entry }),
+        )
+        .await;
+    }
+    // An old client sends no entry at all.
+    create(
+        &app,
+        &t,
+        json!({ "kind": "comprehension", "material": material }),
+    )
+    .await;
+    let logged: Vec<(Value, Value)> = usage(&app, "prep_session_created")
+        .await
+        .iter()
+        .map(|p| (p["entry"].clone(), p["ui_version"].clone()))
+        .collect();
+    assert_eq!(
+        logged,
+        vec![
+            (json!("home"), json!(2)),
+            (json!("create"), json!(2)),
+            (Value::Null, json!(2)),
+            (Value::Null, json!(2)),
+            (Value::Null, json!(2)),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn an_assessment_has_its_own_title_and_settings() {
     let app = test_app!();
     let t = app.teacher("T-PREP-2", "general").await;

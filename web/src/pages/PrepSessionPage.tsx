@@ -155,7 +155,7 @@ function PrepSessionView({ id }: { id: number }) {
       <>
         <ErrorText message={loadError} />
         <p className="after-rows">
-          <Link to="/prep">回我的備課</Link>
+          <Link to="/prep">回我的作品</Link>
         </p>
       </>
     );
@@ -374,7 +374,7 @@ function PrepSessionView({ id }: { id: number }) {
     <div className={`prep-session${viewing !== null ? " with-viewer" : ""}`}>
       <div className="page-head prep-head">
         <p className="crumbs">
-          <Link to="/prep">我的備課</Link>
+          <Link to="/prep">我的作品</Link>
         </p>
         {renaming === null ? (
           <div className="prep-title-row">

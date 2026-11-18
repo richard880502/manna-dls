@@ -1,6 +1,6 @@
 // 內容目標與語言目標 (docs/SIOP_DESIGN_RULES.md G1–G3; docs/API.md「SIOP 目標」): the two optional
 // fields of every generator and Manna's drafts when the teacher leaves both empty. The teacher's
-// choice on every draft — 採用、修改、改寫 — is recorded with POST /api/ai/:id/decision.
+// choice on every draft — left (adopt), edited (revise) or cleared (reject) — is recorded with POST /api/ai/:id/decision.
 import type {
   DecisionRequest,
   WsObjective,
@@ -15,7 +15,7 @@ export const CONTENT_OBJECTIVE_LABEL = "內容目標（選填）";
 export const LANGUAGE_OBJECTIVE_LABEL = "語言目標（選填）";
 export const CONTENT_OBJECTIVE_PLACEHOLDER = "例如：I can explain how the writer uses examples to support the main idea.";
 export const LANGUAGE_OBJECTIVE_PLACEHOLDER = "例如：I can underline signal words like for example and such as.";
-export const OBJECTIVES_HINT = "一行一項，各寫一項就好。兩格都空著，按「產生」時 Manna 會先依文章草擬，你可以採用、修改或改寫。";
+export const OBJECTIVES_HINT = "一行一項，各寫一項就好。兩格都空著，按「產生」時 Manna 會先依文章擬一組，讓你看過再產生。";
 
 export const OBJECTIVE_KIND_LABEL: Record<ObjectiveType, string> = { content: "內容目標", language: "語言目標" };
 
@@ -30,11 +30,15 @@ export const CATEGORY_LABEL: Record<ObjectiveCategory, string> = {
 /** The panel's words (fixed). */
 export const DRAFTS_HEADING = "Manna 先幫你草擬目標";
 export const DRAFTING_LINE = "Manna 正在依文章草擬內容目標與語言目標，並逐項檢查…";
-export const DRAFTS_LEAD = "你沒有寫目標，Manna 依文章先擬了一組，都通過了 SIOP 的檢查。每一項可以採用、修改或改寫；沒選的視為採用。";
-export const USE_ALL = "全部採用並產生";
-export const USE_THESE = "用這些目標產生";
+export const DRAFTS_LEAD = "Manna 依文章擬了一組，都通過了 SIOP 的檢查。直接用，或在框裡改；清空那一項就不放。";
+export const DRAFTS_READY_LINE = "Manna 擬了一組目標，看一下再產生。";
+export const DRAFTS_READY_FILL_LINE = "Manna 擬了一組目標，看一下再填入。";
+export const USE_DRAFTS = "用這組目標產生";
+export const USE_DRAFTS_FILL = "用這組目標";
 export const SKIP_DRAFTS = "不用目標，直接產生";
+export const SKIP_DRAFTS_FILL = "不用目標";
 export const ANOTHER_SET = "換一組";
+export const ASK_MANNA = "請 Manna 擬一組";
 export const DRAFT_FAILED = "Manna 這次沒有草擬出目標。你可以自己寫，或直接產生。";
 
 /** What the teacher chose for one draft, before it is sent. */
@@ -45,11 +49,15 @@ export type DraftChoice =
   /** 改寫: her own objective instead (empty: none in its place). */
   | { decision: "rewrite"; text: string };
 
-export const CHOICE_LABEL: Record<DraftChoice["decision"], string> = {
-  adopt: "已採用",
-  revise: "已修改",
-  rewrite: "已改寫",
-};
+/**
+ * What the line left in a draft's box says: unchanged is an adoption, changed a revision, and
+ * cleared a draft turned down with nothing in its place.
+ */
+export function choiceFor(draft: ObjectiveDraft, text: string): DraftChoice {
+  const t = text.trim();
+  if (t === draft.text.trim()) return { decision: "adopt" };
+  return t === "" ? { decision: "rewrite", text: "" } : { decision: "revise", text: t };
+}
 
 /** A field's objectives: one per line, blank lines dropped. */
 export const objectiveLines = (field: string): string[] =>

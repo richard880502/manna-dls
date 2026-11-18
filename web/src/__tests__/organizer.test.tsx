@@ -346,8 +346,8 @@ describe("organizers in the worksheet editor", () => {
     });
 
     // The teacher view edits the answers.
-    await user.click(screen.getByRole("radio", { name: "教師參考版" }));
-    await screen.findByRole("article", { name: "一般版 教師參考版" });
+    await user.click(screen.getByRole("radio", { name: "教師版" }));
+    await screen.findByRole("article", { name: "一般版 教師版" });
     expect(screen.getByRole("textbox", { name: "參考答案 3-2-1" })).toHaveValue("Key 1.0");
   });
 
