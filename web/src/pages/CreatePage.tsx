@@ -83,6 +83,9 @@ export function summaryLine(total: number, counts: BloomCounts): string {
  * adopts, edits or rewrites each draft (or all at once, or none) and the generation goes on with
  * them; her choices are recorded as decisions on the draft.
  */
+/** What the summary says while the drafted objectives still wait for a choice (產生 is off until then). */
+const DRAFTS_PENDING = "請先在上方選好目標";
+
 function Generator({ tool }: { tool: Tool }) {
   const ids = useId();
   const navigate = useNavigate();
@@ -348,11 +351,13 @@ function Generator({ tool }: { tool: Tool }) {
     }
   }
 
-  const summary = mimic
+  const baseSummary = mimic
     ? [sample ? styleLine(sampleName(sample)) : null, needed].filter(Boolean).join(" · ")
     : fields.bloom
       ? summaryLine(total, counts)
       : `${TOOL_NAME[tool]} · ${TOOL_BLURB[tool]}`;
+  // 產生 is off while Manna's drafted objectives wait for a choice: say so, instead of a silent grey button.
+  const summary = drafts.state ? `${baseSummary} · ${DRAFTS_PENDING}` : baseSummary;
 
   // Writing her own objectives closes Manna's drafts.
   const objectiveField = (
@@ -661,7 +666,7 @@ function Generator({ tool }: { tool: Tool }) {
           type="button"
           className="primary-button"
           disabled={busy || totalOff || needed !== null || drafts.state !== null}
-          aria-describedby={needed ? `${ids}-summary` : ocrBusy ? `${ids}-ocr` : undefined}
+          aria-describedby={needed || drafts.state ? `${ids}-summary` : ocrBusy ? `${ids}-ocr` : undefined}
           onClick={() => void generate()}
         >
           {busy ? "產生中…" : "產生"}

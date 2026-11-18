@@ -164,6 +164,8 @@ describe("建立: 內容目標與語言目標", () => {
     // Nothing is made yet; 產生 waits for the panel.
     expect(api.callsTo("POST", SESSIONS)).toHaveLength(0);
     expect(generate()).toBeDisabled();
+    // and says why, instead of leaving a silent grey button.
+    expect(generate()).toHaveAccessibleDescription(/請先在上方選好目標/);
 
     await user.click(drafts.getByRole("button", { name: "全部採用並產生" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));

@@ -983,3 +983,8 @@
   align-items: center;
   margin-top: var(--space-md);
 }
+
+/* The 理解 segment is the deep blue of the legend dot; its count needs light ink to stay readable. */
+.bloom-bar .bloom-seg.is-understand {
+  color: var(--color-accent-ink);
+}
