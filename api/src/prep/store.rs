@@ -765,18 +765,57 @@ fn siop_step(r: &TurnRow, check: Option<&SiopCheck>) -> Option<Step> {
     Some(step)
 }
 
-/// A turn's steps: the ones it runs itself (`prep_turns.progress`), its worksheet's first run
-/// (a later regeneration of that worksheet is the worksheet's own), the sample a template turn
-/// waits for, and its SIOP 自我檢核. A turn that failed says where. `None` when there is
-/// nothing to show from: 找教學資源、直接問 AI, and turns or worksheets made before progress
-/// was kept.
-async fn turn_progress(
-    state: &AppState,
+/// How long after a turn ends its progress is still returned: long enough for a page that
+/// watched the run to see how it ended (all done for a moment, or the failed step) on the
+/// next poll or two.
+const PROGRESS_AFTER_SECS: i64 = 60;
+
+/// A turn that made a worksheet may still have pictures being drawn after it ended: its
+/// progress is returned until no picture of its run can still be open (the picture jobs' stale
+/// limit: two timeouts and some slack, about eight minutes with the default timeout).
+fn pictures_window_secs(state: &AppState) -> i64 {
+    if state.images.enabled() {
+        (crate::worksheet::images::stale_after(state) as i64).max(PROGRESS_AFTER_SECS)
+    } else {
+        PROGRESS_AFTER_SECS
+    }
+}
+
+/// Whether a turn's progress is worth reading: it runs, its SIOP 自我檢核 runs, or it ended
+/// recently enough for the page to show the end (or for its pictures to be drawn). The page
+/// shows no panel for a run that was already over when it loaded, so every other turn gets
+/// `progress: null` without a query: a long session costs no more per poll than a short one.
+fn wants_progress(
     r: &TurnRow,
-    worksheet: Option<&TurnWorksheet>,
+    check: Option<&SiopCheck>,
+    now: DateTime<Utc>,
+    pictures_window: i64,
+) -> bool {
+    if r.status == STATUS_RUNNING || check.is_some_and(|c| c.status == STATUS_RUNNING) {
+        return true;
+    }
+    let Some(finished) = r.finished_at else {
+        return false;
+    };
+    let window = if r.worksheet_id.is_some() {
+        pictures_window
+    } else {
+        PROGRESS_AFTER_SECS
+    };
+    now.signed_duration_since(finished).num_seconds() <= window
+}
+
+/// A turn's steps: the ones it runs itself (`prep_turns.progress`), its worksheet's first run
+/// (`ws`: read for all the session's turns at once, [`ws_ai::runs_steps`]; a later
+/// regeneration of that worksheet is the worksheet's own), the sample a template turn waits
+/// for, and its SIOP 自我檢核. A turn that failed says where. `None` when there is nothing to
+/// show from: 找教學資源、直接問 AI, and turns or worksheets made before progress was kept.
+fn turn_progress(
+    r: &TurnRow,
+    ws: Option<(Vec<Step>, bool)>,
     ocr: Option<TurnOcr>,
     check: Option<&SiopCheck>,
-) -> AppResult<Option<Progress>> {
+) -> Option<Progress> {
     let kind = r.kind.as_str();
     let running = r.status == STATUS_RUNNING;
     let mut open = running;
@@ -792,28 +831,14 @@ async fn turn_progress(
             }
             s.steps
         });
-    let makes_worksheet = is_worksheet_kind(kind) || kind == KIND_KIT;
-    let ws_steps: Option<Vec<Step>> = match (r.worksheet_id, worksheet) {
-        (Some(id), Some(w)) if makes_worksheet => {
-            match ws_ai::run_steps(state, id, 1, w.running).await? {
-                Some((steps, ws_open)) => {
-                    open |= ws_open;
-                    Some(steps)
-                }
-                None => None,
-            }
-        }
-        _ => None,
-    };
+    let ws_steps: Option<Vec<Step>> = ws.map(|(steps, ws_open)| {
+        open |= ws_open;
+        steps
+    });
     let mut steps: Vec<Step> = match kind {
-        KIND_ACTIVITY | KIND_REVISE => match own {
-            Some(own) => own,
-            None => return Ok(None),
-        },
+        KIND_ACTIVITY | KIND_REVISE => own?,
         KIND_KIT => {
-            let Some(own) = own else {
-                return Ok(None);
-            };
+            let own = own?;
             match ws_steps {
                 Some(ws) => progress::merge(own, ws),
                 // The worksheet could not be made: that is where the kit failed.
@@ -833,22 +858,22 @@ async fn turn_progress(
             match (r.worksheet_id, ws_steps) {
                 (Some(_), Some(ws)) => list.extend(ws),
                 // A worksheet from before progress was kept, or deleted since.
-                (Some(_), None) => return Ok(None),
-                (None, _) if list.is_empty() => return Ok(None),
+                (Some(_), None) => return None,
+                (None, _) if list.is_empty() => return None,
                 (None, _) => {}
             }
             list
         }
-        _ => return Ok(None),
+        _ => return None,
     };
     if selfcheck::is_checked(kind) {
         steps.extend(siop_step(r, check));
     }
     if r.status == STATUS_FAILED {
         let message = r.error.as_deref().unwrap_or("這一步沒有成功。");
-        return Ok(Progress::failed(steps, message));
+        return Progress::failed(steps, message);
     }
-    Ok(Progress::of(steps, open))
+    Progress::of(steps, open)
 }
 
 /// The whole session, brought up to date first.
@@ -858,7 +883,9 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     let summary = summary(&state.db, id).await?;
     let rows = turns(&state.db, id).await?;
     let mut checks = selfcheck::latest_of_session(&state.db, id).await?;
-    let mut out = Vec::with_capacity(rows.len());
+    let now = Utc::now();
+    let pictures_window = pictures_window_secs(state);
+    let mut pending: Vec<(Turn, Option<TurnRow>)> = Vec::with_capacity(rows.len());
     for r in rows {
         let worksheet = match r.worksheet_id {
             Some(ws) => turn_worksheet(state, ws).await?,
@@ -873,15 +900,15 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             _ => None,
         };
         let siop_check = selfcheck::is_checked(&r.kind).then(|| checks.remove(&r.id));
-        let progress = turn_progress(
-            state,
+        // Only the turns whose progress the page can use keep their row for it (below).
+        let keep = wants_progress(
             &r,
-            worksheet.as_ref(),
-            ocr,
             siop_check.as_ref().and_then(Option::as_ref),
+            now,
+            pictures_window,
         )
-        .await?;
-        out.push(Turn {
+        .then(|| r.clone());
+        let turn = Turn {
             id: r.id,
             seq: r.seq,
             kind: r.kind,
@@ -902,8 +929,32 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             phase: ocr.map(|_| "ocr"),
             ocr,
             siop_check,
-            progress,
-        });
+            progress: None,
+        };
+        pending.push((turn, keep));
+    }
+    // The worksheets' first runs, for all those turns in one read.
+    let wanted: Vec<ws_ai::RunRef> = pending
+        .iter()
+        .filter_map(|(t, keep)| {
+            let r = keep.as_ref()?;
+            let w = t.worksheet.as_ref()?;
+            (is_worksheet_kind(&r.kind) || r.kind == KIND_KIT).then_some(ws_ai::RunRef {
+                worksheet_id: w.id,
+                run_no: 1,
+                running: w.running,
+            })
+        })
+        .collect();
+    let mut ws_runs = ws_ai::runs_steps(state, &wanted).await?;
+    let mut out = Vec::with_capacity(pending.len());
+    for (mut turn, keep) in pending {
+        if let Some(r) = keep {
+            let ws = turn.worksheet.as_ref().and_then(|w| ws_runs.remove(&w.id));
+            turn.progress =
+                turn_progress(&r, ws, turn.ocr, turn.siop_check.clone().flatten().as_ref());
+        }
+        out.push(turn);
     }
     let running = out.iter().any(|t| t.status == STATUS_RUNNING);
     // Every suggested kind needs the material.

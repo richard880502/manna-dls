@@ -19,7 +19,7 @@
 //! | `FAKE_BLOCK`             | every step: output with nothing usable                              |
 //! | `FAKE_RUNAWAY`           | every step: call 1 runs to `max_tokens` in whitespace (see `ai::fake`) |
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)          |
-//! | `FAKE_PACED`             | each call waits 150 ms first (handled in `sop::ai`; tests that watch the progress) |
+//! | `FAKE_PACED`             | each call waits 400 ms first (handled in `sop::ai`; tests that watch the progress) |
 //!
 //! `FAKE_WS_SPLICE_ALWAYS` evidence has no verbatim piece of five words, so it is cleared.
 //!

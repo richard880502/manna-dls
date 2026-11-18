@@ -3095,7 +3095,7 @@ interface RunProgress {
 回傳的地方（都是頁面原本就在輪詢的回應）：
 
 - `WorksheetState.progress`（`GET /api/worksheets/:id`、產生與重新產生的 202）與 `GET /api/worksheets/:id/jobs` 的 `progress`：這份學習單**最近一次**產生或單區重新產生的步驟。
-- `PrepTurn.progress`（`GET /api/prep-sessions/:id` 等回傳整個對話的端點）：這一輪自己的步驟、它的學習單第一次產生的步驟、照版型的輪次在等的範本，以及 SIOP 自我檢核。
+- `PrepTurn.progress`（`GET /api/prep-sessions/:id` 等回傳整個對話的端點）：這一輪自己的步驟、它的學習單第一次產生的步驟、照版型的輪次在等的範本，以及 SIOP 自我檢核。**只有頁面還用得到的輪次才有**：還在進行的輪次、SIOP 自我檢核還在跑的輪次、結束不到 60 秒的輪次（頁面看得到結果：全部完成或失敗的那一步），以及做了學習單、結束時間還在圖片工作的逾時上限內（圖片開啟時約 8 分鐘：兩倍 `IMAGE_TIMEOUT_SECS` 加 120 秒）的輪次（配圖可能還在畫）。其他輪次一律 `null`，不為它們查資料庫；需要的那幾輪的學習單步驟與圖片張數各用一個查詢一起讀（`WHERE id = ANY(…)`），所以對話再長，每次輪詢多出的查詢最多兩個。頁面載入時已經結束的產生本來就不顯示進度表。
 - `POST /api/objective-drafts` 多一個選填的 `progress_id`（頁面自己取，8–64 個英數、`-` 或 `_`；格式不對 400）；等待時 `GET /api/objective-drafts/progress/:progress_id` → `{ progress: RunProgress | null }`（只看得到自己的；還沒開始、別人的鍵或結束 15 分鐘後是 `null`）。
 
 `null`：進度功能之前做的學習單與輪次（欄位是 NULL）、還沒產生過的學習單、找教學資源與直接問 AI。頁面這時照舊顯示原本的「Manna 正在…」與工作列表。
@@ -3105,7 +3105,8 @@ interface RunProgress {
 - `worksheets.progress`（JSONB）：`{ run_no, steps, pictures, finished }`。`run_no` 對應 `worksheet_jobs.run_no`；不是最近一次的就不回傳。`pictures` 是這次排進去的 `worksheet_images` id，讀的時候算還在畫的張數（配圖那一步在文字完成後仍可能是 running，頁面繼續輪詢到畫完）。
 - `prep_turns.progress`（JSONB）：`{ steps, finished }`，只有課堂活動、教學套件的活動規劃與修改學習單這三種自己跑的輪次。學習單類的輪次讀它的學習單（只取第一次產生，之後在編輯器裡的重新產生屬於學習單本身）；SIOP 自我檢核讀 `siop_checks`。
 - 草擬學習目標是一個同步請求，進度只放在記憶體（伺服器重啟就沒有，請求本身也一起中斷）。
-- 工作死在伺服器重啟裡（工作被 stale 規則關掉、步驟沒有結束）：讀取時把當時在做的那一步標成 failed（「這次產生中斷了…」或這一輪的錯誤）。
+- 工作死在伺服器重啟裡（工作被 stale 規則關掉、步驟沒有結束）：讀取時把當時在做的那一步標成 failed（「這次產生中斷了…」或這一輪的錯誤）。讀取從不寫資料庫：開著太久（超過圖片工作的 stale 上限）的圖片算畫完了。
+- 寫入：每換一步寫一次，沒有改變就不寫。完整學習單約 12 次（開始 1、讀教材完成 1、四步各開始與完成 8、記下排進去的圖 1、結束 1；修正呼叫的「重試中」每次多 1）；照版型約 7＋區塊數次（每完成一個區塊 1 次，最多 16 個區塊）。配圖進度從 `worksheet_images` 讀，不寫。
 
 ## 各種產出的步驟
 
@@ -3130,4 +3131,4 @@ interface RunProgress {
 
 ## 測試用假模型
 
-教材文字裡放 `FAKE_PACED`：每一次呼叫先等 150 ms（在 `sop::ai::attempt`），測試可以一步一步看到進度（`api/tests/progress.rs`）。
+教材文字裡放 `FAKE_PACED`：每一次呼叫先等 400 ms（在 `sop::ai::attempt`），測試可以一步一步看到進度（`api/tests/progress.rs`）。

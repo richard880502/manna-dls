@@ -1098,7 +1098,7 @@ pub async fn bank_for(state: &AppState, worksheet_id: i64, sheet: &Sheet) -> App
 
 /// Seconds after which an open row that no job of this process holds is reported as failed:
 /// two attempts and some slack.
-fn stale_after(state: &AppState) -> f64 {
+pub(crate) fn stale_after(state: &AppState) -> f64 {
     (state.images.config().timeout_secs * 2 + 120) as f64
 }
 
