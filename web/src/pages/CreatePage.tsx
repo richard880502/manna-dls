@@ -335,6 +335,7 @@ function Generator({ tool }: { tool: Tool }) {
           kind: kindOf(tool),
           // The objectives go as objectives only; the request is the tool's label.
           request: TOOL_CHIP[kindOf(tool)],
+          entry: "create",
           ...material,
           ...(classId !== null ? { class_id: classId } : {}),
           ...(fields.template && templateId !== null ? { template_id: templateId } : {}),

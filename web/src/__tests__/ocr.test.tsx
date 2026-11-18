@@ -274,7 +274,7 @@ describe("用 OCR 重新讀取", () => {
     expect(screen.queryByRole("button", { name: "用 OCR 重新讀取" })).not.toBeInTheDocument();
   });
 
-  it("is offered to a kb_manager on 教材參考's platform material", async () => {
+  it("is offered to a kb_manager on 平台教材's platform material", async () => {
     signIn();
     const platform = read({ id: 31, title: "114 學測英文（掃描）", scope: "platform", text_source: "file" });
     mockApi({

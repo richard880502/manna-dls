@@ -3,17 +3,16 @@ import { Link, useLocation } from "react-router";
 import { api } from "../../api/client";
 import type { PrepSessionSummary } from "../../api/types";
 import { useApp } from "../../context/AppContext";
-import { TOOLS, TOOL_NAME } from "../../lib/create";
 import { can } from "../../lib/permissions";
 import { sessionTitle } from "../../lib/prep";
 import { Icon, type IconName } from "../Icon";
 
 /** How many of the latest prep sessions the sidebar lists. */
-export const RECENT_IN_SIDEBAR = 6;
+export const RECENT_IN_SIDEBAR = 3;
 
 /**
  * Where a link stands relative to the page: "page" on the page itself, "true" on a page inside it
- * (a session inside 工作區, a unit inside 班級與課例), otherwise nothing.
+ * (a session inside 我的作品, a unit inside 班級與課例), otherwise nothing.
  */
 type Current = "page" | "true" | undefined;
 
@@ -66,7 +65,7 @@ function SideLink({
   );
 }
 
-/** A group that folds: 建立 (open by default) and 更多 (folded unless the page is inside it). */
+/** A group that folds: 更多 (folded unless the page is inside it). */
 function SideGroup({
   id,
   icon,
@@ -121,7 +120,6 @@ export function Sidebar({
   const { teacher, logout } = useApp();
   const { pathname } = useLocation();
   const sessions = useRecentSessions(pathname);
-  const [createOpen, setCreateOpen] = useState(true);
   const [moreOpen, setMoreOpen] = useState(() => inMore(pathname));
   // Entering a page inside 更多 opens it, so the current page is visible in the list.
   const [seenPath, setSeenPath] = useState(pathname);
@@ -155,57 +153,20 @@ export function Sidebar({
 
       <nav className="side-nav" aria-label="主要導覽">
         <ul className="side-list">
-          <SideLink to="/" icon="home" label="首頁" current={inside(pathname === "/", false)} />
-          <SideGroup
-            id={`${id}-create`}
-            icon="sparkle"
-            label="建立"
-            open={createOpen}
-            onToggle={() => setCreateOpen((o) => !o)}
-          >
-            {TOOLS.map((t) => (
-              <SideLink
-                key={t}
-                to={`/create/${t}`}
-                icon={t}
-                label={TOOL_NAME[t]}
-                current={inside(pathname === `/create/${t}`, false)}
-              />
-            ))}
-          </SideGroup>
-        </ul>
-
-        <ul className="side-list">
+          {/* 建立 starts on the home page's tiles, so 首頁 is the current item on /create/*. */}
+          <SideLink
+            to="/"
+            icon="home"
+            label="首頁"
+            current={inside(pathname === "/", pathname.startsWith("/create/"))}
+          />
           <SideLink
             to="/prep"
             icon="workspace"
-            label="工作區"
-            current={inside(pathname === "/prep", pathname.startsWith("/prep/"))}
-          />
-          <SideLink
-            to="/worksheets"
-            icon="sheets"
-            label="所有學習單"
-            current={inside(pathname === "/worksheets", pathname.startsWith("/worksheets/"))}
+            label="我的作品"
+            current={inside(pathname === "/prep", pathname.startsWith("/prep/") || pathname.startsWith("/worksheets"))}
           />
         </ul>
-
-        {/* A small label, not a heading: the page's own headings stay the page's. */}
-        <div className="side-section">
-          <p className="side-heading side-label" id={`${id}-resources`}>
-            資源
-          </p>
-          <ul className="side-list" aria-labelledby={`${id}-resources`}>
-            <SideLink to="/reference" icon="reference" label="教材參考" current={inside(pathname === "/reference", false)} />
-            <SideLink to="/materials" icon="library" label="我的教材" current={inside(pathname === "/materials", false)} />
-            <SideLink
-              to="/templates"
-              icon="template"
-              label="學習單範本"
-              current={inside(pathname === "/templates", pathname.startsWith("/templates/"))}
-            />
-          </ul>
-        </div>
 
         {sessions && sessions.length > 0 && (
           <section className="side-recent" aria-labelledby={`${id}-recent`}>
@@ -228,6 +189,23 @@ export function Sidebar({
             </ul>
           </section>
         )}
+
+        {/* A small label, not a heading: the page's own headings stay the page's. */}
+        <div className="side-section">
+          <p className="side-heading side-label" id={`${id}-resources`}>
+            教材與範本
+          </p>
+          <ul className="side-list" aria-labelledby={`${id}-resources`}>
+            <SideLink to="/materials" icon="library" label="我的教材" current={inside(pathname === "/materials", false)} />
+            <SideLink to="/reference" icon="reference" label="平台教材" current={inside(pathname === "/reference", false)} />
+            <SideLink
+              to="/templates"
+              icon="template"
+              label="學習單範本"
+              current={inside(pathname === "/templates", pathname.startsWith("/templates/"))}
+            />
+          </ul>
+        </div>
 
         <ul className="side-list">
           <SideGroup id={`${id}-more`} icon="more" label="更多" open={moreOpen} onToggle={() => setMoreOpen((o) => !o)}>

@@ -4,13 +4,13 @@
 import type { CreatePrepSessionRequest } from "../api/types";
 
 /**
- * The generator's tools, in the sidebar's and the home page's order. 照我的學習單做 (mimic) comes
+ * The generator's tools, in the home page's tile order. 照我的學習單做 (mimic) comes
  * first: it is the teacher's own worksheet as the model, and makes a 完整學習單 (kind worksheet).
  */
 export const TOOLS = ["mimic", "comprehension", "tiered", "activity", "kit", "worksheet"] as const;
 export type Tool = (typeof TOOLS)[number];
 
-/** The tools that are a session kind of their own (the home page's chips follow 照我的學習單做 with these). */
+/** The tools that are a session kind of their own (the home page's tiles follow 照我的學習單做 with these). */
 export const KIND_TOOLS = ["comprehension", "tiered", "activity", "kit", "worksheet"] as const;
 export type KindTool = (typeof KIND_TOOLS)[number];
 
@@ -20,8 +20,9 @@ export const isTool = (value: string | undefined): value is Tool => (TOOLS as re
 export const kindOf = (tool: Tool): KindTool => (tool === "mimic" ? "worksheet" : tool);
 
 /**
- * The contract's chip labels: the home page's chips, and the request text sent when the teacher
- * typed nothing (so the server can tell a bare chip from a real request).
+ * The contract's bare chip labels. Wire values only, never shown: they are the request text sent
+ * when the teacher typed nothing, so the server can tell a bare tool choice from a real request
+ * (the server recognises exactly these; do not rename them). Every visible label is TOOL_NAME.
  */
 export const TOOL_CHIP: Record<KindTool, string> = {
   comprehension: "閱讀理解題",
@@ -32,13 +33,10 @@ export const TOOL_CHIP: Record<KindTool, string> = {
   worksheet: "學習單",
 };
 
-/** The name in the sidebar's 建立 group, on the home page's cards and in the generator's heading. */
+/** The one visible name of a tool: the home page's tiles and the generator's heading. */
 export const TOOL_NAME: Record<Tool, string> = { mimic: "照我的學習單做", ...TOOL_CHIP, worksheet: "完整學習單" };
 
-/** The home quick box's chips, in TOOLS order: 照我的學習單做 (featured) first, then the kinds. */
-export const QUICK_CHIP: Record<Tool, string> = { mimic: TOOL_NAME.mimic, ...TOOL_CHIP };
-
-/** One line per tool: the home page's cards. */
+/** One line per tool: under its name on the home page's tiles. */
 export const TOOL_BLURB: Record<Tool, string> = {
   mimic: "上傳你以前的學習單，Manna 照它的樣式為新課文出題",
   comprehension: "依 Bloom 六個層次出題，附答案與文本依據",
@@ -126,11 +124,11 @@ export const mimicPath = (materialId: number) => `/create/mimic?sample=${materia
 /** Where 照這個範本做 goes: the mimic page with this template (平台範本 or 我的範本) as the sample. */
 export const mimicTemplatePath = (templateId: number) => `/create/mimic?template=${templateId}`;
 
-/** Where 用這篇出題 goes: a tool with this material (教材參考 or 我的教材) in the article slot. */
+/** Where 用這篇出題 goes: a tool with this material (平台教材 or 我的教材) in the article slot. */
 export const toolMaterialPath = (tool: Tool, materialId: number) => `/create/${tool}?material=${materialId}`;
 
 /**
- * Typed words that pick a chip, in the contract's order (the first row that matches wins).
+ * Typed words that pick a tile, in the contract's order (the first row that matches wins).
  * 照我的學習單做 comes first, so 「照我的學習單」 is not just 學習單.
  */
 const KEYWORDS: ReadonlyArray<readonly [Tool, readonly string[]]> = [

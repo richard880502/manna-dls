@@ -123,6 +123,19 @@ pub struct CreateSession {
     /// 出題選項, passed into every worksheet the session makes.
     #[serde(default)]
     pub options: Option<SessionOptions>,
+    /// Which page started the session (`home` or `create`), for the research log only. Anything
+    /// else (another string, another type) is ignored, never an error.
+    #[serde(default)]
+    pub entry: Option<serde_json::Value>,
+}
+
+/// The entries the usage log records; any other value is dropped.
+fn known_entry(entry: Option<&serde_json::Value>) -> Option<&'static str> {
+    match entry.and_then(|e| e.as_str()).map(str::trim) {
+        Some("home") => Some("home"),
+        Some("create") => Some("create"),
+        _ => None,
+    }
 }
 
 /// Options checked with the worksheet settings' rules (400 with their message).
@@ -326,6 +339,7 @@ pub async fn create(
                 "session_id": session.id, "kind": kind, "material_id": session.material_id,
                 "class_id": session.class_id, "template_id": session.template_id,
                 "template_material_id": sample_id,
+                "entry": known_entry(req.entry.as_ref()), "ui_version": 2,
             }),
         )
         .await?;

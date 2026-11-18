@@ -296,7 +296,7 @@ const toggleIn = (list: string[], key: string) => (list.includes(key) ? list.fil
 type MaterialFacets = { categories: FacetCount[]; tags: FacetCount[]; file_types: FacetCount[] };
 
 /**
- * 教材參考 (area=reference) or 我的教材 (area=mine) as a marketplace: search, category chips with
+ * 平台教材 (area=reference) or 我的教材 (area=mine) as a marketplace: search, category chips with
  * counts, 只看 chips, tags, and a grid of cards. The caller gives each card its actions, or draws
  * the cards itself (the 知識庫 gallery: `renderCard`, `layout="wall"`).
  */
@@ -388,7 +388,7 @@ export function MaterialBrowser({
   const sortId = useId();
   return (
     <BrowseFrame
-      searchLabel={labels?.search ?? (area === "reference" ? "搜尋教材參考" : "搜尋我的教材")}
+      searchLabel={labels?.search ?? (area === "reference" ? "搜尋平台教材" : "搜尋我的教材")}
       searchPlaceholder={
         labels?.placeholder ??
         (area === "reference" ? "搜尋標題、內容或標籤，例如：114 學測、閱讀測驗" : "搜尋我的教材的標題、內容或標籤")
@@ -408,7 +408,7 @@ export function MaterialBrowser({
       onReset={reset}
       noMatch={NO_MATERIALS}
       empty={empty}
-      listLabel={labels?.list ?? (area === "reference" ? "教材參考" : "我的教材")}
+      listLabel={labels?.list ?? (area === "reference" ? "平台教材" : "我的教材")}
       layout={layout}
       extra={
         <label className="lib-sort" htmlFor={`${sortId}-sort`}>

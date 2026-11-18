@@ -175,7 +175,7 @@ describe("知識庫：課綱條目與詞彙", () => {
     renderApp("/knowledge");
     expect(await screen.findByRole("heading", { name: "知識庫", level: 1 })).toBeInTheDocument();
     expect(screen.getByText(/只開放給計畫主持人和負責知識庫的帳號/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "到教材參考" })).toHaveAttribute("href", "/reference");
+    expect(screen.getByRole("link", { name: "到平台教材" })).toHaveAttribute("href", "/reference");
     expect(screen.queryByRole("link", { name: "知識庫" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("選擇 CSV 檔案")).not.toBeInTheDocument();
     expect(api.calls.some((c) => c.path.startsWith("/api/admin/"))).toBe(false);

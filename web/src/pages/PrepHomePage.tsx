@@ -31,7 +31,6 @@ import {
   ATTACH_SAMPLE,
   LESSON_TEXT_CHIP_LABEL,
   MATERIAL_REQUIRED,
-  QUICK_CHIP,
   QUICK_NEED_LESSON_TEXT,
   QUICK_NEED_SAMPLE,
   REQUEST_MAX,
@@ -43,6 +42,9 @@ import {
   TOOL_NAME,
   asCreateRequest,
   kindOf,
+  mimicPath,
+  mimicTemplatePath,
+  toolMaterialPath,
   toolFromWords,
   type StartKind,
   type Tool,
@@ -167,22 +169,22 @@ function AttachMenu<W extends AttachWay | SampleWay>({
 type QuickDialog = { slot: "article"; way: AttachWay } | { slot: "sample"; way: SampleWay };
 
 /**
- * The quick box (like Diffit's): one text box, 附上文章 and send. With a material it makes 閱讀理解題
- * unless a chip says otherwise; without one, a question to Manna. Typed words pick a chip until the
+ * The quick box: one composer box (text, 附上 controls, send). With a material it makes 閱讀理解題
+ * unless a tile says otherwise; without one, a question to Manna. Typed words pick a tile until the
  * teacher picks one herself.
  *
- * 照我的學習單做 (the first chip) gives the card two slots, 附上學習單範本 and 附上課文, and sends a
+ * 照我的學習單做 (the first tile) gives the card two slots, 附上學習單範本 and 附上課文, and sends a
  * 完整學習單 in the sample's style, as /create/mimic does. A worksheet put in the article slot under
- * another chip offers 把它當範本, which moves it into the 範本 slot here.
+ * another tile offers 把它當範本, which moves it into the 範本 slot here.
  */
 function QuickBox() {
   const ids = useId();
   const navigate = useNavigate();
   const [text, setText] = useState("");
   const [choice, setChoice] = useState<MaterialChoice | null>(null);
-  /** 照我的學習單做's sample; kept while another chip is chosen, but sent only with it. */
+  /** 照我的學習單做's sample; kept while another tile is chosen, but sent only with it. */
   const [sample, setSample] = useState<Sample | null>(null);
-  /** null: the teacher has not clicked a chip, so typed words choose. */
+  /** null: the teacher has not chosen a tile, so typed words choose. */
   const [clicked, setClicked] = useState<{ tool: Tool | null } | null>(null);
   /** Materials the teacher said to keep as the article (no worksheet notice for them). */
   const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
@@ -204,6 +206,7 @@ function QuickBox() {
   const { triggerRef: articleTrigger } = articleMenu;
   const { triggerRef: sampleTrigger } = sampleMenu;
   const boxRef = useRef<HTMLTextAreaElement>(null);
+  const tileRefs = useRef<Array<HTMLButtonElement | null>>([]);
   useAutoGrow(boxRef, text);
   const backToArticle = useCallback(() => articleTrigger.current, [articleTrigger]);
   const backToSample = useCallback(() => sampleTrigger.current, [sampleTrigger]);
@@ -275,6 +278,7 @@ function QuickBox() {
           ...(material ?? {}),
           ...(mimic && sample ? sampleFields(sample) : {}),
           ...(Object.keys(options).length > 0 ? { options } : {}),
+          entry: "home",
         }),
       );
       navigate(`/prep/${session.id}`);
@@ -291,6 +295,33 @@ function QuickBox() {
     event.preventDefault();
     void send();
   }
+
+  function pickTool(t: Tool) {
+    setClicked({ tool: t });
+    setNeedMaterial(false);
+    setNeedSlots(false);
+  }
+
+  /** Arrow keys move through the tiles and choose as they go (a radiogroup). */
+  function onTileKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+    const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
+    if (!forward && !back) return;
+    event.preventDefault();
+    const next = (index + (forward ? 1 : -1) + TOOLS.length) % TOOLS.length;
+    tileRefs.current[next]?.focus();
+    pickTool(TOOLS[next]!);
+  }
+
+  /** 更多設定: the full form for the chosen tool, with the attached material (or sample) if it has an id. */
+  const fullFormPath = (() => {
+    if (!tool) return null;
+    if (mimic) {
+      if (sample?.kind === "template") return mimicTemplatePath(sample.template.id);
+      if (sample?.kind === "material") return mimicPath(sample.material.id);
+    }
+    return picked ? toolMaterialPath(tool, picked.id) : `/create/${tool}`;
+  })();
 
   function chooseSample(next: Sample) {
     setSample(next);
@@ -415,25 +446,43 @@ function QuickBox() {
         />
       )}
 
-      <div className="output-chips" role="group" aria-label="要做什麼">
-        {TOOLS.map((t) => (
+      <div className="tool-tiles" role="radiogroup" aria-label="要做什麼">
+        {TOOLS.map((t, i) => (
           <button
             key={t}
             type="button"
-            className={`output-chip${t === "mimic" ? " is-featured" : ""}`}
-            aria-pressed={tool === t}
-            disabled={busy}
-            onClick={() => {
-              setClicked({ tool: tool === t ? null : t });
-              setNeedMaterial(false);
-              setNeedSlots(false);
+            role="radio"
+            aria-checked={tool === t}
+            aria-labelledby={`${ids}-${t}-name`}
+            aria-describedby={`${ids}-${t}-blurb`}
+            tabIndex={tool === t || (tool === null && i === 0) ? 0 : -1}
+            ref={(el) => {
+              tileRefs.current[i] = el;
             }}
+            className={`tool-tile${t === "mimic" ? " is-featured" : ""}`}
+            disabled={busy}
+            onClick={() => pickTool(t)}
+            onKeyDown={(e) => onTileKeyDown(e, i)}
           >
-            {t === "mimic" && <Icon name="mimic" />}
-            {QUICK_CHIP[t]}
+            <span className={`tool-card-icon is-${t}`} aria-hidden="true">
+              <Icon name={t} />
+            </span>
+            <span className="tool-card-title" id={`${ids}-${t}-name`}>
+              {TOOL_NAME[t]}
+            </span>
+            <span className="tool-card-blurb" id={`${ids}-${t}-blurb`}>
+              {TOOL_BLURB[t]}
+            </span>
           </button>
         ))}
       </div>
+      {fullFormPath && (
+        <p className="home-more">
+          <Link className="text-link is-plain" to={fullFormPath}>
+            更多設定（班級、題數、Bloom、題型）
+          </Link>
+        </p>
+      )}
       <ErrorText message={error} />
       {dialog === null && <PrivacyReminder />}
 
@@ -486,35 +535,18 @@ function QuickBox() {
 }
 
 /**
- * 首頁: a greeting with the quick box, the tools (each opens its generator; 照我的學習單做 leads,
- * across the whole row), and the latest prep sessions.
+ * 首頁: a greeting with the quick box, the six tools as one radiogroup of tiles under it (the only
+ * place tools are listed; 更多設定 goes to the full form), and the latest prep sessions.
  */
 export function PrepHomePage() {
   return (
     <OncePerPage>
       <div className="home-head">
         <h1>{HOME_HEADING}</h1>
-        <p className="lead">附上一篇文章或教材，選要做什麼，Manna 依 Bloom 認知層次出題。</p>
+        <p className="lead">附上一篇文章或教材，選要做什麼，Manna 幫你做出來。</p>
       </div>
 
       <QuickBox />
-
-      <section className="home-tools" aria-labelledby="home-tools-heading">
-        <h2 id="home-tools-heading">Manna 可以幫你做</h2>
-        <ul className="tool-cards">
-          {TOOLS.map((t) => (
-            <li key={t} className={t === "mimic" ? "is-featured" : undefined}>
-              <Link className={`tool-card${t === "mimic" ? " is-featured" : ""}`} to={`/create/${t}`}>
-                <span className={`tool-card-icon is-${t}`} aria-hidden="true">
-                  <Icon name={t} />
-                </span>
-                <span className="tool-card-title">{TOOL_NAME[t]}</span>
-                <span className="tool-card-blurb">{TOOL_BLURB[t]}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </section>
 
       <RecentSessions />
     </OncePerPage>

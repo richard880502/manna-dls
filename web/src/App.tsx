@@ -87,7 +87,7 @@ export function AppRoutes() {
         <Route path="classes/:classId" element={<ClassPage />} />
         {/* 備課庫 (every unit, to reuse one in another class) is reached from 班級, not the top bar. */}
         <Route path="units" element={<LibraryPage />} />
-        {/* 資源: 教材參考 (the knowledge base), 我的教材, 學習單範本 (平台範本 | 我的範本). */}
+        {/* 資源: 平台教材 (the knowledge base), 我的教材, 學習單範本 (平台範本 | 我的範本). */}
         <Route path="reference" element={<ReferencePage />} />
         {/* /materials#templates (the old 我的版型) goes on to /templates?tab=mine. */}
         <Route path="materials" element={<MaterialsPage />} />
@@ -107,7 +107,7 @@ export function AppRoutes() {
         <Route path="worksheets/:worksheetId/check" element={<WorksheetCheckPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
         <Route path="admin" element={<AdminPage />} />
-        {/* 教材與範本管理: pi and kb_manager seed 教材參考 and the platform 學習單範本. */}
+        {/* 教材與範本管理: pi and kb_manager seed 平台教材 and the platform 學習單範本. */}
         <Route path="admin/library" element={<AdminLibraryPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

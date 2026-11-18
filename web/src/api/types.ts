@@ -2543,6 +2543,8 @@ export interface CreatePrepSessionRequest {
    * 它的版型。同時給 template_id 時以 template_id 為準。
    */
   template_material_id?: number;
+  /** 哪一頁開始的（只寫進研究紀錄；其他值伺服器會忽略） */
+  entry?: "home" | "create";
   /** 帶進這次備課做的每一份學習單（省略＝全部層次、自動題數） */
   options?: {
     bloom?: Array<"remember" | "understand" | "apply" | "analyze" | "evaluate" | "create">;
