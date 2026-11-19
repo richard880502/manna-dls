@@ -6,7 +6,7 @@ import { ErrorText, Loading } from "../components/common";
 import { MaterialBrowser } from "../components/library/BrowsePanel";
 import { MoreMenu, UseMaterialMenu } from "../components/library/Cards";
 import { PREVIEW, cardTitle, unusableReason, usableMaterial } from "../components/library/labels";
-import { Dialog } from "../components/material/AttachDialog";
+import { Dialog } from "../components/Dialog";
 import {
   ADD_WAY_LABEL,
   MaterialAddForm,
@@ -162,7 +162,7 @@ function MyMaterials() {
   /** A scanned upload Manna is still reading (OCR): its progress shows under the notice. */
   const [reading, setReading] = useState<MaterialDetail | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
-  /** The ⋯ button a dialog was opened from: focus goes back there. */
+  /** The button (⋯ or 上傳檔案…) a dialog was opened from: focus goes back there. */
   const opener = useRef<HTMLElement | null>(null);
   const backToOpener = useCallback(() => opener.current, []);
 
@@ -194,11 +194,12 @@ function MyMaterials() {
             key={way}
             type="button"
             className="secondary-button"
-            aria-pressed={adding === way}
+            aria-haspopup="dialog"
             disabled={!library}
-            onClick={() => {
+            onClick={(event) => {
+              opener.current = event.currentTarget;
               setNotice(null);
-              setAdding((cur) => (cur === way ? null : way));
+              setAdding(way);
             }}
           >
             {ADD_WAY_LABEL[way]}
@@ -206,17 +207,19 @@ function MyMaterials() {
         ))}
       </div>
       {adding && library && (
-        <MaterialAddForm
-          key={adding}
-          way={adding}
-          library={library}
-          onCancel={() => setAdding(null)}
-          onAdded={(m) => {
-            setAdding(null);
-            setReading(ocrOpen(m.ocr) ? m : null);
-            listChanged(`已加入「${titleOf(m)}」。`);
-          }}
-        />
+        <Dialog title={ADD_WAY_LABEL[adding]} returnFocus={backToOpener} onClose={() => setAdding(null)}>
+          <MaterialAddForm
+            key={adding}
+            way={adding}
+            library={library}
+            onCancel={() => setAdding(null)}
+            onAdded={(m) => {
+              setAdding(null);
+              setReading(ocrOpen(m.ocr) ? m : null);
+              listChanged(`已加入「${titleOf(m)}」。`);
+            }}
+          />
+        </Dialog>
       )}
       {notice && (
         <p className="quiet-note" role="status">

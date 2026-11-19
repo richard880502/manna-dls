@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { CreateClassRequest, LessonRun, SchoolClass } from "../api/types";
 import { ClassForm, emptyClassValues } from "../components/classes/ClassForm";
 import { NextLesson, useStartInClass } from "../components/classes/NextLesson";
 import { ErrorText, Loading, Notice } from "../components/common";
+import { Dialog } from "../components/Dialog";
 import { useApp } from "../context/AppContext";
 import { classSubtitle, focalClass, nextLine } from "../lib/classes";
 import { formatDate, formatShortDate } from "../lib/labels";
@@ -102,6 +103,9 @@ export function ClassesPage() {
   const [adding, setAdding] = useState(false);
   const [skipped, setSkipped] = useState(loadSkipped);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  /** 新增班級 opens a dialog; focus goes back to the button when it closes. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToOpener = useCallback(() => opener.current, []);
 
   useEffect(() => {
     let alive = true;
@@ -192,8 +196,16 @@ export function ClassesPage() {
             <Link className="text-link is-plain" to="/units">
               所有單元
             </Link>
-            {classes && active.length > 0 && !adding && (
-              <button type="button" className="text-link" onClick={() => setAdding(true)}>
+            {classes && active.length > 0 && (
+              <button
+                type="button"
+                className="text-link"
+                aria-haspopup="dialog"
+                onClick={(event) => {
+                  opener.current = event.currentTarget;
+                  setAdding(true);
+                }}
+              >
                 新增班級
               </button>
             )}
@@ -230,15 +242,14 @@ export function ClassesPage() {
         )}
 
         {adding && (
-          <section className="inline-form-block" aria-labelledby="new-class-heading">
-            <h3 id="new-class-heading">新增班級</h3>
+          <Dialog title="新增班級" returnFocus={backToOpener} onClose={() => setAdding(false)}>
             <ClassForm
               initial={emptyClassValues(track)}
               submitLabel="建立班級"
               onSubmit={create}
               onCancel={() => setAdding(false)}
             />
-          </section>
+          </Dialog>
         )}
 
         {active.length > 0 && (

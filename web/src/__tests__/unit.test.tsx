@@ -136,12 +136,16 @@ describe("unit page", () => {
     expect(screen.getByRole("link", { name: "開始寫單元想法（8 題）" })).toHaveAttribute("href", "/units/1/core");
     expect(api.callsTo("GET", "/api/units/1/core")).toHaveLength(0);
 
-    // With no lesson yet the form is open, and creating one is the page's filled action. The
-    // class profile is not asked for per lesson any more: only a title and a date.
-    await user.type(screen.getByLabelText("課例名稱"), "第 1 節");
-    expect(screen.queryByLabelText(/班級描述/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "建立課例" })).toHaveClass("primary-button");
+    // With no lesson yet, adding one is the page's filled action; it opens a dialog. The class
+    // profile is not asked for per lesson any more: only a title and a date.
+    const add = screen.getByRole("button", { name: "新增一節課例" });
+    expect(add).toHaveClass("primary-button");
     expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
+    await user.click(add);
+    const dialog = within(await screen.findByRole("dialog", { name: "新增一節課例" }));
+    await user.type(dialog.getByLabelText("課例名稱"), "第 1 節");
+    expect(dialog.queryByLabelText(/班級描述/)).not.toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "建立課例" })).toHaveClass("primary-button");
   });
 
   it("creates a lesson with a title and a date only", async () => {
@@ -154,10 +158,45 @@ describe("unit page", () => {
     });
     const user = userEvent.setup();
     renderApp("/units/1");
+    const add = await screen.findByRole("button", { name: "新增一節課例" });
+    await user.click(add);
     await user.type(await screen.findByLabelText("課例名稱"), "第 1 節");
     await user.click(screen.getByRole("button", { name: "建立課例" }));
     await waitFor(() => expect(api.callsTo("POST", "/api/units/1/lessons")).toHaveLength(1));
     expect(api.lastBody("POST", "/api/units/1/lessons")).toEqual({ title: "第 1 節" });
     expect(await screen.findByRole("link", { name: "第 1 節" })).toHaveAttribute("href", "/lessons/9");
+    // Done: the dialog closed and focus is back on the button that opened it.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新增一節課例" })).toHaveFocus();
+  });
+
+  it("closes the 新增一節課例 dialog with Esc or 取消, and asks before dropping typed input", async () => {
+    signIn();
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/units/1/lessons": [],
+      "GET /api/units/1/core": coreVersion([]),
+    });
+    const user = userEvent.setup();
+    renderApp("/units/1");
+    const add = await screen.findByRole("button", { name: "新增一節課例" });
+    await user.click(add);
+    expect(await screen.findByRole("dialog", { name: "新增一節課例" })).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByLabelText("課例名稱")).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(add).toHaveFocus();
+
+    await user.click(add);
+    await user.type(await screen.findByLabelText("課例名稱"), "第 2 節");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("要放棄剛才輸入的內容嗎？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "繼續編輯" }));
+    expect(screen.getByLabelText("課例名稱")).toHaveValue("第 2 節");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    await user.click(screen.getByRole("button", { name: "放棄並關閉" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(add).toHaveFocus();
   });
 });

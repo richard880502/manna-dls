@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { MaterialCard as MaterialCardData, TemplateCard as TemplateCardData } from "../../api/types";
-import { Dialog } from "../material/AttachDialog";
+import { Dialog } from "../Dialog";
 import type { PickedMaterial } from "../material/MaterialChooser";
 import { MaterialContent } from "../material/MaterialViewer";
 import { MaterialBrowser, TemplateBrowser } from "./BrowsePanel";

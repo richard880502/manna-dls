@@ -135,8 +135,12 @@ describe("我的教材 (the material library page)", () => {
     });
     const user = userEvent.setup({ applyAccept: false });
     const section = await openLibrary();
-    await user.click(await section.findByRole("button", { name: "上傳檔案" }));
-    const form = within(section.getByRole("form", { name: "上傳檔案" }));
+    const opener = await section.findByRole("button", { name: "上傳檔案" });
+    await user.click(opener);
+    // The form is in a dialog over the page, not unrolled under the buttons.
+    const dialog = await screen.findByRole("dialog", { name: "上傳檔案" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    const form = within(within(dialog).getByRole("form", { name: "上傳檔案" }));
     // The warning comes with every way of adding a material.
     expect(form.getByRole("note")).toHaveTextContent("請不要上傳學生作業、學生姓名、成績或照片");
     expect(form.getByText(/文件（\.txt、\.docx、\.pdf）每個最大 20 MB/)).toBeInTheDocument();
@@ -157,6 +161,9 @@ describe("我的教材 (the material library page)", () => {
     await user.type(form.getByRole("textbox", { name: "來源說明" }), "自編講義");
     await user.click(form.getByRole("button", { name: "上傳" }));
     expect(await screen.findByText("已加入「handout」。")).toBeInTheDocument();
+    // Done: the dialog is gone and focus is back on the button that opened it.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
     // Sent as multipart, with the file and the fields (a material: no purpose).
     const call = api.fetchMock.mock.calls.find(([url]) => String(url) === "/api/materials/upload");
     const body = call?.[1]?.body as FormData;
@@ -180,9 +187,12 @@ describe("我的教材 (the material library page)", () => {
     const section = await openLibrary();
     expect(await section.findByText(/^還沒有教材。/)).toBeInTheDocument();
     await user.click(await section.findByRole("button", { name: "上傳檔案" }));
-    expect(section.getByText(/還沒有設定檔案儲存空間/)).toBeInTheDocument();
+    const upload = within(await screen.findByRole("dialog", { name: "上傳檔案" }));
+    expect(upload.getByText(/還沒有設定檔案儲存空間/)).toBeInTheDocument();
+    await user.click(upload.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(section.getByRole("button", { name: "貼上文字" }));
-    const form = within(section.getByRole("form", { name: "貼上文字" }));
+    const form = within(within(await screen.findByRole("dialog", { name: "貼上文字" })).getByRole("form", { name: "貼上文字" }));
     await user.type(form.getByRole("textbox", { name: "教材標題" }), "Pasted");
     await user.click(form.getByRole("textbox", { name: "教材文字" }));
     await user.paste(P1);
@@ -190,6 +200,72 @@ describe("我的教材 (the material library page)", () => {
     await waitFor(() =>
       expect(api.lastBody("POST", "/api/materials")).toEqual({ kind: "text", title: "Pasted", source_note: "", text: P1 }),
     );
+  });
+
+  it("加入網址 is a dialog too; Esc and 取消 close it, and typed input is asked about first", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), "GET /api/materials": library(), "GET /api/browse/materials": browse() });
+    const user = userEvent.setup();
+    const section = await openLibrary();
+    const opener = await section.findByRole("button", { name: "加入網址" });
+    await user.click(opener);
+    const dialog = within(await screen.findByRole("dialog", { name: "加入網址" }));
+    expect(dialog.getByRole("textbox", { name: "網址" })).toHaveFocus();
+    expect(dialog.getByRole("note")).toHaveTextContent("請不要上傳學生作業");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+
+    await user.click(opener);
+    await user.click(await screen.findByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+
+    // Typed input is not thrown away silently: Esc, 取消 and a click on the backdrop all ask.
+    await user.click(opener);
+    await user.type(await screen.findByRole("textbox", { name: "網址" }), "https://example.com/a");
+    await user.keyboard("{Escape}");
+    expect(screen.getByText("要放棄剛才輸入的內容嗎？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "繼續編輯" }));
+    expect(screen.getByRole("textbox", { name: "網址" })).toHaveValue("https://example.com/a");
+    await user.click(document.querySelector(".scrim") as HTMLElement);
+    expect(screen.getByText("要放棄剛才輸入的內容嗎？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "放棄並關閉" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it("while a paste is being saved the dialog cannot be closed; a failure is shown inside it", async () => {
+    signIn();
+    const failer: { run: (() => void) | null } = { run: null };
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": library(),
+      "GET /api/browse/materials": browse(),
+      "POST /api/materials": () =>
+        new Promise((resolve) => {
+          failer.run = () => resolve(respond(500, { error: { code: "internal", message: "存不進去" } }));
+        }),
+    });
+    const user = userEvent.setup();
+    const section = await openLibrary();
+    await user.click(await section.findByRole("button", { name: "貼上文字" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "貼上文字" }));
+    await user.click(dialog.getByRole("textbox", { name: "教材文字" }));
+    await user.paste(P1);
+    await user.click(dialog.getByRole("button", { name: "加入教材庫" }));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "儲存中…" })).toBeDisabled());
+    expect(dialog.getByRole("button", { name: "關閉" })).toBeDisabled();
+    expect(dialog.getByRole("button", { name: "取消" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "貼上文字" })).toBeInTheDocument();
+
+    await waitFor(() => expect(failer.run).not.toBeNull());
+    failer.run?.();
+    expect(await dialog.findByRole("alert")).toHaveTextContent("存不進去");
+    expect(screen.getByRole("dialog", { name: "貼上文字" })).toBeInTheDocument();
+    expect(dialog.getByRole("textbox", { name: "教材文字" })).toHaveValue(P1);
   });
 
   it("renames from the card's ⋯ menu", async () => {

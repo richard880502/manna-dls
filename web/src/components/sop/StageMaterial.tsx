@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Material } from "../../api/types";
 import { KIND_LABEL } from "../../lib/materials";
 import { ErrorText, Loading, Notice, PrivacyHint } from "../common";
+import { Dialog, useDialogGuard } from "../Dialog";
 import { MaterialAddForm, MaterialPicker, useMaterialLibrary } from "../material/MaterialLibrary";
 import { MaterialContent } from "../material/MaterialViewer";
 import type { SopController } from "./useSop";
@@ -19,6 +20,8 @@ function LibraryWays({ way, sop, lessonId, onDone }: { way: "library" | "upload"
   const { library, error, reload } = useMaterialLibrary();
   const [busy, setBusy] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
+  // Using the new material is part of the upload: the dialog stays until that is done.
+  useDialogGuard({ busy });
 
   async function pick(material: Pick<Material, "id">) {
     setBusy(true);
@@ -65,6 +68,10 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
   const [way, setWay] = useState<Way>("paste");
   /** 換一份教材: the ways are shown although there is a material. */
   const [switching, setSwitching] = useState(false);
+  /** 上傳檔案 is a dialog; focus goes back to its button when it closes. */
+  const [uploading, setUploading] = useState(false);
+  const uploadOpener = useRef<HTMLElement | null>(null);
+  const backToUpload = useCallback(() => uploadOpener.current, []);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -166,8 +173,14 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
               key={w.key}
               type="button"
               className="way-button"
-              aria-pressed={way === w.key}
-              onClick={() => setWay(w.key)}
+              aria-pressed={w.key === "upload" ? undefined : way === w.key}
+              aria-haspopup={w.key === "upload" ? "dialog" : undefined}
+              onClick={(event) => {
+                if (w.key === "upload") {
+                  uploadOpener.current = event.currentTarget;
+                  setUploading(true);
+                } else setWay(w.key);
+              }}
             >
               {w.label}
             </button>
@@ -180,10 +193,10 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
         </div>
       )}
 
-      {choosing && way !== "paste" && (
-        <section className="stage-block" aria-label={way === "library" ? "從教材庫選" : "上傳檔案"}>
+      {choosing && way === "library" && (
+        <section className="stage-block" aria-label="從教材庫選">
           <LibraryWays
-            way={way}
+            way="library"
             sop={sop}
             lessonId={lessonId}
             onDone={() => {
@@ -193,6 +206,21 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
             }}
           />
         </section>
+      )}
+      {choosing && uploading && (
+        <Dialog title="上傳檔案" returnFocus={backToUpload} onClose={() => setUploading(false)}>
+          <LibraryWays
+            way="upload"
+            sop={sop}
+            lessonId={lessonId}
+            onDone={() => {
+              setUploading(false);
+              setSwitching(false);
+              setEditing(false);
+              setWay("paste");
+            }}
+          />
+        </Dialog>
       )}
 
       {choosing && way === "paste" && switching && material !== null && !pasted && (

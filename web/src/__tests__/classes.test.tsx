@@ -334,11 +334,33 @@ describe("creating a class", () => {
     const user = userEvent.setup();
     renderApp("/classes");
     await user.click(await screen.findByRole("button", { name: "新增班級" }));
-    const form = within(screen.getByRole("region", { name: "新增班級" }));
+    const form = within(await screen.findByRole("dialog", { name: "新增班級" }));
     expect(form.getByRole("textbox", { name: "班級特性（選填）" })).toHaveValue("");
     await user.type(form.getByRole("textbox", { name: "班級名稱" }), "高一 7 班");
     await user.click(form.getByRole("button", { name: "建立班級" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/classes")).toMatchObject({ name: "高一 7 班", class_profile: "" }));
+  });
+
+  it("新增班級 is a dialog: Esc closes it (asking first once something is typed) and focus returns", async () => {
+    signIn();
+    mockApi({ ...routes(), "GET /api/classes": [class3] });
+    const user = userEvent.setup();
+    renderApp("/classes");
+    const add = await screen.findByRole("button", { name: "新增班級" });
+    await user.click(add);
+    expect(await screen.findByRole("dialog", { name: "新增班級" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "班級名稱" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(add).toHaveFocus();
+
+    await user.click(add);
+    await user.type(await screen.findByRole("textbox", { name: "班級名稱" }), "高一 9 班");
+    await user.keyboard("{Escape}");
+    expect(screen.getByText("要放棄剛才輸入的內容嗎？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "放棄並關閉" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(add).toHaveFocus();
   });
 });
 
@@ -439,7 +461,7 @@ describe("class page", () => {
     expect(unitRows()).toHaveLength(1);
 
     await user.click(screen.getByRole("button", { name: "從備課庫加入單元" }));
-    const picker = within(await screen.findByRole("region", { name: "從備課庫加入單元" }));
+    const picker = within(await screen.findByRole("dialog", { name: "從備課庫加入單元" }));
     // Only the units this class does not use yet.
     expect(await picker.findByText("L4 假設語氣")).toBeInTheDocument();
     expect(picker.queryByText("L3 倒裝句")).not.toBeInTheDocument();
@@ -449,7 +471,7 @@ describe("class page", () => {
     await waitFor(() => expect(api.lastBody("POST", "/api/classes/3/units")).toEqual({ unit_id: 2 }));
     expect(await screen.findByText("已加入「L4 假設語氣」。")).toBeInTheDocument();
     expect(unitsSection().getByRole("link", { name: "L4 假設語氣" })).toHaveAttribute("href", "/units/2");
-    expect(screen.getByText("備課庫的單元都已經加入這個班級。")).toBeInTheDocument();
+    expect(within(screen.getByRole("dialog")).getByText("備課庫的單元都已經加入這個班級。")).toBeInTheDocument();
   });
 
   it("creates a new unit in the library and assigns it to the class in one step", async () => {
@@ -458,6 +480,7 @@ describe("class page", () => {
     const user = userEvent.setup();
     await openClass();
     await user.click(screen.getByRole("button", { name: "新增單元" }));
+    expect(await screen.findByRole("dialog", { name: "新增單元" })).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "新單元名稱" }), "L5 分詞構句");
     await user.click(screen.getByRole("button", { name: "建立並加入這個班級" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/units")).toEqual({ title: "L5 分詞構句", class_id: 3 }));
@@ -580,8 +603,10 @@ describe("備課庫", () => {
     });
     const user = userEvent.setup();
     renderApp("/units");
-    // The form opens on request; the page's one filled action then is 「建立單元」.
-    await user.click(await screen.findByRole("button", { name: "新增單元" }));
+    // The form opens on request, in a dialog; the page's one filled action then is 「建立單元」.
+    const opener = await screen.findByRole("button", { name: "新增單元" });
+    await user.click(opener);
+    expect(await screen.findByRole("dialog", { name: "新增單元" })).toHaveAttribute("aria-modal", "true");
     const pick = await screen.findByRole("combobox", { name: "給哪個班級用？" });
     expect(pick).toHaveValue("");
     // The class profile lives on the class: the form does not ask for one.
@@ -591,6 +616,27 @@ describe("備課庫", () => {
     await user.click(screen.getByRole("button", { name: "建立單元" }));
     await waitFor(() => expect(api.lastBody("POST", "/api/units")).toEqual({ title: "L5 分詞構句", class_id: 7 }));
     expect(await screen.findByRole("heading", { name: "L5 分詞構句", level: 1 })).toBeInTheDocument();
+  });
+
+  it("新增單元 closes with Esc or 取消 and gives focus back; typed input is asked about first", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), "GET /api/units": [], "GET /api/classes": [class3] });
+    const user = userEvent.setup();
+    renderApp("/units");
+    const opener = await screen.findByRole("button", { name: "新增單元" });
+    await user.click(opener);
+    expect(await screen.findByLabelText("單元名稱")).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+
+    await user.click(opener);
+    await user.type(await screen.findByLabelText("單元名稱"), "L9");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByText("要放棄剛才輸入的內容嗎？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "放棄並關閉" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it("leaves the class context: a unit opened from the library has no class in play when several use it", async () => {

@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { Lesson, LessonRun, Unit } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { Dialog, useDialogGuard } from "../components/Dialog";
 import { UnitIdeas } from "../components/unit/UnitIdeas";
 import { usedByText, useActiveClass } from "../lib/classes";
 import { formatDate } from "../lib/labels";
@@ -13,6 +14,86 @@ function taughtBy(runs: LessonRun[], lessonId: number): string {
   if (mine.length === 0) return "還沒上";
   const names = [...new Set(mine.map((r) => r.class_name).filter((n): n is string => !!n))];
   return names.length > 0 ? `${names.join("、")}上過` : "上過";
+}
+
+/** 新增一節課例: a name and an optional date. Lives in a dialog. */
+function NewLessonForm({
+  unitId,
+  onCreated,
+  onCancel,
+}: {
+  unitId: number;
+  onCreated: (lesson: Lesson) => void;
+  onCancel: () => void;
+}) {
+  const ids = useId();
+  const [title, setTitle] = useState("");
+  const [lessonDate, setLessonDate] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const requestClose = useDialogGuard({ busy: creating, dirty: title.trim() !== "" || lessonDate !== "" });
+
+  async function onCreate(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = title.trim();
+    if (!trimmed) {
+      setCreateError("請輸入課例名稱。");
+      return;
+    }
+    setCreating(true);
+    setCreateError(null);
+    try {
+      onCreated(
+        await api.createLesson(unitId, {
+          title: trimmed,
+          ...(lessonDate ? { lesson_date: lessonDate } : {}),
+        }),
+      );
+    } catch (err) {
+      setCreateError(errorMessage(err));
+      setCreating(false);
+    }
+  }
+
+  return (
+    <form className="create-lesson-form" onSubmit={onCreate} aria-label="新增一節課例">
+      <div className="two-fields">
+        <div>
+          <label className="field-label" htmlFor={`${ids}-title`}>
+            課例名稱
+          </label>
+          <input
+            id={`${ids}-title`}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="例如：第 2 節・句型練習"
+            disabled={creating}
+          />
+        </div>
+        <div>
+          <label className="field-label" htmlFor={`${ids}-date`}>
+            上課日期（可以不填）
+          </label>
+          <input
+            id={`${ids}-date`}
+            type="date"
+            value={lessonDate}
+            onChange={(e) => setLessonDate(e.target.value)}
+            disabled={creating}
+          />
+        </div>
+      </div>
+      <ErrorText message={createError} />
+      <div className="button-row">
+        <button className="primary-button" type="submit" disabled={creating}>
+          {creating ? "建立中…" : "建立課例"}
+        </button>
+        <button type="button" className="text-link is-plain" disabled={creating} onClick={requestClose ?? onCancel}>
+          取消
+        </button>
+      </div>
+    </form>
+  );
 }
 
 /**
@@ -29,10 +110,9 @@ export function UnitPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [addingLesson, setAddingLesson] = useState(false);
-  const [title, setTitle] = useState("");
-  const [lessonDate, setLessonDate] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  /** 新增一節課例 opens a dialog; focus goes back to the button when it closes. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToOpener = useCallback(() => opener.current, []);
 
   useEffect(() => {
     let alive = true;
@@ -57,31 +137,6 @@ export function UnitPage() {
 
   const { active: activeClass } = useActiveClass(unit);
 
-  async function onCreate(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed) {
-      setCreateError("請輸入課例名稱。");
-      return;
-    }
-    setCreating(true);
-    setCreateError(null);
-    try {
-      const lesson = await api.createLesson(unitId, {
-        title: trimmed,
-        ...(lessonDate ? { lesson_date: lessonDate } : {}),
-      });
-      setLessons((prev) => [...(prev ?? []), lesson]);
-      setTitle("");
-      setLessonDate("");
-      setAddingLesson(false);
-    } catch (err) {
-      setCreateError(errorMessage(err));
-    } finally {
-      setCreating(false);
-    }
-  }
-
   if (loadError) return <ErrorText message={loadError} />;
   if (!unit || !lessons) return <Loading />;
 
@@ -92,8 +147,6 @@ export function UnitPage() {
       .map((r) => r.lesson_id),
   );
   const continueLesson = lessons.find((l) => !taught.has(l.id)) ?? lessons[lessons.length - 1] ?? null;
-  // With no lesson yet, the form is the page's one action; it is open without being asked for.
-  const lessonFormOpen = addingLesson || lessons.length === 0;
 
   return (
     <>
@@ -146,62 +199,30 @@ export function UnitPage() {
           </ol>
         )}
 
-        {lessonFormOpen ? (
-          <form className="inline-form-block create-lesson-form" onSubmit={onCreate} aria-labelledby="new-lesson-heading">
-            <h3 id="new-lesson-heading">新增一節課例</h3>
-            <div className="two-fields">
-              <div>
-                <label className="field-label" htmlFor="lesson-title">
-                  課例名稱
-                </label>
-                <input
-                  id="lesson-title"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="例如：第 2 節・句型練習"
-                  disabled={creating}
-                />
-              </div>
-              <div>
-                <label className="field-label" htmlFor="lesson-date">
-                  上課日期（可以不填）
-                </label>
-                <input
-                  id="lesson-date"
-                  type="date"
-                  value={lessonDate}
-                  onChange={(e) => setLessonDate(e.target.value)}
-                  disabled={creating}
-                />
-              </div>
-            </div>
-            <ErrorText message={createError} />
-            <div className="button-row">
-              <button
-                className={lessons.length === 0 ? "primary-button" : "secondary-button"}
-                type="submit"
-                disabled={creating}
-              >
-                {creating ? "建立中…" : "建立課例"}
-              </button>
-              {addingLesson && lessons.length > 0 && (
-                <button
-                  type="button"
-                  className="text-link is-plain"
-                  disabled={creating}
-                  onClick={() => setAddingLesson(false)}
-                >
-                  取消
-                </button>
-              )}
-            </div>
-          </form>
-        ) : (
-          <p className="after-rows">
-            <button type="button" className="text-link" onClick={() => setAddingLesson(true)}>
-              新增一節課例
-            </button>
-          </p>
+        <p className="after-rows">
+          <button
+            type="button"
+            className={lessons.length === 0 ? "primary-button" : "text-link"}
+            aria-haspopup="dialog"
+            onClick={(event) => {
+              opener.current = event.currentTarget;
+              setAddingLesson(true);
+            }}
+          >
+            新增一節課例
+          </button>
+        </p>
+        {addingLesson && (
+          <Dialog title="新增一節課例" returnFocus={backToOpener} onClose={() => setAddingLesson(false)}>
+            <NewLessonForm
+              unitId={unitId}
+              onCancel={() => setAddingLesson(false)}
+              onCreated={(lesson) => {
+                setLessons((prev) => [...(prev ?? []), lesson]);
+                setAddingLesson(false);
+              }}
+            />
+          </Dialog>
         )}
       </section>
 

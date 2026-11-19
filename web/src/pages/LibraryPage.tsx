@@ -1,8 +1,9 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { CreateUnitRequest, SchoolClass, Unit } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { Dialog, useDialogGuard } from "../components/Dialog";
 import { useApp } from "../context/AppContext";
 import { usedByText } from "../lib/classes";
 import { UNIT_IDEAS_STATUS } from "../lib/labels";
@@ -64,6 +65,83 @@ function AssignClasses({
   );
 }
 
+/** 新增單元: the name and, when there are classes, which one uses it. Lives in a dialog. */
+function NewUnitForm({
+  classes,
+  onCreated,
+  onCancel,
+}: {
+  classes: SchoolClass[];
+  onCreated: (unit: Unit) => void;
+  onCancel: () => void;
+}) {
+  const ids = useId();
+  const [title, setTitle] = useState("");
+  /** "" = 先放在備課庫，不加入班級. */
+  const [classId, setClassId] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const requestClose = useDialogGuard({ busy: creating, dirty: title.trim() !== "" || classId !== "" });
+
+  async function onCreate(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = title.trim();
+    if (!trimmed) {
+      setCreateError("請輸入單元名稱。");
+      return;
+    }
+    const body: CreateUnitRequest = { title: trimmed };
+    if (classId) body.class_id = Number(classId);
+    setCreating(true);
+    setCreateError(null);
+    try {
+      onCreated(await api.createUnit(body));
+    } catch (err) {
+      setCreateError(errorMessage(err));
+      setCreating(false);
+    }
+  }
+
+  return (
+    <form className="create-unit-form" onSubmit={onCreate} aria-label="新增單元">
+      <label className="field-label" htmlFor={`${ids}-title`}>
+        單元名稱
+      </label>
+      <input
+        id={`${ids}-title`}
+        placeholder="例如：龍騰 B1 L3 Not only… but also 倒裝句"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        disabled={creating}
+      />
+      {classes.length > 0 && (
+        <div className="create-unit-class">
+          <label className="field-label" htmlFor={`${ids}-class`}>
+            給哪個班級用？
+          </label>
+          <select id={`${ids}-class`} value={classId} onChange={(e) => setClassId(e.target.value)} disabled={creating}>
+            <option value="">先放在備課庫</option>
+            {classes.map((c) => (
+              <option key={c.id} value={String(c.id)}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <ErrorText message={createError} />
+      <div className="button-row">
+        <button className="primary-button" type="submit" disabled={creating}>
+          {creating ? "建立中…" : "建立單元"}
+        </button>
+        <button type="button" className="text-link is-plain" disabled={creating} onClick={requestClose ?? onCancel}>
+          取消
+        </button>
+      </div>
+    </form>
+  );
+}
+
 /**
  * 備課庫 (`/units`): every unit of the teacher as ruled rows (lessons, 單元想法, which classes use
  * it), with 加到班級 to reuse a unit in another class. It is not in the top bar: it is reached
@@ -74,16 +152,13 @@ function AssignClasses({
 export function LibraryPage() {
   const { setCurrentClassId } = useApp();
   const navigate = useNavigate();
-  const ids = useId();
   const [units, setUnits] = useState<Unit[] | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
-  const [title, setTitle] = useState("");
-  /** "" = 先放在備課庫，不加入班級. */
-  const [classId, setClassId] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
+  /** 新增單元 opens a dialog; focus goes back to the button when it closes. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToOpener = useCallback(() => opener.current, []);
   /** The unit whose 加到班級 choices are open. */
   const [assigning, setAssigning] = useState<number | null>(null);
 
@@ -111,29 +186,6 @@ export function LibraryPage() {
     };
   }, []);
 
-  async function onCreate(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed) {
-      setCreateError("請輸入單元名稱。");
-      return;
-    }
-    const body: CreateUnitRequest = { title: trimmed };
-    if (classId) body.class_id = Number(classId);
-    setCreating(true);
-    setCreateError(null);
-    try {
-      const unit = await api.createUnit(body);
-      setUnits((prev) => [unit, ...(prev ?? [])]);
-      setTitle("");
-      navigate(`/units/${unit.id}`);
-    } catch (err) {
-      setCreateError(errorMessage(err));
-    } finally {
-      setCreating(false);
-    }
-  }
-
   function onAssignChanged(unitId: number, changedClassId: number, assigned: boolean) {
     const c = classes.find((x) => x.id === changedClassId);
     setUnits((prev) =>
@@ -149,9 +201,6 @@ export function LibraryPage() {
     );
   }
 
-  // An empty library opens straight on the form: there is nothing else to do here yet.
-  const formOpen = adding || (units !== null && units.length === 0);
-
   return (
     <section aria-labelledby="library-heading">
       <p className="crumbs">
@@ -162,53 +211,31 @@ export function LibraryPage() {
           <h1 id="library-heading">備課庫</h1>
           <p className="lead">你準備好的單元。一份設計可以給好幾個班用，在哪一班改都是同一份。</p>
         </div>
-        {!formOpen && (
-          <button type="button" className="primary-button" onClick={() => setAdding(true)}>
-            新增單元
-          </button>
-        )}
+        <button
+          type="button"
+          className="primary-button"
+          aria-haspopup="dialog"
+          onClick={(event) => {
+            opener.current = event.currentTarget;
+            setAdding(true);
+          }}
+        >
+          新增單元
+        </button>
       </div>
 
-      {formOpen && (
-        <form className="inline-form-block create-unit-form" onSubmit={onCreate} aria-labelledby={`${ids}-new`}>
-          <h2 id={`${ids}-new`}>新增單元</h2>
-          <label className="field-label" htmlFor="new-unit-title">
-            單元名稱
-          </label>
-          <input
-            id="new-unit-title"
-            placeholder="例如：龍騰 B1 L3 Not only… but also 倒裝句"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            disabled={creating}
+      {adding && (
+        <Dialog title="新增單元" returnFocus={backToOpener} onClose={() => setAdding(false)}>
+          <NewUnitForm
+            classes={classes}
+            onCancel={() => setAdding(false)}
+            onCreated={(unit) => {
+              setUnits((prev) => [unit, ...(prev ?? [])]);
+              setAdding(false);
+              navigate(`/units/${unit.id}`);
+            }}
           />
-          {classes.length > 0 && (
-            <div className="create-unit-class">
-              <label className="field-label" htmlFor={`${ids}-class`}>
-                給哪個班級用？
-              </label>
-              <select id={`${ids}-class`} value={classId} onChange={(e) => setClassId(e.target.value)} disabled={creating}>
-                <option value="">先放在備課庫</option>
-                {classes.map((c) => (
-                  <option key={c.id} value={String(c.id)}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <ErrorText message={createError} />
-          <div className="button-row">
-            <button className="primary-button" type="submit" disabled={creating}>
-              {creating ? "建立中…" : "建立單元"}
-            </button>
-            {adding && (
-              <button type="button" className="text-link is-plain" disabled={creating} onClick={() => setAdding(false)}>
-                取消
-              </button>
-            )}
-          </div>
-        </form>
+        </Dialog>
       )}
 
       {loadError && <ErrorText message={loadError} />}

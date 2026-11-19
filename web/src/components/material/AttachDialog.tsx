@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import type { MaterialPurpose } from "../../api/types";
 import { UPLOAD_WARNING } from "../../lib/materials";
+import { Dialog } from "../Dialog";
 import { Icon, type IconName } from "../Icon";
 import { useFirstOnPage } from "../OncePerPage";
 import { LibraryStep, type MaterialChoice, type PickedMaterial } from "./MaterialChooser";
@@ -66,116 +67,6 @@ export function MaterialChip({
         <Icon name="close" />
       </button>
     </span>
-  );
-}
-
-/**
- * A modal dialog over the page: Escape or a click on the scrim closes it, focus starts on the
- * first field and goes back where it was afterwards, and Tab stays inside while it is open.
- */
-export function Dialog({
-  title,
-  returnFocus,
-  onClose,
-  onEscape,
-  size = "normal",
-  initialFocus,
-  role = "dialog",
-  children,
-}: {
-  title: string;
-  /** Where focus goes when the dialog closes (by default, wherever it was before). Keep it stable. */
-  returnFocus?: () => HTMLElement | null;
-  onClose: () => void;
-  /** Escape, when it should do something else first (e.g. leave a preview inside the dialog). */
-  onEscape?: () => void;
-  /** `large`: the library picker (up to 1100 px wide; the whole screen on a phone). */
-  size?: "normal" | "large";
-  /** What takes focus when the dialog opens (a selector); by default the first field or button. */
-  initialFocus?: string;
-  /** `alertdialog` for a confirmation that cannot be undone. */
-  role?: "dialog" | "alertdialog";
-  children: ReactNode;
-}) {
-  const ids = useId();
-  const ref = useRef<HTMLDivElement>(null);
-  const closeRef = useRef(onClose);
-  const escapeRef = useRef(onEscape);
-  useEffect(() => {
-    closeRef.current = onClose;
-    escapeRef.current = onEscape;
-  }, [onClose, onEscape]);
-  const focusFirst = useRef(initialFocus);
-
-  useEffect(() => {
-    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const first =
-      (focusFirst.current ? ref.current?.querySelector<HTMLElement>(focusFirst.current) : null) ??
-      ref.current?.querySelector<HTMLElement>("input, textarea, select, button:not(.dialog-close)");
-    (first ?? ref.current)?.focus();
-    return () => {
-      const back = returnFocus?.() ?? before;
-      if (back?.isConnected) back.focus();
-    };
-  }, [returnFocus]);
-
-  useEffect(() => {
-    // A press outside the dialog (on the scrim) closes it.
-    const onPointer = (event: Event) => {
-      if (event.target instanceof Node && ref.current && !ref.current.contains(event.target)) closeRef.current();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        (escapeRef.current ?? closeRef.current)();
-        return;
-      }
-      if (event.key !== "Tab" || !ref.current) return;
-      const stops = [
-        ...ref.current.querySelectorAll<HTMLElement>(
-          "a[href], button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)",
-        ),
-      ];
-      const first = stops[0];
-      const last = stops[stops.length - 1];
-      if (!first || !last) return;
-      const inside = ref.current.contains(document.activeElement);
-      if (event.shiftKey && (document.activeElement === first || !inside)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !inside)) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    document.addEventListener("mousedown", onPointer);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("mousedown", onPointer);
-    };
-  }, []);
-
-  const large = size === "large";
-  return (
-    <div className={`scrim${large ? " has-large-dialog" : ""}`}>
-      <div
-        className={`dialog attach-dialog${large ? " is-large" : ""}`}
-        role={role}
-        aria-modal="true"
-        aria-labelledby={`${ids}-title`}
-        ref={ref}
-        tabIndex={-1}
-      >
-        <div className="attach-dialog-head">
-          <h2 id={`${ids}-title`}>{title}</h2>
-          <button type="button" className="dialog-close" aria-label="關閉" onClick={onClose}>
-            <Icon name="close" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
   );
 }
 
