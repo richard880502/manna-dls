@@ -14,7 +14,7 @@ use axum::http::{Method, Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use manna_api::config::Config;
-use manna_api::{auth, build_app, db, AppState};
+use manna_api::{auth, build_app, build_internal_app, db, AppState};
 use rand::RngCore;
 use serde_json::{json, Value};
 use sqlx::postgres::PgConnectOptions;
@@ -25,6 +25,10 @@ pub const BOOTSTRAP_CODE: &str = "boot-strap-test-code";
 
 pub struct TestApp {
     pub app: Router,
+    /// The internal listener's router (only the memory forwarder).
+    pub internal: Router,
+    /// The state both routers share (background workers can be driven with it).
+    pub state: AppState,
     pub db: PgPool,
     db_name: String,
     admin_opts: PgConnectOptions,
@@ -165,13 +169,41 @@ impl TestApp {
         auth::bootstrap_admin(&pool, config.admin_bootstrap_code.as_deref())
             .await
             .expect("bootstrap");
-        let app = build_app(AppState::new(pool.clone(), config));
+        let state = AppState::new(pool.clone(), config);
+        let app = build_app(state.clone());
+        let internal = build_internal_app(state.clone());
         Some(Self {
             app,
+            internal,
+            state,
             db: pool,
             db_name,
             admin_opts,
         })
+    }
+
+    /// A request to the internal listener (`INTERNAL_PORT`): the memory index's forwarder.
+    pub async fn internal_post(
+        &self,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> (StatusCode, Value) {
+        let mut req = Request::builder().method(Method::POST).uri(path);
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+        let resp = self
+            .internal
+            .clone()
+            .oneshot(req.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        let status = resp.status();
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let value = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+        (status, value)
     }
 
     pub async fn send(

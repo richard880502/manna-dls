@@ -521,6 +521,7 @@ pub async fn try_prompt(
     }
     let result = crate::prompt_try::run(
         &state,
+        teacher.id(),
         &key,
         &req.system_text,
         &req.user_template,

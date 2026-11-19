@@ -445,6 +445,7 @@ async fn mark_done(
     interaction_id: Option<i64>,
     context: &[AiContextItem],
 ) -> sqlx::Result<()> {
+    let context = crate::memory::context(db, interaction_id, context).await?;
     sqlx::query(
         "UPDATE worksheet_jobs
             SET status = 'done', outcome = $2, message = $3, interaction_id = $4, context = $5,
@@ -472,6 +473,7 @@ async fn mark_held(
     interaction_id: Option<i64>,
     context: &[AiContextItem],
 ) -> sqlx::Result<()> {
+    let context = crate::memory::context(db, interaction_id, context).await?;
     sqlx::query(
         "UPDATE worksheet_jobs
             SET outcome = $2, message = $3, interaction_id = $4, context = $5,
@@ -1430,6 +1432,9 @@ async fn step_tasks(
         ),
     ]);
     let codes = run.objective_codes();
+    // Option counts the teacher's confirmed habits allow (none while the PI switch is off).
+    let habits =
+        crate::memory::option_habits(&run.state.db, run.input.worksheet.teacher_id).await?;
     let result = run_step(
         run,
         &TASKS,
@@ -1448,6 +1453,7 @@ async fn step_tasks(
                     objective_ids: &codes,
                     item_budget: budget,
                     only: only_nos.as_deref(),
+                    habits,
                 },
             )
         },

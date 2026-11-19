@@ -161,3 +161,11 @@ Actions 設定（Settings → Secrets and variables → Actions）：
 Coolify 預設**不會**在建置時提供 `SOURCE_COMMIT`（它會讓 Docker 快取失效）。執行時也靠不住：compose 檔引用了 `${SOURCE_COMMIT}`，Coolify 就會在這個應用程式的環境變數清單自動建一個同名變數，而清單裡有 `SOURCE_COMMIT` 時 Coolify 不再填入自己的值。所以正式環境要在 Coolify 這個應用程式的設定（Advanced 頁）打開 **Include Source Commit in Build**；之後從 `deploy` 分支部署的映像就帶著 commit。清單裡自動出現的 `SOURCE_COMMIT` 保持空白，不要手填（填了會蓋過真正的值）。部署後可用 `curl -s https://manna.biobank.tw/api/health` 對照 `deploy` 分支最新的 commit。
 
 本機 `docker build .` 不用帶參數（`commit` 會是 `unknown`）；要帶就用 `docker build --build-arg SOURCE_COMMIT=$(git rev-parse HEAD) .`。
+
+### 教師長期記憶（#82）
+
+「備課偏好 → 我的出題習慣」支援確認後記住、取代／停止使用與完整歷程。
+研究介入開關預設關閉，由 PI 在後台決定是否讓習慣影響出題。
+Postgres 是正本；可選擇另建以 `memory-sidecar/docker-compose.yml` 部署的 Coolify 資源，加入 Graphiti + FalkorDB，
+不加索引也能使用全部確認習慣。部署、隱私限制、備份還原與驗證見
+[教師長期記憶](docs/TEACHER_MEMORY.md)。

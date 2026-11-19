@@ -22,6 +22,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      # Optional independent manna-memory resource (docs/TEACHER_MEMORY.md). Empty URL/token
+      # keeps Phase 1 only. The sidecar's model calls come back to INTERNAL_PORT, a second
+      # listener that is opened only when the index is configured, is not published here and
+      # is never routed by nginx/the proxy.
+      GRAPHITI_URL: ${GRAPHITI_URL:-}
+      GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:-}
+      INTERNAL_PORT: ${INTERNAL_PORT:-8081}
+      MEMORY_PROXY_URL: ${MEMORY_PROXY_URL:-http://manna-api:8081/api/internal/memory/v1}
       AI_PROVIDER: ${AI_PROVIDER:-none}
       AI_MODEL: ${AI_MODEL:-claude-opus-5-5}
       AI_EFFORT: ${AI_EFFORT:-medium}
@@ -79,6 +87,10 @@ services:
       S3_SECRET_KEY: ${SERVICE_PASSWORD_MINIO}
       # Fallback for /api/health when the image has no commit baked in (see `build.args`).
       SOURCE_COMMIT: ${SOURCE_COMMIT:-}
+    networks:
+      default: {}
+      memory-link:
+        aliases: [manna-api]
     depends_on:
       minio:
         condition: service_started
@@ -106,3 +118,11 @@ services:
 
 volumes:
   minio-data:
+
+# Set MEMORY_NETWORK_EXTERNAL=true and MEMORY_NETWORK_NAME=manna-memory to connect
+# the independent memory resource. Default is a project-local network, so Phase 1
+# deployments require no host preparation or global Coolify application network.
+networks:
+  memory-link:
+    external: ${MEMORY_NETWORK_EXTERNAL:-false}
+    name: ${MEMORY_NETWORK_NAME:-${COMPOSE_PROJECT_NAME}_memory}

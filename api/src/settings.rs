@@ -4,6 +4,14 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 pub const ROUTE_CHOICE_ENABLED: &str = "route_choice_enabled";
+pub const TEACHER_MEMORY_ENABLED: &str = "teacher_memory_enabled";
+
+pub async fn teacher_memory_enabled(db: &PgPool) -> sqlx::Result<bool> {
+    Ok(get(db, TEACHER_MEMORY_ENABLED)
+        .await?
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
 
 async fn get(db: &PgPool, key: &str) -> sqlx::Result<Option<Value>> {
     sqlx::query_scalar("SELECT value FROM app_settings WHERE key = $1")

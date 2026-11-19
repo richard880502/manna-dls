@@ -1,3 +1,4 @@
+import { TeacherMemories } from "../components/prefs/TeacherMemories";
 import { useState } from "react";
 import { api, errorMessage } from "../api/client";
 import type { PreferenceAnswers } from "../api/types";
@@ -85,6 +86,7 @@ export function PreferencesPage() {
           </div>
         </div>
       )}
+      <TeacherMemories />
     </section>
   );
 }

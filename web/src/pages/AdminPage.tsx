@@ -1,3 +1,4 @@
+import { MemorySettings } from "../components/admin/MemorySettings";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../api/client";
@@ -25,6 +26,7 @@ export function AdminPage() {
         </p>
       </div>
       <PlatformSettings />
+      <MemorySettings />
       <div className="admin-grid">
         <InviteForm />
         <CsvImport

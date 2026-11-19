@@ -46,7 +46,24 @@ pub fn api_router() -> Router<AppState> {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         // teacher
+        .route(
+            "/admin/memory-settings",
+            get(crate::memory::routes::settings_get).put(crate::memory::routes::settings_put),
+        )
         .route("/me", get(auth::me))
+        .route(
+            "/me/memories",
+            get(crate::memory::routes::get).post(crate::memory::routes::confirm),
+        )
+        .route("/me/memories/preview", post(crate::memory::routes::preview))
+        .route("/me/memories/{id}", delete(crate::memory::routes::remove))
+        .route("/admin/memory-index", get(crate::memory::graph::status))
+        .route(
+            "/admin/memory-index/rebuild",
+            post(crate::memory::routes::rebuild),
+        )
+        // The model forwarder of the memory index is NOT here: it is served only on the
+        // internal listener (`INTERNAL_PORT`, `crate::build_internal_app`).
         .route("/preferences/questions", get(preferences::questions))
         .route(
             "/me/preferences",

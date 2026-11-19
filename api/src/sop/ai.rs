@@ -370,12 +370,13 @@ pub(crate) async fn attempt(
     req: &LlmRequest,
     retry_of: Option<i64>,
 ) -> AppResult<Attempt> {
+    let (snapshot, req) = crate::memory::augment(state, meta, snapshot, req).await?;
     let id = pipeline::insert_interaction(
         &state.db,
         meta,
         state.ai.provider_name(),
         &state.ai.model,
-        snapshot,
+        &snapshot,
         req.attempt,
         retry_of,
     )
@@ -388,7 +389,7 @@ pub(crate) async fn attempt(
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     let start = Instant::now();
-    let response = state.ai.complete(req).await;
+    let response = state.ai.complete(&req).await;
     let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
     Ok(Attempt {
         id,
