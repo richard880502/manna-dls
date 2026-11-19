@@ -72,12 +72,13 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
     if text.trim().is_empty() {
         return Err(ProviderError::InvalidOutput("no text content".into()));
     }
-    let json: Value = serde_json::from_str(text.trim()).map_err(|e| {
+    let mut json: Value = serde_json::from_str(text.trim()).map_err(|e| {
         ProviderError::InvalidOutput(format!(
             "output is not valid JSON: {e}; raw: {}",
             clip(&text, 4000)
         ))
     })?;
+    super::strip_nul(&mut json);
     Ok(LlmResponse {
         json,
         model_version,

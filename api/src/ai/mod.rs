@@ -174,6 +174,26 @@ fn repeats_at_end(s: &str) -> bool {
     recent.matches(window.as_str()).count() >= 3
 }
 
+/// Drops NUL characters from every string (and key) of a model's output: PostgreSQL refuses them
+/// in JSONB and text, and they never carry meaning.
+pub fn strip_nul(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    match value {
+        Value::String(s) if s.contains('\0') => s.retain(|c| c != '\0'),
+        Value::Array(items) => items.iter_mut().for_each(strip_nul),
+        Value::Object(map) => {
+            if map.keys().any(|k| k.contains('\0')) {
+                let entries: Vec<_> = std::mem::take(map).into_iter().collect();
+                for (k, v) in entries {
+                    map.insert(k.replace('\0', ""), v);
+                }
+            }
+            map.values_mut().for_each(strip_nul);
+        }
+        _ => {}
+    }
+}
+
 pub struct AiClient {
     pub kind: AiProviderKind,
     pub model: String,
@@ -183,6 +203,8 @@ pub struct AiClient {
     anthropic_api_key: Option<String>,
     openai_base_url: Option<String>,
     openai_api_key: Option<String>,
+    /// `OPENAI_API_KEY`, for `AI_PROVIDER=openai`.
+    openai_platform_key: Option<String>,
 }
 
 impl AiClient {
@@ -202,6 +224,7 @@ impl AiClient {
             anthropic_api_key: cfg.anthropic_api_key.clone(),
             openai_base_url: cfg.openai_compat_base_url.clone(),
             openai_api_key: cfg.openai_compat_api_key.clone(),
+            openai_platform_key: cfg.openai_api_key.clone(),
         }
     }
 
@@ -231,6 +254,18 @@ impl AiClient {
                         base,
                         self.openai_api_key.as_deref(),
                         &self.model,
+                        None,
+                        req,
+                    )
+                    .await
+                }
+                AiProviderKind::OpenAi => {
+                    openai::call(
+                        &self.http,
+                        openai::OPENAI_BASE_URL,
+                        self.openai_platform_key.as_deref(),
+                        &self.model,
+                        Some(&self.effort),
                         req,
                     )
                     .await
