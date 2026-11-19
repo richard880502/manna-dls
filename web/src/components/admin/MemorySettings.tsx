@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../../api/client";
-import type { MemorySettings as Settings } from "../../api/types";
+import type { MemorySettings as Settings, MemoryIndexStatus } from "../../api/types";
 import { ErrorText, Notice } from "../common";
 
 export function MemorySettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [index, setIndex] = useState<{ pending: number; failed: number } | null>(null);
+  const [index, setIndex] = useState<MemoryIndexStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -31,6 +31,8 @@ export function MemorySettings() {
       }} />讓已確認的出題習慣影響學習單與備課產生
     </label>}
     {index && <p>索引待同步：{index.pending}・同步失敗待重試：{index.failed}</p>}
+    {settings?.graph_enabled && index?.compatible === false && <Notice>記憶索引服務未就緒或介面版本不相容，目前只使用 Postgres 的有效習慣；服務恢復後會自動接續同步。</Notice>}
+    {index?.sidecar && <p className="field-hint">記憶介面 v{index.sidecar.api_version}・Graphiti {index.sidecar.graphiti_version}</p>}
     {settings?.graph_enabled && <button className="secondary-button" type="button" disabled={busy} onClick={() => void change(async () => {
       await api.rebuildMemoryIndex(); setIndex(await api.memoryIndex()); setMessage("已排入重建，會從已確認的習慣重新建立 Graphiti 索引。");
     })}>從正本重建記憶索引</button>}

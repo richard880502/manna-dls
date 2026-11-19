@@ -2969,3 +2969,10 @@ export interface MemoryState {
 }
 export interface MemoryCandidate { id: number; statement: string; replaces_id: number | null }
 export interface MemorySettings { enabled: boolean; graph_enabled: boolean }
+
+export interface MemoryIndexStatus {
+  pending: number;
+  failed: number;
+  compatible?: boolean;
+  sidecar?: { ok: boolean; api_version: number; graphiti_version: string; policy_version: string } | null;
+}

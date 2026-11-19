@@ -44,9 +44,9 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(app, "Graphiti", return_value=graph):
             r = await self.http.post("/index", json={"group_id": GROUP, "memories": [HABIT],
                 "proxy_url": app.PROXY_URL, "proxy_key": "a"*64, "model": "test-model",
-                "embedding_model": "test-embedding", "embedding_dims": 64, "policy_version": app.POLICY})
+                "embedding_model": "test-embedding", "embedding_dims": 64, "policy_version": app.POLICY, "api_version":app.API_VERSION})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["graphiti_version"], "0.31.2")
+        self.assertEqual(r.json()["graphiti_version"], app.version("graphiti-core"))
         graph.add_episode.assert_awaited_once()
         kwargs = graph.add_episode.call_args.kwargs
         self.assertEqual(kwargs["episode_body"], HABIT["statement"])
@@ -77,8 +77,18 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await self.http.post("/index", json={"group_id": GROUP, "memories": [HABIT],
                     "proxy_url": app.PROXY_URL, "proxy_key": "a"*64, "model": "test",
-                    "embedding_model": "test", "embedding_dims": 64, "policy_version": app.POLICY})
+                    "embedding_model": "test", "embedding_dims": 64, "policy_version": app.POLICY, "api_version":app.API_VERSION})
         graph.close.assert_awaited_once()
+
+    async def test_health_reports_contract_and_actual_engine_and_refuses_wrong_contract(self):
+        self.driver.execute_query = AsyncMock()
+        with patch.object(app, "version", return_value="0.99.0"):
+            r = await self.http.get("/health")
+        self.assertEqual(r.json(), {"ok":True,"api_version":1,"graphiti_version":"0.99.0","policy_version":app.POLICY})
+        r = await self.http.post("/index",json={"group_id":GROUP,"memories":[],"proxy_url":app.PROXY_URL,
+            "proxy_key":"a"*64,"model":"fixture","embedding_model":"fixture","embedding_dims":768,
+            "policy_version":app.POLICY,"api_version":99})
+        self.assertEqual(r.status_code,400)
 
     async def test_real_constructor_matches_pinned_api(self):
         # Catches SDK/API drift in initialization without opening a database/model connection.
@@ -129,7 +139,7 @@ class RealGraphTests(unittest.IsolatedAsyncioTestCase):
                          patch.object(app.OpenAIEmbedder,"create_batch",embeddings):
                         r = await http.post("/index",json={"group_id":group,"memories":[HABIT],
                             "proxy_url":app.PROXY_URL,"proxy_key":"a"*64,"model":"fixture",
-                            "embedding_model":"fixture","embedding_dims":768,"policy_version":app.POLICY})
+                            "embedding_model":"fixture","embedding_dims":768,"policy_version":app.POLICY,"api_version":app.API_VERSION})
                         self.assertEqual(r.status_code,200,r.text)
                     r = await http.post("/search",json={"group_id":group,"query":"Teacher choices","memory_ids":[1]})
                     self.assertEqual(r.status_code,200,r.text)

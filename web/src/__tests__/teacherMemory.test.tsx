@@ -45,6 +45,16 @@ describe("confirmed teaching habits", () => {
     expect(await screen.findByText(/已停止使用這項習慣/)).toBeInTheDocument();
   });
 
+  it("shows that incompatible services use Postgres without blocking settings", async () => {
+    mockApi({
+      "GET /api/admin/memory-settings": { enabled: true, graph_enabled: true },
+      "GET /api/admin/memory-index": { pending: 1, failed: 0, compatible: false, sidecar: null },
+    });
+    render(<MemorySettings />);
+    expect(await screen.findByText(/目前只使用 Postgres/)).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /讓已確認的出題習慣/ })).toBeChecked();
+  });
+
   it("lets the PI enable memory and request a rebuild", async () => {
     const api = mockApi({
       "GET /api/admin/memory-settings": { enabled: false, graph_enabled: true },

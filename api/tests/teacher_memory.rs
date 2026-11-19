@@ -242,11 +242,13 @@ async fn graph_outbox_retries_rebuilds_and_intersects_current_teacher_ids() {
     use std::sync::{Arc, Mutex};
     let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
     let captured = calls.clone();
-    let stub=Router::new().route("/index",post(move |Json(v):Json<Value>| {
+    let stub=Router::new().route("/health",axum::routing::get(||async {
+        Json(json!({"ok":true,"api_version":1,"graphiti_version":"0.99.0","policy_version":"teacher-habits-v1"}))
+    })).route("/index",post(move |Json(v):Json<Value>| {
         let captured=captured.clone();async move {
             let mut calls=captured.lock().unwrap(); calls.push(v);
             if calls.len()==1 { (StatusCode::SERVICE_UNAVAILABLE,Json(json!({"ok":false}))) }
-            else { (StatusCode::OK,Json(json!({"ok":true,"graphiti_version":"0.31.2","policy_version":"teacher-habits-v1"}))) }
+            else { (StatusCode::OK,Json(json!({"ok":true,"api_version":1,"graphiti_version":"0.99.0","policy_version":"teacher-habits-v1"}))) }
         }
     })).route("/search",post(||async {Json(json!({"memory_ids":[999999,1,1]}))}))
         .route("/groups/{id}",delete(||async {Json(json!({"ok":true}))}));
@@ -350,7 +352,7 @@ async fn memory_proxy_audits_exact_upstream_calls_and_rejects_expired_credential
         .await
         .unwrap();
     let token = manna_api::auth::new_token();
-    sqlx::query("INSERT INTO memory_indexes(teacher_id,token_hash,lease_until,leased_revision) VALUES($1,$2,now()+interval '1 minute',1)")
+    sqlx::query("INSERT INTO memory_indexes(teacher_id,token_hash,lease_until,leased_revision,leased_graphiti_version) VALUES($1,$2,now()+interval '1 minute',1,'0.31.2')")
         .bind(teacher_id).bind(manna_api::auth::sha256_hex(&token)).execute(&app.db).await.unwrap();
     let (s,v)=app.post("/api/internal/memory/v1/chat/completions",Some(&token),json!({
         "model":"unapproved-model","messages":[{"role":"user","content":"選擇題使用 3 個選項。"}],"max_tokens":2000})).await;
@@ -387,4 +389,131 @@ async fn memory_proxy_audits_exact_upstream_calls_and_rejects_expired_credential
         .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     server.abort();
+}
+
+#[tokio::test]
+async fn incompatible_sidecar_falls_back_without_claiming_jobs_or_searching() {
+    use axum::{
+        routing::{get, post},
+        Json, Router,
+    };
+    use manna_api::{
+        memory::{self, graph},
+        AppState,
+    };
+    use std::sync::{
+        atomic::{AtomicU32, AtomicUsize, Ordering},
+        Arc,
+    };
+    let version = Arc::new(AtomicU32::new(99));
+    let called = Arc::new(AtomicUsize::new(0));
+    let health_version = version.clone();
+    let index_called = called.clone();
+    let search_called = called.clone();
+    let stub = Router::new()
+        .route(
+            "/health",
+            get(move || {
+                let v = health_version.load(Ordering::SeqCst);
+                async move {
+                    Json(json!({"ok":true,"api_version":v,
+            "graphiti_version":"0.99.0","policy_version":"teacher-habits-v1"}))
+                }
+            }),
+        )
+        .route(
+            "/index",
+            post(move || {
+                index_called.fetch_add(1, Ordering::SeqCst);
+                async { Json(json!({"ok":false})) }
+            }),
+        )
+        .route(
+            "/search",
+            post(move || {
+                search_called.fetch_add(1, Ordering::SeqCst);
+                async { Json(json!({"memory_ids":[]})) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
+    let app = test_app!();
+    let token = app.teacher("T-INCOMPAT", "general").await;
+    let c = preview(&app, &token, "之後三個選項").await;
+    let id = confirm(&app, &token, &c).await;
+    let teacher_id: i64 =
+        sqlx::query_scalar("SELECT id FROM teachers WHERE research_id='T-INCOMPAT'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    let mut cfg = manna_api::config::Config::for_tests("unused");
+    cfg.memory = graph::MemoryConfig {
+        url: Some(url),
+        token: Some("test".into()),
+        proxy_url: Some("http://manna-api/api/internal/memory/v1".into()),
+    };
+    let state = AppState::new(app.db.clone(), cfg);
+    assert!(!graph::sync_one(&state).await.unwrap());
+    let (attempts, lease, revision): (i32, Option<String>, i64) = sqlx::query_as(
+        "SELECT attempts,token_hash,revision FROM memory_indexes WHERE teacher_id=$1",
+    )
+    .bind(teacher_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 0);
+    assert_eq!(lease, None);
+    assert_eq!(revision, 1);
+    let active = memory::list(&app.db, teacher_id, false).await.unwrap();
+    assert!(graph::rank(&state, teacher_id, "query", &active)
+        .await
+        .is_empty());
+    let mut tx = app.db.begin().await.unwrap();
+    manna_api::settings::set(
+        &mut tx,
+        manna_api::settings::TEACHER_MEMORY_ENABLED,
+        &json!(true),
+        teacher_id,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let req = manna_api::ai::LlmRequest {
+        system: "sys".into(),
+        user: "user".into(),
+        schema_name: "test",
+        schema: json!({}),
+        fake_context: json!({}),
+        attempt: 1,
+        max_tokens: None,
+        temperature: None,
+        images: vec![],
+    };
+    let meta = manna_api::ai::pipeline::InteractionMeta {
+        teacher_id,
+        module: "worksheet_tasks",
+        unit_id: None,
+        lesson_id: None,
+        scaffold_id: None,
+        prompt_version_id: None,
+    };
+    let (snapshot, augmented) = memory::augment(&state, &meta, &json!({}), &req)
+        .await
+        .unwrap();
+    assert_eq!(snapshot["teacher_memory"]["memories"][0]["id"], id);
+    assert!(augmented.user.contains("選擇題使用 3 個選項"));
+    assert_eq!(called.load(Ordering::SeqCst), 0);
+    // A core-only upgrade is accepted as soon as the same interface returns, no app restart.
+    version.store(1, Ordering::SeqCst);
+    assert_eq!(
+        graph::compatible_sidecar(&state)
+            .await
+            .unwrap()
+            .graphiti_version,
+        "0.99.0"
+    );
+    server.abort();
+    assert!(graph::compatible_sidecar(&state).await.is_none());
+    assert!(!graph::sync_one(&state).await.unwrap());
 }

@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 use crate::AppState;
 
 pub const POLICY_VERSION: &str = "teacher-habits-v1";
-pub const GRAPHITI_VERSION: &str = "0.31.2";
+pub const SIDECAR_API_VERSION: u32 = 1;
 pub const MAX_ACTIVE: i64 = 10;
 pub const KINDS: &[&str] = &[
     "choice_options",

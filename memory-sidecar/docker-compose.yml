@@ -1,27 +1,20 @@
-# Optional Phase 2 overlay: docker compose -f docker-compose.yml -f docker-compose.memory.yml up -d --build
-# Enable only in staging first. The PI's separate setting still defaults to OFF.
+# Independent Coolify resource: base directory /memory-sidecar, Compose location /docker-compose.yml.
+# Connect only this resource and Manna API to the pre-created external network.
 services:
-  app:
-    environment:
-      GRAPHITI_URL: http://memory:8000
-      GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:?Set a random service secret}
-      MEMORY_PROXY_URL: http://app:8080/api/internal/memory/v1
-    networks:
-      - default
-      - memory-internal
-
   memory:
-    build: ./memory-sidecar
+    build: .
     restart: unless-stopped
     mem_limit: 512m
     environment:
       GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:?Set a random service secret}
-      MEMORY_PROXY_URL: http://app:8080/api/internal/memory/v1
+      MEMORY_PROXY_URL: ${MEMORY_PROXY_URL:-http://manna-api:8080/api/internal/memory/v1}
       FALKORDB_HOST: falkordb
       GRAPHITI_TELEMETRY_ENABLED: "false"
       SEMAPHORE_LIMIT: "2"
     networks:
-      - memory-internal
+      memory-private: {}
+      memory-link:
+        aliases: [manna-memory]
     depends_on:
       falkordb:
         condition: service_healthy
@@ -40,7 +33,7 @@ services:
     volumes:
       - memory-graph:/data
     networks:
-      - memory-internal
+      - memory-private
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -48,7 +41,10 @@ services:
       retries: 20
 
 networks:
-  memory-internal:
+  memory-link:
+    external: true
+    name: ${MEMORY_NETWORK_NAME:-manna-memory}
+  memory-private:
     internal: true
 
 volumes:

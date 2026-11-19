@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{Memory, GRAPHITI_VERSION, POLICY_VERSION};
+use super::{Memory, POLICY_VERSION, SIDECAR_API_VERSION};
 use crate::ai::pipeline::{self, Finish, InteractionMeta};
 use crate::auth::{bearer_token, new_token, sha256_hex};
 use crate::config::AiProviderKind;
@@ -44,6 +44,49 @@ fn client(timeout: u64) -> reqwest::Client {
         .expect("TLS client")
 }
 
+/// The HTTP contract is versioned independently of the Python engine. A core
+/// upgrade with the same adapter contract never requires a Manna redeployment.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct SidecarInfo {
+    pub ok: bool,
+    pub api_version: u32,
+    pub graphiti_version: String,
+    pub policy_version: String,
+}
+impl SidecarInfo {
+    fn compatible(&self) -> bool {
+        self.ok
+            && self.api_version == SIDECAR_API_VERSION
+            && self.policy_version == POLICY_VERSION
+            && !self.graphiti_version.trim().is_empty()
+            && self.graphiti_version.len() <= 64
+    }
+}
+
+pub async fn compatible_sidecar(state: &AppState) -> Option<SidecarInfo> {
+    let cfg = &state.config.memory;
+    if !cfg.enabled() {
+        return None;
+    }
+    let response = client(2)
+        .get(format!(
+            "{}/health",
+            cfg.url.as_deref()?.trim_end_matches('/')
+        ))
+        .bearer_auth(cfg.token.as_deref()?)
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response
+        .json::<SidecarInfo>()
+        .await
+        .ok()
+        .filter(SidecarInfo::compatible)
+}
+
 pub fn spawn_worker(state: AppState) {
     if !state.config.memory.enabled() {
         return;
@@ -73,11 +116,16 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
     if !state.config.memory.enabled() {
         return Ok(false);
     }
+    // Incompatible/offline sidecars leave the durable queue untouched. The next
+    // poll recovers automatically when a compatible deployment returns.
+    let Some(sidecar) = compatible_sidecar(state).await else {
+        return Ok(false);
+    };
     collect_garbage(state).await?;
     let token = new_token();
     let work: Option<Work> = sqlx::query_as(
         "UPDATE memory_indexes SET
-        lease_until=clock_timestamp()+interval '10 minutes',token_hash=$1,leased_revision=revision
+        lease_until=clock_timestamp()+interval '10 minutes',token_hash=$1,leased_revision=revision,leased_graphiti_version=$2
         WHERE teacher_id=(SELECT teacher_id FROM memory_indexes
             WHERE revision>indexed_revision AND next_attempt_at<=now()
             AND (lease_until IS NULL OR lease_until<clock_timestamp())
@@ -85,6 +133,7 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
         RETURNING teacher_id,revision,group_id",
     )
     .bind(sha256_hex(&token))
+    .bind(&sidecar.graphiti_version)
     .fetch_optional(&state.db)
     .await?;
     let Some(work) = work else {
@@ -111,14 +160,15 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
             "proxy_key":token,"model":state.config.ai_model,
             "embedding_model":state.config.embedding.model,
             "embedding_dims":state.config.embedding.dims,
-            "policy_version":POLICY_VERSION,
+            "policy_version":POLICY_VERSION,"api_version":SIDECAR_API_VERSION,
         }))
         .send()
         .await;
     let success = match result {
         Ok(r) if r.status().is_success() => r.json::<Value>().await.ok().is_some_and(|v| {
             v["ok"] == true
-                && v["graphiti_version"] == GRAPHITI_VERSION
+                && v["api_version"] == SIDECAR_API_VERSION
+                && v["graphiti_version"] == sidecar.graphiti_version
                 && v["policy_version"] == POLICY_VERSION
         }),
         _ => false,
@@ -199,7 +249,7 @@ async fn collect_garbage(state: &AppState) -> AppResult<()> {
 /// The search query contains only canonical habits, never raw conversation/material text.
 /// Graph results may reorder approved IDs, but can never introduce a fact or another teacher.
 pub async fn rank(state: &AppState, teacher_id: i64, _query: &str, active: &[Memory]) -> Vec<i64> {
-    if !state.config.memory.enabled() || active.is_empty() {
+    if active.is_empty() || compatible_sidecar(state).await.is_none() {
         return vec![];
     }
     let group: Option<String> = sqlx::query_scalar(
@@ -281,15 +331,28 @@ async fn forward(
 ) -> AppResult<(StatusCode, Json<Value>)> {
     let token =
         bearer_token(headers).ok_or_else(|| AppError::Unauthorized("需要服務驗證。".into()))?;
-    let job: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT teacher_id,leased_revision FROM memory_indexes
+    let job: Option<(i64, i64, String)> = sqlx::query_as(
+        "SELECT teacher_id,leased_revision,leased_graphiti_version FROM memory_indexes
         WHERE token_hash=$1 AND lease_until>clock_timestamp()",
     )
     .bind(sha256_hex(token))
     .fetch_optional(&state.db)
     .await?;
-    let (teacher_id, revision) =
+    let (teacher_id, revision, leased_graphiti_version) =
         job.ok_or_else(|| AppError::Unauthorized("服務驗證已失效。".into()))?;
+    if headers
+        .get("x-manna-memory-api-version")
+        .is_some_and(|v| v.as_bytes() != SIDECAR_API_VERSION.to_string().as_bytes())
+    {
+        return Err(AppError::Unavailable(
+            "記憶服務介面版本不相容，已回到 Postgres。".into(),
+        ));
+    }
+    let graphiti_version = headers
+        .get("x-manna-graphiti-version")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty() && v.len() <= 64)
+        .unwrap_or(&leased_graphiti_version);
     if !body.is_object() || body["stream"] == true {
         return Err(AppError::bad_request("不支援的模型請求。"));
     }
@@ -362,7 +425,7 @@ async fn forward(
         scaffold_id: None,
         prompt_version_id: None,
     };
-    let snapshot = json!({"graphiti_version":GRAPHITI_VERSION,"policy_version":POLICY_VERSION,
+    let snapshot = json!({"graphiti_version":graphiti_version,"sidecar_api_version":SIDECAR_API_VERSION,"policy_version":POLICY_VERSION,
         "revision":revision,"endpoint":endpoint,"request":body});
     let id =
         pipeline::insert_interaction(&state.db, &meta, provider, model, &snapshot, 1, None).await?;
@@ -425,6 +488,8 @@ async fn forward(
 pub struct IndexStatus {
     pub pending: i64,
     pub failed: i64,
+    pub compatible: bool,
+    pub sidecar: Option<SidecarInfo>,
 }
 pub async fn status(
     State(state): State<AppState>,
@@ -437,5 +502,11 @@ pub async fn status(
     )
     .fetch_one(&state.db)
     .await?;
-    Ok(Json(IndexStatus { pending, failed }))
+    let sidecar = compatible_sidecar(&state).await;
+    Ok(Json(IndexStatus {
+        pending,
+        failed,
+        compatible: sidecar.is_some(),
+        sidecar,
+    }))
 }

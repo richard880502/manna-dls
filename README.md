@@ -166,6 +166,6 @@ Coolify 預設**不會**在建置時提供 `SOURCE_COMMIT`（它會讓 Docker �
 
 「備課偏好 → 我的出題習慣」支援確認後記住、取代／停止使用與完整歷程。
 研究介入開關預設關閉，由 PI 在後台決定是否讓習慣影響出題。
-Postgres 是正本；可選擇用 `docker-compose.memory.yml` 加入 Graphiti + FalkorDB，
+Postgres 是正本；可選擇另建以 `memory-sidecar/docker-compose.yml` 部署的 Coolify 資源，加入 Graphiti + FalkorDB，
 不加索引也能使用全部確認習慣。部署、隱私限制、備份還原與驗證見
 [教師長期記憶](docs/TEACHER_MEMORY.md)。

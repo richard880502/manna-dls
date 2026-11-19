@@ -50,11 +50,8 @@ jobs:
               - 'Dockerfile'
               - '.dockerignore'
               - 'docker-compose.yml'
-              - 'docker-compose.memory.yml'
-              - 'memory-sidecar/**'
             memory:
               - 'memory-sidecar/**'
-              - 'docker-compose.memory.yml'
             ci:
               - '.github/workflows/**'
 
