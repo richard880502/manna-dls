@@ -371,7 +371,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     expect(screen.getByRole("button", { name: "移除「The Umbrella Stand」" })).toBeInTheDocument();
   }
 
-  it("typed text with an attached material makes 閱讀理解題 by default; Enter sends it and opens the session", async () => {
+  it("typed text with an attached material makes a 完整學習單 by default; Enter sends it and opens the session", async () => {
     signIn();
     const api = mockApi({
       ...baseRoutes(),
@@ -394,7 +394,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
       entry: "home",
-      kind: "comprehension",
+      kind: "worksheet",
       request: "B1 程度，記憶到評鑑都要有",
       material_id: 5,
     });

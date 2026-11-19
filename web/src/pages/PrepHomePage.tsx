@@ -213,7 +213,8 @@ function QuickBox() {
   const mimic = tool === "mimic";
   const material = choice ? materialFields(choice) : null;
   const typed = text.trim();
-  const kind: StartKind | null = tool ? kindOf(tool) : material ? "comprehension" : typed ? "ask" : null;
+  // No tile and no tool word: an attached article makes the first tile's 完整學習單; text alone asks Manna.
+  const kind: StartKind | null = tool ? kindOf(tool) : material ? "worksheet" : typed ? "ask" : null;
   const missing = needMaterial && material === null && kind !== null && kind !== "ask";
   /** 照我的學習單做 waits for a sample, then for the lesson text. */
   const slotsNeeded = !mimic ? null : sample === null ? QUICK_NEED_SAMPLE : material === null ? QUICK_NEED_LESSON_TEXT : null;
