@@ -209,8 +209,9 @@ async fn a_sample_becomes_a_template_and_the_first_turn_follows_it() {
     .unwrap();
     assert_eq!(calls.len(), 7);
     for c in &calls {
-        // Version 3 (0029_graphic_organizers.sql) is version 2 with the organizer section.
-        assert_eq!(c["prompt"]["version_no"], 3);
+        // Version 3 (0029_graphic_organizers.sql) is version 2 with the organizer section;
+        // version 4 (0030_fill_in_blanks.sql) adds the 填空題 blank.
+        assert_eq!(c["prompt"]["version_no"], 4);
         assert!(c["prompt"]["system"]
             .as_str()
             .unwrap()

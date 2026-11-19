@@ -633,6 +633,122 @@ async fn failures_are_honest_and_never_block_editing() {
     assert!(v["error"]["message"].as_str().unwrap().contains("貼上教材"));
 }
 
+/// The tasks calls of one worksheet's generation: (attempt, status, check_results).
+async fn task_calls(app: &common::TestApp, id: i64) -> Vec<(i32, String, Value)> {
+    sqlx::query_as(
+        "SELECT attempt, status, check_results FROM ai_interactions
+          WHERE module = 'worksheet_tasks' AND (input_snapshot -> 'worksheet' ->> 'id')::bigint = $1
+          ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+fn check<'a>(results: &'a Value, name: &str) -> &'a Value {
+    results["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == name)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_fill_in_item_always_has_a_blank_to_write_in() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    // (marker, calls, the prompt's blank, the format it ends with, the repair recorded)
+    let cases = [
+        ("", 1, true, "填空題", None),
+        ("FAKE_WS_NO_BLANK", 2, true, "填空題", None),
+        (
+            "FAKE_WS_NO_BLANK_ALWAYS",
+            2,
+            true,
+            "填空題",
+            Some("把題目裡參考答案的字詞換成 ______"),
+        ),
+        (
+            "FAKE_WS_BLANK_LOST",
+            2,
+            false,
+            "簡答題",
+            Some("改成簡答題（印作答線）"),
+        ),
+    ];
+    for (marker, calls, blank, format, repair) in cases {
+        let id = direct(&app, &t, &passage(marker)).await["id"]
+            .as_i64()
+            .unwrap();
+        let state = generate(&app, &t, id).await;
+        let item = blocks(&state)
+            .iter()
+            .flat_map(|b| b["items"].as_array().unwrap().clone())
+            .find(|i| {
+                i["prompt"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("Complete the sentence from")
+            })
+            .unwrap_or_else(|| panic!("{marker}: no fill-in item in {state}"));
+        let prompt = item["prompt"].as_str().unwrap();
+        let answer = item["answer"].as_str().unwrap();
+        assert_eq!(item["answer_format"], format, "{marker}: {item}");
+        assert_eq!(prompt.contains("______"), blank, "{marker}: {prompt}");
+        assert!(
+            !prompt.contains(&format!(" {answer} ")),
+            "{marker}: the answer is not left in the prompt: {prompt}"
+        );
+
+        let rows = task_calls(&app, id).await;
+        assert_eq!(rows.len(), calls, "{marker}: {rows:?}");
+        let first = &rows[0].2;
+        let wellformed = check(first, "items_wellformed");
+        if calls == 1 {
+            assert_eq!(wellformed["passed"], true, "{marker}: {first}");
+            continue;
+        }
+        // The first call fails the check with the problem stated; the repair call is made.
+        assert_eq!(wellformed["passed"], false, "{marker}: {first}");
+        assert!(
+            wellformed["detail"].as_str().unwrap().contains("沒有空格"),
+            "{marker}: {wellformed}"
+        );
+        let (attempt, status, last) = rows.last().unwrap();
+        assert_eq!((*attempt, status.as_str()), (2, "shown"), "{marker}");
+        let repairs: Vec<&str> = last["repairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        match repair {
+            None => assert!(
+                !repairs
+                    .iter()
+                    .any(|r| r.contains("______") || r.contains("簡答題")),
+                "{marker}: {repairs:?}"
+            ),
+            Some(note) => assert!(
+                repairs.iter().any(|r| r.contains(note)),
+                "{marker}: {repairs:?}"
+            ),
+        }
+        // The student sheet gives the 簡答題 lines to write on.
+        let student = sheet(&app, &t, id, "standard", "student").await;
+        let printed = student["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|b| b["items"].as_array().unwrap().clone())
+            .find(|i| i["id"] == item["id"])
+            .unwrap();
+        assert_eq!(printed["lines"].as_u64().unwrap() > 0, !blank, "{printed}");
+    }
+}
+
 #[tokio::test]
 async fn one_block_regenerates_and_undo_brings_back_the_previous_version() {
     let app = test_app!();
