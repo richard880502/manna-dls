@@ -303,6 +303,7 @@ pub async fn material_focuses(
         attempt: 1,
         max_tokens: None,
         temperature: None,
+        images: Vec::new(),
     };
     let outcome = pipeline::run(
         &state,

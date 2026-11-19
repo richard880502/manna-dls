@@ -426,6 +426,7 @@ pub async fn suggest(
         attempt: 1,
         max_tokens: None,
         temperature: None,
+        images: Vec::new(),
     };
     let outcome = pipeline::run(
         &state,

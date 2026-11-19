@@ -1347,6 +1347,7 @@ pub async fn suggest(
         attempt: 1,
         max_tokens: Some(max_tokens),
         temperature: Some(temperature),
+        images: Vec::new(),
     };
     let owned: Vec<OverLevelWord> = chosen.iter().map(|w| (*w).clone()).collect();
     // gloss: base → (suggestion, notes, interaction)

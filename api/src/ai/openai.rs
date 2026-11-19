@@ -23,6 +23,21 @@ pub fn reasoning_effort(effort: &str) -> &'static str {
     }
 }
 
+/// The user message: a plain string, or (with pictures) the text then one `image_url` part per
+/// picture as a data URL.
+fn user_content(req: &LlmRequest) -> Value {
+    if req.images.is_empty() {
+        return json!(req.user);
+    }
+    let mut parts = vec![json!({ "type": "text", "text": req.user })];
+    parts.extend(
+        req.images
+            .iter()
+            .map(|i| json!({ "type": "image_url", "image_url": { "url": i.data_url() } })),
+    );
+    Value::Array(parts)
+}
+
 pub fn build_body(model: &str, req: &LlmRequest) -> Value {
     build_body_for(model, req, None)
 }
@@ -32,7 +47,7 @@ pub fn build_body_for(model: &str, req: &LlmRequest, reasoning: Option<&str>) ->
         "model": model,
         "messages": [
             { "role": "system", "content": req.system },
-            { "role": "user", "content": req.user }
+            { "role": "user", "content": user_content(req) }
         ],
         "response_format": {
             "type": "json_schema",
@@ -143,6 +158,7 @@ mod tests {
             attempt: 1,
             max_tokens: None,
             temperature: None,
+            images: Vec::new(),
         };
         let b = build_body("nchc-model", &req);
         assert_eq!(b["messages"][0]["role"], "system");
@@ -160,11 +176,44 @@ mod tests {
         let bounded = LlmRequest {
             max_tokens: Some(6000),
             temperature: Some(0.5),
+            images: Vec::new(),
             ..req
         };
         let b = build_body("nchc-model", &bounded);
         assert_eq!(b["max_tokens"], 6000);
         assert_eq!(b["temperature"], 0.5);
+    }
+
+    #[test]
+    fn pictures_go_after_the_text_as_image_url_parts() {
+        let req = LlmRequest {
+            system: "s".into(),
+            user: "look".into(),
+            schema_name: "prep_revise",
+            schema: json!({"type": "object"}),
+            fake_context: json!({}),
+            attempt: 1,
+            max_tokens: None,
+            temperature: None,
+            images: vec![crate::ai::LlmImage {
+                media_type: "image/jpeg",
+                data: bytes::Bytes::from_static(b"\xFF\xD8\xFF"),
+            }],
+        };
+        let b = build_body("m", &req);
+        let content = &b["messages"][1]["content"];
+        assert_eq!(content[0], json!({"type": "text", "text": "look"}));
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/jpeg;base64,/9j/"
+        );
+        // Without pictures the content stays a plain string.
+        let plain = LlmRequest {
+            images: vec![],
+            ..req
+        };
+        assert_eq!(build_body("m", &plain)["messages"][1]["content"], "look");
     }
 
     #[test]
@@ -215,6 +264,7 @@ mod tests {
             attempt: 1,
             max_tokens: Some(4000),
             temperature: Some(0.4),
+            images: Vec::new(),
         };
         let b = build_body_for("gpt-5.6-terra", &req, Some("medium"));
         assert_eq!(b["reasoning_effort"], "medium");

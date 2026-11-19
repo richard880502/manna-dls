@@ -222,6 +222,16 @@ pub fn api_router() -> Router<AppState> {
             get(prep::get).patch(prep::patch).delete(prep::delete),
         )
         .route("/prep-sessions/{id}/turns", post(prep::create_turn))
+        .route(
+            "/prep-sessions/{id}/images",
+            post(prep::upload_image).layer(DefaultBodyLimit::max(
+                (crate::prep::images::MAX_BYTES + 1024 * 1024) as usize,
+            )),
+        )
+        .route(
+            "/prep-sessions/{id}/images/{image_id}",
+            get(prep::image_file).delete(prep::delete_image),
+        )
         .route("/prep-sessions/{id}/turns/{turn_id}/kit", get(prep::kit))
         .route(
             "/prep-sessions/{id}/turns/{turn_id}/siop-check",

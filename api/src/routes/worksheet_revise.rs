@@ -16,6 +16,7 @@ use crate::worksheet::ai::revise::{self as block_revise, ReviseRequest};
 use crate::worksheet::comments::{
     self, AnchorInput, Comment, Patch, MAX_NOTE_CHARS, STATUS_DISMISSED, STATUS_OPEN,
 };
+use crate::worksheet::images::actions::{self, PictureOutcome};
 use crate::worksheet::revise::{self as rv, Accepted, Proposal, MSG_CHANGED_MEANWHILE};
 use crate::worksheet::store;
 use crate::AppState;
@@ -157,6 +158,9 @@ pub struct ReviseBlock {
     /// 「可以動到這一區的其他題」
     #[serde(default)]
     pub whole_block: bool,
+    /// Pictures uploaded to the worksheet's prep session, to send with the request (≤ 2).
+    #[serde(default)]
+    pub image_ids: Vec<i64>,
 }
 
 pub async fn revise_block(
@@ -175,6 +179,7 @@ pub async fn revise_block(
             instruction: req.instruction,
             comment_ids: req.comment_ids,
             whole_block: req.whole_block,
+            image_ids: req.image_ids,
         },
     )
     .await?;
@@ -207,6 +212,9 @@ pub async fn get_proposal(
 #[derive(Debug, Serialize)]
 pub struct Decided {
     pub proposal: Proposal,
+    /// What happened to the proposal's picture actions (`[]` without any): queued pictures
+    /// appear in `worksheet.images` as they are drawn.
+    pub pictures: Vec<PictureOutcome>,
     pub worksheet: WorksheetState,
 }
 
@@ -216,16 +224,33 @@ pub async fn accept_proposal(
     ApiPath((id, proposal_id)): ApiPath<(i64, i64)>,
 ) -> AppResult<Json<Decided>> {
     let db = &state.db;
-    store::owned(db, id, teacher.id()).await?;
+    let ws = store::owned(db, id, teacher.id()).await?;
     if crate::worksheet::ai::jobs(&state, id).await?.1 {
         return Err(AppError::Conflict(
             "Manna 正在產生這份學習單，好了之後再採用。".to_string(),
         ));
     }
-    let proposal = match rv::accept(db, id, proposal_id, teacher.id()).await? {
-        Accepted::Done(p) => p,
+    let (proposal, added, saved) = match rv::accept(db, id, proposal_id, teacher.id()).await? {
+        Accepted::Done {
+            proposal,
+            added,
+            content,
+        } => (*proposal, added, *content),
         Accepted::Stale(_) => return Err(AppError::Conflict(MSG_CHANGED_MEANWHILE.to_string())),
     };
+    // 採用 is the teacher's yes to the pictures too: queue the new ones, redraw, remove.
+    let pictures = actions::run(&state, &ws, &proposal.picture_actions, &added, &saved).await;
+    if !pictures.is_empty() {
+        actions::log_applied(
+            &state,
+            teacher.id(),
+            id,
+            "block_revise",
+            json!({ "proposal_id": proposal.id, "block_id": proposal.block_id }),
+            &pictures,
+        )
+        .await;
+    }
     log_usage(
         db,
         teacher.id(),
@@ -238,6 +263,7 @@ pub async fn accept_proposal(
     .await?;
     Ok(Json(Decided {
         proposal,
+        pictures,
         worksheet: state_of(&state, id).await?,
     }))
 }

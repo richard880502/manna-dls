@@ -15,6 +15,8 @@ import { MaterialViewer } from "../components/material/MaterialViewer";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
+import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
+import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ResourcesCard, ReviseCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
@@ -82,6 +84,7 @@ function PrepSessionView({ id }: { id: number }) {
   const [target, setTarget] = useState<{ worksheetId: number; blockId: string; name: string } | null>(null);
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  const attach = useImageAttach(id);
   const previous = useRef<PrepSession | null>(null);
   // A turn that appeared after the page loaded is scrolled into view, so the teacher sees it start.
   const [arrived, setArrived] = useState<number | null>(null);
@@ -154,6 +157,10 @@ function PrepSessionView({ id }: { id: number }) {
     setLabels((prev) => ({ ...prev, [worksheetId]: map }));
   }, []);
 
+  // Pictures go only with a revision of the worksheet (not a question to Manna).
+  const canAttach = session !== null && hasWorksheet(session) && barMode === "revise";
+  const drop = useImageDrop(canAttach && !(session?.running || sending), attach.add);
+
   if (loadError && !session) {
     return (
       <>
@@ -189,7 +196,11 @@ function PrepSessionView({ id }: { id: number }) {
     setSending(true);
     setSendError(null);
     try {
-      await api.reviseWorksheetBlock(t.worksheetId, t.blockId, { instruction });
+      await api.reviseWorksheetBlock(t.worksheetId, t.blockId, {
+        instruction,
+        ...(attach.imageIds.length > 0 ? { image_ids: attach.imageIds } : {}),
+      });
+      attach.clear();
       setProposalsKey((prev) => ({ ...prev, [t.worksheetId]: (prev[t.worksheetId] ?? 0) + 1 }));
       setTarget(null);
       setDraft("");
@@ -204,15 +215,20 @@ function PrepSessionView({ id }: { id: number }) {
   async function sendDraft(event?: FormEvent) {
     event?.preventDefault();
     const text = draft.trim();
-    if (!text || locked) return;
+    if (!text || locked || (canAttach && attach.uploading)) return;
     if (target) {
       await reviseTarget(target, text);
       return;
     }
     // No kind: the server revises the worksheet if there is one, otherwise answers.
     const body: CreatePrepTurnRequest =
-      session && hasWorksheet(session) && barMode === "ask" ? { kind: "ask", request: text } : { request: text };
-    if (await send(body)) setDraft("");
+      session && hasWorksheet(session) && barMode === "ask"
+        ? { kind: "ask", request: text }
+        : { request: text, ...(attach.imageIds.length > 0 ? { image_ids: attach.imageIds } : {}) };
+    if (await send(body)) {
+      setDraft("");
+      attach.clear();
+    }
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -485,6 +501,7 @@ function PrepSessionView({ id }: { id: number }) {
               <span className="sr-only">你：</span>
               <span className="prep-bubble">{turn.request}</span>
             </p>
+            <PrepImageThumbs sessionId={id} images={turn.images} />
             <section className="prep-result" aria-label={`${KIND_LABEL[turn.kind]}（第 ${turn.seq} 則）`}>
               {stepsShown(turn) && turn.progress && (
                 <RunProgressPanel
@@ -543,6 +560,11 @@ function PrepSessionView({ id }: { id: number }) {
           className="prep-composer"
           data-disabled={locked || undefined}
           data-tall={composerTall || undefined}
+          data-dragging={(canAttach && drop.dragging) || undefined}
+          onDragEnter={drop.onDragEnter}
+          onDragOver={drop.onDragOver}
+          onDragLeave={drop.onDragLeave}
+          onDrop={drop.onDrop}
         >
           <label className="sr-only" htmlFor={`${ids}-draft`}>
             給 Manna 的話
@@ -573,6 +595,8 @@ function PrepSessionView({ id }: { id: number }) {
               />
             </svg>
           </button>
+          {canAttach && <AttachedThumbs attach={attach} />}
+          {canAttach && <ErrorText message={attach.error} />}
           <textarea
             id={`${ids}-draft`}
             ref={draftRef}
@@ -591,8 +615,10 @@ function PrepSessionView({ id }: { id: number }) {
             }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={drop.onPaste}
           />
           <div className="prep-composer-tools">
+            {canAttach && <AttachButton onFiles={attach.add} disabled={locked} />}
             {hasWorksheet(session) && (
               <div className="ws-seg prep-bar-mode" role="radiogroup" aria-label="要改學習單還是問問題">
                 {(
@@ -624,7 +650,7 @@ function PrepSessionView({ id }: { id: number }) {
               className="prep-send"
               aria-label="送出"
               title="送出（Enter）"
-              disabled={locked || draft.trim() === ""}
+              disabled={locked || draft.trim() === "" || (canAttach && attach.uploading)}
             >
               <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
                 <path
@@ -639,6 +665,9 @@ function PrepSessionView({ id }: { id: number }) {
             </button>
           </div>
         </div>
+        {canAttach && (
+          <p className="prep-attach-note">{IMAGE_PRIVACY_NOTE}</p>
+        )}
         <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
 

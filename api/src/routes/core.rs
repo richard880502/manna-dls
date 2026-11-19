@@ -623,6 +623,7 @@ pub async fn assist(
         attempt: 1,
         max_tokens: None,
         temperature: None,
+        images: Vec::new(),
     };
     let level = req.level;
     let outcome = pipeline::run(
