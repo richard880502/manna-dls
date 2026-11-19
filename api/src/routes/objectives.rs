@@ -12,6 +12,7 @@ use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::materials::{ocr, store as material_store};
 use crate::objectives::draft::{self, DraftInput, DraftResult};
+use crate::objectives::{CONTENT_CODES, LANGUAGE_CODES};
 use crate::prep::is_bare_label;
 use crate::progress::{self, Progress, Sink, Tracker};
 use crate::routes::{clip_chars, log_usage, owned_class};
@@ -38,12 +39,24 @@ const MAX_REQUEST_CHARS: usize = 2000;
 /// Lines of an earlier draft to write other than (「換一組」).
 const AVOID_MAX: usize = 8;
 const AVOID_CHARS: usize = 200;
+/// Lines kept in a partial redraw: one less than the largest set (C1, C2, L1, L2).
+const KEEP_MAX: usize = 3;
+const MSG_KEEP: &str =
+    "keep 的 code 需為 C1、C2、L1 或 L2，最多 3 句，每個代號一句，句子不能是空的。";
 
 #[derive(Debug, Default, Deserialize)]
 pub struct PastedMaterial {
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
+    pub text: String,
+}
+
+/// One objective kept in a partial redraw (「換掉沒勾的」): its code in the set shown and its
+/// line as the teacher has it now.
+#[derive(Debug, Deserialize)]
+pub struct KeptObjective {
+    pub code: String,
     pub text: String,
 }
 
@@ -63,6 +76,9 @@ pub struct DraftObjectives {
     pub request: Option<String>,
     #[serde(default)]
     pub avoid: Vec<String>,
+    /// 換掉沒勾的: the lines the teacher keeps (and edited), which the new ones go with.
+    #[serde(default)]
+    pub keep: Vec<KeptObjective>,
     /// The page's own key for asking how far the drafting is
     /// (`GET /api/objective-drafts/progress/:progress_id`).
     #[serde(default)]
@@ -142,6 +158,19 @@ pub async fn draft(
         .filter(|a| !a.is_empty())
         .take(AVOID_MAX)
         .collect();
+    let mut keep: Vec<(String, String)> = Vec::new();
+    for k in &req.keep {
+        let code = k.code.trim().to_string();
+        let text = clip_chars(k.text.trim(), AVOID_CHARS);
+        if !(CONTENT_CODES.contains(&code.as_str()) || LANGUAGE_CODES.contains(&code.as_str()))
+            || text.is_empty()
+            || keep.iter().any(|(c, _)| *c == code)
+            || keep.len() >= KEEP_MAX
+        {
+            return Err(AppError::bad_request(MSG_KEEP));
+        }
+        keep.push((code, text));
+    }
     let paragraphs = material.paragraphs.len();
     let tracker = match &req.progress_id {
         Some(key) => {
@@ -160,6 +189,7 @@ pub async fn draft(
             class_id: req.class_id,
             request,
             avoid: avoid.clone(),
+            keep: keep.clone(),
         },
         tracker.clone(),
     )
@@ -179,7 +209,8 @@ pub async fn draft(
             "kind": kind, "material_id": req.material_id, "paragraphs": paragraphs,
             "class_id": req.class_id, "status": result.status,
             "interaction_id": result.interaction_id, "shown": result.objectives.len(),
-            "hidden": result.hidden, "again": !avoid.is_empty(),
+            "hidden": result.hidden, "again": !avoid.is_empty() || !keep.is_empty(),
+            "kept": keep.iter().map(|(c, _)| c).collect::<Vec<_>>(),
         }),
     )
     .await?;

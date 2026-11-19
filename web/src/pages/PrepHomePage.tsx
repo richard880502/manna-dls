@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } f
 import { Link, useNavigate } from "react-router";
 import type { CreateCarry } from "./CreatePage";
 import { api, errorMessage } from "../api/client";
-import type { DecisionRequest, ObjectiveDraftKind, PrepSessionSummary } from "../api/types";
+import type { ObjectiveDraftKind, PrepSessionSummary } from "../api/types";
 import { ErrorText } from "../components/common";
 import { Icon } from "../components/Icon";
 import {
@@ -47,7 +47,7 @@ import {
   type StartKind,
   type Tool,
 } from "../lib/create";
-import { objectiveOptions } from "../lib/objectives";
+import { objectiveOptions, type DraftDecision } from "../lib/objectives";
 import { ocrBusyError } from "../lib/ocr";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
@@ -256,9 +256,9 @@ function QuickBox() {
     }
   }
 
-  async function adoptDrafts(outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) {
+  async function adoptDrafts(outcome: DraftOutcome, decisions: DraftDecision[]) {
     drafts.close();
-    await recordDecisions(interactionId, decisions);
+    await recordDecisions(decisions);
     await create(outcome.content, outcome.language);
   }
 
@@ -432,13 +432,13 @@ function QuickBox() {
         <ObjectiveDrafts
           state={drafts.state}
           disabled={busy}
-          onUse={(outcome, decisions, interactionId) => void adoptDrafts(outcome, decisions, interactionId)}
-          onSkip={(decisions, interactionId) => {
+          onUse={(outcome, decisions) => void adoptDrafts(outcome, decisions)}
+          onSkip={(decisions) => {
             drafts.close();
-            void recordDecisions(interactionId, decisions);
+            void recordDecisions(decisions);
             void create("", "");
           }}
-          onAnother={() => void drafts.another()}
+          onAnother={(plan) => void drafts.another(plan)}
           onCancel={drafts.close}
         />
       )}

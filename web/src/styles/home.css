@@ -986,3 +986,24 @@
 .bloom-bar .bloom-seg {
   color: var(--bloom-ink);
 }
+
+/* Each draft has its own checkbox; an unchecked one is dimmed but stays editable. */
+.objective-draft-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--space-md);
+}
+
+.objective-draft-use {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.objective-draft.is-off > :not(.objective-draft-head) {
+  opacity: 0.55;
+}
