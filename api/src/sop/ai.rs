@@ -613,6 +613,7 @@ async fn run_analysis(
         attempt: 1,
         max_tokens: Some(ANALYSIS_MAX_TOKENS),
         temperature: Some(temperature),
+        images: Vec::new(),
     };
 
     // ---- first call: the whole passage
@@ -1053,6 +1054,7 @@ async fn run_objectives(
         attempt: 1,
         max_tokens: Some(OBJECTIVES_MAX_TOKENS),
         temperature: Some(temperature),
+        images: Vec::new(),
     };
 
     let a1 = attempt(state, &meta, &snapshot, &req, None).await?;

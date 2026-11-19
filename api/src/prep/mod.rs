@@ -13,6 +13,7 @@
 //! `maxLength` / `maxItems` while decoding, which is what stops a runaway.
 
 pub mod fake;
+pub mod images;
 pub mod kit;
 pub mod run;
 pub mod selfcheck;
@@ -620,6 +621,9 @@ pub struct Revision {
     pub reply: String,
     pub changed_block_ids: Vec<String>,
     pub version_no: Option<i32>,
+    /// What happened to the picture actions (docs/API.md「改圖片」); empty without any.
+    #[serde(default)]
+    pub pictures: Vec<crate::worksheet::images::actions::PictureOutcome>,
 }
 
 // ---------------------------------------------------------------- what the model writes
@@ -734,6 +738,8 @@ pub struct RawChange {
 pub struct RawRevision {
     pub reply: String,
     pub changes: Vec<RawChange>,
+    #[serde(default)]
+    pub picture_actions: Vec<crate::worksheet::images::actions::RawPictureAction>,
 }
 
 // ---------------------------------------------------------------- schemas (properties in written order)
@@ -903,7 +909,7 @@ pub fn ask_schema() -> Value {
 }
 
 /// `prep_revise`: `block_id` only from the worksheet's blocks; items capped like a template block.
-pub fn revise_schema(block_ids: &[String]) -> Value {
+pub fn revise_schema(block_ids: &[String], slot_ids: &[String], picture_max: usize) -> Value {
     use crate::worksheet::template::{
         ITEM_ANSWER_CHARS, ITEM_OPTIONS, ITEM_OPTION_CHARS, ITEM_PROMPT_CHARS,
         SECTION_INSTRUCTIONS_CHARS, SECTION_TITLE_CHARS,
@@ -935,6 +941,10 @@ pub fn revise_schema(block_ids: &[String]) -> Value {
         (
             "changes",
             json!({ "type": "array", "items": change, "maxItems": max_changes }),
+        ),
+        (
+            "picture_actions",
+            crate::worksheet::images::actions::schema(block_ids, slot_ids, picture_max),
         ),
     ])
 }
@@ -2616,8 +2626,11 @@ mod tests {
             ),
             ("selfcheck", selfcheck::schema(&selfcheck::judged_ids())),
             ("ask", ask_schema()),
-            ("revise", revise_schema(&["b1".into()])),
-            ("revise_empty", revise_schema(&[])),
+            (
+                "revise",
+                revise_schema(&["b1".into()], &["b1-p1".into()], 3),
+            ),
+            ("revise_empty", revise_schema(&[], &[], 0)),
         ] {
             caps(&schema, name, &mut problems);
         }

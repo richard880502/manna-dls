@@ -107,6 +107,7 @@ export function WorksheetCard({
     reloadKey: proposalsKey,
     onApplied: (done) => {
       setState(done.worksheet);
+      setImages(done.worksheet.images ?? null);
       setLocalKey((n) => n + 1);
       setFlash(new Set([done.proposal.block_id]));
     },

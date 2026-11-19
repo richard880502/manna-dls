@@ -23,6 +23,7 @@
 //! * **Restarts**: open rows are taken over at startup ([`recover`]), like OCR.
 //! * **Logs**: counts, sizes, hashes and token counts only; never a prompt or the teacher's note.
 
+pub mod actions;
 pub mod client;
 pub mod job;
 

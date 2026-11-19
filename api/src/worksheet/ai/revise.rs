@@ -22,6 +22,7 @@ use crate::worksheet::assemble::project;
 use crate::worksheet::bloom::{Bloom, Output};
 use crate::worksheet::checks::SectionCtx;
 use crate::worksheet::comments::{self, Comment, Field, STATUS_OPEN};
+use crate::worksheet::images::actions;
 use crate::worksheet::revise::{
     self as rv, code, max_items, max_tokens, merge, MergeCtx, Merged, NewProposal, Proposal,
     RawBlockRevision, Scope, KEY_BLOCK_REVISE, SCAFFOLD, SCHEMA_NAME,
@@ -45,6 +46,9 @@ pub struct ReviseRequest {
     pub comment_ids: Vec<i64>,
     /// 「可以動到這一區的其他題」
     pub whole_block: bool,
+    /// Pictures uploaded to the worksheet's prep session (`POST /api/prep-sessions/:id/images`),
+    /// at most 2, sent with the request.
+    pub image_ids: Vec<i64>,
 }
 
 /// After this many seconds a running revision died with the server: two attempts and a margin.
@@ -118,6 +122,22 @@ pub async fn start(
     if instruction.is_empty() && notes.is_empty() {
         return Err(AppError::bad_request(MSG_NOTHING_TO_DO));
     }
+    // Attached pictures belong to the prep session the worksheet was made in.
+    let image_ids = if req.image_ids.is_empty() {
+        Vec::new()
+    } else {
+        let session: Option<i64> =
+            sqlx::query_scalar("SELECT prep_session_id FROM worksheets WHERE id = $1")
+                .bind(ws.id)
+                .fetch_one(db)
+                .await?;
+        let Some(session_id) = session else {
+            return Err(AppError::bad_request(
+                "這份學習單不是在備課對話裡做的，沒有地方可以附上圖片。",
+            ));
+        };
+        crate::prep::images::check_ids(db, ws.teacher_id, session_id, &req.image_ids).await?
+    };
     rv::expire_stale(db, ws.id, stale_after(state)).await?;
     // Checked before the block's open proposal is set aside (the insert checks again).
     if rv::any_running(db, ws.id).await? {
@@ -140,6 +160,14 @@ pub async fn start(
         },
     )
     .await?;
+    if let Err(e) = crate::prep::images::attach_to_proposal(db, &image_ids, proposal.id).await {
+        let message = match &e {
+            AppError::Conflict(m) | AppError::BadRequest(m) => m.clone(),
+            _ => MSG_INTERNAL.to_string(),
+        };
+        rv::finish(db, proposal.id, Err(message), None).await?;
+        return Err(e);
+    }
     log_usage(
         db,
         ws.teacher_id,
@@ -147,7 +175,7 @@ pub async fn start(
         json!({
             "worksheet_id": ws.id, "block_id": block.id, "proposal_id": proposal.id,
             "round": round, "comments": comment_ids.len(), "instruction": !instruction.is_empty(),
-            "whole_block": req.whole_block,
+            "whole_block": req.whole_block, "images": image_ids.len(),
         }),
     )
     .await?;
@@ -472,7 +500,20 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         ),
     };
     let max = max_items(block.items.len());
+    let pictures_on = state.images.enabled();
+    let states = crate::worksheet::images::current(db, ws.id).await?;
+    let slot_ids = actions::slot_ids(&content, Some(&block.id));
+    let attached = crate::prep::images::load(state, None, Some(proposal_id)).await?;
     let mut vars: HashMap<&'static str, String> = HashMap::from([
+        ("picture_rules", actions::rules(state).await?),
+        (
+            "pictures_note",
+            format!(
+                "這一區目前的圖片（redraw、remove 的 slot_id 只能用這裡列出的；沒有就是沒有圖）：\n{}",
+                actions::describe_text(&block, &states)
+            ),
+        ),
+        ("attachments_note", attached.note()),
         (
             "instruction",
             if instruction.is_empty() {
@@ -534,6 +575,8 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             "bloom": i.bloom.map(|b| b.as_str()),
         })).collect::<Vec<Value>>(),
         "targets": targets,
+        "pictures": actions::describe(&block, &states),
+        "block_id": block.id,
         "open": scope.open,
         "round": round,
         "title": block.title,
@@ -543,7 +586,13 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         key: KEY_BLOCK_REVISE,
         scaffold: SCAFFOLD,
         schema_name: SCHEMA_NAME,
-        schema: rv::schema(block.items.len(), max),
+        schema: rv::schema(
+            block.items.len(),
+            max,
+            &block.id,
+            &slot_ids,
+            if pictures_on { actions::MAX_ACTIONS } else { 0 },
+        ),
         vars,
         required,
         redact: vec![
@@ -558,8 +607,11 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             "worksheet_id": ws.id, "block_id": block.id, "proposal_id": proposal_id,
             "round": round, "comment_ids": notes.iter().map(|n| n.id).collect::<Vec<_>>(),
             "scope_open": scope.open, "material_source": material.source,
+            // Ids, sizes and hashes of the attached pictures; never their bytes.
+            "attached_images": attached.record,
         }),
         progress: None,
+        images: attached.images.clone(),
     };
 
     let passage: String = material
@@ -598,14 +650,32 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         printed: &printed,
         max_items: max,
     };
+    let name_of = |_: &str| None::<String>;
     let result = call(
         state,
         ws.teacher_id,
         c,
         |raw: &RawBlockRevision| {
             let (merged, problems) = merge(raw, &mctx);
+            // The picture actions: only this block's pictures, and nothing while pictures are
+            // off. A dropped action is no reason for a second call.
+            let (pictures, _notes) = actions::check(
+                &raw.picture_actions,
+                &actions::CheckCtx {
+                    content: &content,
+                    only_block: Some(&block.id),
+                    name_of: &name_of,
+                },
+                pictures_on,
+            );
+            let dropped = if pictures_on {
+                raw.picture_actions.len().saturating_sub(pictures.len())
+            } else {
+                0
+            };
+            let off = !pictures_on && !raw.picture_actions.is_empty();
             Checked {
-                output: Some(merged),
+                output: Some((merged, pictures, dropped, off)),
                 problems,
             }
         },
@@ -613,37 +683,52 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
     )
     .await?;
     let (outcome, interaction_id) = match result {
-        Ok((
-            Merged {
+        Ok(((merged, pictures, dropped, off), id)) => {
+            let Merged {
                 block: revised,
                 reply,
-                changed: true,
-                ..
-            },
-            id,
-        )) => {
-            let reply = if reply.is_empty() {
-                "已依你的註記修改這一區。".to_string()
+                changed,
+                failed,
+            } = merged;
+            let mut notes = String::new();
+            if dropped > 0 {
+                notes.push_str(&format!(
+                    "（有 {dropped} 個圖片動作沒有通過檢查，沒有列進建議。）"
+                ));
+            }
+            if actions::off_notice(usize::from(off), pictures_on).is_some() {
+                notes.push_str("（這個環境沒有開啟 AI 產圖，圖片的部分沒有處理。）");
+            }
+            if changed || !pictures.is_empty() {
+                let reply = if reply.is_empty() {
+                    if changed {
+                        "已依你的註記修改這一區。".to_string()
+                    } else {
+                        "建議調整這一區的圖片。".to_string()
+                    }
+                } else {
+                    reply
+                };
+                (Ok((revised, format!("{reply}{notes}"), pictures)), Some(id))
+            } else if !failed.is_empty() {
+                (
+                    Err(format!(
+                        "Manna 的修改（{}）沒有通過學習單的檢查，這一區維持原樣。可以再請 Manna 改一次。{notes}",
+                        failed.join("、")
+                    )),
+                    Some(id),
+                )
             } else {
-                reply
-            };
-            (Ok((revised, reply)), Some(id))
+                (
+                    Err(if reply.trim().is_empty() {
+                        format!("Manna 這次沒有改動這一區。可以把註記寫得更具體，再請 Manna 改一次。{notes}")
+                    } else {
+                        format!("Manna 沒有改動這一區：{}{notes}", reply.trim())
+                    }),
+                    Some(id),
+                )
+            }
         }
-        Ok((Merged { failed, .. }, id)) if !failed.is_empty() => (
-            Err(format!(
-                "Manna 的修改（{}）沒有通過學習單的檢查，這一區維持原樣。可以再請 Manna 改一次。",
-                failed.join("、")
-            )),
-            Some(id),
-        ),
-        Ok((Merged { reply, .. }, id)) => (
-            Err(if reply.trim().is_empty() {
-                "Manna 這次沒有改動這一區。可以把註記寫得更具體，再請 Manna 改一次。".to_string()
-            } else {
-                format!("Manna 沒有改動這一區：{}", reply.trim())
-            }),
-            Some(id),
-        ),
         Err(message) => (Err(message), None),
     };
     rv::finish(db, proposal_id, outcome, interaction_id).await?;

@@ -4,6 +4,7 @@ import type {
   CreateWorksheetCommentRequest,
   ReviseWorksheetBlockRequest,
   UpdateWorksheetCommentRequest,
+  PictureOutcome,
   WorksheetComment,
   WsBlock,
   WsItem,
@@ -27,6 +28,7 @@ import {
 import { clipQuote } from "../../lib/materials";
 import { printedAnswer, printedOption } from "../../lib/worksheet";
 import { ErrorText } from "../common";
+import { PictureOutcomeList, PrepImageThumbs } from "../prep/ImageAttach";
 
 // ---------------------------------------------------------------- state
 
@@ -52,6 +54,8 @@ export interface BlockRevise {
   running: boolean;
   notesOf: (blockId: string) => WorksheetComment[];
   proposalOf: (blockId: string) => WsProposal | undefined;
+  /** What 採用 did with the picture actions of a block (until the next action on it). */
+  picturesOf: (blockId: string) => PictureOutcome[];
   /** Saves a note; with `revise`, asks Manna to revise the block by it right away. */
   addNote: (body: CreateWorksheetCommentRequest, revise?: boolean) => Promise<boolean>;
   updateNote: (c: WorksheetComment, patch: UpdateWorksheetCommentRequest) => Promise<void>;
@@ -76,6 +80,7 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
   const [error, setError] = useState<BlockRevise["error"]>(null);
   const [busy, setBusy] = useState(false);
   const [seq, setSeq] = useState(0);
+  const [outcomes, setOutcomes] = useState<Record<string, PictureOutcome[]>>({});
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
@@ -156,6 +161,7 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
     act(
       blockId,
       async () => {
+        setOutcomes((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
         const p = await api.reviseWorksheetBlock(worksheetId!, blockId, body);
         if (alive.current) putProposal(p);
       },
@@ -171,6 +177,7 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
     running,
     notesOf: (blockId) => comments.filter((c) => blockOfNote(c) === blockId && c.anchor.block_id !== null),
     proposalOf: (blockId) => proposals.find((p) => p.block_id === blockId),
+    picturesOf: (blockId) => outcomes[blockId] ?? [],
     addNote: async (body, andRevise = false) => {
       let created: WorksheetComment | null = null;
       const saved = await act(body.block_id, async () => {
@@ -202,6 +209,7 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
             const done = await api.acceptWorksheetProposal(worksheetId!, p.id);
             if (!alive.current) return;
             setProposals((prev) => prev.filter((x) => x.id !== p.id));
+            setOutcomes((prev) => ({ ...prev, [p.block_id]: done.pictures ?? [] }));
             optionsRef.current.onApplied?.(done);
           } finally {
             // Notes are marked applied; a proposal that went stale says so.
@@ -558,8 +566,12 @@ export function ProposalPanel({
       </div>
     );
   }
-  if (p.status !== "proposed" || !p.block || !p.changes) return null;
-  const after = p.block;
+  const pictureActions = p.picture_actions ?? [];
+  if (p.status !== "proposed") return null;
+  // Only pictures to add, redraw or remove: there is no changed block, but 採用 still does it.
+  if ((!p.block || !p.changes) && pictureActions.length === 0) return null;
+  const after = p.block ?? p.before;
+  const changes = p.changes ?? { title: false, instructions: false, items: [] };
   const find = (block: WsBlock, id: string) => block.items.find((i) => i.id === id);
   return (
     <section className="ws-proposal" aria-label="Manna 的修改建議" lang="zh-Hant">
@@ -568,18 +580,19 @@ export function ProposalPanel({
         Manna 的修改建議{p.round > 1 ? `（第 ${p.round} 次）` : ""}：還沒有改進學習單，按「採用」才會寫入。
       </p>
       {p.reply && <p className="ws-proposal-reply">{p.reply}</p>}
-      {p.changes.title && (
+      {changes.title && (
         <p className="ws-proposal-field">
           標題：<ins lang="en">{after.title}</ins> <del lang="en">{p.before.title}</del>
         </p>
       )}
-      {p.changes.instructions && (
+      {changes.instructions && (
         <p className="ws-proposal-field">
           作答指示：<ins lang="en">{after.instructions}</ins> <del lang="en">{p.before.instructions}</del>
         </p>
       )}
+      <PrepImageThumbs images={p.images} />
       <ol className="ws-proposal-items" aria-label="修改後的題目">
-        {p.changes.items.map((c) => {
+        {changes.items.map((c) => {
           const item = c.change === "removed" ? find(p.before, c.id) : find(after, c.id);
           if (!item) return null;
           const old = c.change === "modified" ? find(p.before, c.id) : undefined;
@@ -603,6 +616,19 @@ export function ProposalPanel({
           );
         })}
       </ol>
+      {pictureActions.length > 0 && (
+        <div className="ws-proposal-pictures" role="group" aria-label="圖片">
+          <h4>圖片</h4>
+          <ul>
+            {pictureActions.map((a, i) => (
+              <li key={`${a.slot_id}-${i}`} data-action={a.action}>
+                {a.text}
+              </li>
+            ))}
+          </ul>
+          <p className="field-hint">按「採用」後才會畫圖或移除圖片。</p>
+        </div>
+      )}
       <div className="anno-actions">
         <button type="button" className="primary-button small-button" disabled={ctl.busy} onClick={() => void ctl.accept(p)}>
           採用
@@ -647,10 +673,16 @@ export function BlockReviseArea({
   const proposal = ctl.proposalOf(blockId);
   const notes = ctl.notesOf(blockId);
   const error = ctl.error && ctl.error.blockId === blockId ? ctl.error.message : null;
-  if (!proposal && notes.length === 0 && !draft && !error) return null;
+  const pictures = ctl.picturesOf(blockId);
+  if (!proposal && notes.length === 0 && !draft && !error && pictures.length === 0) return null;
   return (
     <div className="ws-revise-area" lang="zh-Hant">
       {proposal && <ProposalPanel proposal={proposal} ctl={ctl} teacher={teacher} />}
+      {pictures.length > 0 && (
+        <div className="ws-proposal-pictures" role="status" aria-label="圖片的結果">
+          <PictureOutcomeList outcomes={pictures} />
+        </div>
+      )}
       {draft && draft.block_id === blockId && (
         <NoteDraft
           key={`${draft.field}-${draft.item_id ?? ""}-${draft.start ?? ""}`}

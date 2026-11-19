@@ -458,6 +458,7 @@ impl CallCtx<'_> {
                 attempt: attempt_no,
                 max_tokens: Some(call.max_tokens),
                 temperature: Some(temperature),
+                images: Vec::new(),
             };
             let a = attempt(state, &meta, &snapshot, &req, retry_of).await?;
             retry_of = Some(a.id);

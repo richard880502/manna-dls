@@ -1133,6 +1133,7 @@ async fn run(state: &AppState, check_id: i64) -> AppResult<Outcome> {
             "worksheet": page.worksheet.map(|(id, v)| json!({ "id": id, "version_no": v })),
         }),
         progress: None,
+        images: Vec::new(),
     };
     let result = run::call(
         state,

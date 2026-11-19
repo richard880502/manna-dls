@@ -1088,6 +1088,7 @@ where
         attempt: 1,
         max_tokens: Some(call.max_tokens),
         temperature: Some(run.temperature),
+        images: Vec::new(),
     };
 
     // ---- first call

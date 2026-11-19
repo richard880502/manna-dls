@@ -3,7 +3,7 @@
 //! delete and the 教學套件 download. Every session belongs to one teacher; anyone else's id is
 //! a 404.
 
-use axum::extract::State;
+use axum::extract::{Multipart, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -15,6 +15,7 @@ use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::ocr;
 use crate::materials::store::{self as material_store, MaterialRow};
+use crate::prep::images as prep_images;
 use crate::prep::kit::{self, KitWorksheet};
 use crate::prep::run::{self, TurnInput};
 use crate::prep::selfcheck::{self, SiopCheck};
@@ -184,6 +185,7 @@ async fn spawn_turn(
     kind: &str,
     request: &str,
     worksheet_id: Option<i64>,
+    image_ids: &[i64],
 ) -> AppResult<()> {
     // A worksheet turn follows the session's template; it waits while that is extracting.
     let template_id = if kind == KIND_WORKSHEET {
@@ -192,13 +194,20 @@ async fn spawn_turn(
         None
     };
     let turn = store::start_turn(&state.db, session.id, kind, request, template_id).await?;
-    log_usage(
-        &state.db,
-        teacher.id(),
-        "prep_turn_created",
-        json!({ "session_id": session.id, "turn_id": turn.id, "kind": kind }),
-    )
-    .await?;
+    // The pictures belong to the turn before it runs (the run reads them).
+    if let Err(e) = prep_images::attach_to_turn(&state.db, image_ids, turn.id).await {
+        let message = match &e {
+            AppError::Conflict(m) | AppError::BadRequest(m) => m.clone(),
+            _ => "附上的圖片沒有存好，這次沒有送出。".to_string(),
+        };
+        store::finish(&state.db, turn.id, Err(message)).await?;
+        return Err(e);
+    }
+    let mut payload = json!({ "session_id": session.id, "turn_id": turn.id, "kind": kind });
+    if !image_ids.is_empty() {
+        payload["images"] = json!(image_ids.len());
+    }
+    log_usage(&state.db, teacher.id(), "prep_turn_created", payload).await?;
     run::start(
         state,
         TurnInput {
@@ -354,7 +363,7 @@ pub async fn create(
             .await?;
         }
         let id = session.id;
-        spawn_turn(&state, &teacher, session, kind, &request, None).await?;
+        spawn_turn(&state, &teacher, session, kind, &request, None, &[]).await?;
         // Read the answer before the extraction starts (a fast one could otherwise finish first).
         store::session(&state, id).await
     }
@@ -463,7 +472,108 @@ pub async fn delete(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<serde_json::Value>> {
     store::owned(&state.db, id, teacher.id()).await?;
+    // The attached pictures leave the storage first; if that fails nothing is deleted.
+    prep_images::purge_session(&state, id).await?;
     store::delete(&state.db, id).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// ---------------------------------------------------------------- attached pictures
+
+/// `POST /api/prep-sessions/:id/images` (multipart `file`): one picture for the next revise
+/// request (PNG, JPEG or WebP, ≤ 5 MB). 201 with the picture; it is re-encoded as JPEG (≤ 1568
+/// px) and waits to be named in `image_ids`.
+pub async fn upload_image(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    mut form: Multipart,
+) -> AppResult<(StatusCode, Json<prep_images::PrepImage>)> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    if state.storage.is_none() {
+        return Err(material_store::storage_missing());
+    }
+    // Uploads are buffered: only a few at a time.
+    let _slot = state
+        .upload_slots
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("upload slots closed: {e}")))?;
+    let bad_form = |e: axum::extract::multipart::MultipartError| {
+        AppError::bad_request(format!("上傳的內容讀不出來：{}", e.body_text()))
+    };
+    let mut file: Option<(String, bytes::BytesMut)> = None;
+    while let Some(mut field) = form.next_field().await.map_err(bad_form)? {
+        if field.name() != Some("file") {
+            continue;
+        }
+        let filename = field.file_name().unwrap_or_default().to_string();
+        // The type is checked before the body is read.
+        if !matches!(
+            crate::materials::file_type_for_name(&filename).map(|t| t.ext),
+            Some("png" | "jpg" | "webp")
+        ) {
+            return Err(AppError::bad_request(prep_images::MSG_TYPE));
+        }
+        let mut data = bytes::BytesMut::new();
+        while let Some(chunk) = field.chunk().await.map_err(bad_form)? {
+            if (data.len() + chunk.len()) as u64 > prep_images::MAX_BYTES {
+                return Err(AppError::bad_request(prep_images::MSG_TOO_BIG));
+            }
+            data.extend_from_slice(&chunk);
+        }
+        file = Some((filename, data));
+    }
+    let Some((filename, data)) = file else {
+        return Err(AppError::bad_request("請選擇要附上的圖片。"));
+    };
+    let original = data.len();
+    let image = prep_images::upload(&state, teacher.id(), id, &filename, data.freeze()).await?;
+    log_usage(
+        &state.db,
+        teacher.id(),
+        "prep_image_uploaded",
+        json!({ "session_id": id, "image_id": image.id, "original_bytes": original,
+                "stored_bytes": image.bytes, "width": image.width, "height": image.height }),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(image)))
+}
+
+/// `GET /api/prep-sessions/:id/images/:image_id`: the picture (JPEG), to its teacher only.
+pub async fn image_file(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, image_id)): ApiPath<(i64, i64)>,
+) -> AppResult<Response> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    let row = prep_images::find(&state.db, id, image_id).await?;
+    let bytes = prep_images::bytes_of(&state, &row.storage_key).await?;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CACHE_CONTROL, "private, max-age=3600")
+        .header(axum::http::header::VARY, "Authorization")
+        .header(CONTENT_TYPE, prep_images::MIME)
+        .header(axum::http::header::CONTENT_LENGTH, bytes.len())
+        .header(axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; sandbox",
+        )
+        .body(axum::body::Body::from(bytes))
+        .map_err(|e| AppError::Internal(e.into()))
+}
+
+/// `DELETE /api/prep-sessions/:id/images/:image_id`: a picture that was not sent yet (409 once
+/// it is attached to a message).
+pub async fn delete_image(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, image_id)): ApiPath<(i64, i64)>,
+) -> AppResult<Json<serde_json::Value>> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    prep_images::delete_pending(&state, id, image_id).await?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -473,6 +583,10 @@ pub struct CreateTurn {
     pub kind: Option<String>,
     #[serde(default)]
     pub request: Option<String>,
+    /// Pictures uploaded with `POST /api/prep-sessions/:id/images` to send with this request
+    /// (at most 2; only a revise takes them).
+    #[serde(default)]
+    pub image_ids: Vec<i64>,
 }
 
 pub async fn create_turn(
@@ -496,6 +610,11 @@ pub async fn create_turn(
         None => KIND_ASK.to_string(),
     };
     let kind = kind.as_str();
+    // Pictures go with a revision only (the other turns do not read them).
+    if !req.image_ids.is_empty() && kind != KIND_REVISE {
+        return Err(AppError::bad_request("只有修改學習單的訊息可以附上圖片。"));
+    }
+    let image_ids = prep_images::check_ids(db, teacher.id(), id, &req.image_ids).await?;
     let has_material = session.material_id.is_some();
     let has_topic = session
         .topic
@@ -557,7 +676,16 @@ pub async fn create_turn(
             )
             .await?;
         }
-        spawn_turn(&state, &teacher, session, kind, &request, worksheet_id).await?;
+        spawn_turn(
+            &state,
+            &teacher,
+            session,
+            kind,
+            &request,
+            worksheet_id,
+            &image_ids,
+        )
+        .await?;
         // Read the answer before the extraction starts (a fast one could otherwise finish first).
         store::session(&state, id).await
     }

@@ -21,6 +21,7 @@ use sqlx::PgPool;
 use super::bloom::Bloom;
 use super::checks::{evaluate_revision, CleanSectionItem, RevisionDraft, SectionCtx};
 use super::comments::{Comment, Field, STATUS_OPEN};
+use super::images::actions::{self, Added, PictureAction, RawPictureAction};
 use super::template::{
     enum_of, obj, s_max, strings_max, RawOutItem, ITEM_ANSWER_CHARS, ITEM_OPTIONS,
     ITEM_OPTION_CHARS, ITEM_PROMPT_CHARS, MSG_EXTERNAL, SECTION_INSTRUCTIONS_CHARS,
@@ -71,6 +72,9 @@ pub struct RawBlockRevision {
     /// "" when unchanged.
     pub instructions: String,
     pub items: Vec<RawRevisedItem>,
+    /// Pictures to add, redraw or remove (proposals; run when the teacher accepts).
+    #[serde(default)]
+    pub picture_actions: Vec<RawPictureAction>,
     pub reply: String,
 }
 
@@ -97,7 +101,13 @@ pub fn max_tokens(max_items: usize) -> u32 {
 /// `worksheet_block_revise`, properties in the order they are written: the title and
 /// instructions ("" = unchanged), every question (`source` and `keep` first, so the model
 /// decides what to keep before it writes), then the reply.
-pub fn schema(question_count: usize, max_items: usize) -> Value {
+pub fn schema(
+    question_count: usize,
+    max_items: usize,
+    block_id: &str,
+    slot_ids: &[String],
+    picture_max: usize,
+) -> Value {
     let mut sources: Vec<String> = (0..question_count).map(code).collect();
     sources.push(NEW.to_string());
     let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
@@ -117,6 +127,10 @@ pub fn schema(question_count: usize, max_items: usize) -> Value {
         (
             "items",
             json!({ "type": "array", "items": item, "maxItems": max_items }),
+        ),
+        (
+            "picture_actions",
+            actions::schema(&[block_id.to_string()], slot_ids, picture_max),
         ),
         ("reply", s_max(REPLY_CHARS)),
     ])
@@ -547,6 +561,11 @@ pub struct Proposal {
     /// The revised block (`proposed` and later).
     pub block: Option<Block>,
     pub changes: Option<Changes>,
+    /// What Manna proposes to do with the block's pictures; nothing is drawn or removed until
+    /// the teacher accepts (docs/API.md「改圖片」).
+    pub picture_actions: Vec<PictureAction>,
+    /// The pictures the teacher attached to the request.
+    pub images: Vec<crate::prep::images::PrepImage>,
     pub interaction_id: Option<i64>,
     pub accepted_version_no: Option<i32>,
     pub created_at: DateTime<Utc>,
@@ -556,6 +575,7 @@ pub struct Proposal {
 
 #[derive(sqlx::FromRow)]
 struct Row {
+    picture_actions: Json<Vec<PictureAction>>,
     id: i64,
     worksheet_id: i64,
     block_id: String,
@@ -578,7 +598,7 @@ struct Row {
 
 const COLS: &str = "id, worksheet_id, block_id, base_version_no, base_block, instruction,
     comment_ids, whole_block, round, status, proposed, reply, error, interaction_id,
-    accepted_version_no, created_at, finished_at, decided_at";
+    accepted_version_no, created_at, finished_at, decided_at, picture_actions";
 
 impl From<Row> for Proposal {
     fn from(r: Row) -> Self {
@@ -586,6 +606,8 @@ impl From<Row> for Proposal {
         let block: Option<Block> = r.proposed.and_then(|v| serde_json::from_value(v).ok());
         Self {
             changes: block.as_ref().map(|b| changes(&before, b)),
+            picture_actions: r.picture_actions.0,
+            images: Vec::new(),
             id: r.id,
             worksheet_id: r.worksheet_id,
             block_id: r.block_id,
@@ -637,7 +659,13 @@ pub async fn open(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<Proposal>>
     .bind(worksheet_id)
     .fetch_all(db)
     .await?;
-    Ok(rows.into_iter().map(Proposal::from).collect())
+    let mut proposals: Vec<Proposal> = rows.into_iter().map(Proposal::from).collect();
+    let ids: Vec<i64> = proposals.iter().map(|p| p.id).collect();
+    let mut images = crate::prep::images::for_proposals(db, &ids).await?;
+    for p in &mut proposals {
+        p.images = images.remove(&p.id).unwrap_or_default();
+    }
+    Ok(proposals)
 }
 
 pub async fn get(db: &PgPool, worksheet_id: i64, id: i64) -> AppResult<Proposal> {
@@ -648,8 +676,14 @@ pub async fn get(db: &PgPool, worksheet_id: i64, id: i64) -> AppResult<Proposal>
     .bind(worksheet_id)
     .fetch_optional(db)
     .await?;
-    row.map(Proposal::from)
-        .ok_or_else(|| AppError::not_found("找不到這個修改。"))
+    let mut proposal = row
+        .map(Proposal::from)
+        .ok_or_else(|| AppError::not_found("找不到這個修改。"))?;
+    proposal.images = crate::prep::images::for_proposals(db, &[id])
+        .await?
+        .remove(&id)
+        .unwrap_or_default();
+    Ok(proposal)
 }
 
 async fn decision(
@@ -784,17 +818,23 @@ pub async fn insert_running(db: &PgPool, new: NewProposal<'_>) -> AppResult<Prop
 pub async fn finish(
     db: &PgPool,
     id: i64,
-    outcome: Result<(Block, String), String>,
+    outcome: Result<(Block, String, Vec<PictureAction>), String>,
     interaction_id: Option<i64>,
 ) -> sqlx::Result<()> {
-    let (status, proposed, reply, error) = match outcome {
-        Ok((block, reply)) => (STATUS_PROPOSED, Some(Json(block)), reply, None),
-        Err(message) => (STATUS_FAILED, None, String::new(), Some(message)),
+    let (status, proposed, reply, error, pictures) = match outcome {
+        Ok((block, reply, pictures)) => (STATUS_PROPOSED, Some(Json(block)), reply, None, pictures),
+        Err(message) => (
+            STATUS_FAILED,
+            None,
+            String::new(),
+            Some(message),
+            Vec::new(),
+        ),
     };
     sqlx::query(
         "UPDATE worksheet_block_proposals
             SET status = $2, proposed = $3, reply = $4, error = $5, interaction_id = $6,
-                finished_at = now()
+                picture_actions = $7, finished_at = now()
           WHERE id = $1 AND status = 'running'",
     )
     .bind(id)
@@ -803,16 +843,22 @@ pub async fn finish(
     .bind(reply)
     .bind(error)
     .bind(interaction_id)
+    .bind(Json(pictures))
     .execute(db)
     .await?;
     Ok(())
 }
 
 pub enum Accepted {
-    /// Written as a new version (`cause = "revise"`).
-    Done(Proposal),
+    /// Written as a new version (`cause = "revise"`). `added` and `content` (the version as
+    /// saved) are for running the picture actions.
+    Done {
+        proposal: Box<Proposal>,
+        added: Added,
+        content: Box<Content>,
+    },
     /// The block changed since the proposal was made: nothing was written.
-    Stale(Proposal),
+    Stale(Box<Proposal>),
 }
 
 /// 採用: in one transaction, checks that the block in the latest version is still exactly the
@@ -852,13 +898,14 @@ pub async fn accept(
     let Some(revised) = proposal.block.clone() else {
         return Err(AppError::Conflict("這個修改已經處理過了。".to_string()));
     };
-    let latest: (Value,) = sqlx::query_as(
-        "SELECT content FROM worksheet_versions WHERE worksheet_id = $1
+    let latest: (Value, i32) = sqlx::query_as(
+        "SELECT content, version_no FROM worksheet_versions WHERE worksheet_id = $1
           ORDER BY version_no DESC LIMIT 1",
     )
     .bind(worksheet_id)
     .fetch_one(&mut *tx)
     .await?;
+    let latest_no = latest.1;
     let mut content: Content = serde_json::from_value(latest.0).unwrap_or_default();
     let pos = content
         .blocks
@@ -873,30 +920,40 @@ pub async fn accept(
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
-        return Ok(Accepted::Stale(get(db, worksheet_id, id).await?));
+        return Ok(Accepted::Stale(Box::new(get(db, worksheet_id, id).await?)));
     };
     let previous = std::mem::replace(&mut content.blocks[pos], revised);
+    // The pictures to add become slots of the block, part of the same version.
+    let added = actions::add_slots(&mut content, &proposal.picture_actions, &format!("p{id}"));
     content
         .normalise()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("revised block failed validation: {e}")))?;
-    sqlx::query(
-        "INSERT INTO worksheet_block_history (worksheet_id, block_id, block, interaction_id)
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(worksheet_id)
-    .bind(&previous.id)
-    .bind(Json(&previous))
-    .bind(interaction_id)
-    .execute(&mut *tx)
-    .await?;
-    let version = store::insert_version(&mut tx, worksheet_id, &content, "revise").await?;
+    // A proposal that only redraws or removes pictures changes no text and adds no slot: it
+    // writes no version (the pictures are handled after this returns).
+    let version_no = if content.blocks[pos] == previous {
+        latest_no
+    } else {
+        sqlx::query(
+            "INSERT INTO worksheet_block_history (worksheet_id, block_id, block, interaction_id)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(worksheet_id)
+        .bind(&previous.id)
+        .bind(Json(&previous))
+        .bind(interaction_id)
+        .execute(&mut *tx)
+        .await?;
+        store::insert_version(&mut tx, worksheet_id, &content, "revise")
+            .await?
+            .version_no
+    };
     sqlx::query(
         "UPDATE worksheet_block_proposals
             SET status = 'accepted', accepted_version_no = $2, decided_at = now()
           WHERE id = $1",
     )
     .bind(id)
-    .bind(version.version_no)
+    .bind(version_no)
     .execute(&mut *tx)
     .await?;
     sqlx::query(
@@ -918,7 +975,11 @@ pub async fn accept(
     )
     .await?;
     tx.commit().await?;
-    Ok(Accepted::Done(get(db, worksheet_id, id).await?))
+    Ok(Accepted::Done {
+        proposal: Box::new(get(db, worksheet_id, id).await?),
+        added,
+        content: Box::new(content),
+    })
 }
 
 /// 放棄 (or, for a failed or stale one, 知道了): nothing is written; the notes stay open.
@@ -1088,6 +1149,7 @@ mod tests {
                 change("Q2", "Did the neighbors like the idea?"),
                 keep(2),
             ],
+            picture_actions: vec![],
             reply: "已把第 5 題改簡單。".into(),
         };
         let (m, problems) = run(&raw, &Scope::from("改簡單", &[], false));
@@ -1124,6 +1186,7 @@ mod tests {
                 change("Q2", "Did the neighbors like the idea?"),
                 change("new", "What would you do?"),
             ],
+            picture_actions: vec![],
             reply: "ok".into(),
         };
         let scope = Scope::from("", &[note_on("b2-i2")], false);
@@ -1168,6 +1231,7 @@ mod tests {
             title: "".into(),
             instructions: "".into(),
             items: vec![keep(0), bad, keep(2)],
+            picture_actions: vec![],
             reply: "已修改。".into(),
         };
         let (m, problems) = run(&raw, &Scope::from("x", &[], false));
@@ -1191,6 +1255,7 @@ mod tests {
             title: "".into(),
             instructions: "".into(),
             items: vec![same, keep(1), keep(2)],
+            picture_actions: vec![],
             reply: "".into(),
         };
         let (m, _) = run_on(&b, &raw, &Scope::from("x", &[], false));
@@ -1200,9 +1265,12 @@ mod tests {
 
     #[test]
     fn the_schema_writes_keep_before_the_question_and_the_reply_last() {
-        let s = schema(3, 12);
+        let s = schema(3, 12, "b2", &[], 0);
         let keys: Vec<&String> = s["properties"].as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["title", "instructions", "items", "reply"]);
+        assert_eq!(
+            keys,
+            ["title", "instructions", "items", "picture_actions", "reply"]
+        );
         let item = &s["properties"]["items"]["items"];
         let keys: Vec<&String> = item["properties"].as_object().unwrap().keys().collect();
         assert_eq!(&keys[..2], ["source", "keep"]);

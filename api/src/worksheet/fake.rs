@@ -71,6 +71,11 @@
 //! | `FAKE_REVISE_BAD`        | the change uses an answer format outside the fixed labels in both calls (the question stays as it was) |
 //! | `FAKE_REVISE_BAD_ONCE`   | the same on the first call only (the retry is fine)                 |
 //! | `FAKE_REVISE_NOTHING`    | every question kept; the reply asks a question (nothing to propose) |
+//! | `FAKE_REVISE_PIC_ADD`    | also proposes a new picture for the block (picture_actions)         |
+//! | `FAKE_REVISE_PIC_REDRAW` | also proposes redrawing the block's first picture ("no text in the picture") |
+//! | `FAKE_REVISE_PIC_REMOVE` | also proposes removing the block's last picture                     |
+//! | `FAKE_REVISE_PIC_BAD`    | also writes two invalid picture actions (unknown slot, another block) |
+//! | `FAKE_REVISE_PIC_ONLY`   | every question kept, only the picture actions                       |
 //!
 //! 差異化學習單 (`worksheet_tiered_level`): see [`tiered_level`] (`FAKE_TIER_LOCATION`,
 //! `FAKE_TIER_FLAT`, `FAKE_BLOCK`).
@@ -988,10 +993,20 @@ pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
             .and_then(|i| i["code"].as_str())
             .map(str::to_string)
     });
+    let pictures = block_pictures(ctx, has);
+    if has("FAKE_REVISE_PIC_ONLY") {
+        let kept: Vec<Value> = items.iter().map(kept_item).collect();
+        return json!({
+            "title": "", "instructions": "", "items": kept,
+            "picture_actions": pictures,
+            "reply": "已調整這一區的圖片。（測試）",
+        });
+    }
     if has("FAKE_REVISE_NOTHING") || target.is_none() && !has("FAKE_REVISE_ADD") {
         let kept: Vec<Value> = items.iter().map(kept_item).collect();
         return json!({
             "title": "", "instructions": "", "items": kept,
+            "picture_actions": pictures,
             "reply": "你想把這一區改成哪一種題型？（測試）",
         });
     }
@@ -1040,8 +1055,54 @@ pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
         "title": if all { format!("{} (touched)", ctx["title"].as_str().unwrap_or_default()) } else { String::new() },
         "instructions": "",
         "items": out,
+        "picture_actions": pictures,
         "reply": format!("已把 {} 改簡單一點。（測試）", target.unwrap_or_default()),
     })
+}
+
+/// The picture actions of the `FAKE_REVISE_PIC_*` markers, for the block the request is about
+/// (`ctx["pictures"]` are its pictures).
+fn block_pictures(ctx: &Value, has: &dyn Fn(&str) -> bool) -> Vec<Value> {
+    let block_id = ctx["block_id"].as_str().unwrap_or_default();
+    let slots: Vec<String> = ctx["pictures"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| p["slot_id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let pic = |action: &str, block: &str, slot: &str, purpose: &str, prompt: &str| {
+        json!({
+            "action": action, "block_id": block, "slot_id": slot, "kind": "scene",
+            "purpose_zh": purpose, "prompt_en": prompt, "caption": "",
+        })
+    };
+    let mut out = Vec::new();
+    if has("FAKE_REVISE_PIC_ADD") {
+        out.push(pic(
+            "add",
+            block_id,
+            "",
+            "蜜蜂停在花上",
+            "A honey bee sitting on a yellow flower in a sunny garden",
+        ));
+    }
+    if has("FAKE_REVISE_PIC_REDRAW") {
+        if let Some(s) = slots.first() {
+            out.push(pic("redraw", "", s, "不要有文字", "no text in the picture"));
+        }
+    }
+    if has("FAKE_REVISE_PIC_REMOVE") {
+        if let Some(s) = slots.last() {
+            out.push(pic("remove", "", s, "", ""));
+        }
+    }
+    if has("FAKE_REVISE_PIC_BAD") {
+        out.push(pic("redraw", "", "no-such-slot", "x", "x"));
+        out.push(pic("add", "other-block", "", "別區", "A bee"));
+    }
+    out
 }
 
 /// A question kept as it is: only its code, the flag and the labels.

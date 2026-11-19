@@ -216,6 +216,7 @@ where
             attempt: attempt_no,
             max_tokens: Some(s.max_tokens),
             temperature: Some(temperature),
+            images: Vec::new(),
         };
         let a = attempt(state, &meta, &snapshot, &req, retry_of).await?;
         if let Some(f) = on_first.take() {

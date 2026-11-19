@@ -3441,3 +3441,72 @@ interface RunProgress {
 - **刪除**：刪除學習單（`DELETE /api/worksheets/:id`）時，盡力刪掉「目前狀態」的那一張預覽圖；失敗只記警告（`removing a worksheet preview failed`），不擋刪除。**舊版本、舊指紋的預覽圖不會清掉**（儲存空間沒有列出前綴的功能，它們也只是幾十 KB）。
 
 測試：`api/tests/mywork_previews.rs`（沒有 poppler 的機器上，需要圖片的部分改查 503；CI 會裝 poppler 並檢查圖片）。
+
+## 改圖片與附上圖片（`0032_revise_pictures_and_uploads.sql`）
+
+老師在備課對話說「B 區加一張蜜蜂在花上的圖」「這張圖重畫，不要有文字」，或附上截圖說明要改哪裡。兩條修改路徑（對話框的 `revise` 輪次、逐區的 `worksheet_block_revise`）的輸出多了 `picture_actions`，prompt 各多一版（`COALESCE(MAX(version_no),0)+1`：在當下最新的文字後面接上圖片規則與 `{{picture_rules}}`、`{{pictures_note}}`、`{{attachments_note}}`）。模型只提出動作，伺服器檢查，**採用／同意之前什麼都不畫、不移除**。
+
+### `picture_actions` schema
+
+`array, maxItems = 3`（沒開啟 AI 產圖時 `0`，prompt 也告知），每項（依寫出順序，全部必填）：
+
+| 欄位 | 說明 |
+|---|---|
+| `action` | enum `add`／`redraw`／`remove` |
+| `block_id` | `add` 用：要加圖的區塊（enum：這份學習單的 block_id 加 `""`；逐區修改只有這一區）；其他給 `""` |
+| `slot_id` | `redraw`／`remove` 用：enum 為「目前的圖片」列出的 slot_id 加 `""` |
+| `kind` | enum `scene`／`object`／`icon` |
+| `purpose_zh` | `add`：這張圖做什麼（教師的語言）；`redraw`：這次要改什麼（教師的語言） |
+| `prompt_en` | `add`：給產圖模型的英文畫面描述（≤300）；`redraw`：英文簡短說明要怎麼改（≤200，當作「Teacher's note」） |
+| `caption` | `add`：圖說（≤80） |
+
+模型讀到的「目前的圖片」：turn 層級是 `blocks_json` 每個區塊的 `pictures: [{slot_id, number, purpose, caption, prompt, state}]`；逐區修改是訊息裡這一區的圖片清單。規則文字用 `worksheet_image_slots` 最新版（圖裡不要字、不要真實人物與品牌、不要網址）；沒開啟產圖時改告知「picture_actions 一律給空陣列」。
+
+### 伺服器檢查（`worksheet::images::actions::check`）
+
+- 沒開啟 AI 產圖 → 全部丟掉，`reply` 後面加「（這個環境沒有開啟 AI 產圖，圖片的部分沒有處理。）」。
+- 動作最多 3 個（多的丟掉）；每張圖最多一個動作；逐區修改只能動這一區。
+- `add`：區塊要存在且啟用；內容走 `clean_slots`（字數上限、不可有網址、要有畫面描述、與已有的重複就丟掉）；一個區塊最多 2 個圖片位置（`MAX_SLOTS_PER_BLOCK`；「拿掉」的位置仍佔位）。`redraw`／`remove`：slot 要在這份學習單。`redraw` 的說明不可有網址、≤200 字。
+- 丟掉的動作不會觸發重試；數量寫進 `reply`（「有 N 個圖片動作沒有通過檢查」）。通過的動作帶一行給老師看的 `text`：「加一張圖：…（B 區）」「重畫第 2 張圖：…（B 區）」「移除圖：第 1 張圖「…」（B 區）」。
+
+### 確認流程
+
+- **逐區修改**：`WsProposal.picture_actions`（`PictureAction[]`，含 `text`）隨建議一起顯示；只有圖片動作的建議也能採用（`block` 與原區塊相同、`changes` 全為 `kept`）。**採用**時，同一個交易把 `add` 的新 slot 加進區塊（和文字修改同一個新版本；沒有文字也沒有新 slot 就不寫新版本），交易後依序：`add` 的圖排進產圖佇列（`enqueue`，受每份學習單的自動產圖上限與 `IMAGE_CONCURRENCY` 限制）、`redraw` 走 `regenerate`（受 `max_regenerations` 限制）、`remove` 走 `remove`。回應 `{ proposal, pictures: PictureOutcome[], worksheet }`。放棄 → 什麼都不做。
+- **對話框 `revise` 輪次**維持原本的做法：修改直接套用（寫成一個新版本，編輯器可以復原），所以圖片動作也**直接**執行（新 slot 與文字改動同一個版本，之後排進佇列；redraw、remove 緊接著做），結果寫在 `result.pictures` 與 `reply`（「圖片：加了 1 張圖、重畫了 1 張圖（畫好會自動出現）」）。`remove` 與 `重畫` 不會進版本歷史（和老師自己按按鈕一樣），要找回圖片按「重畫」。
+- `PictureOutcome = { action, text, status: "queued" | "removed" | "skipped", message }`。`skipped` 的原因（重畫已到上限、這張圖正在畫、沒有儲存空間、這一區已滿…）寫在 `message`；絕不讓整個修改失敗。畫好的圖照原本的方式出現（`GET /api/worksheets/:id/images` 輪詢）。
+- 研究紀錄：`ai_interactions.output` 照舊存模型的原始輸出（含 `picture_actions`）；套用時寫一筆 `usage_logs` `worksheet_picture_actions_applied`：`{ worksheet_id, source: "prep_turn" | "block_revise", ref, add, redraw, remove, queued, removed, skipped }`。
+
+### 附上圖片
+
+先上傳、再送出（和教材、圖片的上傳一樣用 multipart 與 `state.storage`）：
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/api/prep-sessions/:id/images` | multipart 欄位 `file`：PNG／JPEG／WebP（副檔名與檔頭都要對，GIF 不收），≤ 5 MB（讀到超過就停）。轉正、長邊縮到 ≤ 1568 px、重新編成 JPEG（去掉 EXIF）後存在 `prep-images/s<session>/<隨機>.jpg`。201 `PrepImage { id, session_id, width, height, bytes }`。錯誤：副檔名不對／內容對不上／讀不出來／太大 → 400；還沒送出的圖已有 4 張 → 409；沒有儲存空間 → 503；別人的對話 → 404 |
+| GET | `/api/prep-sessions/:id/images/:image_id` | 圖（JPEG，`private`、`nosniff`），只有該老師 |
+| DELETE | `/api/prep-sessions/:id/images/:image_id` | 移除還沒送出的圖；已附在訊息上 → 409 |
+
+送出：`POST /api/prep-sessions/:id/turns` 與 `POST /api/worksheets/:id/blocks/:block_id/revise` 多一個 `image_ids`（≤ 2；必須是這位老師、這個對話、還沒附到訊息上的；逐區修改用學習單所屬備課對話裡的圖，學習單不是在備課對話做的 → 400；超過 → 400「一則訊息最多附 2 張圖片」；`kind` 不是 `revise` 卻帶 `image_ids` → 400）。圖片附到該輪次（`prep_images.turn_id`）或該建議（`proposal_id`）；`PrepTurn.images` 與 `WsProposal.images` 回傳 `PrepImage[]`。24 小時沒人送出的圖由下一次上傳順手刪掉。刪除備課對話時先刪儲存空間裡的圖（失敗就不刪對話），資料列隨對話一起刪（`ON DELETE CASCADE`）。
+
+**給模型**：圖是 user 訊息的圖片內容：OpenAI 相容 API 送 `[{type: "text"}, {type: "image_url", image_url: {url: "data:image/jpeg;base64,…"}}]`（沒有圖時仍是純字串，其他呼叫不受影響）；Anthropic 送 `image` 區塊（base64）接著文字。訊息文字多一句「教師附上了 N 張圖片」，prompt 說明圖片是用來指出要改哪裡、不要把學生的臉孔或姓名寫進學習單。輸出照舊用 strict JSON schema（沒有用 tool call）。
+
+**研究紀錄**：`ai_interactions.input_snapshot.prep.attached_images = [{ id, bytes, original_bytes, width, height, sha256 }]`，沒有圖片內容；使用事件 `prep_image_uploaded`（大小與尺寸）、`prep_turn_created.images`、`worksheet_block_revise_started.images`。
+
+### 測試用假模型新增的標記
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_PREP_PIC_ADD`／`REDRAW`／`REMOVE` | revise：另外提出加圖（第一個有題目的區塊）／重畫第一張圖（「no text in the picture」）／移除最後一張圖 |
+| `FAKE_PREP_PIC_BAD` | revise：四個不合格的動作（不存在的區塊、不存在的 slot ×2、含網址） |
+| `FAKE_PREP_PIC_MANY` | revise：每個有題目的區塊兩個 `add`（超過 3 個，伺服器只留前 3 個） |
+| `FAKE_PREP_PIC_ONLY` | revise：沒有文字修改，只有圖片動作 |
+| `FAKE_REVISE_PIC_ADD`／`REDRAW`／`REMOVE`／`BAD`／`ONLY` | 逐區修改的同類標記 |
+| （自動）請求帶圖片 | 假模型在 `reply` 後面加「（收到 N 張圖片）」 |
+
+測試：`api/tests/revise_pictures.rs`；網頁：`web/src/__tests__/prepImages.test.tsx`。
+
+### 沒做的
+
+- 附圖只用在 `revise` 與逐區修改，「問 Manna」不收圖。逐區修改的建議卡只顯示附上的小縮圖（網頁）。
+- 模型不能新增超過一區 2 個位置，也不能真正刪除位置（「移除」是不印）。
+- 沒有用 tool call（gemma 支援，但其他呼叫都是 strict JSON schema，維持一致）。

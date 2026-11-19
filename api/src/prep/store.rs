@@ -729,6 +729,8 @@ pub struct Turn {
     pub interaction_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// The pictures the teacher attached to the request (`[]` without any).
+    pub images: Vec<super::images::PrepImage>,
     /// `"ocr"` while the turn waits for its worksheet sample to be read by OCR
     /// (「Manna 正在辨識掃描檔（3／8 頁）」); absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -964,6 +966,8 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     let now = Utc::now();
     let pictures_window = pictures_window_secs(state);
     let mut pending: Vec<(Turn, Option<TurnRow>)> = Vec::with_capacity(rows.len());
+    let turn_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let mut attached = super::images::for_turns(&state.db, &turn_ids).await?;
     for r in rows {
         let worksheet = match r.worksheet_id {
             Some(ws) => turn_worksheet(state, ws).await?,
@@ -1004,6 +1008,7 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             interaction_id: r.interaction_id,
             created_at: r.created_at,
             finished_at: r.finished_at,
+            images: attached.remove(&r.id).unwrap_or_default(),
             phase: ocr.map(|_| "ocr"),
             ocr,
             siop_check,

@@ -120,6 +120,7 @@ import type {
   WsProposal,
   WsProposalAccepted,
   ReviseWorksheetBlockRequest,
+  PrepImage,
   PrepSession,
   PrepSessionList,
   CreatePrepSessionRequest,
@@ -532,6 +533,17 @@ export const api = {
   /** 409 while the kit is still being made; 400 for a turn that is not a kit. */
   exportPrepKit: (id: number, turnId: number) =>
     download(`/prep-sessions/${id}/turns/${turnId}/kit`, { format: "docx" }, "教學套件.docx"),
+  /** 上傳一張要附在訊息上的圖（png、jpg、webp，≤5 MB）→ 201 */
+  uploadPrepImage: (id: number, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<PrepImage>("POST", `/prep-sessions/${id}/images`, { form });
+  },
+  /** 一張附上的圖（JPEG；帶老師的權杖） */
+  prepImage: (id: number, imageId: number) =>
+    download(`/prep-sessions/${id}/images/${imageId}`, {}, "image.jpg").then((r) => r.blob),
+  /** 拿掉還沒送出的圖 */
+  deletePrepImage: (id: number, imageId: number) => del<OkResponse>(`/prep-sessions/${id}/images/${imageId}`),
   /** 這一輪最新的 SIOP 自我檢核（檢核中時輪詢）；還沒有 → 404 */
   getSiopCheck: (id: number, turnId: number) => get<SiopCheck>(`/prep-sessions/${id}/turns/${turnId}/siop-check`),
   /** 202：再檢核一次；這一輪沒有完成或檢核還在跑 → 409 */

@@ -1274,8 +1274,9 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_bloom_level v4, worksheet_exit_ticket v3, worksheet_tasks v5,
         // worksheet_template_section v4 and worksheet_tiered_level v3 since 0030_fill_in_blanks.sql.
         // prep_revise v3, worksheet_block_revise v3, worksheet_exit_ticket v4 and worksheet_tasks
-        // v6 since 0031_sentence_frames_apart.sql.
-        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 3, 1, 1, 1, 3, 1, 4, 4, 2, 1, 6, 2, 1, 4, 3, 1, 1, 1]
+        // v6 since 0031_sentence_frames_apart.sql. prep_revise and worksheet_block_revise v4 since
+        // 0032_revise_pictures_and_uploads.sql.
+        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 4, 1, 4, 4, 2, 1, 6, 2, 1, 4, 3, 1, 1, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

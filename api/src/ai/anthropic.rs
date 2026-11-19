@@ -18,12 +18,37 @@ pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
 pub const API_VERSION: &str = "2026-10-21";
 pub const MAX_TOKENS: u32 = 16000;
 
+/// The user message: a plain string, or (with pictures) the pictures as `image` blocks and then
+/// the text.
+fn user_content(req: &LlmRequest) -> Value {
+    if req.images.is_empty() {
+        return json!(req.user);
+    }
+    use base64::Engine;
+    let mut parts: Vec<Value> = req
+        .images
+        .iter()
+        .map(|i| {
+            json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": i.media_type,
+                    "data": base64::engine::general_purpose::STANDARD.encode(&i.data),
+                }
+            })
+        })
+        .collect();
+    parts.push(json!({ "type": "text", "text": req.user }));
+    Value::Array(parts)
+}
+
 pub fn build_body(model: &str, effort: &str, req: &LlmRequest) -> Value {
     json!({
         "model": model,
         "max_tokens": MAX_TOKENS,
         "system": req.system,
-        "messages": [{ "role": "user", "content": req.user }],
+        "messages": [{ "role": "user", "content": user_content(req) }],
         "output_config": {
             "effort": effort,
             "format": { "type": "json_schema", "schema": req.schema }
@@ -120,6 +145,7 @@ mod tests {
             attempt: 1,
             max_tokens: None,
             temperature: None,
+            images: Vec::new(),
         }
     }
 
@@ -141,6 +167,21 @@ mod tests {
         }
         // single user message, no assistant prefill
         assert_eq!(b["messages"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pictures_are_image_blocks_before_the_text() {
+        let mut r = req();
+        r.images = vec![crate::ai::LlmImage {
+            media_type: "image/jpeg",
+            data: bytes::Bytes::from_static(b"\xFF\xD8\xFF"),
+        }];
+        let b = build_body("claude-opus-5-5", "medium", &r);
+        let content = &b["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["media_type"], "image/jpeg");
+        assert_eq!(content[0]["source"]["data"], "/9j/");
+        assert_eq!(content[1], json!({"type": "text", "text": "hello"}));
     }
 
     #[test]

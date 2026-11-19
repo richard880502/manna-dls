@@ -13,6 +13,7 @@ import {
   stepText,
 } from "../../lib/prep";
 import { BloomChips } from "../worksheet/Bloom";
+import { PictureOutcomeList } from "./ImageAttach";
 import { SectionTools } from "./SectionTools";
 
 /** A step's 分組 and 語言技能 as tags, then 分工, 教師巡視 and 鷹架 (version 4; nothing before). */
@@ -388,6 +389,7 @@ export function ReviseCard({
   return (
     <div className="prep-answer">
       <p className="prep-pre">{result.reply}</p>
+      <PictureOutcomeList outcomes={result.pictures} />
       {result.changed_block_ids.length > 0 && (
         <p className="prep-changed" role="status">
           已修改：{changedBlocksLine(result.changed_block_ids, labels)}

@@ -161,6 +161,14 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
             )))
         }
     };
+    // Pictures that came with the request are recorded in the reply of the revisions (the only
+    // calls that take any), so a test can tell that they arrived: 「（收到 2 張圖片）」.
+    let mut json = json;
+    if !req.images.is_empty() {
+        if let Some(reply) = json["reply"].as_str() {
+            json["reply"] = json!(format!("{reply}（收到 {} 張圖片）", req.images.len()));
+        }
+    }
     Ok(LlmResponse {
         json,
         model_version: format!("{model}-fake-1"),
@@ -305,6 +313,7 @@ mod tests {
             attempt,
             max_tokens: None,
             temperature: None,
+            images: Vec::new(),
         }
     }
 

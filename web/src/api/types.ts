@@ -2408,6 +2408,33 @@ export interface UpdateWorksheetCommentRequest {
   status?: "open" | "dismissed";
 }
 
+/** 備課對話裡附上的圖片（一律 JPEG）：GET /prep-sessions/{session_id}/images/{id} */
+export interface PrepImage {
+  id: number;
+  session_id: number;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
+export type PictureOp = "add" | "redraw" | "remove";
+
+/** 提案裡 Manna 想做的圖片動作；`text` 是伺服器寫好的中文，照原樣顯示 */
+export interface WsPictureAction {
+  action: PictureOp;
+  block_id: string;
+  slot_id: string;
+  text: string;
+}
+
+/** 圖片動作做了沒有（採用之後／直接修改之後） */
+export interface PictureOutcome {
+  action: PictureOp;
+  text: string;
+  status: "queued" | "removed" | "skipped";
+  message: string | null;
+}
+
 export type WsProposalStatus = "running" | "proposed" | "accepted" | "rejected" | "stale" | "failed";
 
 export interface WsProposalChange {
@@ -2436,6 +2463,10 @@ export interface WsProposal {
   /** 改好的區塊（proposed 之後才有） */
   block: WsBlock | null;
   changes: { title: boolean; instructions: boolean; items: WsProposalChange[] } | null;
+  /** 按「採用」後才會畫圖或移除圖片；舊的伺服器沒有這一欄 */
+  picture_actions?: WsPictureAction[];
+  /** 這次修改附上的圖片；舊的伺服器沒有這一欄 */
+  images?: PrepImage[];
   interaction_id: number | null;
   accepted_version_no: number | null;
   created_at: string;
@@ -2448,17 +2479,22 @@ export interface ReviseWorksheetBlockRequest {
   comment_ids?: number[];
   /** 可以動到這一區的其他題 */
   whole_block?: boolean;
+  /** 先用 POST /prep-sessions/:id/images 上傳的圖片 */
+  image_ids?: number[];
 }
 
 export interface WsProposalAccepted {
   proposal: WsProposal;
   worksheet: WorksheetState;
+  /** 圖片動作的結果；舊的伺服器沒有這一欄 */
+  pictures?: PictureOutcome[];
 }
 
 export interface PrepReviseResult {
   reply: string;
   changed_block_ids: string[];
   version_no: number | null;
+  pictures?: PictureOutcome[];
 }
 
 export interface PrepSessionSummary {
@@ -2489,6 +2525,8 @@ export interface PrepTurn {
   /** 照版型做的學習單：用的版型與它的狀態；extracting 時 worksheet 是 null。舊的伺服器沒有這一欄 */
   template?: { id: number; title: string; status: WsTemplateStatus } | null;
   result: ActivityPlan | PrepResources | PrepAskResult | PrepReviseResult | null;
+  /** 這一輪附上的圖片；舊的伺服器沒有這一欄 */
+  images?: PrepImage[];
   /** 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs } */
   interaction_id: number | null;
   created_at: string;
@@ -2636,6 +2674,8 @@ export interface CreatePrepTurnRequest {
   /** 省略（下方輸入列）：有學習單就是 revise，否則 ask */
   kind?: PrepKind;
   request: string;
+  /** 先用 POST /prep-sessions/:id/images 上傳；只用在修改學習單 */
+  image_ids?: number[];
 }
 
 // =============================================================================================

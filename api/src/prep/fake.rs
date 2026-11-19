@@ -14,6 +14,12 @@
 //! | `FAKE_PREP_FLAT_ONCE`  | activity: the same in the first call only; the retry has three groupings and all four skills |
 //! | `FAKE_PREP_BAD_REVISE` | revise: the change uses an answer format outside the fixed labels in both calls (it is dropped and the reply says so) |
 //! | `FAKE_PREP_REVISE_ADD` | revise: changes the **last** block that has items and adds one new item at its end |
+//! | `FAKE_PREP_PIC_ADD`    | revise: also proposes a picture for the first block that has items (picture_actions) |
+//! | `FAKE_PREP_PIC_REDRAW` | revise: also redraws the first picture the request listed ("no text in the picture") |
+//! | `FAKE_PREP_PIC_REMOVE` | revise: also removes the last picture the request listed |
+//! | `FAKE_PREP_PIC_BAD`    | revise: four invalid picture actions (unknown block, unknown slot twice, a web address) |
+//! | `FAKE_PREP_PIC_MANY`   | revise: two new pictures for every block with items (more than the server keeps) |
+//! | `FAKE_PREP_PIC_ONLY`   | revise: no text changes (only the picture actions) |
 //! | `FAKE_SIOP_BLOCK`      | SIOP self-check: unusable output in both calls (the check fails)      |
 //! | `FAKE_SIOP_PARTIAL_ONCE` | SIOP self-check: the first call leaves out the last item, the retry has them all |
 //! | `FAKE_SIOP_FAIL_FIRST` | SIOP self-check: the first check of a turn times out; a later one (再試一次) works |
@@ -359,15 +365,112 @@ pub fn revise(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             "answer": "Answers will vary.",
         }));
     }
-    json!({
-        "reply": format!("已修改 {label} 區的第 1 題。（測試）"),
-        "changes": [{
+    let pictures = picture_actions(&blocks, has);
+    let changes = if has("FAKE_PREP_PIC_ONLY") {
+        json!([])
+    } else {
+        json!([{
             "block_id": block["block_id"].clone(),
             "title": block["title"].clone(),
             "instructions": block["instructions"].clone(),
             "items": items,
-        }],
+        }])
+    };
+    json!({
+        "reply": format!("已修改 {label} 區的第 1 題。（測試）"),
+        "changes": changes,
+        "picture_actions": pictures,
     })
+}
+
+fn picture(action: &str, block_id: &str, slot_id: &str, purpose: &str, prompt: &str) -> Value {
+    json!({
+        "action": action, "block_id": block_id, "slot_id": slot_id, "kind": "scene",
+        "purpose_zh": purpose, "prompt_en": prompt, "caption": "",
+    })
+}
+
+/// The picture actions of the markers (see the module documentation), from the blocks and the
+/// pictures the request showed.
+fn picture_actions(blocks: &[Value], has: &dyn Fn(&str) -> bool) -> Vec<Value> {
+    let mut out = Vec::new();
+    let first_with_items = blocks
+        .iter()
+        .find(|b| b["items"].as_array().is_some_and(|i| !i.is_empty()));
+    let slots: Vec<(String, String)> = blocks
+        .iter()
+        .flat_map(|b| {
+            b["pictures"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| {
+                    (
+                        b["block_id"].as_str().unwrap_or_default().to_string(),
+                        p["slot_id"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+        })
+        .collect();
+    if has("FAKE_PREP_PIC_ADD") {
+        if let Some(b) = first_with_items {
+            out.push(picture(
+                "add",
+                b["block_id"].as_str().unwrap_or_default(),
+                "",
+                "蜜蜂停在花上",
+                "A honey bee sitting on a yellow flower in a sunny garden",
+            ));
+        }
+    }
+    if has("FAKE_PREP_PIC_REDRAW") {
+        if let Some((_, slot)) = slots.first() {
+            out.push(picture(
+                "redraw",
+                "",
+                slot,
+                "不要有文字",
+                "no text in the picture",
+            ));
+        }
+    }
+    if has("FAKE_PREP_PIC_REMOVE") {
+        if let Some((_, slot)) = slots.last() {
+            out.push(picture("remove", "", slot, "", ""));
+        }
+    }
+    if has("FAKE_PREP_PIC_BAD") {
+        out.push(picture("add", "no-such-block", "", "不存在的區", "A bee"));
+        out.push(picture("redraw", "", "no-such-slot", "x", "x"));
+        out.push(picture("remove", "", "no-such-slot", "", ""));
+        out.push(picture(
+            "add",
+            first_with_items
+                .and_then(|b| b["block_id"].as_str())
+                .unwrap_or("b1"),
+            "",
+            "網址",
+            "see https://example.com/bee.png",
+        ));
+    }
+    if has("FAKE_PREP_PIC_MANY") {
+        for b in blocks
+            .iter()
+            .filter(|b| b["items"].as_array().is_some_and(|i| !i.is_empty()))
+        {
+            for k in 1..=2 {
+                out.push(picture(
+                    "add",
+                    b["block_id"].as_str().unwrap_or_default(),
+                    "",
+                    "一張圖",
+                    &format!("A calm scene number {k} for block {}", b["block_id"]),
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// The SIOP self-check (`siop_selfcheck`): every item of `items`, in order.

@@ -16,6 +16,38 @@ use serde_json::Value;
 
 use crate::config::{AiProviderKind, Config};
 
+/// A picture sent with the user message (a screenshot or photo the teacher attached). Already
+/// downscaled and re-encoded by the server; never logged (only its size is).
+#[derive(Clone, PartialEq, Eq)]
+pub struct LlmImage {
+    /// `image/jpeg`.
+    pub media_type: &'static str,
+    pub data: bytes::Bytes,
+}
+
+impl std::fmt::Debug for LlmImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "LlmImage({}, {} bytes)",
+            self.media_type,
+            self.data.len()
+        )
+    }
+}
+
+impl LlmImage {
+    /// `data:image/jpeg;base64,…` (OpenAI `image_url`).
+    pub fn data_url(&self) -> String {
+        use base64::Engine;
+        format!(
+            "data:{};base64,{}",
+            self.media_type,
+            base64::engine::general_purpose::STANDARD.encode(&self.data)
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LlmRequest {
     pub system: String,
@@ -32,6 +64,10 @@ pub struct LlmRequest {
     /// OpenAI-compatible provider only. A retry must differ from the first request (the
     /// gateway caches identical ones), so the SOP stages raise it on the repair call.
     pub temperature: Option<f32>,
+    /// Pictures that go with the user message (after its text). Empty for almost every call.
+    /// The OpenAI-compatible provider sends them as `image_url` parts, Anthropic as `image`
+    /// blocks; the fake provider records that they arrived.
+    pub images: Vec<LlmImage>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

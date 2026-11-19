@@ -19,6 +19,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
+use super::images;
 use super::store::{self, SessionRow, TurnRow};
 use super::{
     activity_schema, ask_schema, chip_label, clean_answer, clean_plan, clean_text, is_bare_label,
@@ -47,6 +48,7 @@ use crate::worksheet::ai::{self as ws_ai};
 use crate::worksheet::assemble::project;
 use crate::worksheet::bloom::Output;
 use crate::worksheet::checks::{evaluate_section, CleanSection, SectionCtx};
+use crate::worksheet::images::actions::{self, PictureAction};
 use crate::worksheet::material::SOURCE_LIBRARY;
 use crate::worksheet::store::{self as ws_store, Worksheet};
 use crate::worksheet::template::extract as tpl_extract;
@@ -493,6 +495,8 @@ pub(crate) struct Call {
     pub(crate) trace: Value,
     /// The step of a run's progress the call is (its retry is said there as 「重試中」).
     pub(crate) progress: Option<(Arc<Tracker>, &'static str)>,
+    /// Pictures the teacher attached; sent after the user message's text.
+    pub(crate) images: Vec<crate::ai::LlmImage>,
 }
 
 /// The output of an attempt after the server's checks: what can be used, and what to tell the
@@ -571,6 +575,7 @@ where
             attempt: attempt_no,
             max_tokens: Some(c.max_tokens),
             temperature: Some(temperature),
+            images: c.images.clone(),
         };
         let a = attempt(state, &meta, &snapshot, &req, retry_of).await?;
         if let Some(f) = on_first.take() {
@@ -726,6 +731,7 @@ async fn activity(
         temperature: BASE_TEMPERATURE,
         trace: trace_of(input, Some(&class_snapshot), Some(&codes)),
         progress: Some((progress.clone(), progress::PLAN)),
+        images: Vec::new(),
     };
     let track = input.track.clone();
     progress.start(progress::PLAN).await;
@@ -1114,6 +1120,7 @@ async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
         temperature: BASE_TEMPERATURE,
         trace: trace_of(input, Some(&class_snapshot), Some(&codes)),
         progress: None,
+        images: Vec::new(),
     };
     let track = input.track.clone();
     let trace = found.trace.clone();
@@ -1180,21 +1187,54 @@ struct RevisePlan {
     accepted: Vec<Accepted>,
     /// Blocks whose change did not pass the checks, with the reason.
     dropped: Vec<String>,
+    /// The picture actions that passed the checks (applied with the text changes).
+    pictures: Vec<PictureAction>,
+    /// How many the model wrote that did not (told to the teacher).
+    pictures_dropped: usize,
+    /// The model wrote some while pictures are off.
+    pictures_off: bool,
 }
 
 /// Checks every change like a template block (fixed labels, well-formed closed items, no
-/// answer in the stem, dictionary syllables, at most 12 items).
+/// answer in the stem, dictionary syllables, at most 12 items), and the picture actions
+/// ([`actions::check`]; a dropped action is not a reason for a second call).
 fn check_revision(
     raw: &RawRevision,
     content: &Content,
     labels: &HashMap<String, String>,
     passage: &str,
+    pictures_on: bool,
 ) -> Checked<RevisePlan> {
+    let name_of = |id: &str| -> Option<String> {
+        labels
+            .get(id)
+            .filter(|l| !l.is_empty())
+            .map(|l| format!("{l} 區"))
+    };
+    let (pictures, picture_notes) = actions::check(
+        &raw.picture_actions,
+        &actions::CheckCtx {
+            content,
+            only_block: None,
+            name_of: &name_of,
+        },
+        pictures_on,
+    );
     let mut plan = RevisePlan {
         reply: clean_text(&raw.reply, REPLY_CHARS),
         accepted: Vec::new(),
         dropped: Vec::new(),
+        pictures_dropped: if pictures_on {
+            raw.picture_actions.len().saturating_sub(pictures.len())
+        } else {
+            0
+        },
+        pictures_off: !pictures_on && !raw.picture_actions.is_empty(),
+        pictures,
     };
+    if !picture_notes.is_empty() {
+        tracing::debug!(notes = ?picture_notes, "picture actions were trimmed");
+    }
     let mut problems = Vec::new();
     let mut seen = HashSet::new();
     let ctx = SectionCtx {
@@ -1254,7 +1294,11 @@ fn check_revision(
 }
 
 /// The worksheet's blocks as the model sees them.
-fn blocks_for_model(content: &Content, labels: &HashMap<String, String>) -> Vec<Value> {
+fn blocks_for_model(
+    content: &Content,
+    labels: &HashMap<String, String>,
+    states: &[crate::worksheet::images::SlotState],
+) -> Vec<Value> {
     content
         .blocks
         .iter()
@@ -1266,6 +1310,8 @@ fn blocks_for_model(content: &Content, labels: &HashMap<String, String>) -> Vec<
                 "kind": b.kind,
                 "title": b.title,
                 "instructions": b.instructions,
+                // The pictures the block has (slot ids a picture action may name).
+                "pictures": actions::describe(b, states),
                 "items": b.items.iter().map(|i| json!({
                     "answer_format": i.answer_format,
                     "prompt": i.prompt,
@@ -1415,13 +1461,17 @@ async fn revise(
     let content = ws_store::latest(db, worksheet_id).await?.content;
     progress.done(progress::READ).await;
     let labels = labels(&ws, &content);
-    let blocks = blocks_for_model(&content, &labels);
+    let states = crate::worksheet::images::current(db, worksheet_id).await?;
+    let blocks = blocks_for_model(&content, &labels, &states);
     let block_ids: Vec<String> = content
         .blocks
         .iter()
         .filter(|b| b.enabled)
         .map(|b| b.id.clone())
         .collect();
+    let pictures_on = state.images.enabled();
+    let slot_ids = actions::slot_ids(&content, None);
+    let attached = images::load(state, Some(input.turn.id), None).await?;
     let m = &ws.material;
     let text = m.text();
     let instruction = input.turn.request.trim().to_string();
@@ -1430,6 +1480,13 @@ async fn revise(
         ("instruction", instruction.clone()),
         ("worksheet_title", ws.title.clone()),
         ("blocks_json", blocks_json),
+        ("picture_rules", actions::rules(state).await?),
+        (
+            "pictures_note",
+            "目前的圖片寫在上面每個區塊的 pictures 裡（slot_id 就是 redraw、remove 要寫的 id）。"
+                .to_string(),
+        ),
+        ("attachments_note", attached.note()),
         ("material_title", material_title(m)),
         ("paragraph_count", m.paragraphs.len().to_string()),
         ("passage_numbered", passage(m)),
@@ -1439,7 +1496,11 @@ async fn revise(
         key: KEY_REVISE,
         scaffold: SCAFFOLD_REVISE,
         schema_name: REVISE_SCHEMA_NAME,
-        schema: revise_schema(&block_ids),
+        schema: revise_schema(
+            &block_ids,
+            &slot_ids,
+            if pictures_on { actions::MAX_ACTIONS } else { 0 },
+        ),
         vars,
         required: vec![
             ("instruction", "教師的修改指示"),
@@ -1456,15 +1517,21 @@ async fn revise(
         }),
         max_tokens: REVISE_MAX_TOKENS,
         temperature: BASE_TEMPERATURE,
-        trace: trace_of(input, None, None),
+        trace: {
+            let mut trace = trace_of(input, None, None);
+            // Ids, sizes and hashes of the attached pictures; never their bytes.
+            trace["attached_images"] = json!(attached.record);
+            trace
+        },
         progress: Some((progress.clone(), REVISE)),
+        images: attached.images.clone(),
     };
     progress.start(REVISE).await;
     let result = call(
         state,
         session.teacher_id,
         c,
-        |raw: &RawRevision| check_revision(raw, &content, &labels, &text),
+        |raw: &RawRevision| check_revision(raw, &content, &labels, &text, pictures_on),
         nothing,
     )
     .await?;
@@ -1491,10 +1558,17 @@ async fn apply_revision(
         reply,
         accepted,
         mut dropped,
+        pictures,
+        pictures_dropped,
+        pictures_off,
     } = plan;
     let mut changed: Vec<(Block, Block)> = Vec::new();
     let mut version_no = None;
-    if !accepted.is_empty() {
+    // Blocks that only got a picture slot (their previous state goes to the history too).
+    let mut slot_only: Vec<Block> = Vec::new();
+    let mut added: actions::Added = Vec::new();
+    let mut outcomes: Vec<actions::PictureOutcome> = Vec::new();
+    if !accepted.is_empty() || !pictures.is_empty() {
         let (_, running) = ws_ai::jobs(state, ws.id).await?;
         if running {
             return Ok(Err(MSG_WORKSHEET_BUSY.to_string()));
@@ -1521,21 +1595,61 @@ async fn apply_revision(
             let previous = std::mem::replace(slot, block.clone());
             changed.push((previous, block));
         }
-        if !changed.is_empty() {
+        // Pictures to add are part of the version (a new slot in the block); the pictures
+        // themselves are queued once it is saved. Redraws and removals only touch the pictures.
+        for a in pictures
+            .iter()
+            .filter(|a| a.action == actions::PictureOp::Add)
+        {
+            if !changed.iter().any(|(p, _)| p.id == a.block_id)
+                && !slot_only.iter().any(|b| b.id == a.block_id)
+            {
+                if let Some(b) = next.block(&a.block_id) {
+                    slot_only.push(b.clone());
+                }
+            }
+        }
+        added = actions::add_slots(&mut next, &pictures, &format!("t{}", input.turn.id));
+        let slots_added = added.iter().any(|(_, r)| r.is_ok());
+        if !changed.is_empty() || slots_added {
             next.normalise().map_err(|e| {
                 AppError::Internal(anyhow::anyhow!("revised worksheet failed validation: {e}"))
             })?;
             for (previous, _) in &changed {
                 ws_store::push_history(db, ws.id, previous, Some(interaction_id)).await?;
             }
+            for previous in &slot_only {
+                ws_store::push_history(db, ws.id, previous, Some(interaction_id)).await?;
+            }
             let saved = ws_store::save_content(db, ws.id, &next, "revise").await?;
             version_no = Some(saved.version_no);
         }
+        outcomes = actions::run(state, ws, &pictures, &added, &next).await;
+        if !outcomes.is_empty() {
+            actions::log_applied(
+                state,
+                ws.teacher_id,
+                ws.id,
+                "prep_turn",
+                json!({ "turn_id": input.turn.id, "interaction_id": interaction_id }),
+                &outcomes,
+            )
+            .await;
+        }
     }
-    let changed_ids: Vec<String> = changed.iter().map(|(p, _)| p.id.clone()).collect();
+    let mut changed_ids: Vec<String> = changed.iter().map(|(p, _)| p.id.clone()).collect();
+    for (i, r) in &added {
+        if r.is_ok() {
+            if let Some(a) = pictures.get(*i) {
+                if !changed_ids.contains(&a.block_id) {
+                    changed_ids.push(a.block_id.clone());
+                }
+            }
+        }
+    }
     let mut reply = reply;
     if reply.trim().is_empty() {
-        reply = if changed_ids.is_empty() {
+        reply = if changed_ids.is_empty() && outcomes.is_empty() {
             "這次沒有修改學習單。".to_string()
         } else {
             "已依你的指示修改學習單。".to_string()
@@ -1547,10 +1661,21 @@ async fn apply_revision(
             dropped.join("、")
         );
     }
+    let summary = actions::summary(&outcomes);
+    if !summary.is_empty() {
+        reply = format!("{reply}（{summary}）");
+    }
+    if pictures_dropped > 0 {
+        reply = format!("{reply}（有 {pictures_dropped} 個圖片動作沒有通過檢查，沒有做。）");
+    }
+    if pictures_off {
+        reply = format!("{reply}（這個環境沒有開啟 AI 產圖，圖片的部分沒有處理。）");
+    }
     let result = Revision {
         reply,
         changed_block_ids: changed_ids,
         version_no,
+        pictures: outcomes,
     };
     Ok(Ok((Some(json!(result)), Some(interaction_id))))
 }
@@ -1705,16 +1830,17 @@ mod tests {
                     organizer: None,
                 }],
             }],
+            picture_actions: Vec::new(),
         }
     }
 
     #[test]
     fn a_change_with_a_label_outside_the_set_is_dropped() {
         let labels = HashMap::from([("b1".to_string(), "A".to_string())]);
-        let ok = check_revision(&change(FMT_SHORT), &content(), &labels, "text");
+        let ok = check_revision(&change(FMT_SHORT), &content(), &labels, "text", true);
         assert!(ok.problems.is_empty(), "{:?}", ok.problems);
         assert_eq!(ok.output.as_ref().unwrap().accepted.len(), 1);
-        let bad = check_revision(&change("連連看"), &content(), &labels, "text");
+        let bad = check_revision(&change("連連看"), &content(), &labels, "text", true);
         let plan = bad.output.unwrap();
         assert!(plan.accepted.is_empty());
         assert_eq!(plan.dropped, ["A 區"]);
@@ -1725,7 +1851,7 @@ mod tests {
     fn revised_items_get_new_ids_and_keep_their_versions() {
         let c = content();
         let labels = HashMap::new();
-        let plan = check_revision(&change(FMT_SHORT), &c, &labels, "text")
+        let plan = check_revision(&change(FMT_SHORT), &c, &labels, "text", true)
             .output
             .unwrap();
         let levels = [Level::Basic, Level::Standard];
