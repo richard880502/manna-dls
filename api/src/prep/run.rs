@@ -1621,7 +1621,22 @@ async fn apply_revision(
             for previous in &slot_only {
                 ws_store::push_history(db, ws.id, previous, Some(interaction_id)).await?;
             }
-            let saved = ws_store::save_content(db, ws.id, &next, "revise").await?;
+            let block_ids: Vec<String> = changed
+                .iter()
+                .map(|(p, _)| p.id.clone())
+                .chain(slot_only.iter().map(|b| b.id.clone()))
+                .collect();
+            let saved = ws_store::save_content_from(
+                db,
+                ws.id,
+                &next,
+                "revise",
+                json!({
+                    "cause": "prep_turn", "turn_id": input.turn.id,
+                    "interaction_id": interaction_id, "block_ids": block_ids,
+                }),
+            )
+            .await?;
             version_no = Some(saved.version_no);
         }
         outcomes = actions::run(state, ws, &pictures, &added, &next).await;

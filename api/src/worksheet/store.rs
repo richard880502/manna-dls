@@ -327,12 +327,15 @@ pub async fn versions_count(db: &PgPool, worksheet_id: i64) -> sqlx::Result<i64>
 pub struct VersionSummary {
     pub version_no: i32,
     pub cause: String,
+    /// What produced the version (docs/API.md「修改歷程」); `null` for a version made before
+    /// the source was kept.
+    pub source: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
 
 pub async fn list_versions(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<VersionSummary>> {
     sqlx::query_as(
-        "SELECT version_no, cause, created_at FROM worksheet_versions
+        "SELECT version_no, cause, source, created_at FROM worksheet_versions
           WHERE worksheet_id = $1 ORDER BY version_no DESC",
     )
     .bind(worksheet_id)
@@ -346,16 +349,30 @@ pub(crate) async fn insert_version(
     content: &Content,
     cause: &str,
 ) -> AppResult<Version> {
+    insert_version_from(tx, worksheet_id, content, cause, None).await
+}
+
+/// [`insert_version`] with what produced the version (`source`: a JSON object; `{"cause": …}`
+/// when `None`). Versions are only ever appended.
+pub(crate) async fn insert_version_from(
+    tx: &mut Transaction<'_, Postgres>,
+    worksheet_id: i64,
+    content: &Content,
+    cause: &str,
+    source: Option<serde_json::Value>,
+) -> AppResult<Version> {
     let json = serde_json::to_value(content).map_err(anyhow::Error::from)?;
+    let source = source.unwrap_or_else(|| serde_json::json!({ "cause": cause }));
     let row: VersionRow = sqlx::query_as(&format!(
-        "INSERT INTO worksheet_versions (worksheet_id, version_no, content, cause)
+        "INSERT INTO worksheet_versions (worksheet_id, version_no, content, cause, source)
          VALUES ($1, (SELECT COALESCE(MAX(version_no), 0) + 1 FROM worksheet_versions
-                       WHERE worksheet_id = $1), $2, $3)
+                       WHERE worksheet_id = $1), $2, $3, $4)
          RETURNING {VERSION_COLS}"
     ))
     .bind(worksheet_id)
     .bind(json)
     .bind(cause)
+    .bind(source)
     .fetch_one(&mut **tx)
     .await?;
     sqlx::query("UPDATE worksheets SET updated_at = now() WHERE id = $1")
@@ -363,6 +380,25 @@ pub(crate) async fn insert_version(
         .execute(&mut **tx)
         .await?;
     Ok(row.into())
+}
+
+/// Writes which picture was current in each slot at a step (`{slot_id: worksheet_images.id}`),
+/// once the step's pictures are settled.
+pub async fn set_version_pictures(
+    db: impl sqlx::PgExecutor<'_>,
+    worksheet_id: i64,
+    version_no: i32,
+    pictures: &serde_json::Value,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_versions SET pictures = $3 WHERE worksheet_id = $1 AND version_no = $2",
+    )
+    .bind(worksheet_id)
+    .bind(version_no)
+    .bind(pictures)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Said when an editor saves over a version it has not seen (409).
@@ -379,6 +415,17 @@ pub async fn save_content(
     save_content_over(db, worksheet_id, content, cause, None).await
 }
 
+/// [`save_content`] that also says what produced the version.
+pub async fn save_content_from(
+    db: &PgPool,
+    worksheet_id: i64,
+    content: &Content,
+    cause: &str,
+    source: serde_json::Value,
+) -> AppResult<Version> {
+    save_content_source(db, worksheet_id, content, cause, None, Some(source)).await
+}
+
 /// [`save_content`] for an editor that last saw `base_version_no`: when a newer version exists
 /// and this content differs from it, nothing is saved and the answer is a 409 (the editor would
 /// otherwise overwrite, for example, a block revision accepted elsewhere). `None` skips the check.
@@ -388,6 +435,17 @@ pub async fn save_content_over(
     content: &Content,
     cause: &str,
     base_version_no: Option<i32>,
+) -> AppResult<Version> {
+    save_content_source(db, worksheet_id, content, cause, base_version_no, None).await
+}
+
+async fn save_content_source(
+    db: &PgPool,
+    worksheet_id: i64,
+    content: &Content,
+    cause: &str,
+    base_version_no: Option<i32>,
+    source: Option<serde_json::Value>,
 ) -> AppResult<Version> {
     let mut tx = db.begin().await?;
     sqlx::query("SELECT id FROM worksheets WHERE id = $1 FOR UPDATE")
@@ -409,7 +467,7 @@ pub async fn save_content_over(
             return Err(AppError::Conflict(MSG_EDITED_ELSEWHERE.to_string()));
         }
     }
-    let saved = insert_version(&mut tx, worksheet_id, content, cause).await?;
+    let saved = insert_version_from(&mut tx, worksheet_id, content, cause, source).await?;
     tx.commit().await?;
     Ok(saved)
 }
@@ -552,35 +610,80 @@ pub async fn push_history(
     Ok(())
 }
 
-/// Takes the newest kept state of a block back out: the block and the interaction that had
-/// replaced it.
-pub async fn pop_history(
+/// A kept earlier state of a block that is not taken back yet (the top of the undo stack).
+pub struct HistoryStep {
+    pub id: i64,
+    pub block: Block,
+    pub interaction_id: Option<i64>,
+    pub proposal_id: Option<i64>,
+    pub version_no: Option<i32>,
+    /// The block as the step wrote it (a 採用); `None` for older steps.
+    pub after_block: Option<Block>,
+    pub picture_undo: Option<serde_json::Value>,
+}
+
+/// The newest kept state of a block that is not undone yet. Nothing is changed.
+pub async fn peek_history(
     db: &PgPool,
     worksheet_id: i64,
     block_id: &str,
-) -> sqlx::Result<Option<(Block, Option<i64>)>> {
-    let row: Option<(serde_json::Value, Option<i64>)> = sqlx::query_as(
-        "DELETE FROM worksheet_block_history
-          WHERE id = (SELECT id FROM worksheet_block_history
-                       WHERE worksheet_id = $1 AND block_id = $2 ORDER BY id DESC LIMIT 1)
-        RETURNING block, interaction_id",
+) -> sqlx::Result<Option<HistoryStep>> {
+    type R = (
+        i64,
+        serde_json::Value,
+        Option<i64>,
+        Option<i64>,
+        Option<i32>,
+        Option<serde_json::Value>,
+        Option<serde_json::Value>,
+    );
+    let row: Option<R> = sqlx::query_as(
+        "SELECT id, block, interaction_id, proposal_id, version_no, after_block, picture_undo
+           FROM worksheet_block_history
+          WHERE worksheet_id = $1 AND block_id = $2 AND undone_at IS NULL
+          ORDER BY id DESC LIMIT 1",
     )
     .bind(worksheet_id)
     .bind(block_id)
     .fetch_optional(db)
     .await?;
-    Ok(row.and_then(|(block, interaction)| {
-        serde_json::from_value::<Block>(block)
-            .ok()
-            .map(|b| (b, interaction))
-    }))
+    Ok(row.and_then(
+        |(id, block, interaction_id, proposal_id, version_no, after, undo)| {
+            Some(HistoryStep {
+                id,
+                block: serde_json::from_value::<Block>(block).ok()?,
+                interaction_id,
+                proposal_id,
+                version_no,
+                after_block: after.and_then(|v| serde_json::from_value::<Block>(v).ok()),
+                picture_undo: undo,
+            })
+        },
+    ))
 }
 
-/// Ids of the blocks that have a kept earlier state.
+/// Marks a kept state as taken back (it stays in the table: history is never deleted).
+pub async fn mark_undone(
+    db: impl sqlx::PgExecutor<'_>,
+    history_id: i64,
+    version_no: i32,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_block_history SET undone_at = now(), undone_in_version_no = $2
+          WHERE id = $1 AND undone_at IS NULL",
+    )
+    .bind(history_id)
+    .bind(version_no)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Ids of the blocks that have a kept earlier state not taken back yet.
 pub async fn undoable(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<String>> {
     sqlx::query_scalar(
         "SELECT DISTINCT block_id FROM worksheet_block_history
-          WHERE worksheet_id = $1 ORDER BY block_id",
+          WHERE worksheet_id = $1 AND undone_at IS NULL ORDER BY block_id",
     )
     .bind(worksheet_id)
     .fetch_all(db)

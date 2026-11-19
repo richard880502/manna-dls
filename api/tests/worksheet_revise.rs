@@ -1037,3 +1037,186 @@ async fn open_notes_for_ai_reach_a_new_generation_of_the_worksheet() {
         "{list}"
     );
 }
+
+#[tokio::test]
+async fn an_earlier_attempt_of_the_round_can_still_be_adopted() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let block = target_block(&st);
+    let block_id = block["id"].as_str().unwrap();
+
+    let p1 = revise(
+        &app,
+        &t,
+        id,
+        block_id,
+        json!({ "instruction": "整區改簡單一點" }),
+    )
+    .await;
+    let p2 = revise(
+        &app,
+        &t,
+        id,
+        block_id,
+        json!({ "instruction": "整區改簡單一點" }),
+    )
+    .await;
+    let p3 = revise(
+        &app,
+        &t,
+        id,
+        block_id,
+        json!({ "instruction": "整區改簡單一點" }),
+    )
+    .await;
+    // The open proposal carries the attempts set aside before it, oldest first.
+    let (_, open) = app
+        .get(&format!("/api/worksheets/{id}/proposals"), Some(&t))
+        .await;
+    assert_eq!(open.as_array().unwrap().len(), 1);
+    assert_eq!(open[0]["id"], p3["id"]);
+    let earlier: Vec<&Value> = open[0]["earlier"].as_array().unwrap().iter().collect();
+    assert_eq!(earlier.len(), 2, "{open}");
+    assert_eq!(earlier[0]["id"], p1["id"]);
+    assert_eq!(earlier[1]["id"], p2["id"]);
+    assert_eq!(earlier[0]["block"], p1["block"], "its own content is kept");
+
+    // Adopt the first attempt.
+    let (s, d) = app
+        .post(
+            &format!("/api/worksheets/{id}/proposals/{}/accept", p1["id"]),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    assert_eq!(d["proposal"]["status"], "accepted");
+    assert_eq!(block_of(&d["worksheet"], block_id), p1["block"]);
+    // The other attempts of the round are closed.
+    let (_, open) = app
+        .get(&format!("/api/worksheets/{id}/proposals"), Some(&t))
+        .await;
+    assert_eq!(open, json!([]));
+    for other in [&p2, &p3] {
+        let (s, _) = app
+            .post(
+                &format!("/api/worksheets/{id}/proposals/{}/accept", other["id"]),
+                Some(&t),
+                json!({}),
+            )
+            .await;
+        assert_eq!(s, StatusCode::CONFLICT);
+    }
+    // Decisions are appended: the earlier reject of attempt 1 stays, an adopt is added; the
+    // still-proposed newest one is turned down.
+    let of = |pid: &Value, decision: &str| {
+        let q = format!(
+            "SELECT COUNT(*) FROM teacher_decisions d
+               JOIN worksheet_block_proposals p ON p.interaction_id = d.ai_interaction_id
+              WHERE p.id = {} AND d.decision = '{decision}'",
+            pid
+        );
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(&q)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(of(&p1["id"], "reject").await, 1);
+    assert_eq!(of(&p1["id"], "adopt").await, 1);
+    assert_eq!(of(&p3["id"], "reject").await, 1);
+    let logged: Vec<Value> = sqlx::query_scalar(
+        "SELECT payload FROM usage_logs WHERE event = 'worksheet_block_revise_accepted'",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(logged.len(), 1);
+    assert_eq!(logged[0]["attempt_no"], 1);
+    assert_eq!(logged[0]["attempts"], 3);
+    assert_eq!(
+        logged[0]["attempt_proposal_ids"],
+        json!([p1["id"], p2["id"], p3["id"]])
+    );
+    // Taking it back brings the original block, and the round is still closed.
+    let (s, st) = app
+        .post(
+            &format!("/api/worksheets/{id}/blocks/{block_id}/undo"),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    assert_eq!(block_of(&st, block_id), block);
+}
+
+#[tokio::test]
+async fn giving_up_ends_the_round_and_a_changed_block_refuses_an_earlier_attempt() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let block = target_block(&st);
+    let block_id = block["id"].as_str().unwrap();
+    let ask = json!({ "instruction": "整區改簡單一點" });
+
+    let p1 = revise(&app, &t, id, block_id, ask.clone()).await;
+    let p2 = revise(&app, &t, id, block_id, ask.clone()).await;
+    // 放棄 discards the whole round: the first attempt can not be adopted afterwards.
+    let (s, _) = app
+        .post(
+            &format!("/api/worksheets/{id}/proposals/{}/reject", p2["id"]),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = app
+        .post(
+            &format!("/api/worksheets/{id}/proposals/{}/accept", p1["id"]),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+
+    // A new round starts clean; the teacher then edits the block by hand: the earlier attempt
+    // is refused (and the newest goes stale as before).
+    let p3 = revise(&app, &t, id, block_id, ask.clone()).await;
+    let p4 = revise(&app, &t, id, block_id, ask.clone()).await;
+    let (_, open) = app
+        .get(&format!("/api/worksheets/{id}/proposals"), Some(&t))
+        .await;
+    assert_eq!(open[0]["earlier"].as_array().unwrap().len(), 1, "{open}");
+    assert_eq!(open[0]["earlier"][0]["id"], p3["id"]);
+    let now = state(&app, &t, id).await;
+    let mut content = now["content"].clone();
+    for b in content["blocks"].as_array_mut().unwrap() {
+        if b["id"] == block_id {
+            b["instructions"] = json!("Changed by hand.");
+        }
+    }
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": now["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = app
+        .post(
+            &format!("/api/worksheets/{id}/proposals/{}/accept", p3["id"]),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("這個版本不能直接採用"));
+    let _ = p4;
+}

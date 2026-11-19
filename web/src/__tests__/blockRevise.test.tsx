@@ -314,6 +314,10 @@ describe("備課對話: one block of the worksheet", () => {
         accepted = true;
         return { proposal: proposal("accepted"), worksheet: worksheet({ version_no: 4, undoable: ["b2"], content: content(REVISED) }) };
       },
+      [`POST ${WS}/blocks/b2/undo`]: () => {
+        accepted = false;
+        return worksheet({ version_no: 5 });
+      },
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
@@ -339,6 +343,12 @@ describe("備課對話: one block of the worksheet", () => {
     expect(await prepBlock().findByText("Did the neighbors think the umbrellas would stay?")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Manna 的修改建議" })).not.toBeInTheDocument();
     expect(prepBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
+    // Right after 採用: the notice with 復原 under the block.
+    expect(prepBlock().getByText("已採用 Manna 的修改。")).toBeInTheDocument();
+    await user.click(prepBlock().getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/undo`)).toHaveLength(1));
+    await waitFor(() => expect(prepBlock().queryByText("已採用 Manna 的修改。")).not.toBeInTheDocument());
+    expect(await prepBlock().findByText("What did the neighbors expect would happen?")).toBeInTheDocument();
   });
 
   it("selected text becomes a note, and 儲存並請 Manna 改 sends it to Manna", async () => {
@@ -577,5 +587,87 @@ describe("編輯器: 改這一區, notes and saving", () => {
     await user.click(screen.getByRole("button", { name: "重新載入" }));
     expect(await screen.findByRole("heading", { name: "Changed elsewhere", level: 1 })).toBeInTheDocument();
     expect(loads).toBe(2);
+  });
+});
+
+describe("編輯器: 採用之後的復原與同一輪的各次建議", () => {
+  it("right after 採用 the block says so with a 復原 button that gives the block back", async () => {
+    let open: WsProposal[] = [proposal("proposed", { comment_ids: [] })];
+    const api = mockApi(
+      editorRoutes(worksheet(), {
+        [`GET ${WS}/proposals`]: () => open,
+        [`POST ${WS}/proposals/90/accept`]: () => {
+          open = [];
+          return {
+            proposal: proposal("accepted"),
+            worksheet: worksheet({ version_no: 4, undoable: ["b2"], content: content(REVISED) }),
+          };
+        },
+        [`POST ${WS}/blocks/b2/undo`]: () => worksheet({ version_no: 5 }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    const panel = within(await editorBlock().findByRole("region", { name: "Manna 的修改建議" }));
+    await user.click(panel.getByRole("button", { name: "採用" }));
+    const notice = await editorBlock().findByText("已採用 Manna 的修改。");
+    expect(notice.closest("[role=status]")).not.toBeNull();
+    // The existing 復原上一版 stays among the block tools.
+    expect(editorBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
+    await user.click(editorBlock().getByRole("button", { name: "復原" }));
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/undo`)).toHaveLength(1));
+    await waitFor(() => expect(editorBlock().queryByText("已採用 Manna 的修改。")).toBeNull());
+    await waitFor(() =>
+      expect(editorBlock().getByRole("textbox", { name: "題目 3" })).toHaveValue("What did the neighbors expect would happen?"),
+    );
+  });
+
+  it("the box switches between the attempts of the round and 採用 adopts the one shown", async () => {
+    const first = proposal("proposed", {
+      id: 88,
+      round: 1,
+      instruction: "改簡單",
+      reply: "第一次的說明",
+      comment_ids: [],
+      decided_at: "2026-11-15T09:01:00Z",
+    });
+    const newest = proposal("proposed", {
+      id: 90,
+      round: 2,
+      instruction: "改簡單",
+      reply: "第二次的說明",
+      comment_ids: [],
+      earlier: [first],
+    });
+    let open: WsProposal[] = [newest];
+    const api = mockApi(
+      editorRoutes(worksheet(), {
+        [`GET ${WS}/proposals`]: () => open,
+        [`POST ${WS}/proposals/88/accept`]: () => {
+          open = [];
+          return {
+            proposal: proposal("accepted", { id: 88 }),
+            worksheet: worksheet({ version_no: 4, undoable: ["b2"], content: content(REVISED) }),
+          };
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    const panel = within(await editorBlock().findByRole("region", { name: "Manna 的修改建議" }));
+    // The newest shows first.
+    expect(panel.getByText("第 2 次（共 2 次）")).toBeInTheDocument();
+    expect(panel.getByText("第二次的說明")).toBeInTheDocument();
+    expect(panel.getByRole("button", { name: "下一次的建議" })).toBeDisabled();
+    await user.click(panel.getByRole("button", { name: "上一次的建議" }));
+    expect(panel.getByText("第 1 次（共 2 次）")).toBeInTheDocument();
+    expect(panel.getByText("第一次的說明")).toBeInTheDocument();
+    expect(panel.getByRole("button", { name: "上一次的建議" })).toBeDisabled();
+    await user.click(panel.getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/88/accept`)).toHaveLength(1));
+    expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(0);
+    await waitFor(() => expect(editorBlock().queryByRole("region", { name: "Manna 的修改建議" })).toBeNull());
   });
 });

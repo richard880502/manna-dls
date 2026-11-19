@@ -950,6 +950,8 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const revise = useBlockRevise(state && !state.running ? state.id : null, {
     beforeAction: ws.flush,
     onApplied: (done) => ws.adopt(done.worksheet),
+    versionNo: state?.version_no ?? null,
+    onUndone: (next) => ws.adopt(next),
   });
   const [supportMemory] = useState<SupportMemory>(() => new Map());
 

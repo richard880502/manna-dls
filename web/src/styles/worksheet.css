@@ -1563,6 +1563,32 @@ button.bloom-seg:focus-visible {
   font-weight: var(--weight-strong);
 }
 
+/* ‹ 第 2 次（共 3 次） › : browse the attempts of the round */
+.ws-proposal-attempts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-2xs);
+}
+
+.ws-proposal-asked {
+  margin-top: var(--space-2xs);
+  color: var(--color-ink-soft, inherit);
+  overflow-wrap: anywhere;
+}
+
+.ws-accepted-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-manna-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-manna-wash);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
 .ws-proposal-field {
   margin-top: var(--space-2xs);
   overflow-wrap: anywhere;

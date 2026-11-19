@@ -2472,6 +2472,10 @@ export interface WsProposal {
   created_at: string;
   finished_at: string | null;
   decided_at: string | null;
+  /** 採用後又按「復原」的時間；舊的伺服器沒有這一欄 */
+  undone_at?: string | null;
+  /** 「再改一次」留下的同一輪較早的建議（舊的在前）；每一次都還可以採用。舊的伺服器沒有這一欄 */
+  earlier?: WsProposal[];
 }
 
 export interface ReviseWorksheetBlockRequest {

@@ -26,6 +26,7 @@
 pub mod actions;
 pub mod client;
 pub mod job;
+pub mod undo;
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;

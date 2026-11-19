@@ -2390,7 +2390,14 @@ async fn replace_block(
         AppError::Internal(anyhow::anyhow!("regenerated block failed validation: {e}"))
     })?;
     store::push_history(db, ws.id, &previous, Some(interaction_id)).await?;
-    let saved = store::save_content(db, ws.id, &next, "regenerate").await?;
+    let saved = store::save_content_from(
+        db,
+        ws.id,
+        &next,
+        "regenerate",
+        json!({ "cause": "regenerate", "interaction_id": interaction_id, "block_ids": [old.id] }),
+    )
+    .await?;
     queue_pictures(run, &next).await;
     log_usage(
         db,
