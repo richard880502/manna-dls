@@ -120,9 +120,10 @@ volumes:
   minio-data:
 
 # Set MEMORY_NETWORK_EXTERNAL=true and MEMORY_NETWORK_NAME=manna-memory to connect
-# the independent memory resource. Default is a project-local network, so Phase 1
-# deployments require no host preparation or global Coolify application network.
+# the independent memory resource. By default compose creates its own network
+# (manna-memory-link), so Phase 1 deployments require no host preparation.
 networks:
   memory-link:
     external: ${MEMORY_NETWORK_EXTERNAL:-false}
-    name: ${MEMORY_NETWORK_NAME:-${COMPOSE_PROJECT_NAME}_memory}
+    # A literal default: Coolify refuses nested variables in a network name.
+    name: ${MEMORY_NETWORK_NAME:-manna-memory-link}

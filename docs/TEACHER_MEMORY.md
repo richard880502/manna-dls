@@ -260,8 +260,8 @@ FalkorDB 設定（compose 已寫好）：
   `THREAD_COUNT 2 MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000`。
 - **資料 volume 掛在 `/var/lib/falkordb/data`**（映像的 `FALKORDB_DATA_PATH`；舊設定的 `/data`
   不會被寫入，重啟後索引會消失）。
-- `network_mode: "${COMPOSE_PROJECT_NAME}_memory-private"` + `hostname: falkordb`：FalkorDB 只在本資源的
-  internal 網路上（名稱 `<資源 UUID>_memory-private`），連 Coolify 的資源網路也不接
+- `network_mode: ${MEMORY_PRIVATE_NETWORK:-manna-memory-private}` + `hostname: falkordb`：FalkorDB 只在本資源的
+  internal 網路上（預設名稱 `manna-memory-private`；Coolify 不接受網路欄位裡的巢狀變數或「變數＋字尾」，所以用單一變數加固定預設值），連 Coolify 的資源網路也不接
   （Coolify 不替使用 `network_mode` 的服務加網路）。sidecar 以 `falkordb` 解析它。
 - 兩個容器各限 512 MB。這是限制，**不是實測峰值或容量保證**。不要設定固定 container_name。
 
@@ -289,14 +289,14 @@ predefined network 以連到資料庫；同網路上的其他容器若連到 808
 主服務 Watch Paths 設為自己的檔案範圍，例如 `api/**`、`web/**`、`Dockerfile`、`docker-compose.yml`、
 `.dockerignore`，不含 `memory-sidecar/**`。
 
-未啟用 Phase 2 時，`MEMORY_NETWORK_EXTERNAL` 預設 false、網路名稱預設專案專屬，
+未啟用 Phase 2 時，`MEMORY_NETWORK_EXTERNAL` 預設 false、網路名稱預設 `manna-memory-link`（由 compose 自己建立），
 不要求主機預先建 external network；空的 `GRAPHITI_URL`／`GRAPHITI_TOKEN` 不啟動 worker、不開 8081。
 Preview／測試資源必須用不同的 network name，避免固定別名指到正式資源。
 
 ### 4. 部署後檢查
 
 ```sh
-# FalkorDB 只在 <UUID>_memory-private 上，沒有其他網路（network_mode）
+# FalkorDB 只在 manna-memory-private 上，沒有其他網路（network_mode）
 docker inspect --format '{{.HostConfig.NetworkMode}} {{json .NetworkSettings.Networks}}' <falkordb 容器>
 # 資料目錄與 volume
 docker inspect --format '{{json .Mounts}}' <falkordb 容器>   # Destination 應為 /var/lib/falkordb/data
