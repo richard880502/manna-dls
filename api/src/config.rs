@@ -101,7 +101,13 @@ pub struct Config {
     /// Pictures on worksheets (`IMAGE_*`, `OPENAI_API_KEY`, docs/API.md「學習單的圖片」). Never
     /// fails: a bad setting turns pictures off.
     pub images: ImageConfig,
+    /// The optional Graphiti index of teacher habits (`GRAPHITI_URL`, `GRAPHITI_TOKEN`,
+    /// `MEMORY_PROXY_URL`, docs/TEACHER_MEMORY.md). Never fails: it stays off (Phase 1 only)
+    /// when incomplete or when the models cannot be forwarded.
     pub memory: crate::memory::graph::MemoryConfig,
+    /// `INTERNAL_PORT` (default 8081): the listener for the memory index's model forwarder,
+    /// opened only when the index is configured. Never routed by the reverse proxy.
+    pub internal_port: u16,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -122,6 +128,8 @@ impl std::fmt::Debug for Config {
             .field("platform_library_bytes", &self.platform_library_bytes)
             .field("ocr", &self.ocr)
             .field("images", &self.images)
+            .field("memory", &self.memory)
+            .field("internal_port", &self.internal_port)
             .finish_non_exhaustive()
     }
 }
@@ -167,6 +175,14 @@ impl Config {
 
         let database_url = get("DATABASE_URL").ok_or(ConfigError::Missing("DATABASE_URL"))?;
         let port = parse_num("PORT", get("PORT"), 8080u16)?;
+        let internal_port = parse_num("INTERNAL_PORT", get("INTERNAL_PORT"), 8081u16)?;
+        if internal_port == port {
+            return Err(ConfigError::Invalid {
+                var: "INTERNAL_PORT",
+                value: internal_port.to_string(),
+                reason: "must differ from PORT (the proxy routes PORT only)",
+            });
+        }
         let static_dir = PathBuf::from(get("STATIC_DIR").unwrap_or_else(|| "./web-dist".into()));
 
         let provider_raw = get("AI_PROVIDER").unwrap_or_default();
@@ -248,6 +264,21 @@ impl Config {
             AiProviderKind::Fake | AiProviderKind::None => {}
         }
 
+        let embedding = EmbeddingConfig::from_lookup(get);
+        // The memory index forwards Graphiti's chat and embedding calls to these providers.
+        let forwardable = if !matches!(
+            ai_provider,
+            AiProviderKind::OpenAi | AiProviderKind::OpenAiCompatible
+        ) {
+            Err("AI_PROVIDER=openai or openai_compatible")
+        } else if embedding.provider != crate::embedding::EmbeddingProviderKind::OpenAiCompatible
+            || embedding.base_url.is_none()
+        {
+            Err("EMBEDDING_PROVIDER=openai_compatible")
+        } else {
+            Ok(())
+        };
+
         Ok(Self {
             database_url,
             port,
@@ -265,11 +296,12 @@ impl Config {
             rag_top_k,
             // Never an error: a broken storage configuration only turns uploads off.
             storage: StorageConfig::from_lookup(get),
-            embedding: EmbeddingConfig::from_lookup(get),
+            embedding,
             platform_library_bytes,
             ocr: OcrConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
             images: ImageConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
-            memory: crate::memory::graph::MemoryConfig::from_lookup(get),
+            memory: crate::memory::graph::MemoryConfig::from_lookup(get, forwardable),
+            internal_port,
         })
     }
 
@@ -299,6 +331,7 @@ impl Config {
             ocr: OcrConfig::disabled(),
             images: ImageConfig::disabled(),
             memory: crate::memory::graph::MemoryConfig::default(),
+            internal_port: 0,
         }
     }
 
@@ -441,6 +474,44 @@ mod tests {
         assert!(cfg(&[DB, ("DEMO_MODE", "maybe")]).is_err());
         assert!(cfg(&[DB, ("RAG_TOP_K", "0")]).is_err());
         assert!(cfg(&[DB, ("AI_TIMEOUT_SECS", "0")]).is_err());
+        assert_eq!(o.internal_port, 8081);
+        assert!(cfg(&[DB, ("INTERNAL_PORT", "8080")]).is_err());
+        assert!(!o.memory.enabled());
+    }
+
+    #[test]
+    fn memory_index_needs_forwardable_chat_and_embedding_providers() {
+        let graph = [
+            DB,
+            ("GRAPHITI_URL", "http://manna-memory:8000"),
+            ("GRAPHITI_TOKEN", "service-secret"),
+            (
+                "MEMORY_PROXY_URL",
+                "http://manna-api:8081/api/internal/memory/v1",
+            ),
+        ];
+        // AI off (or fake): Phase 1 only, said once at startup.
+        let c = cfg(&graph).unwrap();
+        assert!(!c.memory.enabled());
+        assert!(c.memory.warning.as_deref().unwrap().contains("AI_PROVIDER"));
+        let mut with_ai = graph.to_vec();
+        with_ai.extend([
+            ("AI_PROVIDER", "openai_compatible"),
+            ("AI_MODEL", "m"),
+            ("OPENAI_COMPAT_BASE_URL", "http://llm/v1"),
+        ]);
+        let c = cfg(&with_ai).unwrap();
+        assert!(!c.memory.enabled());
+        assert!(c.memory.warning.as_deref().unwrap().contains("EMBEDDING"));
+        with_ai.extend([
+            ("EMBEDDING_PROVIDER", "openai_compatible"),
+            ("EMBEDDING_BASE_URL", "http://embed/v1"),
+            ("EMBEDDING_MODEL", "e"),
+            ("EMBEDDING_DIMS", "768"),
+        ]);
+        let c = cfg(&with_ai).unwrap();
+        assert!(c.memory.enabled(), "{:?}", c.memory);
+        assert!(!format!("{c:?}").contains("service-secret"));
     }
 
     #[test]

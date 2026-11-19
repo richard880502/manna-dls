@@ -74,6 +74,8 @@ pub struct AppState {
     pub images: Arc<worksheet::images::Images>,
     /// Progress of the runs a page waits for in one request (drafting objectives).
     pub progress: Arc<progress::Registry>,
+    /// The memory index client: cached sidecar health, orphan sweep clock.
+    pub memory: Arc<memory::graph::Runtime>,
 }
 
 impl AppState {
@@ -100,8 +102,21 @@ impl AppState {
             )),
             images,
             progress: Arc::default(),
+            memory: Arc::default(),
         }
     }
+}
+
+/// The internal listener (`INTERNAL_PORT`): only the memory index's model forwarder. The
+/// reverse proxy routes the public port only; this one is reachable just from the private
+/// `manna-memory` network, and every call still needs the service secret and a job token.
+pub fn build_internal_app(state: AppState) -> Router {
+    Router::new()
+        .nest(
+            memory::graph::INTERNAL_PREFIX,
+            memory::graph::internal_router().with_state(state),
+        )
+        .layer(TraceLayer::new_for_http())
 }
 
 /// `/api/*` routes plus the frontend: files from `STATIC_DIR` (e.g. `/assets/*`), and

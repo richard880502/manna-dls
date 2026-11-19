@@ -2973,6 +2973,8 @@ export interface MemorySettings { enabled: boolean; graph_enabled: boolean }
 export interface MemoryIndexStatus {
   pending: number;
   failed: number;
+  /** false：沒有設定 Graphiti 索引，兩個計數都是 0。 */
+  graph_enabled?: boolean;
   compatible?: boolean;
   sidecar?: { ok: boolean; api_version: number; graphiti_version: string; policy_version: string } | null;
 }

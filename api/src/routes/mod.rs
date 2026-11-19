@@ -62,14 +62,8 @@ pub fn api_router() -> Router<AppState> {
             "/admin/memory-index/rebuild",
             post(crate::memory::routes::rebuild),
         )
-        .route(
-            "/internal/memory/v1/chat/completions",
-            post(crate::memory::graph::chat),
-        )
-        .route(
-            "/internal/memory/v1/embeddings",
-            post(crate::memory::graph::embeddings),
-        )
+        // The model forwarder of the memory index is NOT here: it is served only on the
+        // internal listener (`INTERNAL_PORT`, `crate::build_internal_app`).
         .route("/preferences/questions", get(preferences::questions))
         .route(
             "/me/preferences",

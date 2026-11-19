@@ -16,10 +16,11 @@ pub async fn get(State(state): State<AppState>, teacher: AuthTeacher) -> AppResu
     .bind(teacher.id())
     .fetch_optional(&state.db)
     .await?;
+    let graph_enabled = state.config.memory.enabled();
     Ok(Json(json!({"memories": history,
         "enabled":crate::settings::teacher_memory_enabled(&state.db).await?,
-        "graph_enabled":state.config.memory.enabled(),
-        "index":index.map(|(revision,indexed_revision,error)| json!({"revision":revision,
+        "graph_enabled":graph_enabled,
+        "index":index.filter(|_| graph_enabled).map(|(revision,indexed_revision,error)| json!({"revision":revision,
             "indexed_revision":indexed_revision,"error":error}))})))
 }
 
@@ -49,6 +50,7 @@ pub async fn preview(
 #[serde(deny_unknown_fields)]
 pub struct Confirm {
     pub candidate_id: i64,
+    /// `false` cancels the preview: recorded as the teacher's rejection of the suggestion.
     pub confirmed: bool,
 }
 
@@ -61,13 +63,34 @@ struct Candidate {
     interaction_id: i64,
 }
 
+/// The teacher's decision on the habit-sorting suggestion, like other AI suggestions.
+async fn decide(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    interaction_id: i64,
+    teacher_id: i64,
+    decision: &str,
+    note: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO teacher_decisions (ai_interaction_id, teacher_id, item_index, decision, reason_note)
+         VALUES ($1, $2, 0, $3, $4)",
+    )
+    .bind(interaction_id)
+    .bind(teacher_id)
+    .bind(decision)
+    .bind(note)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 pub async fn confirm(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiJson(req): ApiJson<Confirm>,
 ) -> AppResult<Json<Value>> {
     if !req.confirmed {
-        return Err(AppError::bad_request("請先確認要記住這項習慣。"));
+        return cancel(&state, &teacher, req.candidate_id).await;
     }
     let mut tx = state.db.begin().await?;
     // Serialize all confirms/removals for this teacher, including the limit and replacements.
@@ -78,21 +101,52 @@ pub async fn confirm(
     let c: Candidate = sqlx::query_as(
         "SELECT kind,value,statement,replaces_id,interaction_id
         FROM memory_candidates WHERE id=$1 AND teacher_id=$2 AND confirmed_at IS NULL
-        AND created_at > clock_timestamp() - interval '15 minutes' FOR UPDATE",
+        AND cancelled_at IS NULL AND created_at > clock_timestamp() - interval '15 minutes'
+        FOR UPDATE",
     )
     .bind(req.candidate_id)
     .bind(teacher.id())
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::Conflict("預覽已過期或已確認，請重新整理習慣。".into()))?;
-    let current: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM teacher_memories
+    let current: Option<(i64, String)> = sqlx::query_as(
+        "SELECT id, value FROM teacher_memories
         WHERE teacher_id=$1 AND kind=$2 AND invalid_at IS NULL",
     )
     .bind(teacher.id())
     .bind(&c.kind)
     .fetch_optional(&mut *tx)
     .await?;
+    let at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *tx)
+        .await?;
+    // Confirming exactly what is already active changes nothing: no new row, no re-index.
+    if let Some((same, _)) = current.as_ref().filter(|(_, value)| *value == c.value) {
+        sqlx::query("UPDATE memory_candidates SET confirmed_at=$2 WHERE id=$1")
+            .bind(req.candidate_id)
+            .bind(at)
+            .execute(&mut *tx)
+            .await?;
+        decide(
+            &mut tx,
+            c.interaction_id,
+            teacher.id(),
+            "adopt",
+            "already_active",
+        )
+        .await?;
+        crate::routes::log_usage(
+            &mut *tx,
+            teacher.id(),
+            "memory_confirmed",
+            json!({"candidate_id": req.candidate_id, "memory_id": same, "kind": c.kind,
+                "value": c.value, "unchanged": true}),
+        )
+        .await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"id": same, "unchanged": true})));
+    }
+    let current = current.map(|(id, _)| id);
     if current != c.replaces_id {
         return Err(AppError::Conflict(
             "習慣已變更，請重新整理並確認取代的項目。".into(),
@@ -112,9 +166,6 @@ pub async fn confirm(
     let id: i64 = sqlx::query_scalar("SELECT nextval('teacher_memories_id_seq')")
         .fetch_one(&mut *tx)
         .await?;
-    let at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut *tx)
-        .await?;
     if let Some(old) = current {
         sqlx::query("UPDATE teacher_memories SET invalid_at=$2,superseded_by=$3,invalidation_reason='replaced' WHERE id=$1")
             .bind(old).bind(at).bind(id).execute(&mut *tx).await?;
@@ -125,8 +176,8 @@ pub async fn confirm(
     )
     .bind(id)
     .bind(teacher.id())
-    .bind(c.kind)
-    .bind(c.value)
+    .bind(&c.kind)
+    .bind(&c.value)
     .bind(c.statement)
     .bind(at)
     .bind(c.interaction_id)
@@ -137,9 +188,55 @@ pub async fn confirm(
         .bind(at)
         .execute(&mut *tx)
         .await?;
-    dirty(&mut tx, teacher.id()).await?;
+    decide(
+        &mut tx,
+        c.interaction_id,
+        teacher.id(),
+        "adopt",
+        "confirmed",
+    )
+    .await?;
+    crate::routes::log_usage(
+        &mut *tx,
+        teacher.id(),
+        "memory_confirmed",
+        json!({"candidate_id": req.candidate_id, "memory_id": id, "replaces_id": current,
+            "kind": c.kind, "value": c.value, "unchanged": false}),
+    )
+    .await?;
+    dirty(&mut tx, &state.config.memory, teacher.id()).await?;
     tx.commit().await?;
     Ok(Json(json!({"id":id})))
+}
+
+/// 取消: the preview can no longer be confirmed; the rejection is recorded.
+async fn cancel(
+    state: &AppState,
+    teacher: &AuthTeacher,
+    candidate_id: i64,
+) -> AppResult<Json<Value>> {
+    let mut tx = state.db.begin().await?;
+    let interaction_id: Option<i64> = sqlx::query_scalar(
+        "UPDATE memory_candidates SET cancelled_at=clock_timestamp()
+        WHERE id=$1 AND teacher_id=$2 AND confirmed_at IS NULL AND cancelled_at IS NULL
+        RETURNING interaction_id",
+    )
+    .bind(candidate_id)
+    .bind(teacher.id())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let interaction_id =
+        interaction_id.ok_or_else(|| AppError::Conflict("這個預覽已確認或已取消。".into()))?;
+    decide(&mut tx, interaction_id, teacher.id(), "reject", "cancelled").await?;
+    crate::routes::log_usage(
+        &mut *tx,
+        teacher.id(),
+        "memory_cancelled",
+        json!({"candidate_id": candidate_id}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"ok": true, "cancelled": true})))
 }
 
 pub async fn remove(
@@ -152,19 +249,25 @@ pub async fn remove(
         .bind(teacher.id())
         .execute(&mut *tx)
         .await?;
-    let n = sqlx::query(
+    let kind: Option<String> = sqlx::query_scalar(
         "UPDATE teacher_memories SET invalid_at=clock_timestamp(),invalidation_reason='removed'
-        WHERE id=$1 AND teacher_id=$2 AND invalid_at IS NULL",
+        WHERE id=$1 AND teacher_id=$2 AND invalid_at IS NULL RETURNING kind",
     )
     .bind(id)
     .bind(teacher.id())
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    if n == 0 {
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(kind) = kind else {
         return Err(AppError::not_found("找不到目前有效的習慣。"));
-    }
-    dirty(&mut tx, teacher.id()).await?;
+    };
+    crate::routes::log_usage(
+        &mut *tx,
+        teacher.id(),
+        "memory_removed",
+        json!({"memory_id": id, "kind": kind}),
+    )
+    .await?;
+    dirty(&mut tx, &state.config.memory, teacher.id()).await?;
     tx.commit().await?;
     Ok(Json(json!({"ok":true})))
 }

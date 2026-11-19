@@ -7,6 +7,7 @@
 //! gets, so one bad item never costs the whole step; only an output with nothing usable left is
 //! blocked.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 
 use super::bloom::{Bloom, RawBloomCheck, RawBloomLevel, HINT_CHARS, REASON_CHARS};
@@ -23,6 +24,7 @@ use super::{
     FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, KIND_FRAMES, KIND_STEPS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::checks::CheckResult;
+use crate::memory::OptionHabits;
 use crate::routes::clip_chars;
 use crate::sop::checks::{clean_markup, english_only, is_verbatim, locate_verbatim, norm};
 use crate::syllables;
@@ -185,6 +187,9 @@ pub struct TasksCtx<'a> {
     pub item_budget: usize,
     /// A single-block regeneration: the paragraph numbers the one block has to cover.
     pub only: Option<&'a [i64]>,
+    /// Option counts the teacher's confirmed habits allow besides the defaults (empty while
+    /// the teacher-memory switch is off, which keeps the default rules exactly).
+    pub habits: OptionHabits,
 }
 
 const TASK_CHECKS: [&str; 10] = [
@@ -906,17 +911,25 @@ fn true_false_check(
     }
 }
 
-fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
+/// The default rules: 選擇題 exactly 4 distinct options, 配對題 at least 3. A teacher's confirmed
+/// option-count habit (only while the PI switch is on, [`crate::memory::option_habits`])
+/// additionally allows that count; nothing else changes.
+fn item_wellformed(it: &RawItem, habits: OptionHabits) -> Result<(), Cow<'static, str>> {
     match it.answer_format.as_str() {
         f if f == FMT_CHOICE => {
             let distinct: HashSet<&str> = it.options.iter().map(|o| o.trim()).collect();
-            if !(2..=5).contains(&it.options.len())
-                || distinct.len() != it.options.len()
-                || distinct.contains("")
-            {
-                Err("選擇題要有 2–5 個不重複且非空白的選項")
+            let allowed = |n: usize| n == 4 || habits.choice_options == Some(n);
+            if !allowed(it.options.len()) || distinct.len() != it.options.len() {
+                Err(match habits.choice_options.filter(|n| *n != 4) {
+                    None => Cow::Borrowed("選擇題要有 4 個不重複的選項"),
+                    Some(n) => Cow::Owned(format!(
+                        "選擇題要有 4 個或 {n} 個（老師確認的習慣）不重複的選項"
+                    )),
+                })
             } else if !it.options.iter().any(|o| o.trim() == it.answer_en.trim()) {
-                Err("選擇題的 answer_en 必須與其中一個選項完全相同")
+                Err(Cow::Borrowed(
+                    "選擇題的 answer_en 必須與其中一個選項完全相同",
+                ))
             } else {
                 Ok(())
             }
@@ -925,14 +938,17 @@ fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
             if matches!(it.answer_en.trim(), "True" | "False") {
                 Ok(())
             } else {
-                Err("是非題的 answer_en 必須是 True 或 False")
+                Err(Cow::Borrowed("是非題的 answer_en 必須是 True 或 False"))
             }
         }
         f if f == FMT_MATCHING => {
-            if it.options.len() >= 2 {
+            let min = habits.matching_pairs.map_or(3, |n| n.min(3));
+            if it.options.len() >= min {
                 Ok(())
+            } else if min == 3 {
+                Err(Cow::Borrowed("配對題的 options 至少要 3 個"))
             } else {
-                Err("配對題的 options 至少要 2 個")
+                Err(Cow::Owned(format!("配對題的 options 至少要 {min} 個")))
             }
         }
         _ => Ok(()),
@@ -1188,7 +1204,7 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 &mut t,
             );
             frame_check(&item.prompt_en, &passage, &iname, "prompt_en", &mut t);
-            if let Err(why) = item_wellformed(&item) {
+            if let Err(why) = item_wellformed(&item, ctx.habits) {
                 t.fail(
                     "items_wellformed",
                     format!("{iname}（{}）：{why}。", item.answer_format),
@@ -3579,22 +3595,83 @@ mod tests {
     use crate::worksheet::schemas::{RawProcedure, RawSupport};
     use crate::worksheet::{FMT_PARAGRAPH, FMT_SHORT};
 
-    #[test]
-    fn choice_habits_allow_two_to_five_distinct_nonempty_options_with_an_answer() {
-        let mut item: RawItem = serde_json::from_value(serde_json::json!({
+    fn choice_item(options: &[&str]) -> RawItem {
+        serde_json::from_value(serde_json::json!({
             "item_id":"q1","answer_format":FMT_CHOICE,"tier":"core","prompt_en":"Choose.",
-            "options":["One","Two","Three"],"answer_en":"One","evidence":null
+            "options":options,"answer_en":"One","evidence":null
         }))
-        .unwrap();
-        assert!(item_wellformed(&item).is_ok());
-        item.options = vec!["One".into(), "Two".into()];
-        assert!(item_wellformed(&item).is_ok());
-        item.options.push("Two".into());
-        assert!(item_wellformed(&item).is_err());
-        item.options = vec!["One".into(), " ".into()];
-        assert!(item_wellformed(&item).is_err());
-        item.options = vec!["Two".into(), "Three".into()];
-        assert!(item_wellformed(&item).is_err());
+        .unwrap()
+    }
+
+    #[test]
+    fn without_a_habit_the_option_rules_are_exactly_the_old_ones() {
+        // The switch off (or no count habit): exactly 4 distinct options, matching ≥ 3, with
+        // the same messages as before teacher memory existed.
+        let none = OptionHabits::default();
+        assert!(item_wellformed(&choice_item(&["One", "Two", "Three", "Four"]), none).is_ok());
+        for options in [
+            &["One", "Two"][..],
+            &["One", "Two", "Three"],
+            &["One", "Two", "Three", "Four", "Five"],
+            &["One", "Two", "Two", "Four"],
+        ] {
+            assert_eq!(
+                item_wellformed(&choice_item(options), none).unwrap_err(),
+                "選擇題要有 4 個不重複的選項"
+            );
+        }
+        assert_eq!(
+            item_wellformed(&choice_item(&["Two", "Three", "Four", "Five"]), none).unwrap_err(),
+            "選擇題的 answer_en 必須與其中一個選項完全相同"
+        );
+        let mut matching = choice_item(&["a", "b"]);
+        matching.answer_format = FMT_MATCHING.into();
+        assert_eq!(
+            item_wellformed(&matching, none).unwrap_err(),
+            "配對題的 options 至少要 3 個"
+        );
+        matching.options.push("c".into());
+        assert!(item_wellformed(&matching, none).is_ok());
+    }
+
+    #[test]
+    fn a_confirmed_count_habit_additionally_allows_that_count_only() {
+        let three = OptionHabits {
+            choice_options: Some(3),
+            matching_pairs: Some(2),
+        };
+        assert!(item_wellformed(&choice_item(&["One", "Two", "Three"]), three).is_ok());
+        // The default stays acceptable (the teacher's explicit request for this run wins).
+        assert!(item_wellformed(&choice_item(&["One", "Two", "Three", "Four"]), three).is_ok());
+        for options in [
+            &["One", "Two"][..],
+            &["One", "Two", "Three", "Four", "Five"],
+        ] {
+            assert_eq!(
+                item_wellformed(&choice_item(options), three).unwrap_err(),
+                "選擇題要有 4 個或 3 個（老師確認的習慣）不重複的選項"
+            );
+        }
+        assert!(item_wellformed(&choice_item(&["One", "Two", "Two"]), three).is_err());
+        let mut matching = choice_item(&["a", "b"]);
+        matching.answer_format = FMT_MATCHING.into();
+        assert!(item_wellformed(&matching, three).is_ok());
+        matching.options.pop();
+        assert_eq!(
+            item_wellformed(&matching, three).unwrap_err(),
+            "配對題的 options 至少要 2 個"
+        );
+        // A habit above the default minimum does not make matching stricter.
+        let six = OptionHabits {
+            choice_options: Some(5),
+            matching_pairs: Some(6),
+        };
+        let mut matching = choice_item(&["a", "b", "c"]);
+        matching.answer_format = FMT_MATCHING.into();
+        assert!(item_wellformed(&matching, six).is_ok());
+        assert!(
+            item_wellformed(&choice_item(&["One", "Two", "Three", "Four", "Five"]), six).is_ok()
+        );
     }
 
     fn out_item(
@@ -3855,6 +3932,7 @@ mod tests {
             objective_ids: objectives,
             item_budget: 6,
             only: None,
+            habits: OptionHabits::default(),
         }
     }
 
@@ -4001,7 +4079,7 @@ mod tests {
         );
         spliced.evidence = Some("In the first month ... unexpected followed.".into());
         let mut mcq = item("選擇題", "Pick one.", "A");
-        mcq.options = vec!["A".into(), "A".into()];
+        mcq.options = vec!["A".into(), "B".into()];
         let leak = item(
             "簡答題",
             "They were sure every umbrella would be gone. What were they sure about?",

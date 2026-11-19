@@ -38,11 +38,28 @@ export function TeacherMemories() {
   async function confirm() {
     if (!candidate) return;
     await run(async () => {
-      await api.confirmMemory(candidate.id);
+      const saved = await api.confirmMemory(candidate.id);
       setCandidate(null); setText("");
       setData(await api.memories());
-      setMessage("已記住這項習慣，舊版本會保留在歷程。");
+      setMessage(saved.unchanged ? "這項習慣已經記住了，沒有新增版本。" : "已記住這項習慣，舊版本會保留在歷程。");
     });
+  }
+
+  /** 取消預覽要告訴伺服器（研究紀錄老師沒有採用）；改寫草稿也算取消。 */
+  async function cancel() {
+    if (!candidate) return;
+    await run(async () => {
+      await api.cancelMemory(candidate.id);
+      setCandidate(null);
+      setMessage("已取消，沒有記住這項習慣。");
+    });
+  }
+
+  function discard() {
+    if (!candidate) return;
+    const id = candidate.id;
+    setCandidate(null);
+    api.cancelMemory(id).catch(() => undefined);
   }
 
   async function remove() {
@@ -72,7 +89,7 @@ export function TeacherMemories() {
           {active.map((m) => <li key={m.id}>
             <div><strong>{m.statement}</strong><small>確認於 {formatDateTime(m.valid_at)}</small></div>
             <button type="button" className="secondary-button" disabled={busy} onClick={() => {
-              setText(`之後${m.statement}`); setCandidate(null); setMessage(null); field.current?.focus();
+              setText(`之後${m.statement}`); discard(); setMessage(null); field.current?.focus();
             }}>修改<span className="sr-only">：{m.statement}</span></button>
             <button type="button" className="text-link is-plain" disabled={busy} onClick={() => setRemoving(m)}>停止使用<span className="sr-only">：{m.statement}</span></button>
           </li>)}
@@ -80,14 +97,14 @@ export function TeacherMemories() {
         <label className="field-label" htmlFor="memory-draft">想記住的長期習慣</label>
         <textarea id="memory-draft" ref={field} value={text} maxLength={1000} rows={3}
           disabled={busy} placeholder="例如：之後選擇題都用三個選項。"
-          onChange={(e) => { setText(e.target.value); setCandidate(null); setMessage(null); }} />
+          onChange={(e) => { setText(e.target.value); discard(); setMessage(null); }} />
         <button type="button" className="secondary-button" disabled={busy || !text.trim()} onClick={() => void preview()}>{busy ? "處理中…" : "整理成習慣（尚未記住）"}</button>
         {candidate && <div className="memory-preview" role="region" aria-label="確認出題習慣">
           <h3>確認要記住的內容</h3>
           <p>{candidate.statement}</p>
           {replaced && <p>將取代：{replaced.statement} 舊的內容會保留在歷程。</p>}
           <button type="button" className="primary-button" disabled={busy} onClick={() => void confirm()}>確認並記住</button>
-          <button type="button" className="text-link is-plain" disabled={busy} onClick={() => setCandidate(null)}>取消</button>
+          <button type="button" className="text-link is-plain" disabled={busy} onClick={() => void cancel()}>取消</button>
         </div>}
         <details><summary>查看歷程（{history.length} 項）</summary>
           {history.length === 0 && <p>尚無已停止使用的版本。</p>}

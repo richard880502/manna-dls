@@ -325,6 +325,18 @@ fn bad_organizer() -> Value {
     })
 }
 
+/// The `choice_options` habit in `teacher_habits` (added to the request by
+/// [`crate::memory::apply`] only while the PI switch is on).
+fn choice_habit(ctx: &Value) -> Option<usize> {
+    ctx["teacher_habits"]
+        .as_array()?
+        .iter()
+        .find(|h| h["kind"] == "choice_options")?["value"]
+        .as_str()?
+        .parse()
+        .ok()
+}
+
 pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let invalid = has("FAKE_BLOCK");
     let cjk = has("FAKE_WS_CJK_ALWAYS") || (has("FAKE_WS_CJK") && attempt == 1);
@@ -440,6 +452,21 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 for it in &mut items {
                     let p = it["prompt_en"].as_str().unwrap_or_default().to_string();
                     it["prompt_en"] = json!(format!("{p} [draft {run_no}]"));
+                }
+            }
+            // A confirmed option-count habit the request carries (teacher memory on), followed
+            // the way a model would (the answer is the first option).
+            if let Some(n) = choice_habit(ctx) {
+                for it in items.iter_mut().filter(|it| it["answer_format"] == FMT_CHOICE) {
+                    if let Some(options) = it["options"].as_array_mut() {
+                        options.truncate(n);
+                        while options.len() < n {
+                            options.push(json!(format!(
+                                "None of the other answers ({}).",
+                                options.len() + 1
+                            )));
+                        }
+                    }
                 }
             }
             if invalid {

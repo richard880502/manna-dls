@@ -154,6 +154,14 @@ pub static REGISTRY: &[PromptInfo] = &[
         uses_user_template: true,
         vars: &[],
     },
+    PromptInfo {
+        key: "teacher_memory_context",
+        name_zh: "帶入已確認的出題習慣",
+        group: G_PREP,
+        description: "主持人開啟教師長期記憶後，老師有已確認的出題習慣時，system_text 附在出題與備課產生步驟（學習單四步、Bloom／差異化層次、照範本做、逐區修改、備課對話）的系統提示詞後面，user_template 帶入習慣資料。評審、讀範本、詞彙與目標步驟不會帶入。",
+        uses_user_template: true,
+        vars: vars![req("teacher_habits", "老師確認的出題習慣（JSON，依確認時間排序）")],
+    },
     // ------------------------------------------------------------ 學習單產生
     PromptInfo {
         key: "worksheet_tasks",

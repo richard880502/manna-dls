@@ -7,7 +7,9 @@
 //!   writes `ai_interactions`, `worksheets`, jobs or progress rows. The provider is called
 //!   directly with `AiClient::complete`; nothing a teacher can see is read or written, and no
 //!   teacher data (classes, materials, preferences) is read: the only inputs are what the lead
-//!   typed into the box.
+//!   typed into the box, plus the lead's OWN confirmed teaching habits while the
+//!   teacher-memory switch is on, appended exactly as a real run of that step appends them
+//!   (`memory::habit_context`), so the try shows what teachers' runs will receive.
 //! * The draft text is used for this one call only. It is rendered here, never stored as a
 //!   `prompt_versions` row, and `prompts::latest` is not involved.
 //! * The result is stored in its own table, `prompt_try_runs` (every row is a preview, enforced
@@ -87,6 +89,11 @@ pub struct TryResult {
     pub checks: Vec<CheckLine>,
     /// What the platform's own checks would have fixed or noted (not failures).
     pub notes: Vec<String>,
+    /// The lead's own confirmed habits, appended exactly as a real run appends them while the
+    /// teacher-memory switch is on (`input_snapshot.teacher_memory` of a real run). `None` for
+    /// a key that never receives habits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teacher_memory: Option<Value>,
 }
 
 /// vars, `required` appended variables, schema name, schema, fake context, max tokens.
@@ -319,6 +326,7 @@ fn draft_version(key: &str, system_text: &str, user_template: &str) -> PromptVer
 /// everything the model or the checks do is in the `TryResult`.
 pub async fn run(
     state: &AppState,
+    lead_id: i64,
     key: &str,
     system_text: &str,
     user_template: &str,
@@ -334,25 +342,9 @@ pub async fn run(
     }
     let p = prepare(key, sample)?;
     let draft = draft_version(key, system_text, user_template);
-    let system = prompts::render(&draft.system_text, &p.vars);
-    let user = prompts::render_user_with(&draft, &p.vars, &p.required);
-    let mut result = TryResult {
-        status: "ok",
-        message: None,
-        system: system.clone(),
-        user: user.clone(),
-        output: None,
-        checks: Vec::new(),
-        notes: Vec::new(),
-    };
-    if !state.ai.enabled() {
-        result.status = "disabled";
-        result.message = Some("這個環境沒有開啟 AI，所以不能試產生。".to_string());
-        return Ok(result);
-    }
     let req = LlmRequest {
-        system,
-        user,
+        system: prompts::render(&draft.system_text, &p.vars),
+        user: prompts::render_user_with(&draft, &p.vars, &p.required),
         schema_name: p.schema_name,
         schema: p.schema.clone(),
         fake_context: p.fake_context.clone(),
@@ -361,6 +353,32 @@ pub async fn run(
         temperature: Some(BASE_TEMPERATURE),
         images: Vec::new(),
     };
+    // The same habit context a real run of this step gets (only the lead's own habits; the
+    // index is not consulted: its ranking is metadata only and never changes the prompt).
+    let memory = crate::memory::habit_context(&state.db, lead_id, key)
+        .await
+        .map_err(|e| format!("無法讀取出題習慣：{e}"))?;
+    let req = match &memory {
+        Some(ctx) => crate::memory::apply(ctx, &req),
+        None => req,
+    };
+    let mut result = TryResult {
+        status: "ok",
+        message: None,
+        system: req.system.clone(),
+        user: req.user.clone(),
+        output: None,
+        checks: Vec::new(),
+        notes: Vec::new(),
+        teacher_memory: memory
+            .as_ref()
+            .map(|ctx| crate::memory::snapshot_value(ctx, None)),
+    };
+    if !state.ai.enabled() {
+        result.status = "disabled";
+        result.message = Some("這個環境沒有開啟 AI，所以不能試產生。".to_string());
+        return Ok(result);
+    }
     match state.ai.complete(&req).await {
         Ok(resp) => {
             result.checks = evaluate(key, &resp.json, &p, &mut result.notes);

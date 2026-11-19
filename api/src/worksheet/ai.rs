@@ -1432,6 +1432,9 @@ async fn step_tasks(
         ),
     ]);
     let codes = run.objective_codes();
+    // Option counts the teacher's confirmed habits allow (none while the PI switch is off).
+    let habits =
+        crate::memory::option_habits(&run.state.db, run.input.worksheet.teacher_id).await?;
     let result = run_step(
         run,
         &TASKS,
@@ -1450,6 +1453,7 @@ async fn step_tasks(
                     objective_ids: &codes,
                     item_budget: budget,
                     only: only_nos.as_deref(),
+                    habits,
                 },
             )
         },

@@ -32,6 +32,26 @@ describe("confirmed teaching habits", () => {
     expect(screen.getByText(/已被新習慣取代/)).toBeInTheDocument();
   });
 
+  it("sends a cancelled preview to the server and reports an unchanged re-confirmation", async () => {
+    const api = mockApi({
+      "GET /api/me/memories": { memories: [row], enabled: true, graph_enabled: false, index: null },
+      "POST /api/me/memories/preview": { id: 9, statement: "選擇題使用 3 個選項。", replaces_id: 1 },
+      "POST /api/me/memories": (call: { body: unknown }) => (call.body as { confirmed: boolean }).confirmed
+        ? { id: 1, unchanged: true }
+        : { ok: true, cancelled: true },
+    });
+    const user = userEvent.setup(); render(<TeacherMemories />);
+    const draft = await screen.findByLabelText("想記住的長期習慣");
+    await user.type(draft, "之後選擇題三個選項");
+    await user.click(screen.getByRole("button", { name: "整理成習慣（尚未記住）" }));
+    await user.click(await screen.findByRole("button", { name: "取消" }));
+    await waitFor(() => expect(api.lastBody("POST", "/api/me/memories")).toEqual({ candidate_id: 9, confirmed: false }));
+    expect(await screen.findByText("已取消，沒有記住這項習慣。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "整理成習慣（尚未記住）" }));
+    await user.click(await screen.findByRole("button", { name: "確認並記住" }));
+    expect(await screen.findByText("這項習慣已經記住了，沒有新增版本。")).toBeInTheDocument();
+  });
+
   it("requires an explicit stop confirmation and keeps errors visible", async () => {
     const api = mockApi({
       "GET /api/me/memories": { memories: [row], enabled: true, graph_enabled: false, index: null },

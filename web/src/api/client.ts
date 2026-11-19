@@ -347,7 +347,9 @@ export const api = {
   me: () => get<Teacher>("/me"),
   memories: () => get<MemoryState>("/me/memories"),
   previewMemory: (text: string) => post<MemoryCandidate>("/me/memories/preview", { text }),
-  confirmMemory: (candidate_id: number) => post<{ id: number }>("/me/memories", { candidate_id, confirmed: true }),
+  confirmMemory: (candidate_id: number) => post<{ id: number; unchanged?: boolean }>("/me/memories", { candidate_id, confirmed: true }),
+  /** 取消預覽：伺服器記錄老師拒絕這項整理結果，之後不能再確認。 */
+  cancelMemory: (candidate_id: number) => post<{ ok: boolean; cancelled: boolean }>("/me/memories", { candidate_id, confirmed: false }),
   removeMemory: (id: number) => del<OkResponse>(`/me/memories/${id}`),
   memorySettings: () => get<MemorySettings>("/admin/memory-settings"),
   saveMemorySettings: (enabled: boolean) => put<MemorySettings>("/admin/memory-settings", { enabled }),

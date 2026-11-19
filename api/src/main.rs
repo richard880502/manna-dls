@@ -1,10 +1,13 @@
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 
 use anyhow::Context;
 use manna_api::config::{AiProviderKind, Config};
 use manna_api::storage::s3::S3Storage;
 use manna_api::storage::{StorageBackend, StorageConfig};
-use manna_api::{auth, build_app, db, kb_embeddings, materials, worksheet, AppState};
+use manna_api::{
+    auth, build_app, build_internal_app, db, kb_embeddings, materials, worksheet, AppState,
+};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -38,6 +41,9 @@ async fn run() -> anyhow::Result<()> {
     }
     if let Some(warning) = &config.images.warning {
         tracing::warn!("{warning}; worksheets get no generated pictures");
+    }
+    if let Some(warning) = &config.memory.warning {
+        tracing::warn!("{warning}; teacher memory stays Postgres-only (no Graphiti index)");
     }
     if config.ai_provider == AiProviderKind::Fake {
         tracing::warn!("AI_PROVIDER=fake: AI outputs are deterministic test fixtures");
@@ -87,14 +93,32 @@ async fn run() -> anyhow::Result<()> {
         ),
         Err(e) => tracing::error!(error = %e, "could not start OCR for knowledge-base files"),
     }
+    // The memory index's model forwarder has its own port that the proxy never routes to.
+    let internal = if state.config.memory.enabled() {
+        let internal_addr = SocketAddr::from(([0, 0, 0, 0], state.config.internal_port));
+        let listener = tokio::net::TcpListener::bind(internal_addr)
+            .await
+            .with_context(|| format!("cannot listen on {internal_addr}"))?;
+        tracing::info!("memory index forwarder on internal http://{internal_addr}");
+        Some((listener, build_internal_app(state.clone())))
+    } else {
+        None
+    };
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("cannot listen on {addr}"))?;
     tracing::info!("listening on http://{addr}");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let public = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+    match internal {
+        None => public.await?,
+        Some((listener, app)) => {
+            let internal = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+            let (public, internal) = tokio::join!(public.into_future(), internal.into_future());
+            public?;
+            internal?;
+        }
+    }
     Ok(())
 }
 
