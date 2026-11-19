@@ -27,6 +27,7 @@ use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::worksheet::ai::{self as ws_ai, Job, RunInput};
 use crate::worksheet::assemble::{keep_original_text, project, Sheet};
 use crate::worksheet::export::{self, ExportError};
+use crate::worksheet::history;
 use crate::worksheet::images::{self, WorksheetImages};
 use crate::worksheet::material::{SOURCE_LESSON_SOP, SOURCE_LIBRARY, SOURCE_PASTED};
 use crate::worksheet::store::{self, Summary, Worksheet};
@@ -1210,6 +1211,14 @@ pub async fn regenerate_image(
 ) -> AppResult<(StatusCode, Json<WorksheetImages>)> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
     images::regenerate(&state, &ws, &slot_id, req.hint.as_deref()).await?;
+    history::record_picture_button(
+        &state.db,
+        id,
+        &slot_id,
+        history::PictureButton::Regenerate,
+        req.hint.as_deref().unwrap_or_default(),
+    )
+    .await;
     Ok((
         StatusCode::ACCEPTED,
         Json(images::states(&state, id).await?),
@@ -1256,6 +1265,8 @@ pub async fn upload_image(
         return Err(AppError::bad_request("請選擇要上傳的圖片。"));
     };
     images::replace_with_upload(&state, &ws, &slot_id, &filename, data).await?;
+    history::record_picture_button(&state.db, id, &slot_id, history::PictureButton::Upload, "")
+        .await;
     Ok(Json(images::states(&state, id).await?))
 }
 
@@ -1267,6 +1278,8 @@ pub async fn remove_image(
 ) -> AppResult<Json<WorksheetImages>> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
     images::remove(&state, &ws, &slot_id).await?;
+    history::record_picture_button(&state.db, id, &slot_id, history::PictureButton::Remove, "")
+        .await;
     Ok(Json(images::states(&state, id).await?))
 }
 

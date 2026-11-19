@@ -364,9 +364,11 @@ pub(crate) async fn insert_version_from(
     let json = serde_json::to_value(content).map_err(anyhow::Error::from)?;
     let source = source.unwrap_or_else(|| serde_json::json!({ "cause": cause }));
     let row: VersionRow = sqlx::query_as(&format!(
-        "INSERT INTO worksheet_versions (worksheet_id, version_no, content, cause, source)
+        "INSERT INTO worksheet_versions (worksheet_id, version_no, content, cause, source, pictures)
          VALUES ($1, (SELECT COALESCE(MAX(version_no), 0) + 1 FROM worksheet_versions
-                       WHERE worksheet_id = $1), $2, $3, $4)
+                       WHERE worksheet_id = $1), $2, $3, $4,
+                 (SELECT COALESCE(jsonb_object_agg(slot_id, id), '{{}}'::jsonb)
+                    FROM worksheet_images WHERE worksheet_id = $1 AND current))
          RETURNING {VERSION_COLS}"
     ))
     .bind(worksheet_id)
@@ -396,6 +398,45 @@ pub async fn set_version_pictures(
     .bind(worksheet_id)
     .bind(version_no)
     .bind(pictures)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Writes the pictures current right now as the pictures of a version (after the step's picture
+/// actions ran).
+pub async fn snapshot_version_pictures(
+    db: impl sqlx::PgExecutor<'_>,
+    worksheet_id: i64,
+    version_no: i32,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_versions
+            SET pictures = (SELECT COALESCE(jsonb_object_agg(slot_id, id), '{}'::jsonb)
+                              FROM worksheet_images WHERE worksheet_id = $1 AND current)
+          WHERE worksheet_id = $1 AND version_no = $2",
+    )
+    .bind(worksheet_id)
+    .bind(version_no)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Adds slot → image row entries to the pictures of the newest version (pictures queued right
+/// after a version was saved belong to it). Entries already there are replaced.
+pub async fn merge_latest_pictures(
+    db: impl sqlx::PgExecutor<'_>,
+    worksheet_id: i64,
+    added: &serde_json::Value,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_versions SET pictures = COALESCE(pictures, '{}'::jsonb) || $2
+          WHERE worksheet_id = $1
+            AND version_no = (SELECT MAX(version_no) FROM worksheet_versions WHERE worksheet_id = $1)",
+    )
+    .bind(worksheet_id)
+    .bind(added)
     .execute(db)
     .await?;
     Ok(())
@@ -463,8 +504,22 @@ async fn save_content_source(
         if v.content == *content {
             return Ok(v);
         }
-        if base_version_no.is_some_and(|base| base != v.version_no) {
-            return Err(AppError::Conflict(MSG_EDITED_ELSEWHERE.to_string()));
+        if let Some(base) = base_version_no.filter(|base| *base != v.version_no) {
+            // Versions that only moved pictures (the picture buttons) leave the text as the
+            // editor saw it: saving over them loses nothing.
+            let seen: Option<serde_json::Value> = sqlx::query_scalar(
+                "SELECT content FROM worksheet_versions WHERE worksheet_id = $1 AND version_no = $2",
+            )
+            .bind(worksheet_id)
+            .bind(base)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let unchanged = seen
+                .and_then(|c| serde_json::from_value::<Content>(c).ok())
+                .is_some_and(|c| c == v.content);
+            if !unchanged {
+                return Err(AppError::Conflict(MSG_EDITED_ELSEWHERE.to_string()));
+            }
         }
     }
     let saved = insert_version_from(&mut tx, worksheet_id, content, cause, source).await?;

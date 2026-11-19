@@ -2561,6 +2561,86 @@ export interface ReviseWorksheetBlockRequest {
   image_ids?: number[];
 }
 
+// ---- 修改歷程（docs/API.md「修改歷程與採用過往的版本」）----
+
+export type WsHistoryKind =
+  | "original"
+  | "proposal_adopted"
+  | "proposal_rejected"
+  | "regenerate"
+  | "prep_revise"
+  | "vocabulary"
+  | "manual"
+  | "pictures"
+  | "undo"
+  | "restore";
+
+/** 某一步裡一個圖片位置的圖（`done` 才有 image_id） */
+export interface WsHistoryPicture {
+  slot_id: string;
+  image_id: number | null;
+  status: WsImageStatus | "none";
+  source: WsImageSource;
+  purpose_zh: string;
+}
+
+export interface WsHistoryStep {
+  kind: WsHistoryKind;
+  /** 伺服器寫好的白話名稱，照原樣顯示 */
+  label: string;
+  at: string;
+  /** 學習單的第幾版（版本的一步）；沒採用的提案沒有 */
+  version_no: number | null;
+  proposal_id: number | null;
+  /** 這一區現在就是這個樣子 */
+  current: boolean;
+  /** 一行說明（問了什麼、Manna 說了什麼） */
+  detail: string;
+  /** 併進這一步的較早版本（連續的手動修改） */
+  merged_version_nos: number[];
+  /** 採用過的提案後來被復原 */
+  undone: boolean;
+  /** 沒採用的提案，後來從歷程採用，寫成第幾版 */
+  adopted_later_version_no: number | null;
+  /** 這一步的區塊（提案則是它會寫成的區塊） */
+  block: WsBlock;
+  /** 這一步各圖片位置的圖；這一步沒留下圖片紀錄時是 null */
+  pictures: WsHistoryPicture[] | null;
+  /** 提案還沒做的圖片動作（採用時才會畫） */
+  picture_actions: { action: PictureOp; slot_id: string; text: string }[];
+  adopt: {
+    possible: boolean;
+    clean: boolean;
+    /** 這個提案是根據比較早的內容改的 */
+    warn_older: boolean;
+    /** 採用時會請產圖模型畫圖 */
+    draws_pictures: boolean;
+    pictures_unknown: boolean;
+    reason: string | null;
+  };
+}
+
+export interface WsBlockHistory {
+  block_id: string;
+  version_no: number;
+  /** Manna 正在產生或修改：暫時不能採用 */
+  busy: boolean;
+  /** 新的在前 */
+  steps: WsHistoryStep[];
+}
+
+export interface AdoptWsBlockVersionRequest {
+  version_no?: number;
+  proposal_id?: number;
+}
+
+export interface WsBlockAdopted {
+  version_no: number;
+  kind: "version" | "proposal";
+  pictures: PictureOutcome[];
+  worksheet: WorksheetState;
+}
+
 export interface WsProposalAccepted {
   proposal: WsProposal;
   worksheet: WorksheetState;

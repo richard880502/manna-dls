@@ -50,6 +50,7 @@ import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
 import { BloomDistribution, BloomSelect } from "./Bloom";
 import { ChoicesArea, WritingArea, promptPlaceholder } from "./ItemAnswer";
+import { BlockHistoryButton } from "./BlockHistory";
 import { SheetText } from "./SheetText";
 import {
   BlockReviseArea,
@@ -436,6 +437,17 @@ function BlockSection({
           >
             復原上一版
           </button>
+        )}
+        {ws.state && (
+          <BlockHistoryButton
+            worksheetId={ws.state.id}
+            blockId={block.id}
+            label={`修改歷程（區塊 ${name}）`}
+            className="text-link is-plain"
+            disabled={locked}
+            beforeOpen={ws.flush}
+            onAdopted={(done) => ws.adopt(done.worksheet)}
+          />
         )}
         <button
           type="button"

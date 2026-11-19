@@ -1639,6 +1639,141 @@ button.bloom-seg:focus-visible {
   font-size: var(--text-xs);
 }
 
+/* ================= 修改歷程 dialog ================= */
+.ws-history-body {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) 1fr;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.ws-history-list {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2xs);
+  max-height: 60vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.ws-history-step {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-manna-rule);
+  border-radius: var(--radius-control);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-history-step.is-selected {
+  background: var(--color-manna-wash);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.ws-history-label {
+  font-weight: var(--weight-strong);
+}
+
+.ws-history-time {
+  margin-left: var(--space-xs);
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+  font-weight: normal;
+}
+
+.ws-history-step .ws-history-time {
+  margin-left: 0;
+}
+
+.ws-history-now {
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+}
+
+.ws-history-preview {
+  min-width: 0;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.ws-history-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.ws-history-step-title {
+  margin-top: var(--space-sm);
+  font-size: var(--text-md);
+}
+
+.ws-history-detail {
+  overflow-wrap: anywhere;
+}
+
+.ws-history-block {
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule, var(--color-manna-rule));
+  border-radius: var(--radius-control);
+  font-family: var(--font-print);
+  overflow-wrap: anywhere;
+}
+
+.ws-history-items {
+  display: grid;
+  gap: var(--space-xs);
+  padding-left: var(--space-lg);
+}
+
+.ws-history-pics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.ws-history-pic {
+  width: 9rem;
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.ws-history-pic img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-control);
+}
+
+.ws-history-pic-empty {
+  display: grid;
+  place-items: center;
+  height: 6rem;
+  border: var(--rule-hair) dashed var(--color-manna-rule);
+  border-radius: var(--radius-control);
+  color: var(--color-muted);
+}
+
+.ws-history-ask,
+.ws-history-actions {
+  margin-top: var(--space-sm);
+}
+
+.ws-history-ask {
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-warn-wash);
+}
+
 .prep-sheet-block.is-targeted {
   box-shadow: inset 3px 0 0 var(--color-accent);
 }

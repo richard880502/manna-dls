@@ -1640,6 +1640,10 @@ async fn apply_revision(
             version_no = Some(saved.version_no);
         }
         outcomes = actions::run(state, ws, &pictures, &added, &next).await;
+        if let Some(no) = version_no.filter(|_| !outcomes.is_empty()) {
+            // The pictures the turn drew, redrew or removed belong to its step.
+            ws_store::snapshot_version_pictures(db, ws.id, no).await?;
+        }
         if !outcomes.is_empty() {
             actions::log_applied(
                 state,

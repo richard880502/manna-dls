@@ -661,6 +661,7 @@ pub async fn enqueue(
     .fetch_one(&mut *tx)
     .await?;
     let mut queued: Vec<(i64, DateTime<Utc>)> = Vec::new();
+    let mut made = serde_json::Map::new();
     let (mut skipped, mut seen) = (0usize, HashSet::new());
     for (block, slot) in wanted {
         if known.contains(&slot.id) || !seen.insert(slot.id.clone()) {
@@ -677,11 +678,11 @@ pub async fn enqueue(
         };
         match skip {
             Some((kind, message)) => {
-                sqlx::query(
+                let id: i64 = sqlx::query_scalar(
                     "INSERT INTO worksheet_images
                        (worksheet_id, teacher_id, block_id, slot_id, source, status, message,
                         error_kind, finished_at)
-                     VALUES ($1, $2, $3, $4, 'none', 'skipped', $5, $6, now())",
+                     VALUES ($1, $2, $3, $4, 'none', 'skipped', $5, $6, now()) RETURNING id",
                 )
                 .bind(worksheet_id)
                 .bind(teacher_id)
@@ -689,8 +690,9 @@ pub async fn enqueue(
                 .bind(&slot.id)
                 .bind(message)
                 .bind(kind)
-                .execute(&mut *tx)
+                .fetch_one(&mut *tx)
                 .await?;
+                made.insert(slot.id.clone(), json!(id));
                 skipped += 1;
             }
             None => {
@@ -706,10 +708,15 @@ pub async fn enqueue(
                 .bind(&slot.id)
                 .fetch_one(&mut *tx)
                 .await?;
+                made.insert(slot.id.clone(), json!(row.0));
                 queued.push(row);
                 generated += 1;
             }
         }
+    }
+    if !made.is_empty() {
+        // These pictures belong to the version just saved: its history step shows them.
+        super::store::merge_latest_pictures(&mut *tx, worksheet_id, &Value::Object(made)).await?;
     }
     if !queued.is_empty() || skipped > 0 {
         log_usage(

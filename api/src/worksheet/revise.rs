@@ -575,6 +575,10 @@ pub struct Proposal {
     pub decided_at: Option<DateTime<Utc>>,
     /// When the teacher took the accepted proposal back (復原); it stays `accepted`.
     pub undone_at: Option<DateTime<Utc>>,
+    /// When a proposal that was not adopted at the time was adopted later from the 修改歷程, and the
+    /// version that wrote (it stays as it was decided then).
+    pub adopted_later_at: Option<DateTime<Utc>>,
+    pub adopted_later_version_no: Option<i32>,
     /// The earlier attempts of the same round (oldest first) that 再改一次 set aside: made from
     /// the same block, not adopted or given up yet. Any of them can still be adopted.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -603,6 +607,8 @@ struct Row {
     finished_at: Option<DateTime<Utc>>,
     decided_at: Option<DateTime<Utc>>,
     undone_at: Option<DateTime<Utc>>,
+    adopted_later_at: Option<DateTime<Utc>>,
+    adopted_later_version_no: Option<i32>,
     set_aside_at: Option<DateTime<Utc>>,
     round_closed_at: Option<DateTime<Utc>>,
 }
@@ -610,7 +616,7 @@ struct Row {
 const COLS: &str = "id, worksheet_id, block_id, base_version_no, base_block, instruction,
     comment_ids, whole_block, round, status, proposed, reply, error, interaction_id,
     accepted_version_no, created_at, finished_at, decided_at, picture_actions, undone_at,
-    set_aside_at, round_closed_at";
+    set_aside_at, round_closed_at, adopted_later_at, adopted_later_version_no";
 
 impl From<Row> for Proposal {
     fn from(r: Row) -> Self {
@@ -639,6 +645,8 @@ impl From<Row> for Proposal {
             finished_at: r.finished_at,
             decided_at: r.decided_at,
             undone_at: r.undone_at,
+            adopted_later_at: r.adopted_later_at,
+            adopted_later_version_no: r.adopted_later_version_no,
             earlier: Vec::new(),
         }
     }
@@ -699,6 +707,24 @@ pub async fn open(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<Proposal>>
     Ok(proposals)
 }
 
+/// Every proposal ever made for a block, oldest first (the 修改歷程 lists the ones that were not
+/// adopted).
+pub async fn for_block(
+    db: &PgPool,
+    worksheet_id: i64,
+    block_id: &str,
+) -> sqlx::Result<Vec<Proposal>> {
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT {COLS} FROM worksheet_block_proposals
+          WHERE worksheet_id = $1 AND block_id = $2 ORDER BY id"
+    ))
+    .bind(worksheet_id)
+    .bind(block_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().map(Proposal::from).collect())
+}
+
 pub async fn get(db: &PgPool, worksheet_id: i64, id: i64) -> AppResult<Proposal> {
     let row: Option<Row> = sqlx::query_as(&format!(
         "SELECT {COLS} FROM worksheet_block_proposals WHERE id = $1 AND worksheet_id = $2"
@@ -717,7 +743,7 @@ pub async fn get(db: &PgPool, worksheet_id: i64, id: i64) -> AppResult<Proposal>
     Ok(proposal)
 }
 
-async fn decision(
+pub(crate) async fn decision(
     db: impl sqlx::PgExecutor<'_>,
     interaction_id: Option<i64>,
     teacher_id: i64,

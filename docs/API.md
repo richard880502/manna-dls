@@ -3484,6 +3484,59 @@ interface RunProgress {
 - 研究紀錄：`usage_logs` `worksheet_block_undone` 的 payload：`{ worksheet_id, block_id, version_no, from_version_no, undone_version_no, proposal_id, interaction_id, pictures_reverted }`。
 - 前端：採用之後，那一區下方出現「已採用 Manna 的修改。」與「復原」（`role=status`，焦點移到這則訊息），直到這一區又被任何動作改動（版本號變了）、再改、重新產生或復原；區塊工具裡的「復原上一版」照舊。
 
+## 修改歷程與採用過往的版本（`0039_block_history_browse.sql`）
+
+老師說「每一步修改的歷程都要保留」「可以採用過往拋棄的選項」。每一區的歷程是從**已經只新增的紀錄**推出來的，瀏覽不寫任何東西；只有「採用」會新增一個版本。
+
+### 一步是什麼
+
+| `kind` | `label` | 從哪裡推出來 |
+|---|---|---|
+| `original` | 原本 | 這一區第一次出現的版本（`created`／`generate`） |
+| `proposal_adopted` | Manna 的提案（你採用） | `source.cause = block_proposal`／`block_proposal_pictures`（舊的 `revise` 版本若有提案的 `accepted_version_no` 指向它也算）；`proposal_id`、`undone`（採用後被復原） |
+| `proposal_rejected` | Manna 的提案（沒採用） | `worksheet_block_proposals` 裡 `status` 為 `rejected`／`stale` 且有 `proposed` 的列（放棄、被「再改一次」放到一旁、過期）。**不是版本**：`version_no = null`、`proposal_id` 有值；`block` 是它會寫成的區塊，`picture_actions` 是還沒做過的圖片動作。還在等你決定的提案不列（在區塊下方處理） |
+| `regenerate` | Manna 重新產生 | `regenerate`，或不是第一次的 `generate` |
+| `prep_revise` | 備課對話修改 | `prep_turn` |
+| `vocabulary` | 換字 | `vocabulary` |
+| `manual` | 你手動修改 | `edit`。**間隔 5 分鐘以內的連續手動修改合成一步**（編輯器隨打隨存），顯示最後的樣子，較早的版本號在 `merged_version_nos`，仍可用 `version_no` 採用 |
+| `pictures` | 改圖片 | 老師自己按的 重畫／拿掉／換成我的圖（見下） |
+| `undo` | 復原 | `undo` |
+| `restore` | 回到這一步 | `restore`（採用的結果） |
+
+版本只在**這一區或這一區圖片位置的圖和前一版不同**時才算一步（別區的修改不會出現）。
+
+### 老師自己按的圖片按鈕也是一步
+
+`POST …/image-slots/:slot_id/regenerate`、`…/upload`、`DELETE …/image-slots/:slot_id` 成功之後，各寫一個內容與前一版相同的新版本：`cause = "pictures"`、`source = { cause: "pictures", action: "regenerate"|"upload"|"remove", block_id, block_ids, slot_id, image_id, hint }`。（採用提案或對話框 `revise` 做的圖片動作不另寫，屬於那一步。）為了不讓這些版本擋住編輯器，`PUT /api/worksheets/:id` 帶 `base_version_no` 時，只要「編輯器看到的那一版的內容」和最新版內容相同就不算 409。注意：詞彙檢查綁版本號，按過圖片按鈕後檢查會顯示過期，需重新檢查。
+
+### 每一版都留圖片快照
+
+`worksheet_versions.pictures`（`{ slot_id: worksheet_images.id }`）現在每個新版本寫入時就一併記下，產生／重新產生後才排進佇列的新圖會補進最新版（`enqueue`），備課對話修改的圖片動作做完後重寫。舊版本是 `null`：預覽的 `pictures = null`，採用時圖片維持現在的樣子（`adopt.pictures_unknown = true`）。
+
+### API
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/api/worksheets/:id/blocks/:block_id/history` | `{ block_id, version_no, busy, steps: Step[] }`，新的在前。`busy`：Manna 正在產生學習單或在改這一區（暫時不能採用）。區塊不在最新版 → 404。記 `worksheet_block_history_viewed` |
+| POST | `/api/worksheets/:id/blocks/:block_id/adopt` | `{ version_no }` **或** `{ proposal_id }`（兩個都給或都沒給 → 400）→ `{ version_no, kind: "version"\|"proposal", pictures: PictureOutcome[], worksheet: WorksheetState }` |
+
+`Step`：`kind`、`label`、`at`、`version_no`、`proposal_id`、`current`（這一區現在就是這樣）、`detail`（一行說明）、`merged_version_nos`、`undone`、`adopted_later_version_no`、`block`（預覽用的區塊；提案是它會寫成的區塊）、`pictures`（`[{ slot_id, image_id, status, source, purpose_zh }]`，`image_id` 只有 `done` 才有，圖用 `GET /api/worksheets/:id/images/:image_id`；沒有紀錄時 `null`）、`picture_actions`、`adopt`：`{ possible, clean, warn_older, draws_pictures, pictures_unknown, reason }`。`clean` = 不用警告也不用先畫圖。
+
+### 採用
+
+一個交易、鎖學習單：
+
+- **過往的版本**：這一區換回那一版的樣子（整個區塊），圖片：該版快照裡每個圖片位置的那一列 `worksheet_images` 設回 `current`（現在的那一列保留、不再是目前的；那一版沒有這個位置的圖就不留圖）。**不呼叫圖片模型、不刪任何一列。** 就是現在的樣子 → 409。
+- **沒採用的提案**（`proposal_id`；已採用的 → 409「請在歷程裡找它採用後的那一步」；還在等決定 → 409）：提案的區塊換進來，新的圖片位置（`<block>-xh<新版本號>n<k>`）成為版本的一部分，之後和「採用」一樣執行 `picture_actions`（畫新圖、重畫、移除；結果在 `pictures`）。介面會先說「會用到 AI 產圖」。提案的 `before` 與現在這一區不同時 `adopt.warn_older = true`，介面先警告：「這個版本是根據比較早的內容改的，採用後會取代這一區之後的修改（之後的修改仍保留在歷程裡，可以再換回來）。」伺服器本身不擋。
+- 寫新版本 `cause = "restore"`，`source = { cause: "restore", adopted_kind: "version", adopted_version_no, from_version_no, block_ids }`（提案是 `adopted_kind: "proposal"`、`proposal_id`、`interaction_id`、`round`、`warned_older`）；`worksheet_block_history` 多一列（`version_no`、`after_block`、`picture_undo`，所以「復原上一版」可以把這次採用也復原）；`pictures` 快照寫最後的狀態。
+- 提案：`worksheet_block_proposals.adopted_later_at`／`adopted_later_version_no`（`status`、`decided_at` 維持當時的樣子）；`teacher_decisions` **新增**一列 `adopt`（原本的 `reject` 保留）。
+- 學習單正在產生 → 409「Manna 正在產生這份學習單，好了之後再採用。」；這一區有提案在跑 → 409。別的老師的學習單 → 404。
+- 研究紀錄：`worksheet_block_version_adopted`：`{ worksheet_id, block_id, from_version_no, version_no, kind, adopted_version_no, proposal_id, warned_older, pictures_restored }`；`worksheet_block_history_viewed`：`{ worksheet_id, block_id, steps }`。
+
+### 前端
+
+編輯器每區工具列與備課對話卡片的「修改歷程」按鈕開啟共用 `Dialog`（`BlockHistory.tsx`）：左邊步驟清單，右邊預覽（文字、圖片縮圖）、「‹ ›」逐步看、「採用這個版本」；需要警告或會畫圖時先在對話框內確認「仍要採用／先不要」。「已採用 Manna 的修改。〔復原〕」與「復原上一版」照舊。
+
 ## 改圖片與附上圖片（`0032_revise_pictures_and_uploads.sql`）
 
 老師在備課對話說「B 區加一張蜜蜂在花上的圖」「這張圖重畫，不要有文字」，或附上截圖說明要改哪裡。兩條修改路徑（對話框的 `revise` 輪次、逐區的 `worksheet_block_revise`）的輸出多了 `picture_actions`，prompt 各多一版（`COALESCE(MAX(version_no),0)+1`：在當下最新的文字後面接上圖片規則與 `{{picture_rules}}`、`{{pictures_note}}`、`{{attachments_note}}`）。模型只提出動作，伺服器檢查，**採用／同意之前什麼都不畫、不移除**。
