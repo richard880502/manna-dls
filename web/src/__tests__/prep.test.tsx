@@ -513,10 +513,28 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await user.click(chips().getByRole("radio", { name: "課堂活動" }));
     expect(screen.getByRole("link", { name: "更多設定（班級、題數、Bloom、題型）" })).toHaveAttribute("href", "/create/activity");
     await attachFromLibrary(user);
-    expect(screen.getByRole("link", { name: /更多設定/ })).toHaveAttribute("href", "/create/activity?material=5");
     await user.click(chips().getByRole("radio", { name: "照我的學習單做" }));
-    // 照我的學習單做 with only lesson text: the tool's own page (the sample is what its path carries).
-    expect(screen.getByRole("link", { name: /更多設定/ })).toHaveAttribute("href", "/create/mimic?material=5");
+    expect(screen.getByRole("link", { name: /更多設定/ })).toHaveAttribute("href", "/create/mimic");
+    // What is attached here goes along: the form opens with the lesson text already in place.
+    await user.click(screen.getByRole("link", { name: /更多設定/ }));
+    expect(await screen.findByRole("button", { name: "移除「The Umbrella Stand」" })).toBeInTheDocument();
+    expect(screen.queryByText("先放這節課的課文")).not.toBeInTheDocument();
+  });
+
+  it("更多設定 carries pasted text too", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), "GET /api/materials": library(), "GET /api/browse/materials": browse() });
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(screen.getByRole("button", { name: "附上文章" }));
+    await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "貼上文字" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByRole("textbox", { name: /內容|文字|課文/ }), "Bees help plants grow.");
+    await user.click(dialog.getByRole("button", { name: /^(加入|附上|用這段|確定)/ }));
+    await user.click(screen.getByRole("link", { name: /更多設定/ }));
+    expect(await screen.findByDisplayValue("Bees help plants grow.")).toBeInTheDocument();
   });
 
   it("an output without a material says 先附上文章或教材 next to 附上文章 and sends nothing", async () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Link, useNavigate } from "react-router";
+import type { CreateCarry } from "./CreatePage";
 import { api, errorMessage } from "../api/client";
 import type { DecisionRequest, ObjectiveDraftKind, PrepSessionSummary } from "../api/types";
 import { ErrorText } from "../components/common";
@@ -42,9 +43,6 @@ import {
   TOOL_NAME,
   asCreateRequest,
   kindOf,
-  mimicPath,
-  mimicTemplatePath,
-  toolMaterialPath,
   toolFromWords,
   type StartKind,
   type Tool,
@@ -313,15 +311,13 @@ function QuickBox() {
     pickTool(TOOLS[next]!);
   }
 
-  /** 更多設定: the full form for the chosen tool, with the attached material (or sample) if it has an id. */
-  const fullFormPath = (() => {
-    if (!tool) return null;
-    if (mimic) {
-      if (sample?.kind === "template") return mimicTemplatePath(sample.template.id);
-      if (sample?.kind === "material") return mimicPath(sample.material.id);
-    }
-    return picked ? toolMaterialPath(tool, picked.id) : `/create/${tool}`;
-  })();
+  /**
+   * 更多設定: the full form for the chosen tool. What is already attached here (the article, pasted
+   * or picked, and 照我的學習單做's sample) goes along in the history state, so the form opens
+   * filled in instead of asking for it again.
+   */
+  const fullFormPath = tool ? `/create/${tool}` : null;
+  const carry: CreateCarry = { carry: { choice, sample: mimic ? sample : null } };
 
   function chooseSample(next: Sample) {
     setSample(next);
@@ -478,7 +474,7 @@ function QuickBox() {
       </div>
       {fullFormPath && (
         <p className="home-more">
-          <Link className="text-link is-plain" to={fullFormPath}>
+          <Link className="text-link is-plain" to={fullFormPath} state={carry}>
             更多設定（班級、題數、Bloom、題型）
           </Link>
         </p>
