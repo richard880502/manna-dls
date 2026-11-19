@@ -276,6 +276,8 @@ pub struct PromptList {
     pub prompts: Vec<PromptRow>,
     pub groups: Vec<&'static str>,
     pub registry: Vec<&'static prompt_registry::PromptInfo>,
+    /// Keys that can be tried (試產生).
+    pub try_keys: Vec<&'static str>,
 }
 
 pub async fn list_prompts(
@@ -295,6 +297,7 @@ pub async fn list_prompts(
         prompts,
         groups: prompt_registry::GROUPS.to_vec(),
         registry: prompt_registry::REGISTRY.iter().collect(),
+        try_keys: crate::prompt_try::SUPPORTED.to_vec(),
     }))
 }
 
@@ -462,6 +465,96 @@ pub async fn create_prompt(
     tx.commit().await?;
     Ok(Json(SavedPrompt {
         version: row,
+        unknown_variables: unknown,
+    }))
+}
+
+// ---------------------------------------------------------------- 試產生
+
+#[derive(Debug, Deserialize)]
+pub struct TryRequest {
+    /// The unsaved draft.
+    pub system_text: String,
+    pub user_template: String,
+    pub sample: crate::prompt_try::Sample,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TryResponse {
+    pub run_id: i64,
+    /// Always true: nothing of a try is shown to teachers or reaches the research data.
+    pub preview: bool,
+    #[serde(flatten)]
+    pub result: crate::prompt_try::TryResult,
+    pub unknown_variables: Vec<String>,
+}
+
+/// Runs the draft on the sample with one real model call. Nothing is saved as a prompt version,
+/// worksheet or `ai_interactions` row: the result goes to `prompt_try_runs` (see `prompt_try`).
+pub async fn try_prompt(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(key): ApiPath<String>,
+    ApiJson(req): ApiJson<TryRequest>,
+) -> AppResult<Json<TryResponse>> {
+    teacher.require_pi()?;
+    if !crate::prompt_try::supported(&key) {
+        return Err(AppError::bad_request("這個提示詞還不能試產生。"));
+    }
+    if req.system_text.trim().is_empty() || req.user_template.trim().is_empty() {
+        return Err(AppError::bad_request("系統提示詞與使用者範本都不可空白。"));
+    }
+    let unknown = variable_problems(&key, &req.system_text, &req.user_template)
+        .map_err(AppError::bad_request)?;
+    let recent: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM prompt_try_runs
+          WHERE teacher_id = $1 AND created_at > now() - interval '1 hour'",
+    )
+    .bind(teacher.id())
+    .fetch_one(&state.db)
+    .await?;
+    if recent >= crate::prompt_try::MAX_RUNS_PER_HOUR {
+        return Err(AppError::Conflict(format!(
+            "一小時最多試產生 {} 次，請稍後再試。",
+            crate::prompt_try::MAX_RUNS_PER_HOUR
+        )));
+    }
+    let result = crate::prompt_try::run(
+        &state,
+        &key,
+        &req.system_text,
+        &req.user_template,
+        &req.sample,
+    )
+    .await
+    .map_err(AppError::bad_request)?;
+    let base: Option<i32> =
+        sqlx::query_scalar("SELECT MAX(version_no) FROM prompt_versions WHERE prompt_key = $1")
+            .bind(&key)
+            .fetch_one(&state.db)
+            .await?;
+    let run_id: i64 = sqlx::query_scalar(
+        "INSERT INTO prompt_try_runs
+                (teacher_id, prompt_key, base_version_no, system_text, user_template, sample,
+                 status, output, checks)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id",
+    )
+    .bind(teacher.id())
+    .bind(&key)
+    .bind(base)
+    .bind(&req.system_text)
+    .bind(&req.user_template)
+    .bind(crate::prompt_try::sample_summary(&req.sample))
+    .bind(result.status)
+    .bind(&result.output)
+    .bind(json!(result.checks))
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(TryResponse {
+        run_id,
+        preview: true,
+        result,
         unknown_variables: unknown,
     }))
 }

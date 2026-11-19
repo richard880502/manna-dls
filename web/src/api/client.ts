@@ -66,6 +66,8 @@ import type {
   SavePreferencesRequest,
   SaveSopMaterialRequest,
   SavedPrompt,
+  TryResponse,
+  TrySample,
   SavedSop,
   ScaffoldEventRequest,
   SchoolClass,
@@ -672,6 +674,9 @@ export const api = {
     listPrompts: () => get<PromptList>("/admin/prompts"),
     /** 一個 key 的所有版本，新的在前 */
     promptVersions: (key: string) => get<PromptVersion[]>(`/admin/prompts/${encodeURIComponent(key)}/versions`),
+    /** 試產生：用還沒儲存的草稿跑一次，不存版本、不給老師看 */
+    tryPrompt: (key: string, body: { system_text: string; user_template: string; sample: TrySample }) =>
+      post<TryResponse>(`/admin/prompts/${encodeURIComponent(key)}/try`, body),
     createPrompt: (body: CreatePromptRequest) => post<SavedPrompt>("/admin/prompts", body),
     importTeacherCases: (csv: string) =>
       request<ImportResult>("POST", "/admin/teacher-cases/import", {

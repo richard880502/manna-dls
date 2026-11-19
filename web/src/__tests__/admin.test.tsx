@@ -31,6 +31,7 @@ describe("admin page (pi)", () => {
       "GET /api/admin/prompts": {
         groups: [],
         registry: [],
+        try_keys: [],
         prompts: [
           {
             id: 1,
@@ -104,7 +105,7 @@ describe("admin page (pi)", () => {
       "GET /api/me": pi,
       "GET /api/admin/settings": { route_choice_enabled: true },
       "GET /api/admin/accounts": accounts,
-      "GET /api/admin/prompts": { prompts: [], groups: [], registry: [] },
+      "GET /api/admin/prompts": { prompts: [], groups: [], registry: [], try_keys: [] },
       "POST /api/admin/invites": { code: "KBKB-1234" },
     });
     const user = userEvent.setup();
@@ -129,7 +130,7 @@ describe("admin page (pi)", () => {
       "GET /api/admin/settings": { route_choice_enabled: true },
       "GET /api/admin/accounts": accounts,
       "PUT /api/admin/settings": (call: MockCall) => call.body,
-      "GET /api/admin/prompts": { prompts: [], groups: [], registry: [] },
+      "GET /api/admin/prompts": { prompts: [], groups: [], registry: [], try_keys: [] },
     });
     const user = userEvent.setup();
     renderApp("/admin");
@@ -170,7 +171,7 @@ describe("帳號與角色 (pi)", () => {
     ...baseRoutes(),
     "GET /api/me": pi,
     "GET /api/admin/settings": { route_choice_enabled: true },
-    "GET /api/admin/prompts": { prompts: [], groups: [], registry: [] },
+    "GET /api/admin/prompts": { prompts: [], groups: [], registry: [], try_keys: [] },
     "GET /api/admin/accounts": accounts,
     "PATCH /api/admin/accounts/7": patch,
   });
