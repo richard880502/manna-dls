@@ -1,7 +1,14 @@
 // 我的學習單版型 (docs/WORKSHEET_TEMPLATES_CONTRACT.md): what the template screens say and the
 // small rules they check before sending. The server validates again; the fixed labels are the
 // worksheet spec's, never renamed.
-import type { Material, MaterialLibrary, WsTemplateSection, WsTemplateSummary } from "../api/types";
+import type {
+  Material,
+  MaterialLibrary,
+  WsTemplateSection,
+  WsTemplateSummary,
+  WsTemplateSupport,
+  WsTemplateSupportRole,
+} from "../api/types";
 
 /** How often a template being read is asked for. Tests shorten it. */
 export const templateConfig = { pollMs: 3000 };
@@ -17,6 +24,20 @@ export const MAX_STYLE_NOTES = 8;
 export const MAX_NOTE_CHARS = 200;
 
 export const templateTitle = (t: { title: string }) => t.title.trim() || "未命名的版型";
+
+/** What a support box of the sample is for, in the teacher's words. */
+export const SUPPORT_ROLE_LABEL: Record<WsTemplateSupportRole, string> = {
+  directions: "作答步驟",
+  sentence_frame: "句型框架",
+  sharing_frame: "分享句型",
+  word_bank: "字詞表",
+  hints: "提示",
+  guiding_questions: "引導問題",
+  example: "作答示例",
+};
+
+/** 「Sentence Frame for Sharing（分享句型）」: a support box as the template page lists it. */
+export const supportLine = (s: WsTemplateSupport) => `${s.heading}（${SUPPORT_ROLE_LABEL[s.role] ?? s.role}）`;
 
 /** 「4 區 · 第 2 版」, 「讀取中」, 「沒有讀成功」: what a row says under the title. */
 export function templateMeta(t: WsTemplateSummary): string {

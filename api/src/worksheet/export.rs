@@ -142,6 +142,14 @@ fn footer_label(sheet: &Sheet) -> Option<String> {
     }
 }
 
+/// The lines of a support box: the first prints after its heading, each other on a line of its
+/// own (a Directions box is one step per line).
+fn box_lines(content: &str) -> (&str, Vec<&str>) {
+    let mut lines = content.lines().map(str::trim).filter(|l| !l.is_empty());
+    let first = lines.next().unwrap_or_default();
+    (first, lines.collect())
+}
+
 /// What a version's support prints under a question of a 差異化學習單, as (bold label, text)
 /// lines: the form's heading with its first line, the other lines, then the word bank.
 fn support_lines(s: &SheetItemSupport) -> Vec<(String, String)> {
@@ -816,6 +824,7 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
             }
         }
         for s in &b.supports {
+            let (first, rest) = box_lines(&s.content);
             body.push_str(&para(
                 &[
                     run(
@@ -825,7 +834,7 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
                             ..RunStyle::default()
                         },
                     ),
-                    run(&s.content, RunStyle::default()),
+                    run(first, RunStyle::default()),
                 ],
                 &ParaStyle {
                     before: 80,
@@ -833,6 +842,16 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
                     ..ParaStyle::default()
                 },
             ));
+            for line in rest {
+                body.push_str(&para(
+                    &[run(line, RunStyle::default())],
+                    &ParaStyle {
+                        indent: 200,
+                        after: 40,
+                        ..ParaStyle::default()
+                    },
+                ));
+            }
         }
         for it in &b.items {
             docx_item(&mut body, it, teacher);
@@ -2042,9 +2061,10 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
             }
         }
         for s in &b.supports {
+            let (first, rest) = box_lines(&s.content);
             l.labelled(
                 &format!("{}: ", s.heading),
-                &s.content,
+                first,
                 Style {
                     before: 4.0,
                     after: 2.0,
@@ -2052,6 +2072,16 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
                 },
                 Weight::Bold,
             );
+            for line in rest {
+                l.paragraph(
+                    line,
+                    Style {
+                        indent: 8.0,
+                        after: 2.0,
+                        ..body
+                    },
+                );
+            }
         }
         if b.kind == BlockKind::ExitTicket && b.items.is_empty() {
             l.answer_lines(2, 0.0);
@@ -2351,7 +2381,7 @@ mod tests {
                 instructions: "Read paragraph 1 again, then answer.".into(),
                 steps: vec!["Read on your own.".into(), "Check with a partner.".into()],
                 vocabulary: vec![SheetWord { word: "stand".into(), level: Some(1), definition: "a small table".into(), task_word: false }],
-                supports: vec![SheetSupport { kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames", content: "She started it because ___.".into() }],
+                supports: vec![SheetSupport { kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames".into(), content: "She started it because ___.".into() }],
                 items: (1..=30)
                     .map(|no| SheetItem {
                         id: format!("b1-i{no}"),
@@ -2422,6 +2452,24 @@ mod tests {
         // The PDF draws it too (English only: no CJK font needed).
         let pdf = pdf(&sheet(Audience::Student)).unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn a_box_prints_one_line_per_line_under_its_own_heading() {
+        let mut s = sheet(Audience::Student);
+        s.blocks[0].supports = vec![SheetSupport {
+            kind_type: ScaffoldType::Procedural,
+            kind: "清楚的分步指示及完成順序".into(),
+            heading: "Directions".into(),
+            content: "Underline the topic sentence.\nCircle two details.".into(),
+        }];
+        let xml = document(docx(&s).unwrap());
+        assert!(xml.contains(">Directions: <"));
+        // Two paragraphs, not one line run together.
+        assert!(xml.contains(">Underline the topic sentence.<"));
+        assert!(xml.contains(">Circle two details.<"));
+        assert!(!xml.contains("Underline the topic sentence. Circle"));
+        assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
     }
 
     #[test]
@@ -2690,6 +2738,7 @@ mod tests {
                     levels: Level::ALL.to_vec(),
                     auto: false,
                     origin: Origin::Ai,
+                    heading: None,
                 }],
                 ..Block::default()
             }],

@@ -24,8 +24,10 @@ use super::{
 use crate::error::{AppError, AppResult};
 use crate::progress::Step;
 use crate::routes::{log_usage, or_blank};
-use crate::worksheet::assemble::scaffold_levels;
-use crate::worksheet::checks::{evaluate_section, CleanSection, Eval, SectionCtx};
+use crate::worksheet::assemble::{self, scaffold_levels};
+use crate::worksheet::checks::{
+    evaluate_template_section, CleanSupport, Eval, SectionCtx, SupportsCtx, TemplateSection,
+};
 use crate::worksheet::images::{self, ImageSlot, WithSlots, MAX_SLOTS_PER_BLOCK};
 use crate::worksheet::store::{self, Worksheet};
 use crate::worksheet::template::store::{self as tpl_store, STATUS_READY};
@@ -95,7 +97,8 @@ pub(super) async fn for_generation(
             id,
             title: row.title,
             version_no,
-            content,
+            // A template read before supports gets the boxes its patterns hold.
+            content: content.for_generation(),
             sample_pictures,
         }))
 }
@@ -125,6 +128,7 @@ pub(super) async fn for_block(
     }) else {
         return Ok(None);
     };
+    let content = content.for_generation();
     let Some(index) = content.sections.iter().position(|s| s.id == section_id) else {
         return Ok(None);
     };
@@ -167,7 +171,7 @@ struct SectionRequest<'a> {
 }
 
 /// A checked block and the picture slots the model wrote for it (cleaned, without ids).
-type SectionOut = (CleanSection, Vec<ImageSlot>);
+type SectionOut = (TemplateSection, Vec<ImageSlot>);
 
 async fn section_call(
     run: &Run,
@@ -252,7 +256,12 @@ async fn section_call(
             .answer_formats
             .iter()
             .any(|f| f == crate::worksheet::FMT_ORGANIZER);
-    let mut schema = section_out_schema(ctx.item_count, organizers);
+    let mut schema = section_out_schema(ctx.item_count, organizers, &r.section.supports);
+    let legacy = legacy_kind(r.section);
+    let supports = SupportsCtx {
+        supports: &r.section.supports,
+        legacy: (legacy.0, legacy.1.as_str()),
+    };
     if slots {
         // Last: the block first, then the pictures it needs.
         images::add_slots_property(&mut schema, None, MAX_SLOTS_PER_BLOCK);
@@ -268,7 +277,7 @@ async fn section_call(
             max_tokens: SECTION_MAX_TOKENS,
         },
         |raw: &WithSlots<RawSectionOut>| {
-            let e = evaluate_section(&raw.inner, &ctx);
+            let e = evaluate_template_section(&raw.inner, &ctx, &supports);
             // Slots are cleaned, never a reason for a repair call.
             let (slots, _) = images::clean_slots(&raw.image_slots, MAX_SLOTS_PER_BLOCK);
             Eval {
@@ -284,48 +293,49 @@ async fn section_call(
 
 // ---------------------------------------------------------------- blocks from outputs
 
-/// The section's scaffold text as one scaffold of the section's first scaffold kind (引導問題
-/// when it names none). Procedural kinds keep their lines as steps.
-fn template_scaffold(
-    block_id: &str,
-    section: &WsTemplateSection,
-    text: &str,
-    levels: &[Level],
-) -> Option<Scaffold> {
-    let text = text.trim();
-    if text.is_empty() {
-        return None;
-    }
-    let (kind_type, kind) = section
+/// The kind of the one scaffold a block gets from a section without support boxes (a template
+/// read before supports): the section's first scaffold kind (引導問題 when it names none).
+fn legacy_kind(section: &WsTemplateSection) -> (ScaffoldType, String) {
+    section
         .scaffolds
         .iter()
         .find_map(|k| scaffold_type_of(k).map(|t| (t, k.clone())))
-        .unwrap_or((ScaffoldType::Verbal, KIND_GUIDING.to_string()));
-    let (content, steps) = if kind_type == ScaffoldType::Procedural {
-        (
-            String::new(),
-            text.lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(str::to_string)
-                .take(12)
-                .collect(),
-        )
-    } else {
-        (text.to_string(), Vec::new())
-    };
-    let shown = scaffold_levels(kind_type, &kind, levels, &[kind.as_str()])
-        .unwrap_or_else(|| levels.to_vec());
-    Some(Scaffold {
-        id: format!("{block_id}-s1"),
-        kind_type,
-        kind,
-        content,
-        steps,
-        levels: shown,
-        auto: false,
-        origin: Origin::Ai,
-    })
+        .unwrap_or((ScaffoldType::Verbal, KIND_GUIDING.to_string()))
+}
+
+/// The block's support boxes as scaffolds, in print order, each under its heading (the sample's;
+/// none for a template read before supports, which prints the kind's own heading). Procedural
+/// boxes keep their lines as steps; the others as lines of text.
+fn template_scaffolds(
+    block_id: &str,
+    supports: &[CleanSupport],
+    levels: &[Level],
+) -> Vec<Scaffold> {
+    supports
+        .iter()
+        .filter(|s| !s.lines.is_empty())
+        .enumerate()
+        .map(|(i, s)| {
+            let (content, steps) = if s.kind_type == ScaffoldType::Procedural {
+                (String::new(), s.lines.iter().take(12).cloned().collect())
+            } else {
+                (s.lines.join("\n"), Vec::new())
+            };
+            let shown = scaffold_levels(s.kind_type, &s.kind, levels, &[s.kind.as_str()])
+                .unwrap_or_else(|| levels.to_vec());
+            Scaffold {
+                id: format!("{block_id}-s{}", i + 1),
+                kind_type: s.kind_type,
+                kind: s.kind.clone(),
+                content,
+                steps,
+                levels: shown,
+                auto: false,
+                origin: Origin::Ai,
+                heading: s.heading.clone(),
+            }
+        })
+        .collect()
 }
 
 fn paragraph_ids(material: &Material, paragraph: Option<usize>) -> Vec<String> {
@@ -344,6 +354,8 @@ fn section_block(
     levels: &[Level],
     language: &str,
 ) -> Block {
+    let supports = &out.supports;
+    let out = &out.section;
     let title = if out.title.trim().is_empty() {
         &section.title_pattern
     } else {
@@ -376,9 +388,7 @@ fn section_block(
         paragraph_ids: paragraph_ids(material, paragraph),
         student_tasks: section.student_tasks.clone(),
         items,
-        scaffolds: template_scaffold(id, section, &out.scaffold, levels)
-            .into_iter()
-            .collect(),
+        scaffolds: template_scaffolds(id, supports, levels),
         teacher_notes: section.purpose.clone(),
         origin: Origin::Ai,
         message: section
@@ -611,7 +621,15 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
     }
     mark_held(db, job_id, outcome, message.as_deref(), None, &context).await?;
     let failed = failures.len();
-    let blocks: Vec<Block> = made.into_iter().map(|(b, _)| b).collect();
+    let mut blocks: Vec<Block> = made.into_iter().map(|(b, _)| b).collect();
+    // One name per idea on the whole sheet (the blocks were written side by side): the
+    // template's, then the material's.
+    let template_text = serde_json::to_string(&tpl.content).unwrap_or_default();
+    assemble::unify_terms(
+        &mut blocks,
+        &[&template_text, &run.paragraphs.join("\n")],
+        true,
+    );
 
     // Objectives are the teacher's: take them as they are now, not as they were at the start.
     let latest = store::latest(db, ws.id).await?;
@@ -757,5 +775,15 @@ async fn regenerate(
         &levels,
         &tpl.content.instruction_language,
     );
+    // The name the rest of the sheet uses for an idea.
+    let others: Vec<Block> = content
+        .blocks
+        .iter()
+        .filter(|b| b.id != old.id)
+        .cloned()
+        .collect();
+    let mut one = [block];
+    assemble::unify_terms(&mut one, &[&assemble::blocks_text(&others)], false);
+    let [block] = one;
     replace_block(run, &old, block, interaction_id, Vec::new()).await
 }

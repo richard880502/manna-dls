@@ -17,6 +17,7 @@ import {
   notesFromText,
   notesProblem,
   sectionLine,
+  supportLine,
   templateConfig,
   templateTitle,
 } from "../lib/templates";
@@ -521,8 +522,13 @@ function SectionCard({ section: s, index, count, disabled, onChange, onMove, onD
   const [more, setMore] = useState(false);
   const name = `第 ${index + 1} 區`;
   const itemCount = Math.min(MAX_ITEMS, Math.max(MIN_ITEMS, s.item_count));
+  const supports = s.supports ?? [];
   const hasMore =
-    s.item_patterns.length > 0 || s.student_tasks.length > 0 || s.scaffolds.length > 0 || s.text_scope.trim() !== "";
+    s.item_patterns.length > 0 ||
+    s.student_tasks.length > 0 ||
+    s.scaffolds.length > 0 ||
+    supports.length > 0 ||
+    s.text_scope.trim() !== "";
 
   return (
     <li className="template-section" aria-label={name}>
@@ -691,6 +697,22 @@ function SectionCard({ section: s, index, count, disabled, onChange, onMove, onD
                 <>
                   <dt>鷹架</dt>
                   <dd>{s.scaffolds.join("、")}</dd>
+                </>
+              )}
+              {supports.length > 0 && (
+                <>
+                  <dt>提示框</dt>
+                  <dd>
+                    <ul>
+                      {supports.map((b, i) => (
+                        // oxlint-disable-next-line react/no-array-index-key -- read-only strings
+                        <li key={i}>
+                          {supportLine(b)}
+                          {b.pattern.trim() && `：${b.pattern}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
                 </>
               )}
               {s.item_patterns.length > 0 && (

@@ -1020,6 +1020,11 @@ interface WsItem {
 
 **句型框架不是題目**（完整學習單的主要任務與 Exit ticket）：語言鷹架（句型框架，SIOP Q2／T4）印在區塊的「Sentence frames」方框裡（`scaffolds` 的 `句型框架`），不編題號。模型把句型框架本身寫成一題時（題目有空格、用學生的口吻 I／my／we、沒有問號、沒有一句以指示或疑問詞開頭，而且不是逐字取自教材的克漏字；`checks::sentence_frame_only`）→ `items_wellformed` 不通過，修正呼叫會寫明要寫出要學生做什麼、不要用 Hi! 之類的招呼語開頭；修正後仍是句型框架 → 組成區塊時（`assemble::lift_frames`）框架移到這一區的 `句型框架` 鷹架（印的版本＝那一題印的版本），前一題是簡答題或段落寫作時這一題拿掉（那是前一題的框架），否則這一題改成「Use the sentence frame above to write your answer.」（簡答題，印作答線），所以 Exit ticket 的題數與目標檢核不變；後面的題號連續。教師自己寫的題目不動。`0031_sentence_frames_apart.sql` 的提示詞新版本（Exit ticket、主要任務、逐區修改、備課對話的修改）寫明句型框架不能單獨當一題、題目不用招呼語開頭；兩種修改沒有放鷹架的欄位，句型框架接在它要幫助的那一題最後。
 
+**招呼語開頭的分享句型、句型框架裡的步驟、是非題**（`0036_template_supports.sql`，所有產生學習單的路徑）：
+- 題目是以 Hi!、Hello! 等招呼語開頭、有空格、不是逐字取自教材的句型（口頭分享用的句型框架；`checks::greeting_frame`），或把這樣的句型包在題目裡（「Write a short analysis paragraph using the frame: Hi! …」「Complete the analysis paragraph: Hi! …」）→ 一樣是 `items_wellformed` 不通過；修正後仍是 → 完整學習單照上面的方式移到 Sentence frames 方框（不含外面那層題目）；照版型產生的區塊見「提示框」。
+- 鷹架步驟的「句型框架」裡寫了作答步驟（沒有空格、以祈使動詞開頭的句子，例如「Identify the common idea in the first sentence.」）→ `supports_wellformed` 不通過（`worksheet_scaffolds` 第 2 版要求步驟寫在程序鷹架）；修正後仍是 → 步驟移到這一區的分步指示（程序鷹架的 `steps`），句型框架只留有空格的句子；「Use this frame:」這類只是指向框架的開頭拿掉。
+- **是非題要是可以依課文判斷對錯的直述句**（「The second sentence of Paragraph 1 is the topic sentence.」）。題目是問句，或問學生的看法（「Do you think this sentence serves as a topic sentence?」「In your opinion …」）→ `items_wellformed` 不通過（主要任務、Exit ticket、閱讀理解題、照版型產生與兩種修改的檢查都有；提示詞新版本寫明規則）；修正後仍是 → 「Do you think X?」「Do you agree that X?」「Is it true that X?」改成判斷「X.」（仍是是非題、答案不變），其他改成簡答題，題目後加「Answer Yes or No, and give one reason from the text.」，選項拿掉，答案 True／False 改成 Yes.／No.。
+
 ```ts
 interface WsScaffold {
   id: string; type: WsScaffoldType;
@@ -1028,6 +1033,7 @@ interface WsScaffold {
   levels: WsLevel[];             // 這個鷹架出現在哪些版本
   auto: boolean;                 // 系統自動加入的程序鷹架
   origin: WsOrigin;
+  heading?: string;              // 印在它上面的標題（≤80）；沒有時印種類的英文標題（Sentence frames、Hints…）。照版型產生的區塊印原學習單的標題（Directions、Sentence Frame for Sharing…）；有標題的程序鷹架印成一個方框（一行一步），不併進區塊的編號步驟
 }
 interface WsBlock {
   id: string; kind: WsBlockKind;
@@ -1698,9 +1704,15 @@ interface WsTemplateSection {
   item_count: number;                           // 1–12
   text_scope: string;                           // ≤100，例如「逐段」「全文」「課文外」
   scaffolds: string[];                          // 只能用規格 §3 的鷹架種類（語言、教學、程序三類）
+  supports?: WsTemplateSupport[];               // 0–6 個，原學習單在這一區印出的提示框，依原本順序；沒有時不出現（見「提示框」）
   instruction_style: string;                    // ≤200
-  item_patterns: string[];                      // 0–6 條，每條 ≤300
+  item_patterns: string[];                      // 0–6 條，每條 ≤300；只有有題號的題目，句型框架不算
   needs_external_material: boolean;             // 需要教師另外提供的影片、錄音、圖片或另一篇文字
+}
+interface WsTemplateSupport {
+  heading: string;                              // 1–60 字，原學習單上的標題，逐字（例如 "Directions"、"Sentence Frame for Sharing"）
+  role: "directions" | "sentence_frame" | "sharing_frame" | "word_bank" | "hints" | "guiding_questions" | "example";
+  pattern: string;                              // ≤300，內容的通用樣式（佔位符與空格），可以是空字串
 }
 interface WsTemplateSummary {
   id: number; title: string; status: "extracting" | "ready" | "failed"; section_count: number;
@@ -1734,15 +1746,15 @@ interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "temp
 **驗證（400，訊息為中文）**
 
 - `POST`：`material_id` 必須是自己教材庫裡、已擷取到文字（`text_status = ready`）的教材。不是自己的或不存在 → 「找不到這份教材。」；圖片、影音、網址 → 「這份教材沒有文字可以讀…」；掃描檔或讀不出文字 → 「這份檔案讀不到文字（可能是掃描檔）…」；文字超過 30000 字 → 400（不像是一份學習單）。`title` 選填（≤200）；沒給時是教材標題＋「版型」。
-- `PUT`：`title` 不可空白、≤200。`content` 依上面型別的規則檢查：標籤不在固定集合內（包含「課綱議題」「SDGs」「SEL」「探究」「高層次思考」「專題任務」「合作活動」）、題數不在 1–12、區塊數不在 1–12、id 重複、長度超過 → 400，訊息會指出是第幾個區塊。重複的標籤會被去掉，順序照送來的。`block_kind` 不是三個值之一 → 400（「請求內容格式不正確…」）。
+- `PUT`：`title` 不可空白、≤200。`content` 依上面型別的規則檢查（提示框：最多 6 個、標題不可空白且 ≤60、樣式 ≤300、`role` 只能是上面七個值）：標籤不在固定集合內（包含「課綱議題」「SDGs」「SEL」「探究」「高層次思考」「專題任務」「合作活動」）、題數不在 1–12、區塊數不在 1–12、id 重複、長度超過 → 400，訊息會指出是第幾個區塊。重複的標籤會被去掉，順序照送來的。`block_kind` 不是三個值之一 → 400（「請求內容格式不正確…」）。
 
 ## 抽版型（背景工作）
 
-1. **呼叫 A（大綱）** `worksheet_template_outline`：結構化大綱 `{ title_pattern, per_paragraph }[]`，加上表頭資訊（`worksheet_kind`、`instruction_language`、`header_fields`、`shows_objectives`、`includes_passage_text`）。規則照 probe v4：區塊內的小步驟不另列；逐段重複的區塊只列一次；學生版與教師版只算一次；只用佔位符；不寫人名、學校、出版社或班級。`max_tokens` 2000。
-2. **呼叫 B（細節）** `worksheet_template_details`：`sections` 的 `minItems = maxItems =` 大綱項數，另有 `generation_options` 與 `style_notes`。比 probe 多了 `needs_external_material`：需要學習單本身課文以外的影片、錄音、圖片或另一篇文章時為 true。`max_tokens` 5000。
+1. **呼叫 A（大綱）** `worksheet_template_outline`：結構化大綱 `{ title_pattern, per_paragraph }[]`，加上表頭資訊（`worksheet_kind`、`instruction_language`、`header_fields`、`shows_objectives`、`includes_passage_text`）。規則照 probe v4：區塊內的小步驟不另列；逐段重複的區塊只列一次；學生版與教師版只算一次；只用佔位符；不寫人名、學校、出版社或班級。第 2 版：區塊裡有標題的提示框（Directions、Sentence Frame for Sharing…）屬於那個區塊，不另列。`max_tokens` 2000。
+2. **呼叫 B（細節）** `worksheet_template_details`：`sections` 的 `minItems = maxItems =` 大綱項數，另有 `generation_options` 與 `style_notes`。比 probe 多了 `needs_external_material`：需要學習單本身課文以外的影片、錄音、圖片或另一篇文章時為 true。第 3 版多了 `supports`（在 `item_patterns` 之前寫）：見「提示框」。`max_tokens` 5000。
 3. schema 的欄位照撰寫順序（閘道依 schema 順序輸出；字母順序曾造成輸出空白失控）。
 4. 任一次呼叫寫到 `max_tokens`、輸出讀不懂，或細節數量和大綱不同時，**重試一次**，temperature +0.4（0.2 → 0.6；閘道會快取相同的請求）。還是失敗，或逾時、供應商錯誤：`status = "failed"`，`error` 寫中文原因，教師可以按「重試」（`POST …/retry`）。
-5. 伺服器整理結果：配 section id（`s1`…）；`item_count` 限制在 1–12；拿掉固定集合以外的標籤；最多 12 個區塊；`text_scope` 明確指定某一段或某幾段（例如「第 2 段」「Paragraphs 2–3」「P4」）時，`per_paragraph` 改成 false。各文字欄位截到上限長度。
+5. 伺服器整理結果：配 section id（`s1`…）；`item_count` 限制在 1–12；拿掉固定集合以外的標籤；最多 12 個區塊；`text_scope` 明確指定某一段或某幾段（例如「第 2 段」「Paragraphs 2–3」「P4」）時，`per_paragraph` 改成 false。各文字欄位截到上限長度。提示框：`role` 不在七個值內的拿掉，沒有標題的用 role 的預設標題（Directions、Sentence Frames、Sentence Frame for Sharing、Word Bank、Hints、Guiding Questions、Example），`scaffolds` 補上提示框對應的鷹架種類。`item_patterns` 裡帶標籤的提示框（「Directions: …」「Sentence Frame for Sharing: …」，標籤當標題）與句型框架（招呼語開頭、有空格的分享句型，或用學生口吻、只有空格的句型）移出題型樣式，成為分享句型（或句型框架）提示框的 `pattern`（沒有這個提示框時加一個；原本一個提示框都沒有時，先加 `scaffolds` 第一個種類的提示框，因為舊做法會印它）；題型樣式原本一題一條（條數＝`item_count`）時，`item_count` 跟著減少。
 6. 存成第 1 版（`origin = "ai"`），`status = "ready"`。
 7. 每次呼叫一列 `ai_interactions`（`module` = prompt key）。輸入快照裡的學習單文字只留字數與雜湊。
 8. 伺服器重啟會中斷工作：`extracting` 超過 `6 × AI_TIMEOUT_SECS + 60` 秒的版型，下次讀取時改成 `failed`（「這次讀取中斷了…請按「重試」」）。
@@ -1774,7 +1786,18 @@ interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "temp
 - **檢查**：作答方式只能用固定標籤；選擇題至少 2 個不重複選項，答案必須是其中之一（模型只寫字母 A、B… 時換成該選項）；配對題至少 2 個選項；題幹不可直接含答案；至少要有 1 題。題目超過 `item_count` 時由程式只留前面幾題（不另外花一次呼叫）。答案是教材裡至少 5 個字的連續原文時，記為該題的 `evidence`（教師參考版會印出依據）。指示語可以是中文（由版型的 `instruction_language` 決定），所以這裡不做「全英文」檢查。
 - 輸出失控、讀不懂或沒通過檢查時**重試一次**（temperature +0.4，附上沒通過的項目）。還是失敗的區塊保留下來（標題、`student_tasks`），沒有題目，`message` 說明原因；其他區塊照常產生。工作的 `message` 會寫有幾個區塊沒有成功。
 - **需要教師提供素材的 section**（`needs_external_material = true`）：prompt 禁止寫出或編造任何素材（名稱、網址、作者、內容），題目只留空位；檢查會拿掉含網址或影片網站的欄位與題目。區塊的 `message` 一律是「這一區需要你提供素材（例如影片或另一篇文章），Manna 不會自己編造。」，`paragraph_ids` 是空的。呼叫失敗時程式放一題空位題（「放上你提供的素材後，在這裡寫題目。」）。
-- **對應到 `WsBlock`**：`block_kind` → `kind`；`title`、`instructions` 照輸出；`student_tasks` 照 section；題目 `origin = "ai"`、`levels` = 這次產生的所有版本；`answer` 只在教師參考版；`scaffold` 文字成為一個鷹架，種類是 section 的第一個 `scaffolds`（沒有時是語言鷹架「引導問題」；程序鷹架的文字依行拆成 `steps`），文字是空的就不加；`teacher_notes` = section 的 `purpose`；`template_section_id` = section 的 `id`。不另外加程式自動產生的程序鷹架。
+- **對應到 `WsBlock`**：`block_kind` → `kind`；`title`、`instructions` 照輸出；`student_tasks` 照 section；題目 `origin = "ai"`、`levels` = 這次產生的所有版本；`answer` 只在教師參考版；每個提示框成為一個鷹架，依版型的順序，`heading` 是原學習單的標題（見「提示框」）；section 沒有提示框（提示框出現以前讀的版型）時，`scaffold` 文字成為一個鷹架，種類是 section 的第一個 `scaffolds`（沒有時是語言鷹架「引導問題」；程序鷹架的文字依行拆成 `steps`），沒有 `heading`；文字是空的就不加；`teacher_notes` = section 的 `purpose`；`template_section_id` = section 的 `id`。不另外加程式自動產生的程序鷹架。
+- **一份學習單一個用語**：各區塊是分開同時寫的，看不到彼此，所以同一個概念的不同說法（目前是 informative／expository／informational 加 writing、text、essay、paragraph… 這一組）由程式統一：整份學習單混用時，用版型裡出現的那個詞，版型沒有就用教材的，都沒有就用學習單裡用得多的（同樣多時用先出現的），其他的換掉（保留字首大寫；不改教材的引文 `evidence`）。單一區塊重新產生時，跟著其他區塊用的詞。`worksheet_template_section` 第 5 版也寫明這條規則。
+
+### 提示框
+
+原學習單在一個區塊裡常有幾個有自己標題的部分，例如「Directions」（祈使句的作答步驟）與「Sentence Frame for Sharing」（口頭分享用、以 Hi! 開頭的句型）。它們是鷹架，不是題目，也各有用途。
+
+- **抽版型**：每個這樣的部分是 section 的一個 `supports`（`heading` 逐字照抄原學習單、`role`、`pattern`），依原本順序。七種 `role` 與印出的鷹架種類：`directions` → 程序鷹架「清楚的分步指示及完成順序」；`sentence_frame`、`sharing_frame` → 語言鷹架「句型框架」；`word_bank` → 「字詞表」；`hints` → 「提示與追問」；`guiding_questions` → 「引導問題」；`example` → 「作答示例」。句型框架（包括 Hi! 開頭的分享句型）一律是提示框，不是題型樣式，也不算進 `item_count`（伺服器另外檢查，見「抽版型」第 5 點）。教師的編輯頁在「看 Manna 讀到的細節」列出提示框；改版型時原樣保留。
+- **產生**：section 有提示框時，輸出沒有 `scaffold`，改成 `supports`：`minItems = maxItems =` 提示框數，每項 `{ heading（只能是這個 section 的標題之一）, lines[] }`，寫在 `items` 之前。輸出依標題對回版型的提示框（標題對不上時依位置），每個提示框成為區塊的一個鷹架，順序與標題照版型。`directions` 是一行一步的祈使句（不得有空格）；`sentence_frame` 只寫有空格的句型；`sharing_frame` 可以用 Hi! 開頭，但永遠不編題號。
+- **檢查**（`checks::evaluate_template_section`，`supports_wellformed`）：句型框架的提示框裡寫了作答步驟 → 步驟移到 Directions 提示框（版型沒有就在句型框架前面加一個標題為「Directions」的）；Directions 裡寫了有空格的句型 → 移到句型框架的提示框；「Use this frame:」開頭拿掉；招呼語開頭的分享句型寫在其他提示框（例如 Sentence Frames、Hints）時，移到分享句型的提示框；版型有、輸出卻空著的提示框會被指出（修正後仍空著就不印）。題目是招呼語開頭的分享句型（含包在題目裡的）→ `items_wellformed` 不通過，修正後仍是 → 移出題號，放進分享句型的提示框（它已經有句型時不重複；版型沒有就在最後加一個標題為「Sentence Frame for Sharing」的）；只有句型框架、用學生口吻的題目照「句型框架不是題目」的做法移到句型框架的提示框。都照「檢查 → 修正呼叫一次 → 程式處理」的流程。
+- **舊版型**（提示框出現以前讀的，沒有 `supports`）：產生時（整份與單一區塊重新產生），伺服器先在記憶體裡用「抽版型」第 5 點同樣的規則整理：題型樣式裡帶標籤的提示框（「Directions: …」「Sentence Frame for Sharing: …」「Word Bank: …」等，標籤照原文當標題）、招呼語開頭的分享句型、只有空格的句型框架，移成這個 section 的提示框（`WsTemplate::for_generation`），之後照有提示框的方式產生。存著的版型不改。題型樣式裡沒有這些時，照舊產生一個 `scaffold`，同樣的檢查也適用：這個鷹架是句型框架、裡面寫了步驟時拆成「Directions」與「Sentence frames」兩個方框；分享句型寫成題目，或寫在這個鷹架裡（不論它是哪一種），都移到「Sentence Frame for Sharing」方框（寫在鷹架裡的不另外花一次修正呼叫，因為舊版型沒有別的地方可寫）。舊版型沒有讀到、題型樣式裡也沒有的提示框（例如原學習單的 Directions 被讀成指示語寫法），要重新讀一次範例學習單才會有。
+- **印出**（預覽、複製、DOCX、PDF 共用 `assemble::project`）：每個鷹架印在 `heading`（沒有時是種類的英文標題）下面；有標題的程序鷹架印成一個方框，不併進區塊開頭的編號步驟。編輯器仍以種類顯示鷹架。
 - `content.chosen`：照一般流程決定設定，`reasons` 第一條是「依版型：<版型名稱>」，`item_budget` 是各區塊題數的總和。`show_objectives` 依「顯示學習目標」。
 - 既有的檢查照常適用：詞彙級別檢查（`POST …/checks/vocabulary`）、編修時的標籤驗證、匯出。
 - **單一區塊重新產生**（`POST …/blocks/:block_id/regenerate`）：有 `template_section_id` 的區塊重跑那個 section 的呼叫（逐段的區塊用原本的段落），工作是 `step = "template"`、`block_id` 為該區塊；失敗時區塊維持原樣。可以照常 `undo`。教師自己新增、沒有 `template_section_id` 的區塊，用原本的流程重新產生。
@@ -1791,6 +1814,16 @@ interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "temp
 | `FAKE_RUNAWAY` | 每次呼叫的第 1 次都寫到 `max_tokens`，重試成功 |
 
 照版型產生時，假模型每個區塊給 `item_count + 1` 題（由伺服器截掉多的），題目根據目標段落的第一句。既有的 `FAKE_ERROR`、`FAKE_TIMEOUT`、`FAKE_SLOW` 照舊。
+
+提示框：抽版型時，`## ` 區塊裡標題為 Directions、Sentence Frame(s) for Sharing、Sentence Frames、Sentence Starters、Word Bank、Hints、Guiding Questions 或 Example 的「標題: 內容」行，是那個區塊的提示框；有提示框的區塊照版型產生時，每個提示框依 role 給內容。
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_TPL_FRAME_AS_ITEM` | 抽版型：沒有提示框，分享句型是四條題型樣式的最後一條（`item_count` 4），像提示框出現以前那樣 → 伺服器移回提示框，`item_count` 3 |
+| `FAKE_TPL_BAD_SHAPES` | 照版型產生的第 1 次呼叫：第一題是問看法的是非題，最後兩題是分享句型（一題包在「Write … using the frame:」裡），步驟和「Use this frame:」寫在第一個句型框架提示框（或 `scaffold`），Directions 與分享句型提示框空著 → 修正呼叫寫好 |
+| `FAKE_TPL_BAD_SHAPES_ALWAYS` | 兩次呼叫都這樣 → 伺服器拆開、移出題號、改成直述句 |
+| `FAKE_TPL_TERMS` | 照版型產生：單數段的指示語寫 expository writing，雙數段寫 informative writing → 伺服器統一成一個 |
+| `FAKE_WS_FRAME_STEPS`／`FAKE_WS_FRAME_STEPS_ALWAYS` | 完整學習單的鷹架步驟：句型框架裡有兩句步驟與「Use this frame:」（第 1 次／兩次都是）→ 修正，或步驟移到分步指示 |
 
 ## usage_logs 新事件
 

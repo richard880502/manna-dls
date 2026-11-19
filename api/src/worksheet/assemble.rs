@@ -190,6 +190,7 @@ fn auto_procedural(block: &Block, levels: &[Level]) -> Scaffold {
         levels: levels.to_vec(),
         auto: true,
         origin: Origin::Ai,
+        heading: None,
     }
 }
 
@@ -213,6 +214,7 @@ pub fn attach_scaffolds(
                 levels: levels.to_vec(),
                 auto: true,
                 origin: Origin::Ai,
+                heading: None,
             });
         }
         let supports = set
@@ -235,6 +237,7 @@ pub fn attach_scaffolds(
                     levels: shown,
                     auto: false,
                     origin: Origin::Ai,
+                    heading: None,
                 });
             }
         }
@@ -259,18 +262,27 @@ pub const FRAME_TASK: &str = "Use the sentence frame above to write your answer.
 /// the block's 句型框架 scaffold, printed un-numbered in the 「Sentence frames」 box above the
 /// questions, in the versions the question was in. Right after an open question (簡答題,
 /// 段落寫作) it is that question's frame and its number goes; otherwise the question stays and
-/// asks to use the frame ([`FRAME_TASK`], a 簡答題 so it prints lines). The teacher's own
-/// questions are never touched. Returns how many frames were moved.
+/// asks to use the frame ([`FRAME_TASK`], a 簡答題 so it prints lines). A greeting-led frame
+/// wrapped in a task (「Write … using the frame: Hi! …」, [`super::checks::greeting_frame`]) is
+/// lifted the same way, without the wrapper. The teacher's own questions are never touched.
+/// Returns how many frames were moved.
 pub fn lift_frames(block: &mut Block, passage: &str) -> usize {
     let mut frames: Vec<String> = Vec::new();
     let mut levels: Vec<Level> = Vec::new();
     let mut items: Vec<Item> = Vec::new();
     for mut item in std::mem::take(&mut block.items) {
-        if item.origin != Origin::Ai || !super::checks::sentence_frame_only(&item.prompt, passage) {
+        let frame = if item.origin != Origin::Ai {
+            None
+        } else if super::checks::sentence_frame_only(&item.prompt, passage) {
+            Some(item.prompt.trim().to_string())
+        } else {
+            super::checks::greeting_frame(&item.prompt, passage)
+        };
+        let Some(frame) = frame else {
             items.push(item);
             continue;
-        }
-        frames.push(item.prompt.trim().to_string());
+        };
+        frames.push(frame);
         levels.extend(item.levels.iter().copied());
         let open = |i: &Item| {
             matches!(
@@ -309,9 +321,159 @@ pub fn lift_frames(block: &mut Block, passage: &str) -> usize {
             levels,
             auto: false,
             origin: Origin::Ai,
+            heading: None,
         }),
     }
     frames.len()
+}
+
+// ---------------------------------------------------------------- one term per worksheet
+
+/// Names of one idea a worksheet must not mix (a teacher found "informative writing" and
+/// "expository writing" on one sheet; a real-model run wrote "informational text" for a sample
+/// that says "informative writing"). Each group is one idea; its words are recognised before
+/// one of [`TERM_NOUNS`] ("informative writing", "Expository texts").
+const TERM_GROUPS: [&[&str]; 1] = [&["informative", "expository", "informational"]];
+const TERM_NOUNS: &str =
+    r"writing|texts?|essays?|articles?|paragraphs?|passages?|genre|style|structure|features?";
+
+static TERM_PATTERNS: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+    TERM_GROUPS
+        .iter()
+        .map(|group| {
+            regex::Regex::new(&format!(
+                r"(?i)\b({})(\s+(?:{TERM_NOUNS}))\b",
+                group.join("|")
+            ))
+            .expect("valid regex")
+        })
+        .collect()
+});
+
+/// Every text of a block the student or teacher reads, except quotes from the material.
+fn block_texts(b: &mut Block) -> Vec<&mut String> {
+    let mut out: Vec<&mut String> = vec![&mut b.title, &mut b.instructions];
+    for it in &mut b.items {
+        out.push(&mut it.prompt);
+        out.push(&mut it.answer);
+        out.push(&mut it.hint);
+        out.extend(it.options.iter_mut());
+    }
+    for s in &mut b.scaffolds {
+        out.push(&mut s.content);
+        out.extend(s.steps.iter_mut());
+    }
+    out
+}
+
+/// The same texts, to read.
+fn block_strings(b: &Block) -> Vec<&str> {
+    let mut out = vec![b.title.as_str(), b.instructions.as_str()];
+    for it in &b.items {
+        out.extend([it.prompt.as_str(), it.answer.as_str(), it.hint.as_str()]);
+        out.extend(it.options.iter().map(String::as_str));
+    }
+    for s in &b.scaffolds {
+        out.push(s.content.as_str());
+        out.extend(s.steps.iter().map(String::as_str));
+    }
+    out
+}
+
+/// The texts of `blocks` ([`block_texts`]), one per line: a reference for [`unify_terms`].
+pub fn blocks_text(blocks: &[Block]) -> String {
+    blocks
+        .iter()
+        .flat_map(block_strings)
+        .filter(|t| !t.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// How often each word of `group` names the idea in `text` (lower case).
+fn term_counts(pattern: &regex::Regex, text: &str) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for c in pattern.captures_iter(text) {
+        *counts.entry(c[1].to_lowercase()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// One name per idea across `blocks` ([`TERM_GROUPS`]): when the blocks use two words of a
+/// group (or, with `mixed_only` false, a word another than the reference's), the one the first
+/// of `reference` uses wins (a whole sheet: the template, then the material; one block made
+/// again: the other blocks); with none there, the one the blocks use most (the first used on a
+/// tie). The others are replaced, keeping a capital first letter. Blocks written in parallel
+/// cannot see each other, so the model alone cannot keep this. Returns how many words were
+/// replaced.
+pub fn unify_terms(blocks: &mut [Block], reference: &[&str], mixed_only: bool) -> usize {
+    let mut replaced = 0;
+    for pattern in TERM_PATTERNS.iter() {
+        let mut order: Vec<String> = Vec::new();
+        let mut used: HashMap<String, usize> = HashMap::new();
+        for b in blocks.iter() {
+            for text in block_strings(b) {
+                for c in pattern.captures_iter(text) {
+                    let w = c[1].to_lowercase();
+                    if !order.contains(&w) {
+                        order.push(w.clone());
+                    }
+                    *used.entry(w).or_insert(0) += 1;
+                }
+            }
+        }
+        if order.is_empty() || (mixed_only && order.len() < 2) {
+            continue;
+        }
+        let chosen = reference
+            .iter()
+            .find_map(|text| {
+                let counts = term_counts(pattern, text);
+                counts
+                    .iter()
+                    .max_by_key(|(w, n)| {
+                        (**n, std::cmp::Reverse(order.iter().position(|o| o == *w)))
+                    })
+                    .map(|(w, _)| w.clone())
+            })
+            .unwrap_or_else(|| {
+                order
+                    .iter()
+                    .max_by_key(|w| {
+                        (
+                            used[*w],
+                            std::cmp::Reverse(order.iter().position(|o| o == *w)),
+                        )
+                    })
+                    .cloned()
+                    .unwrap_or_default()
+            });
+        for b in blocks.iter_mut() {
+            for text in block_texts(b) {
+                let new = pattern.replace_all(text, |c: &regex::Captures| {
+                    let w = &c[1];
+                    if w.to_lowercase() == chosen {
+                        return format!("{w}{}", &c[2]);
+                    }
+                    replaced += 1;
+                    let word = if w.starts_with(char::is_uppercase) {
+                        let mut chars = chosen.chars();
+                        chars
+                            .next()
+                            .map(|f| f.to_uppercase().chain(chars).collect::<String>())
+                            .unwrap_or_default()
+                    } else {
+                        chosen.clone()
+                    };
+                    format!("{word}{}", &c[2])
+                });
+                if new != *text {
+                    *text = new.into_owned();
+                }
+            }
+        }
+    }
+    replaced
 }
 
 // ---------------------------------------------------------------- blocks from step outputs
@@ -546,8 +708,10 @@ pub struct SheetSupport {
     #[serde(rename = "type")]
     pub kind_type: ScaffoldType,
     pub kind: String,
-    /// English heading printed on the sheet (the kind labels themselves are Chinese).
-    pub heading: &'static str,
+    /// English heading printed on the sheet (the kind labels themselves are Chinese): the
+    /// scaffold's own heading when it has one (a template block prints the sample's, e.g.
+    /// "Directions", "Sentence Frame for Sharing"), otherwise the kind's ([`support_heading`]).
+    pub heading: String,
     pub content: String,
 }
 
@@ -986,9 +1150,10 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             label,
             title: b.title.trim().to_string(),
             instructions: b.instructions.trim().to_string(),
+            // A procedural scaffold with a heading of its own is a box (below).
             steps: scaffolds
                 .iter()
-                .filter(|s| s.kind_type == ScaffoldType::Procedural)
+                .filter(|s| s.kind_type == ScaffoldType::Procedural && s.own_heading().is_none())
                 .flat_map(|s| s.steps.iter())
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
@@ -1008,14 +1173,24 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             // 複製, DOCX, PDF) shows the heading once.
             supports: scaffolds
                 .iter()
-                .filter(|s| s.kind_type != ScaffoldType::Procedural)
+                .filter(|s| s.kind_type != ScaffoldType::Procedural || s.own_heading().is_some())
                 .filter_map(|s| {
-                    let heading = support_heading(&s.kind);
-                    let content = without_heading(&s.content, heading);
+                    let heading = s.own_heading().unwrap_or_else(|| support_heading(&s.kind));
+                    let text = if s.kind_type == ScaffoldType::Procedural {
+                        s.steps
+                            .iter()
+                            .map(|l| l.trim())
+                            .filter(|l| !l.is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    } else {
+                        s.content.clone()
+                    };
+                    let content = without_heading(&text, heading);
                     (!content.is_empty()).then(|| SheetSupport {
                         kind_type: s.kind_type,
                         kind: s.kind.clone(),
-                        heading,
+                        heading: heading.to_string(),
                         content: content.to_string(),
                     })
                 })
@@ -2005,7 +2180,7 @@ mod tests {
         let printed: Vec<(&str, &str)> = sheet.blocks[0]
             .supports
             .iter()
-            .map(|s| (s.heading, s.content.as_str()))
+            .map(|s| (s.heading.as_str(), s.content.as_str()))
             .collect();
         assert_eq!(
             printed,
@@ -2115,5 +2290,185 @@ mod tests {
             ..Block::default()
         };
         assert!(auto_steps(&b).iter().any(|s| s.contains("group")));
+    }
+
+    #[test]
+    fn a_frame_wrapped_in_a_writing_task_is_lifted_too() {
+        const FRAME: &str = "Hi! In Paragraph 2, the author describes ______. I identified ______ as the main idea.";
+        let mut b = Block {
+            id: "b1".into(),
+            enabled: true,
+            items: vec![
+                Item {
+                    prompt: "Which sentence is the topic sentence?".into(),
+                    ..item("q1", &Level::ALL, FMT_CHOICE)
+                },
+                Item {
+                    prompt: format!("Write a short analysis paragraph using the frame: {FRAME}"),
+                    ..item("q2", &Level::ALL, FMT_PARAGRAPH)
+                },
+            ],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut b, ""), 1);
+        // Not after an open question: it stays and asks for the frame (#71), without the wrapper.
+        assert_eq!(b.items[1].prompt, FRAME_TASK);
+        assert_eq!(b.scaffolds[0].content, FRAME);
+    }
+
+    #[test]
+    fn a_support_prints_under_its_own_heading() {
+        let support = |id: &str, kind_type, kind: &str, heading: Option<&str>| Scaffold {
+            id: id.into(),
+            kind_type,
+            kind: kind.into(),
+            levels: Level::ALL.to_vec(),
+            heading: heading.map(str::to_string),
+            ..Scaffold::default()
+        };
+        let mut c = content();
+        c.blocks[1].scaffolds = vec![
+            // Unheaded steps print as the block's numbered steps, as before.
+            Scaffold {
+                steps: vec!["Read the paragraph.".into()],
+                ..support("b1-sp", ScaffoldType::Procedural, KIND_STEPS, None)
+            },
+            // A template's Directions box prints as a box of lines under the sample's heading.
+            Scaffold {
+                steps: vec![
+                    "Identify the common idea.".into(),
+                    "Underline the topic sentence.".into(),
+                ],
+                ..support(
+                    "b1-s1",
+                    ScaffoldType::Procedural,
+                    KIND_STEPS,
+                    Some("Directions"),
+                )
+            },
+            Scaffold {
+                content:
+                    "Sentence Frame for Sharing: Hi! In Paragraph 1, the author describes ___."
+                        .into(),
+                ..support(
+                    "b1-s2",
+                    ScaffoldType::Verbal,
+                    KIND_FRAMES,
+                    Some(" Sentence Frame for Sharing "),
+                )
+            },
+            Scaffold {
+                content: "The author describes ___ to show ___.".into(),
+                ..support("b1-s3", ScaffoldType::Verbal, KIND_FRAMES, None)
+            },
+        ];
+        c.normalise().unwrap();
+        assert_eq!(
+            c.blocks[1].scaffolds[2].heading.as_deref(),
+            Some("Sentence Frame for Sharing"),
+            "trimmed"
+        );
+        let sheet = project("T", &c, Level::Standard, Audience::Student);
+        let b = sheet
+            .blocks
+            .iter()
+            .find(|b| b.id == c.blocks[1].id)
+            .unwrap();
+        assert_eq!(b.steps, ["Read the paragraph."]);
+        let printed: Vec<(&str, &str)> = b
+            .supports
+            .iter()
+            .map(|s| (s.heading.as_str(), s.content.as_str()))
+            .collect();
+        assert_eq!(
+            printed,
+            [
+                (
+                    "Directions",
+                    "Identify the common idea.\nUnderline the topic sentence."
+                ),
+                (
+                    "Sentence Frame for Sharing",
+                    "Hi! In Paragraph 1, the author describes ___."
+                ),
+                ("Sentence frames", "The author describes ___ to show ___."),
+            ]
+        );
+        // A heading longer than a heading is refused.
+        let mut long = c.clone();
+        long.blocks[1].scaffolds[1].heading = Some("H".repeat(81));
+        assert!(long.normalise().is_err());
+    }
+
+    #[test]
+    fn a_sheet_uses_one_name_for_one_idea() {
+        let block = |id: &str, instructions: &str, prompt: &str| Block {
+            id: id.into(),
+            instructions: instructions.into(),
+            items: vec![Item {
+                prompt: prompt.into(),
+                ..item(&format!("{id}-i1"), &Level::ALL, "簡答題")
+            }],
+            ..Block::default()
+        };
+        let sheet = || {
+            vec![
+                block(
+                    "b1",
+                    "Read paragraph 1 of this informative writing.",
+                    "Name one feature of informative writing.",
+                ),
+                block(
+                    "b2",
+                    "Expository writing explains facts.",
+                    "Which expository text features do you see? Informative texts use facts.",
+                ),
+            ]
+        };
+        // The template's word wins.
+        let mut blocks = sheet();
+        let n = unify_terms(
+            &mut blocks,
+            &["Features of expository writing", "informative"],
+            true,
+        );
+        assert_eq!(n, 3);
+        assert_eq!(
+            blocks[0].instructions,
+            "Read paragraph 1 of this expository writing."
+        );
+        assert_eq!(
+            blocks[1].items[0].prompt,
+            "Which expository text features do you see? Expository texts use facts."
+        );
+        // Without one there, the material's; without that either, the most used (capitals kept).
+        let mut blocks = sheet();
+        unify_terms(&mut blocks, &["", "An informative essay about bees."], true);
+        assert_eq!(
+            blocks[1].instructions,
+            "Informative writing explains facts."
+        );
+        let mut blocks = sheet();
+        unify_terms(&mut blocks, &[], true);
+        assert_eq!(
+            blocks[1].instructions,
+            "Informative writing explains facts."
+        );
+        // A third name of the same idea.
+        let mut three = vec![block(
+            "b3",
+            "Informational texts give facts.",
+            "Name one feature of informative writing.",
+        )];
+        unify_terms(&mut three, &["informative writing"], true);
+        assert_eq!(three[0].instructions, "Informative texts give facts.");
+        // One word throughout: nothing to do; one block made again follows the others.
+        let mut one = [sheet().remove(0)];
+        assert_eq!(unify_terms(&mut one, &["expository texts"], true), 0);
+        assert_eq!(unify_terms(&mut one, &["expository texts"], false), 2);
+        assert_eq!(
+            one[0].items[0].prompt,
+            "Name one feature of expository writing."
+        );
     }
 }

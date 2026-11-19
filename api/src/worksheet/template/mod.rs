@@ -22,7 +22,8 @@ use serde_json::{json, Value};
 use super::bloom::Bloom;
 use super::{
     student_tasks, BlockKind, ScaffoldType, Settings, ANSWER_FORMATS, GENERATION_OPTIONS,
-    GEN_OBJECTIVES, INSTRUCTIONAL_KINDS, MAX_ID_CHARS, PROCEDURAL_KINDS, VERBAL_KINDS,
+    GEN_OBJECTIVES, INSTRUCTIONAL_KINDS, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS,
+    KIND_WORD_LIST, MAX_ID_CHARS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::routes::clip_chars;
 
@@ -44,6 +45,9 @@ pub const MAX_STYLE_NOTES: usize = 8;
 pub const MAX_STYLE_NOTE_CHARS: usize = 200;
 pub const MAX_HEADER_FIELDS: usize = 20;
 pub const MAX_HEADER_FIELD_CHARS: usize = 100;
+pub const MAX_SUPPORTS: usize = 6;
+pub const MAX_SUPPORT_HEADING_CHARS: usize = 60;
+pub const MAX_SUPPORT_PATTERN_CHARS: usize = 300;
 
 /// What a block that needs the teacher's own material says (contract, verbatim).
 pub const MSG_EXTERNAL: &str = "這一區需要你提供素材（例如影片或另一篇文章），Manna 不會自己編造。";
@@ -118,10 +122,133 @@ pub struct WsTemplateSection {
     pub item_count: i64,
     pub text_scope: String,
     pub scaffolds: Vec<String>,
+    /// The sample's labelled support boxes in this section, in the sample's order, each with its
+    /// own heading ("Directions", "Sentence Frame for Sharing", "Word Bank"…). A block made from
+    /// the section prints each one separately under that heading. Empty for a section without
+    /// any, and for a template read before supports existed (its block prints one scaffold of
+    /// its first kind, as before); absent from the JSON when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supports: Vec<WsTemplateSupport>,
     pub instruction_style: String,
+    /// Patterns of the numbered questions only: a frame is a support, never an item pattern.
     pub item_patterns: Vec<String>,
     /// Needs a video, recording, image or other text the teacher must supply.
     pub needs_external_material: bool,
+}
+
+/// What a support box of the sample is for. Each role prints as one scaffold kind of the spec
+/// ([`SupportRole::kind`]); the box keeps the sample's heading.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SupportRole {
+    /// Short imperative steps, no blanks (清楚的分步指示及完成順序, procedural).
+    Directions,
+    /// Sentences with blanks the student completes in writing (句型框架).
+    #[default]
+    SentenceFrame,
+    /// A frame for sharing aloud; it may open with a greeting ("Hi! In Paragraph 2, …"). Never a
+    /// numbered question (句型框架).
+    SharingFrame,
+    /// Words only (字詞表).
+    WordBank,
+    /// Short hints or prompts (提示與追問).
+    Hints,
+    /// Questions that guide the thinking, not answered on the sheet (引導問題).
+    GuidingQuestions,
+    /// A worked example (作答示例).
+    Example,
+}
+
+impl SupportRole {
+    pub const ALL: [Self; 7] = [
+        Self::Directions,
+        Self::SentenceFrame,
+        Self::SharingFrame,
+        Self::WordBank,
+        Self::Hints,
+        Self::GuidingQuestions,
+        Self::Example,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Directions => "directions",
+            Self::SentenceFrame => "sentence_frame",
+            Self::SharingFrame => "sharing_frame",
+            Self::WordBank => "word_bank",
+            Self::Hints => "hints",
+            Self::GuidingQuestions => "guiding_questions",
+            Self::Example => "example",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.as_str() == s.trim())
+    }
+
+    /// The role a scaffold kind is printed for, if any (a sentence frame is a writing frame).
+    pub fn of_kind(kind: &str) -> Option<Self> {
+        [
+            Self::Directions,
+            Self::SentenceFrame,
+            Self::WordBank,
+            Self::Hints,
+            Self::GuidingQuestions,
+            Self::Example,
+        ]
+        .into_iter()
+        .find(|r| r.kind() == kind)
+    }
+
+    /// The scaffold kind it prints as.
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::Directions => KIND_STEPS,
+            Self::SentenceFrame | Self::SharingFrame => KIND_FRAMES,
+            Self::WordBank => KIND_WORD_LIST,
+            Self::Hints => "提示與追問",
+            Self::GuidingQuestions => KIND_GUIDING,
+            Self::Example => KIND_EXAMPLE,
+        }
+    }
+
+    pub fn kind_type(self) -> ScaffoldType {
+        if self == Self::Directions {
+            ScaffoldType::Procedural
+        } else {
+            ScaffoldType::Verbal
+        }
+    }
+
+    /// The heading a box of this role gets when the sample gave it none.
+    pub fn default_heading(self) -> &'static str {
+        match self {
+            Self::Directions => "Directions",
+            Self::SentenceFrame => "Sentence Frames",
+            Self::SharingFrame => "Sentence Frame for Sharing",
+            Self::WordBank => "Word Bank",
+            Self::Hints => "Hints",
+            Self::GuidingQuestions => "Guiding Questions",
+            Self::Example => "Example",
+        }
+    }
+
+    /// A sentence frame (for writing or for sharing aloud).
+    pub fn is_frame(self) -> bool {
+        matches!(self, Self::SentenceFrame | Self::SharingFrame)
+    }
+}
+
+/// One labelled support box of the sample.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct WsTemplateSupport {
+    /// The sample's own heading, word for word (≤60).
+    pub heading: String,
+    pub role: SupportRole,
+    /// What the box holds, as a reusable pattern with placeholders and blanks (≤300, may be
+    /// empty).
+    pub pattern: String,
 }
 
 /// Keeps the labels in the order given, without duplicates; one outside `allowed` is an error
@@ -239,6 +366,18 @@ impl WsTemplate {
             s.text_scope = s.text_scope.trim().to_string();
             check_len("課文範圍", &s.text_scope, MAX_TEXT_SCOPE_CHARS).map_err(at)?;
             s.scaffolds = check_labels("鷹架", &s.scaffolds, &all_kinds).map_err(at)?;
+            if s.supports.len() > MAX_SUPPORTS {
+                return Err(at(format!("提示框最多 {MAX_SUPPORTS} 個。")));
+            }
+            for sup in &mut s.supports {
+                sup.heading = sup.heading.trim().to_string();
+                if sup.heading.is_empty() {
+                    return Err(at("提示框的標題不能是空的。".to_string()));
+                }
+                check_len("提示框的標題", &sup.heading, MAX_SUPPORT_HEADING_CHARS).map_err(at)?;
+                sup.pattern = sup.pattern.trim().to_string();
+                check_len("提示框的樣式", &sup.pattern, MAX_SUPPORT_PATTERN_CHARS).map_err(at)?;
+            }
             s.instruction_style = s.instruction_style.trim().to_string();
             check_len(
                 "指示語寫法",
@@ -300,9 +439,21 @@ pub struct RawSection {
     pub item_count: i64,
     pub text_scope: String,
     pub scaffolds: Vec<String>,
+    /// `worksheet_template_details` version 3; absent from an older output.
+    #[serde(default)]
+    pub supports: Vec<RawSupport>,
     pub instruction_style: String,
     pub item_patterns: Vec<String>,
     pub needs_external_material: bool,
+}
+
+/// One support box as the extraction wrote it (`role` is checked when it is cleaned up).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct RawSupport {
+    pub heading: String,
+    pub role: String,
+    pub pattern: String,
 }
 
 /// Call B: one section per outline item.
@@ -336,28 +487,56 @@ pub struct RawSectionOut {
     pub instructions: String,
     /// One line per step, frame or question. The schema asks for an array of lines (version 2:
     /// gemma ends a JSON string where it wants a line break); a single string is read as well.
-    #[serde(deserialize_with = "lines_or_string")]
+    /// A section with supports is asked for `supports` instead (absent then).
+    #[serde(default, deserialize_with = "lines_or_string")]
     pub scaffold: String,
+    /// One entry per support box of the section, in its order (sections with supports only).
+    #[serde(default)]
+    pub supports: Vec<RawSupportOut>,
     pub items: Vec<RawOutItem>,
+}
+
+/// One support box as generated: the heading it belongs to and its lines.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct RawSupportOut {
+    #[serde(default)]
+    pub heading: String,
+    #[serde(default, deserialize_with = "line_list")]
+    pub lines: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Lines {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Lines {
+    fn list(self) -> Vec<String> {
+        let all = match self {
+            Lines::One(s) => s.lines().map(str::to_string).collect::<Vec<_>>(),
+            Lines::Many(lines) => lines,
+        };
+        all.iter()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 /// An array of lines joined with line breaks, or a string as it is.
 fn lines_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Lines {
-        One(String),
-        Many(Vec<String>),
-    }
     Ok(match Lines::deserialize(d)? {
         Lines::One(s) => s,
-        Lines::Many(lines) => lines
-            .iter()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
+        many => many.list().join("\n"),
     })
+}
+
+/// An array of lines, or a string split at its line breaks; blank lines dropped.
+fn line_list<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    Ok(Lines::deserialize(d)?.list())
 }
 
 // ---------------------------------------------------------------- schemas (properties in written order)
@@ -434,6 +613,16 @@ fn section_schema() -> Value {
         ("item_count", json!({ "type": "integer" })),
         ("text_scope", s_max(MAX_TEXT_SCOPE_CHARS)),
         ("scaffolds", enum_array(&scaffold_kinds())),
+        // Before the item patterns: what is a support box is decided first, so a frame does
+        // not end up as a question pattern.
+        (
+            "supports",
+            json!({ "type": "array", "items": obj(vec![
+                ("heading", s_max(MAX_SUPPORT_HEADING_CHARS)),
+                ("role", enum_of(&support_roles())),
+                ("pattern", s_max(MAX_SUPPORT_PATTERN_CHARS)),
+            ]), "maxItems": MAX_SUPPORTS }),
+        ),
         ("instruction_style", s_max(MAX_INSTRUCTION_STYLE_CHARS)),
         (
             "item_patterns",
@@ -441,6 +630,10 @@ fn section_schema() -> Value {
         ),
         ("needs_external_material", b()),
     ])
+}
+
+fn support_roles() -> Vec<&'static str> {
+    SupportRole::ALL.iter().map(|r| r.as_str()).collect()
 }
 
 /// `details_schema(n)` of the probe: exactly `n` sections (one per outline item).
@@ -474,7 +667,13 @@ pub const ITEM_ANSWER_CHARS: usize = 400;
 /// the prompt: the scaffold is an array of lines and every item ends with its Bloom level (an
 /// enum of the six ids), written after the item so the label describes what was written.
 /// `organizers` (the section may use 圖像組織): every item has an `organizer` after its options.
-pub fn section_out_schema(item_count: usize, organizers: bool) -> Value {
+/// `supports` (the section's support boxes): instead of `scaffold`, exactly one entry per box,
+/// its heading one of the boxes' headings, written before the items.
+pub fn section_out_schema(
+    item_count: usize,
+    organizers: bool,
+    supports: &[WsTemplateSupport],
+) -> Value {
     let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
     let mut item = vec![
         ("answer_format", enum_of(&ANSWER_FORMATS)),
@@ -488,13 +687,35 @@ pub fn section_out_schema(item_count: usize, organizers: bool) -> Value {
         ("answer", s_max(ITEM_ANSWER_CHARS)),
         ("bloom", enum_of(&blooms)),
     ]);
-    obj(vec![
-        ("title", s_max(SECTION_TITLE_CHARS)),
-        ("instructions", s_max(SECTION_INSTRUCTIONS_CHARS)),
+    let support = if supports.is_empty() {
         (
             "scaffold",
             strings_max(SECTION_SCAFFOLD_LINES, SECTION_SCAFFOLD_LINE_CHARS),
-        ),
+        )
+    } else {
+        let mut headings: Vec<&str> = Vec::new();
+        for s in supports {
+            if !headings.contains(&s.heading.as_str()) {
+                headings.push(s.heading.as_str());
+            }
+        }
+        (
+            "supports",
+            json!({
+                "type": "array",
+                "items": obj(vec![
+                    ("heading", enum_of(&headings)),
+                    ("lines", strings_max(SECTION_SCAFFOLD_LINES, SECTION_SCAFFOLD_LINE_CHARS)),
+                ]),
+                "minItems": supports.len(),
+                "maxItems": supports.len(),
+            }),
+        )
+    };
+    obj(vec![
+        ("title", s_max(SECTION_TITLE_CHARS)),
+        ("instructions", s_max(SECTION_INSTRUCTIONS_CHARS)),
+        support,
         (
             "items",
             json!({
@@ -578,7 +799,7 @@ pub fn from_extraction(outline: &RawOutline, details: &RawDetails) -> WsTemplate
                 "exit_ticket" => BlockKind::ExitTicket,
                 _ => BlockKind::Activity,
             };
-            WsTemplateSection {
+            let mut section = WsTemplateSection {
                 id: format!("s{}", i + 1),
                 title_pattern: title,
                 purpose: clip_trim(&d.purpose, MAX_PURPOSE_CHARS),
@@ -589,6 +810,7 @@ pub fn from_extraction(outline: &RawOutline, details: &RawDetails) -> WsTemplate
                 item_count: d.item_count.clamp(1, MAX_ITEM_COUNT),
                 text_scope,
                 scaffolds: keep_labels(&d.scaffolds, &all_kinds),
+                supports: supports_from(&d.supports),
                 instruction_style: clip_trim(&d.instruction_style, MAX_INSTRUCTION_STYLE_CHARS),
                 item_patterns: clip_list(
                     &d.item_patterns,
@@ -596,7 +818,9 @@ pub fn from_extraction(outline: &RawOutline, details: &RawDetails) -> WsTemplate
                     MAX_ITEM_PATTERN_CHARS,
                 ),
                 needs_external_material: d.needs_external_material,
-            }
+            };
+            settle_supports(&mut section);
+            section
         })
         .collect();
     let sections = drop_header_section(sections);
@@ -618,6 +842,155 @@ pub fn from_extraction(outline: &RawOutline, details: &RawDetails) -> WsTemplate
         sections,
         generation_options: keep_labels(&details.generation_options, &GENERATION_OPTIONS),
         style_notes: clip_list(&details.style_notes, MAX_STYLE_NOTES, MAX_STYLE_NOTE_CHARS),
+    }
+}
+
+/// The support boxes the extraction wrote, leniently: a role outside the set drops the box, an
+/// empty heading becomes the role's default heading, text is cut to its limit, at most
+/// [`MAX_SUPPORTS`].
+fn supports_from(raw: &[RawSupport]) -> Vec<WsTemplateSupport> {
+    raw.iter()
+        .filter_map(|r| {
+            let role = SupportRole::parse(&r.role)?;
+            let mut heading = clip_trim(&r.heading, MAX_SUPPORT_HEADING_CHARS);
+            if heading.is_empty() {
+                heading = role.default_heading().to_string();
+            }
+            Some(WsTemplateSupport {
+                heading,
+                role,
+                pattern: clip_trim(&r.pattern, MAX_SUPPORT_PATTERN_CHARS),
+            })
+        })
+        .take(MAX_SUPPORTS)
+        .collect()
+}
+
+/// A pattern that is a support box of the sample with its label: 「Directions: Underline …」,
+/// 「Sentence Frame for Sharing: Hi! …」 (a template read before supports wrote them so). The
+/// label as written, its role and what follows it.
+static LABELLED_BOX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^\s*(directions?|sentence\s+frames?\s+for\s+sharing|sharing\s+frames?|sentence\s+frames?|sentence\s+starters?|word\s+banks?|hints?|tips|guiding\s+questions|examples?)\s*[:：]\s*(.+)$",
+    )
+    .expect("valid regex")
+});
+
+fn labelled_box(pattern: &str) -> Option<(String, SupportRole, String)> {
+    let c = LABELLED_BOX.captures(pattern)?;
+    let label = c[1].split_whitespace().collect::<Vec<_>>().join(" ");
+    let key = label.to_lowercase();
+    let role = if key.starts_with("direction") {
+        SupportRole::Directions
+    } else if key.contains("sharing") {
+        SupportRole::SharingFrame
+    } else if key.starts_with("sentence") {
+        SupportRole::SentenceFrame
+    } else if key.starts_with("word") {
+        SupportRole::WordBank
+    } else if key.starts_with("hint") || key == "tips" {
+        SupportRole::Hints
+    } else if key.starts_with("guiding") {
+        SupportRole::GuidingQuestions
+    } else {
+        SupportRole::Example
+    };
+    Some((label, role, c[2].trim().to_string()))
+}
+
+/// A frame (or another support box) is never a question pattern (a teacher found her 「Sentence
+/// Frame for Sharing」 numbered as a question in every paragraph block): an item pattern that is
+/// a labelled box (「Directions: …」, [`labelled_box`]), a greeting-led fill-in frame
+/// ([`crate::worksheet::checks::greeting_frame`]) or a frame in the student's voice
+/// ([`crate::worksheet::checks::sentence_frame_only`]) leaves `item_patterns` and becomes the
+/// pattern of the section's box of that role, which is added (under the label as written, or the
+/// role's default heading) when the section has none. A section that had no boxes and whose
+/// frames came without a label keeps, first, a box of its first scaffold kind (its one scaffold
+/// printed before). When the patterns were one per question (as many as `item_count`), the count
+/// goes down with them.
+fn frames_out_of_patterns(s: &mut WsTemplateSection) {
+    use crate::worksheet::checks::{greeting_frame, sentence_frame_only};
+    let one_per_item = s.item_patterns.len() as i64 == s.item_count;
+    let had_supports = !s.supports.is_empty();
+    let mut moved: Vec<(Option<String>, SupportRole, String)> = Vec::new();
+    let mut kept = Vec::new();
+    for p in std::mem::take(&mut s.item_patterns) {
+        if let Some((label, role, rest)) = labelled_box(&p) {
+            let rest = match role {
+                SupportRole::SharingFrame => greeting_frame(&rest, "").unwrap_or(rest),
+                _ => rest,
+            };
+            moved.push((Some(label), role, rest));
+        } else if let Some(frame) = greeting_frame(&p, "") {
+            moved.push((None, SupportRole::SharingFrame, frame));
+        } else if sentence_frame_only(&p, "") {
+            moved.push((None, SupportRole::SentenceFrame, p));
+        } else {
+            kept.push(p);
+        }
+    }
+    s.item_patterns = kept;
+    if moved.is_empty() {
+        return;
+    }
+    if !had_supports && moved.iter().all(|(label, _, _)| label.is_none()) {
+        let first = s.scaffolds.iter().find_map(|k| SupportRole::of_kind(k));
+        if let Some(first) = first.filter(|r| moved.iter().all(|(_, role, _)| role != r)) {
+            s.supports.push(WsTemplateSupport {
+                heading: first.default_heading().to_string(),
+                role: first,
+                pattern: String::new(),
+            });
+        }
+    }
+    let count = moved.len() as i64;
+    for (label, role, text) in moved {
+        let text = clip_trim(&text, MAX_SUPPORT_PATTERN_CHARS);
+        match s.supports.iter().position(|x| x.role == role) {
+            Some(at) if s.supports[at].pattern.is_empty() => s.supports[at].pattern = text,
+            Some(_) => {}
+            None if s.supports.len() < MAX_SUPPORTS => s.supports.push(WsTemplateSupport {
+                heading: label
+                    .map(|l| clip_trim(&l, MAX_SUPPORT_HEADING_CHARS))
+                    .unwrap_or_else(|| role.default_heading().to_string()),
+                role,
+                pattern: text,
+            }),
+            None => {}
+        }
+    }
+    if one_per_item {
+        s.item_count = (s.item_count - count).max(1);
+    }
+}
+
+/// A section read before supports existed, brought up to date: its labelled boxes and frames
+/// move out of the question patterns ([`frames_out_of_patterns`]) and its kinds follow
+/// ([`kinds_of_supports`]). A section whose patterns hold no box stays as it is.
+fn settle_supports(s: &mut WsTemplateSection) {
+    frames_out_of_patterns(s);
+    kinds_of_supports(s);
+}
+
+impl WsTemplate {
+    /// The template as a worksheet is generated from it: sections read before supports existed
+    /// get the boxes their question patterns hold ([`settle_supports`]). The stored versions are
+    /// not changed; a section that has boxes is used as it is.
+    pub fn for_generation(mut self) -> Self {
+        for s in self.sections.iter_mut().filter(|s| s.supports.is_empty()) {
+            settle_supports(s);
+        }
+        self
+    }
+}
+
+/// The scaffold kinds of a section include those its support boxes print as.
+fn kinds_of_supports(s: &mut WsTemplateSection) {
+    for sup in &s.supports {
+        let kind = sup.role.kind();
+        if !s.scaffolds.iter().any(|k| k == kind) {
+            s.scaffolds.push(kind.to_string());
+        }
     }
 }
 
@@ -888,6 +1261,7 @@ mod tests {
                 "逐段".into()
             },
             scaffolds: labels(&["引導問題", "高層次思考"]),
+            supports: Vec::new(),
             instruction_style: "英文".into(),
             item_patterns: labels(&["a", "b", "c", "d", "e", "f", "g"]),
             needs_external_material: i == 3,
@@ -1089,14 +1463,14 @@ mod tests {
         let o = outline_schema();
         let keys: Vec<&String> = o["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys.last().map(|k| k.as_str()), Some("outline"));
-        let out = section_out_schema(20, false);
+        let out = section_out_schema(20, false, &[]);
         assert_eq!(out["properties"]["items"]["maxItems"], 12, "capped at 12");
         assert_eq!(
-            section_out_schema(3, false)["properties"]["items"]["maxItems"],
+            section_out_schema(3, false, &[])["properties"]["items"]["maxItems"],
             3
         );
         // A section that may use 圖像組織: an organizer after the options.
-        let with = section_out_schema(3, true);
+        let with = section_out_schema(3, true, &[]);
         let keys: Vec<&String> = with["properties"]["items"]["items"]["properties"]
             .as_object()
             .unwrap()
@@ -1157,5 +1531,284 @@ mod tests {
                 assert!(!text.contains(&format!("\"{label}\"")), "{label}");
             }
         }
+    }
+
+    fn raw_section(supports: Vec<RawSupport>, patterns: &[&str], count: i64) -> RawSection {
+        RawSection {
+            title_pattern: "[n] Paragraph Analysis".into(),
+            purpose: "p".into(),
+            block_kind: "activity".into(),
+            student_tasks: labels(&["理解內容"]),
+            answer_formats: labels(&["是非題", "段落寫作"]),
+            item_count: count,
+            text_scope: "逐段".into(),
+            scaffolds: labels(&["句型框架", "提示與追問"]),
+            supports,
+            instruction_style: "英文祈使句".into(),
+            item_patterns: labels(patterns),
+            needs_external_material: false,
+        }
+    }
+
+    fn extracted(section: RawSection) -> WsTemplateSection {
+        let outline = RawOutline {
+            worksheet_kind: "逐段分析".into(),
+            instruction_language: "英文".into(),
+            header_fields: Vec::new(),
+            shows_objectives: false,
+            includes_passage_text: false,
+            outline: vec![RawOutlineItem {
+                title_pattern: "[n] Paragraph Analysis".into(),
+                per_paragraph: true,
+            }],
+        };
+        let details = RawDetails {
+            sections: vec![section],
+            generation_options: Vec::new(),
+            style_notes: Vec::new(),
+        };
+        let mut t = from_extraction(&outline, &details);
+        let before = t.clone();
+        t.validate().unwrap();
+        assert_eq!(t, before, "a cleaned extraction is already valid");
+        t.sections.remove(0)
+    }
+
+    const SHARING_PATTERN: &str = "Hi! In the [段落編號] paragraph, the author describes _____. After reading it carefully, I identified _____ as one of the main characteristics...";
+
+    #[test]
+    fn the_samples_support_boxes_are_kept_with_their_headings() {
+        let raw = |heading: &str, role: &str, pattern: &str| RawSupport {
+            heading: heading.into(),
+            role: role.into(),
+            pattern: pattern.into(),
+        };
+        let s = extracted(raw_section(
+            vec![
+                raw(
+                    "Directions",
+                    "directions",
+                    "Identify [關鍵概念] in the first sentence.",
+                ),
+                raw(
+                    " Sentence Frame for Sharing ",
+                    "sharing_frame",
+                    SHARING_PATTERN,
+                ),
+                raw("", "word_bank", "[字詞], [字詞]"),
+                raw("Tips", "nonsense", "x"),
+            ],
+            &["Do you think [句子] is the topic sentence?"],
+            3,
+        ));
+        assert_eq!(
+            s.supports,
+            [
+                WsTemplateSupport {
+                    heading: "Directions".into(),
+                    role: SupportRole::Directions,
+                    pattern: "Identify [關鍵概念] in the first sentence.".into(),
+                },
+                WsTemplateSupport {
+                    heading: "Sentence Frame for Sharing".into(),
+                    role: SupportRole::SharingFrame,
+                    pattern: SHARING_PATTERN.into(),
+                },
+                WsTemplateSupport {
+                    heading: "Word Bank".into(),
+                    role: SupportRole::WordBank,
+                    pattern: "[字詞], [字詞]".into(),
+                },
+            ]
+        );
+        // The kinds the boxes print as join the section's kinds.
+        assert_eq!(
+            s.scaffolds,
+            labels(&["句型框架", "提示與追問", KIND_STEPS, KIND_WORD_LIST])
+        );
+        assert_eq!(s.item_count, 3);
+        // Stored as it was read; a template without boxes keeps its JSON as before.
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["supports"][1]["role"], "sharing_frame");
+        let old: WsTemplateSection = serde_json::from_value(json!({
+            "id": "s1", "title_pattern": "Paragraph [n]", "item_count": 2,
+        }))
+        .unwrap();
+        assert!(old.supports.is_empty());
+        assert!(serde_json::to_value(&old)
+            .unwrap()
+            .get("supports")
+            .is_none());
+    }
+
+    #[test]
+    fn a_frame_read_as_a_question_pattern_becomes_a_box() {
+        // As the teacher's template was read: the sharing frame is the 4th of 4 question patterns.
+        let s = extracted(raw_section(
+            Vec::new(),
+            &[
+                "What is the common idea about [主題] in the first sentence?",
+                "Which sentence introduces the main point of paragraph [n]?",
+                "Do you think [句子] serves as a topic sentence? (True/False)",
+                SHARING_PATTERN,
+            ],
+            4,
+        ));
+        assert_eq!(s.item_patterns.len(), 3);
+        assert_eq!(s.item_count, 3, "the frame was not a question");
+        // The box of its first kind stays (a template read without boxes printed it), then the
+        // sharing frame's.
+        assert_eq!(
+            s.supports
+                .iter()
+                .map(|b| (b.heading.as_str(), b.role))
+                .collect::<Vec<_>>(),
+            [
+                ("Sentence Frames", SupportRole::SentenceFrame),
+                ("Sentence Frame for Sharing", SupportRole::SharingFrame),
+            ]
+        );
+        assert_eq!(s.supports[1].pattern, SHARING_PATTERN);
+        // A wrapped frame among more patterns than questions: the count stays.
+        let s = extracted(raw_section(
+            vec![RawSupport {
+                heading: "Sentence Frame for Sharing".into(),
+                role: "sharing_frame".into(),
+                pattern: String::new(),
+            }],
+            &[
+                "What does [人物] do?",
+                &format!("Write a paragraph using the frame: {SHARING_PATTERN}"),
+            ],
+            4,
+        ));
+        assert_eq!(s.item_patterns, labels(&["What does [人物] do?"]));
+        assert_eq!(s.item_count, 4);
+        assert_eq!(s.supports.len(), 1);
+        assert_eq!(s.supports[0].pattern, SHARING_PATTERN);
+    }
+
+    #[test]
+    fn a_template_read_before_supports_gets_its_boxes_when_generating() {
+        // As a real-model extraction on main read a sample with a Directions part and a
+        // Sentence Frame for Sharing part: both among the question patterns, with their labels.
+        let old = WsTemplateSection {
+            id: "s1".into(),
+            title_pattern: "Part A. Paragraph [n] Analysis".into(),
+            per_paragraph: true,
+            item_count: 3,
+            scaffolds: labels(&["透過上下文解釋詞義", "句型框架"]),
+            item_patterns: labels(&[
+                "Directions: Underline the topic sentence, circle two supporting details.",
+                "Do you think the [第一] sentence serves as the topic sentence? (A) True (B) False",
+                "Which detail best supports the main idea of Paragraph [n]?",
+                "In your own words, what does the word \"[關鍵字]\" mean? ______",
+                "Sentence Frame for Sharing: Hi! In Paragraph [n], the author describes ______.",
+            ]),
+            ..WsTemplateSection::default()
+        };
+        let plain = section("Wrap-up", false);
+        let t = template(vec![old, plain.clone()]).for_generation();
+        let s = &t.sections[0];
+        assert_eq!(
+            s.supports,
+            [
+                WsTemplateSupport {
+                    heading: "Directions".into(),
+                    role: SupportRole::Directions,
+                    pattern: "Underline the topic sentence, circle two supporting details.".into(),
+                },
+                WsTemplateSupport {
+                    heading: "Sentence Frame for Sharing".into(),
+                    role: SupportRole::SharingFrame,
+                    pattern: "Hi! In Paragraph [n], the author describes ______.".into(),
+                },
+            ]
+        );
+        assert_eq!(s.item_patterns.len(), 3);
+        assert_eq!(
+            s.item_count, 3,
+            "five patterns for three questions: the count stays"
+        );
+        assert!(s.scaffolds.contains(&KIND_STEPS.to_string()));
+        // Nothing to move, or boxes already there: as stored.
+        assert_eq!(t.sections[1], plain);
+        let read = template(vec![s.clone()]);
+        assert_eq!(read.clone().for_generation(), read);
+    }
+
+    #[test]
+    fn support_boxes_are_validated() {
+        let mut t = template(vec![section("TASK 1", false)]);
+        t.sections[0].supports = vec![WsTemplateSupport {
+            heading: " Directions ".into(),
+            role: SupportRole::Directions,
+            pattern: String::new(),
+        }];
+        t.validate().unwrap();
+        assert_eq!(t.sections[0].supports[0].heading, "Directions");
+        let mut bad = t.clone();
+        bad.sections[0].supports[0].heading = " ".into();
+        assert!(bad.validate().unwrap_err().contains("提示框"));
+        let mut bad = t.clone();
+        bad.sections[0].supports[0].heading = "H".repeat(61);
+        assert!(bad.validate().is_err());
+        let mut bad = t.clone();
+        bad.sections[0].supports = vec![t.sections[0].supports[0].clone(); 7];
+        assert!(bad.validate().is_err());
+        // A role outside the set is not a template.
+        let parsed: Result<WsTemplateSupport, _> =
+            serde_json::from_value(json!({ "heading": "Tips", "role": "tips" }));
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn a_section_with_boxes_is_asked_for_each_box() {
+        let boxes = vec![
+            WsTemplateSupport {
+                heading: "Directions".into(),
+                role: SupportRole::Directions,
+                pattern: String::new(),
+            },
+            WsTemplateSupport {
+                heading: "Sentence Frame for Sharing".into(),
+                role: SupportRole::SharingFrame,
+                pattern: String::new(),
+            },
+        ];
+        let out = section_out_schema(3, false, &boxes);
+        let keys: Vec<&String> = out["properties"].as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["title", "instructions", "supports", "items"]);
+        let sup = &out["properties"]["supports"];
+        assert_eq!(
+            (sup["minItems"].clone(), sup["maxItems"].clone()),
+            (json!(2), json!(2))
+        );
+        assert_eq!(
+            sup["items"]["properties"]["heading"]["enum"],
+            json!(["Directions", "Sentence Frame for Sharing"])
+        );
+        // Read back: supports as lines (or one string), no scaffold.
+        let v: RawSectionOut = serde_json::from_value(json!({
+            "title": "P1", "instructions": "Read.",
+            "supports": [
+                { "heading": "Directions", "lines": ["Underline it.", " "] },
+                { "heading": "Sentence Frame for Sharing", "lines": "Hi! ______\nThanks." },
+            ],
+            "items": [],
+        }))
+        .unwrap();
+        assert_eq!(v.scaffold, "");
+        assert_eq!(v.supports[0].lines, ["Underline it."]);
+        assert_eq!(v.supports[1].lines, ["Hi! ______", "Thanks."]);
+        // The details schema asks for the boxes before the question patterns.
+        let d = details_schema(1);
+        let keys: Vec<&String> = d["properties"]["sections"]["items"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect();
+        let at = |k: &str| keys.iter().position(|x| *x == k).unwrap();
+        assert!(at("supports") < at("item_patterns"));
     }
 }

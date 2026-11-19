@@ -111,7 +111,14 @@ const content = (overrides: Partial<WsTemplate> = {}): WsTemplate => ({
   includes_passage_text: false,
   sections: [
     section("s1", "Warm-up: [主題]", { block_kind: "warmup", item_count: 2 }),
-    section("s2", "Paragraph [n]: Find", { per_paragraph: true, answer_formats: ["填空題"] }),
+    section("s2", "Paragraph [n]: Find", {
+      per_paragraph: true,
+      answer_formats: ["填空題"],
+      supports: [
+        { heading: "Directions", role: "directions", pattern: "Underline [關鍵句]." },
+        { heading: "Sentence Frame for Sharing", role: "sharing_frame", pattern: "" },
+      ],
+    }),
     section("s3", "Video talk", { needs_external_material: true, item_count: 4 }),
   ],
   generation_options: ["加入暖身活動"],
@@ -310,6 +317,10 @@ describe("/templates/:id", () => {
     await userEvent.setup().click(card(1).getByRole("button", { name: "看 Manna 讀到的細節" }));
     expect(card(1).getByText("What does [主題] mean?")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "看原本的學習單" })).toBeInTheDocument();
+    // The sample's support boxes, with their own headings and what they are for.
+    await userEvent.setup().click(card(2).getByRole("button", { name: "看 Manna 讀到的細節" }));
+    expect(card(2).getByText("Directions（作答步驟）：Underline [關鍵句].")).toBeInTheDocument();
+    expect(card(2).getByText("Sentence Frame for Sharing（分享句型）")).toBeInTheDocument();
     // The answer-format chips are the fixed labels.
     const chips = within(card(1).getByRole("group", { name: "作答方式（第 1 區）" }))
       .getAllByRole("checkbox")
@@ -372,6 +383,8 @@ describe("/templates/:id", () => {
       needs_external_material: false,
     });
     expect(sent.sections[1]).toMatchObject({ answer_formats: ["選擇題"], item_count: 12 });
+    // The support boxes Manna read go back as they were.
+    expect(sent.sections[2]?.supports).toEqual(content().sections[1]?.supports);
     expect(sent.style_notes).toEqual(["每題留兩行作答空間", "指示一律用英文"]);
     // The header facts are sent back unchanged.
     expect(sent).toMatchObject({ worksheet_kind: "課文深度閱讀", header_fields: ["Name", "No", "Class"] });
