@@ -11,6 +11,7 @@ import {
 } from "../../lib/materials";
 import { OCR_NOT_YET, ocrOpen } from "../../lib/ocr";
 import { ErrorText } from "../common";
+import { useDialogGuard } from "../Dialog";
 import { useFirstOnPage } from "../OncePerPage";
 
 /** The teacher's library as the server reports it: materials, usage, limits, whether uploads work. */
@@ -71,7 +72,12 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
   const fileRef = useRef<HTMLInputElement>(null);
   const rules = library.limits.files;
   // The privacy reminder is said once per page (another add form may already show it).
-  const showWarning = useFirstOnPage();
+  const firstOnPage = useFirstOnPage();
+  // In a dialog the reminder is always said: the dialog is where the file goes in.
+  const dirty = title.trim() !== "" || sourceNote.trim() !== "" || text.trim() !== "" || url.trim() !== "" || file !== null;
+  const requestClose = useDialogGuard({ busy, dirty });
+  const showWarning = firstOnPage || requestClose !== null;
+  const cancel = requestClose ?? onCancel;
 
   const fileProblem = (() => {
     if (!file) return null;
@@ -144,8 +150,8 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
         <p className="material-state">
           這個環境還沒有設定檔案儲存空間，所以現在不能上傳檔案。你仍然可以貼上文字或加入網址。
         </p>
-        {onCancel && (
-          <button type="button" className="text-link is-plain" onClick={onCancel}>
+        {cancel && (
+          <button type="button" className="text-link is-plain" onClick={cancel}>
             取消
           </button>
         )}
@@ -249,8 +255,8 @@ export function MaterialAddForm({ way, library, lessonId, onAdded, onCancel, sub
               : "儲存中…"
             : (submitLabel ?? (way === "upload" ? "上傳" : "加入教材庫"))}
         </button>
-        {onCancel && (
-          <button type="button" className="text-link is-plain" disabled={busy} onClick={onCancel}>
+        {cancel && (
+          <button type="button" className="text-link is-plain" disabled={busy} onClick={cancel}>
             取消
           </button>
         )}

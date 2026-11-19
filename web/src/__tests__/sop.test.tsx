@@ -462,6 +462,20 @@ describe("lesson workspace: quiet saving", () => {
     expect(api.callsTo("PUT", SOP)).toHaveLength(0);
   });
 
+  it("上傳檔案 in step 1 is a dialog: it opens over the page and Esc gives focus back to the button", async () => {
+    signIn();
+    mockApi(routes(sopState({ material: null })));
+    const user = userEvent.setup();
+    await openLesson();
+    const opener = await screen.findByRole("button", { name: "上傳檔案" });
+    await user.click(opener);
+    const dialog = within(await screen.findByRole("dialog", { name: "上傳檔案" }));
+    expect(await dialog.findByLabelText("選擇檔案")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
   it("a lesson whose material was deleted says so in step 1 and in 對照教材", async () => {
     signIn();
     mockApi(routes(sopState({ material: null, material_deleted: true })));

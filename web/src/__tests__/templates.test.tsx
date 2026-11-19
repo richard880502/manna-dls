@@ -236,13 +236,17 @@ describe("學習單範本: 我的範本", () => {
     renderApp(MINE);
     expect(await screen.findByText(/^還沒有我的範本。/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "上傳我的學習單" }));
-    const form = within(await screen.findByRole("form", { name: "上傳檔案" }));
+    const opener = screen.getByRole("button", { name: "上傳我的學習單" });
+    await user.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "上傳我的學習單" });
+    const form = within(within(dialog).getByRole("form", { name: "上傳檔案" }));
     expect(screen.getAllByText(UPLOAD_WARNING)).toHaveLength(1);
     await user.upload(form.getByLabelText("選擇檔案"), new File(["PK"], "midterm.docx"));
     await user.click(form.getByRole("button", { name: "上傳，讓 Manna 讀設計" }));
 
     expect(await screen.findByText("Manna 正在讀「期中學習單版型」的設計，讀好了就能用。")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
     await screen.findByRole("article", { name: "期中學習單版型" });
     expect(tcard("期中學習單版型").getByText("讀取中", { selector: ".lib-badge" })).toBeInTheDocument();
     // The file went in as a worksheet sample (it stays out of 我的教材), then the template from it.
@@ -250,6 +254,22 @@ describe("學習單範本: 我的範本", () => {
     const sent = call?.[1]?.body as FormData;
     expect(sent.get("purpose")).toBe("worksheet_sample");
     expect(api.lastBody("POST", TEMPLATES)).toEqual({ material_id: 6 });
+  });
+
+  it("上傳我的學習單 closes with Esc or 取消 and gives focus back", async () => {
+    mockApi({ ...baseRoutes(), "GET /api/materials": library() });
+    const user = userEvent.setup();
+    renderApp(MINE);
+    const opener = await screen.findByRole("button", { name: "上傳我的學習單" });
+    await user.click(opener);
+    expect(await screen.findByRole("dialog", { name: "上傳我的學習單" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+    await user.click(opener);
+    await user.click(await screen.findByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
   });
 
   it("refuses a scan without text before asking the server", async () => {

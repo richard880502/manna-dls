@@ -478,6 +478,25 @@
   box-shadow: var(--shadow-dialog);
 }
 
+/* 「要放棄剛才輸入的內容嗎？」: asked inside the dialog before typed input is thrown away. */
+.dialog-confirm {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border-left: 3px solid var(--color-warn-rule);
+  background: var(--color-warn-wash);
+}
+
+.dialog-confirm .button-row {
+  margin-top: var(--space-xs);
+}
+
+/* A form in a dialog starts at the heading: no extra top margin of its own. */
+.dialog .material-add,
+.dialog .create-unit-form,
+.dialog .create-lesson-form {
+  margin-top: 0;
+}
+
 .radio-rows {
   margin: var(--space-md) 0 1.25rem;
   border-bottom: var(--rule-hair) solid var(--color-rule);

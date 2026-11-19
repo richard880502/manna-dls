@@ -1,10 +1,11 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { ClassDetail, ClassUnit, CreateClassRequest, LessonRun, SchoolClass, Unit } from "../api/types";
 import { ClassForm } from "../components/classes/ClassForm";
 import { NextLesson } from "../components/classes/NextLesson";
 import { ErrorText, Loading, Notice } from "../components/common";
+import { Dialog, DialogCancel } from "../components/Dialog";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { useApp } from "../context/AppContext";
 import { CLASS_NOTE_MAX_CHARS, classSubtitle, usedByText } from "../lib/classes";
@@ -176,6 +177,9 @@ export function ClassPage() {
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  /** The button 新增單元 / 從備課庫加入單元 was pressed on: focus goes back there. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToOpener = useCallback(() => opener.current, []);
 
   const [editing, setEditing] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
@@ -255,7 +259,8 @@ export function ClassPage() {
     void changeUnits(() => api.reorderClassUnits(classId, order));
   }
 
-  function openPicker() {
+  function openPicker(from: HTMLElement) {
+    opener.current = from;
     setPicking(true);
     setCreating(false);
     if (library) return;
@@ -357,9 +362,12 @@ export function ClassPage() {
               <button
                 type="button"
                 className="text-link is-plain"
-                aria-expanded={creating}
-                onClick={() => {
-                  setCreating((v) => !v);
+                aria-haspopup="dialog"
+                onClick={(event) => {
+                  opener.current = event.currentTarget;
+                  setNewTitle("");
+                  setCreateError(null);
+                  setCreating(true);
                   setPicking(false);
                 }}
               >
@@ -368,8 +376,8 @@ export function ClassPage() {
               <button
                 type="button"
                 className="text-link"
-                aria-expanded={picking}
-                onClick={() => (picking ? setPicking(false) : openPicker())}
+                aria-haspopup="dialog"
+                onClick={(event) => openPicker(event.currentTarget)}
               >
                 從備課庫加入單元
               </button>
@@ -378,13 +386,12 @@ export function ClassPage() {
         </div>
 
         {picking && (
-          <section className="inline-form-block" aria-labelledby={`${ids}-picker`}>
-            <div className="head-row">
-              <h3 id={`${ids}-picker`}>從備課庫加入單元</h3>
+          <Dialog title="從備課庫加入單元" returnFocus={backToOpener} onClose={() => setPicking(false)} busy={busy}>
+            <p className="field-hint">
               <Link className="text-link is-plain" to="/units">
                 看所有單元
               </Link>
-            </div>
+            </p>
             {!library ? (
               <Loading />
             ) : available.length === 0 ? (
@@ -416,15 +423,21 @@ export function ClassPage() {
                 ))}
               </ul>
             )}
-          </section>
+          </Dialog>
         )}
 
         {creating && (
-          <form className="inline-form-block" onSubmit={createUnit}>
-            <label className="field-label" htmlFor={`${ids}-new-unit`}>
-              新單元名稱
-            </label>
-            <div className="inline-form">
+          <Dialog
+            title="新增單元"
+            returnFocus={backToOpener}
+            onClose={() => setCreating(false)}
+            busy={busy}
+            dirty={newTitle.trim() !== ""}
+          >
+            <form onSubmit={createUnit} aria-label="新增單元">
+              <label className="field-label" htmlFor={`${ids}-new-unit`}>
+                新單元名稱
+              </label>
               <input
                 id={`${ids}-new-unit`}
                 value={newTitle}
@@ -432,13 +445,16 @@ export function ClassPage() {
                 disabled={busy}
                 onChange={(e) => setNewTitle(e.target.value)}
               />
-              <button type="submit" className="secondary-button" disabled={busy}>
-                建立並加入這個班級
-              </button>
-            </div>
-            <p className="field-hint">新單元會放進備課庫，並由這個班級取用；之後也可以給其他班級用。</p>
-            <ErrorText message={createError} />
-          </form>
+              <p className="field-hint">新單元會放進備課庫，並由這個班級取用；之後也可以給其他班級用。</p>
+              <ErrorText message={createError} />
+              <div className="button-row">
+                <button type="submit" className="primary-button" disabled={busy}>
+                  {busy ? "建立中…" : "建立並加入這個班級"}
+                </button>
+                <DialogCancel disabled={busy} />
+              </div>
+            </form>
+          </Dialog>
         )}
 
         {detail.units.length === 0 ? (

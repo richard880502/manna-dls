@@ -1,8 +1,9 @@
-import { useCallback, useId, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { MaterialDetail, TemplateCard as TemplateCardData } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
+import { Dialog, useDialogGuard } from "../components/Dialog";
 import { TemplateBrowser } from "../components/library/BrowsePanel";
 import {
   TEMPLATE_AREA_LABEL,
@@ -36,6 +37,9 @@ function UploadSample({ onStarted, onCancel }: { onStarted: (title: string) => v
   const [busy, setBusy] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [reading, setReading] = useState<MaterialDetail | null>(null);
+  // Starting the template is part of the upload: the dialog stays until it is sent.
+  const requestClose = useDialogGuard({ busy });
+  const cancel = requestClose ?? onCancel;
 
   async function start(m: MaterialDetail) {
     setStartError(null);
@@ -79,7 +83,7 @@ function UploadSample({ onStarted, onCancel }: { onStarted: (title: string) => v
           }}
         />
         <ErrorText message={startError} />
-        <button type="button" className="text-link is-plain" onClick={onCancel}>
+        <button type="button" className="text-link is-plain" onClick={cancel}>
           取消
         </button>
       </div>
@@ -117,6 +121,9 @@ function Templates() {
   const [rowError, setRowError] = useState<{ id: number; message: string } | null>(null);
   const [retrying, setRetrying] = useState<number | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
+  /** 上傳我的學習單: focus goes back there when its dialog closes. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToOpener = useCallback(() => opener.current, []);
 
   const choose = (next: TemplateArea) => {
     setUploading(false);
@@ -153,24 +160,27 @@ function Templates() {
               <button
                 type="button"
                 className="secondary-button"
-                aria-pressed={uploading}
-                onClick={() => {
+                aria-haspopup="dialog"
+                onClick={(event) => {
+                  opener.current = event.currentTarget;
                   setNotice(null);
-                  setUploading((u) => !u);
+                  setUploading(true);
                 }}
               >
                 {UPLOAD_SAMPLE}
               </button>
             </div>
             {uploading && (
-              <UploadSample
-                onCancel={() => setUploading(false)}
-                onStarted={(title) => {
-                  setUploading(false);
-                  setNotice(`Manna 正在讀「${title}」的設計，讀好了就能用。`);
-                  setChanged((n) => n + 1);
-                }}
-              />
+              <Dialog title={UPLOAD_SAMPLE} returnFocus={backToOpener} onClose={() => setUploading(false)}>
+                <UploadSample
+                  onCancel={() => setUploading(false)}
+                  onStarted={(title) => {
+                    setUploading(false);
+                    setNotice(`Manna 正在讀「${title}」的設計，讀好了就能用。`);
+                    setChanged((n) => n + 1);
+                  }}
+                />
+              </Dialog>
             )}
             {notice && (
               <p className="quiet-note" role="status">

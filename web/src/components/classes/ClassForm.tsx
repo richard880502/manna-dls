@@ -8,6 +8,7 @@ import {
 import { SCHOOL_TRACK_LABELS } from "../../lib/labels";
 import { CLASS_PROFILE_MAX_CHARS } from "../../lib/preferences";
 import { ErrorText, PrivacyHint } from "../common";
+import { useDialogGuard } from "../Dialog";
 
 export interface ClassFormValues {
   name: string;
@@ -49,6 +50,10 @@ export function ClassForm({
   const [values, setValues] = useState<ClassFormValues>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // In a dialog: no closing while saving, and typed input is asked about first.
+  const dirty = (Object.keys(values) as Array<keyof ClassFormValues>).some((k) => values[k] !== initial[k]);
+  const requestClose = useDialogGuard({ busy: saving, dirty });
+  const cancel = requestClose ?? onCancel;
 
   const set = <K extends keyof ClassFormValues>(key: K, value: ClassFormValues[K]) =>
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -196,8 +201,8 @@ export function ClassForm({
         <button type="submit" className="primary-button" disabled={saving}>
           {saving ? "儲存中…" : submitLabel}
         </button>
-        {onCancel && (
-          <button type="button" className="ghost-button" onClick={onCancel} disabled={saving}>
+        {cancel && (
+          <button type="button" className="text-link is-plain" onClick={cancel} disabled={saving}>
             {cancelLabel}
           </button>
         )}

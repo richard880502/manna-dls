@@ -6,7 +6,7 @@ import { Icon } from "../Icon";
 import { MaterialBrowser } from "../library/BrowsePanel";
 import { TagList } from "../library/Cards";
 import { cardTitle, fileTypeLabel, materialCardMeta } from "../library/labels";
-import { Dialog } from "../material/AttachDialog";
+import { Dialog } from "../Dialog";
 import { MaterialContent } from "../material/MaterialViewer";
 import "./knowledge.css";
 
