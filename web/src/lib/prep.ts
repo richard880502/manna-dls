@@ -71,7 +71,9 @@ export const WORKING_LINE = "Manna 正在處理…";
 /** A worksheet turn whose template (the teacher's own worksheet) is still being read. */
 export const READING_SAMPLE_LINE = "Manna 正在讀你的學習單設計…（約 20 秒）";
 export const AI_DISCLAIMER = "AI 產生的內容可能有錯，請核對重要資訊。";
-export const DELETE_CONFIRM = "刪除這次備課對話？學習單會保留。";
+export const DELETE_CONFIRM = "刪除這份備課？裡面的學習單也會一起刪除。";
+/** Said on window after a prep session is deleted: the sidebar's 最近 reads its list again. */
+export const PREP_SESSIONS_CHANGED = "manna:prep-sessions-changed";
 export const OPTION_NAMES = ["選項一", "選項二", "選項三"];
 
 export const sessionTitle = (s: { title: string }) => s.title.trim() || "未命名的備課";

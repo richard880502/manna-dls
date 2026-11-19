@@ -994,7 +994,7 @@ describe("備課對話 (session page)", () => {
     await waitFor(() => expect(api.lastBody("PATCH", S7)).toEqual({ class_id: 3 }));
 
     await user.click(context.getByRole("button", { name: "刪除" }));
-    expect(context.getByText("刪除這次備課對話？學習單會保留。")).toBeInTheDocument();
+    expect(context.getByText("刪除這份備課？裡面的學習單也會一起刪除。")).toBeInTheDocument();
     expect(api.callsTo("DELETE", S7)).toHaveLength(0);
     await user.click(context.getByRole("button", { name: "確定刪除" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep"));

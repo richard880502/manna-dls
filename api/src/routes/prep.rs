@@ -35,6 +35,7 @@ use crate::worksheet::template::extract::{
     self as tpl_extract, MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT,
 };
 use crate::worksheet::template::store as tpl_store;
+use crate::worksheet::thumbnail as ws_thumbnail;
 use crate::AppState;
 
 const MSG_KIND: &str = "kind 需為 worksheet、assessment、comprehension、tiered、kit、activity、resources、ask 或 revise。";
@@ -474,8 +475,16 @@ pub async fn delete(
     store::owned(&state.db, id, teacher.id()).await?;
     // The attached pictures leave the storage first; if that fails nothing is deleted.
     prep_images::purge_session(&state, id).await?;
-    store::delete(&state.db, id).await?;
-    Ok(Json(json!({ "ok": true })))
+    let worksheets = store::delete(&state.db, id, teacher.id()).await?;
+    // Their kept previews go too; a failure there never undoes or blocks the delete.
+    for ws_id in &worksheets {
+        if let Ok(Some(ws)) = ws_store::by_id(&state.db, *ws_id).await {
+            ws_thumbnail::forget(&state, &ws).await;
+        }
+    }
+    Ok(Json(
+        json!({ "ok": true, "worksheets_deleted": worksheets.len() }),
+    ))
 }
 
 // ---------------------------------------------------------------- attached pictures

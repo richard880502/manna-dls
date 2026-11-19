@@ -299,26 +299,49 @@ describe("我的作品", () => {
     expect(titles()).toEqual(["暖身遊戲"]);
   });
 
-  it("shows 刪除 on a standalone worksheet's card (outside its link) and on no session's", async () => {
+  it("shows 刪除 on every card, outside its link: sessions and standalone worksheets", async () => {
     signIn();
     mockApi(routes());
     renderApp("/prep");
     await screen.findByRole("list", { name: "我的作品" });
-    const own = card("獨立的學習單");
-    const del = within(own).getByRole("button", { name: "刪除 獨立的學習單" });
-    expect(del).toBeVisible();
-    expect(own.querySelector("a")?.contains(del)).toBe(false);
-    expect(within(card("The Umbrella Stand")).queryByRole("button")).not.toBeInTheDocument();
+    for (const [title, kind] of [
+      ["獨立的學習單", "worksheet"],
+      ["The Umbrella Stand", "session"],
+    ]) {
+      const own = card(title!);
+      const del = within(own).getByRole("button", { name: `刪除 ${title}` });
+      expect(del, kind).toBeVisible();
+      expect(own.querySelector("a")?.contains(del), kind).toBe(false);
+    }
+    expect(screen.getAllByRole("button", { name: /^刪除/ })).toHaveLength(5);
   });
 
-  it("deletes a standalone worksheet after a confirmation, and offers no delete on sessions", async () => {
+  it("deletes a session with its worksheets after saying so, and the sidebar's 最近 reads its list again", async () => {
+    signIn();
+    const api = mockApi(routes({ "DELETE /api/prep-sessions/7": { ok: true, worksheets_deleted: 1 } }));
+    const user = userEvent.setup();
+    renderApp("/prep");
+    await screen.findByRole("list", { name: "我的作品" });
+    await user.click(screen.getByRole("button", { name: "刪除 The Umbrella Stand" }));
+    expect(within(card("The Umbrella Stand")).getByText("刪除這份備課？裡面的學習單也會一起刪除。")).toBeInTheDocument();
+    expect(api.callsTo("DELETE", "/api/prep-sessions/7")).toHaveLength(0);
+    const listed = api.callsTo("GET", "/api/prep-sessions").length;
+    await user.click(screen.getByRole("button", { name: "確定刪除" }));
+    await waitFor(() => expect(list().queryByRole("link", { name: "The Umbrella Stand" })).not.toBeInTheDocument());
+    expect(api.callsTo("DELETE", "/api/prep-sessions/7")).toHaveLength(1);
+    expect(api.callsTo("DELETE", "/api/worksheets/22")).toHaveLength(0);
+    expect(titles()).toHaveLength(4);
+    await waitFor(() => expect(api.callsTo("GET", "/api/prep-sessions").length).toBeGreaterThan(listed));
+  });
+
+  it("deletes a standalone worksheet after a confirmation", async () => {
     signIn();
     const api = mockApi(routes({ "DELETE /api/worksheets/21": { deleted: true } }));
     const user = userEvent.setup();
     renderApp("/prep");
     await screen.findByRole("list", { name: "我的作品" });
-    expect(screen.getAllByRole("button", { name: /^刪除/ })).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "刪除 獨立的學習單" }));
+    expect(within(card("獨立的學習單")).getByText("確定刪除？")).toBeInTheDocument();
     expect(api.callsTo("DELETE", "/api/worksheets/21")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "不刪" }));
     expect(screen.getByRole("button", { name: "刪除 獨立的學習單" })).toBeInTheDocument();
@@ -342,7 +365,7 @@ describe("我的作品", () => {
     renderApp("/prep");
     await screen.findByRole("list", { name: "我的作品" });
     expect(document.querySelector("ul.rows")).not.toBeNull();
-    expect(screen.getAllByRole("button", { name: /^刪除/ })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^刪除/ })).toHaveLength(5);
 
     await user.click(screen.getByRole("button", { name: "刪除 獨立的學習單" }));
     await user.click(screen.getByRole("button", { name: "確定刪除" }));
