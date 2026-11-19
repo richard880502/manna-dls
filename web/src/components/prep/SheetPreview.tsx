@@ -6,6 +6,7 @@ import { BloomChip } from "../worksheet/Bloom";
 import { GlossaryBox, glossText } from "../worksheet/Glossary";
 import { OrganizerView } from "../worksheet/Organizer";
 import { organizerText } from "../../lib/organizer";
+import { printedObjective } from "../../lib/objectives";
 import { SlotPicture, viewOfSheetImage, type PictureActions } from "../worksheet/SlotPicture";
 import { SectionTools } from "./SectionTools";
 
@@ -98,7 +99,7 @@ export function SheetPreview({
           <h3>Today I can …</h3>
           <ol>
             {sheet.objectives.map((o) => (
-              <li key={o}>{o}</li>
+              <li key={o}>{printedObjective(o)}</li>
             ))}
           </ol>
         </section>

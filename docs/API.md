@@ -973,7 +973,7 @@ interface WorksheetMaterial {
 interface WsObjective {
   id: string; type: "content" | "language";
   text: string;                 // 教師看的說明（可中文）
-  student_facing_en: string;    // 印在學習單「Today I can …」的英文
+  student_facing_en: string;    // 印在學習單「Today I can …」的英文（存成 "I can …"；印在標題下時去掉開頭的 I can，見下）
   origin: WsOrigin;
   sop_id: string | null;        // 從課例帶入時，對應的 SOP 目標 id
 }
@@ -1005,6 +1005,7 @@ interface WsItem {
 **作答方式怎麼印**（投影、預覽、DOCX、PDF 一致；編輯器照同樣的規則畫）：
 
 - `options` 只在**選擇題、是非題、配對題**（與沒有作答方式的舊題目）印出，空白的選項不印；其他作答方式的題目若還有選項，留在資料裡但不印（教師換回去時就回來）。
+- 學習目標印在「Today I can …」下面時，每一行開頭的「I can」（不分大小寫，也接受「I can:」與多餘空白）不重複印（`objectives::printed_objective`／`printedObjective`）；不是以 I can 開頭的行照原樣。編輯器裡可以改的目標欄位仍顯示完整的「I can …」。
 - **表格整理**印成表格：題目的 `table`；沒有時用題目最後一個冒號後以「/」或「|」分開的 2–6 個短欄名（生成器的寫法：`Complete the table: Who? / What happened? / Why?`，結尾的 `(Question 3)` 不算），再沒有就是兩欄、沒有欄名；列數預設 3。有任何欄名時第一列印欄名。投影的題目多一個 `table: { columns, rows }`（只有表格整理有），作答行數是 0。
 - **圖像組織**印一個作答框；**簡答題**依版本印 2／3／4 行，**段落寫作**再多 2 行；其他作答方式不印作答線。
 - 編輯器換作答方式時保留題目、答案、依據、提示與各版本的支持：換成是非題 → 選項變成 True／False，原本的選項放進 `kept_options`；換成選擇題／配對題且沒有選項（或只有 True／False）→ 放回 `kept_options`，沒有就給 4／3 個空白選項；`table` 不論作答方式都留著。

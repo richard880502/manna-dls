@@ -22,6 +22,7 @@ use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport
 use super::organizer::SheetOrganizer;
 use super::tiered::{student_version_name, SupportKind};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
+use crate::objectives::printed_objective;
 use crate::retrieval::is_cjk;
 
 pub const DOCX_TYPE: &str =
@@ -689,6 +690,7 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
             },
         ));
         for (i, o) in sheet.objectives.iter().enumerate() {
+            let o = printed_objective(o);
             body.push_str(&para(
                 &[run(&format!("{}.\t{o}", i + 1), RunStyle::default())],
                 &ParaStyle {
@@ -1938,7 +1940,7 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         for (i, o) in sheet.objectives.iter().enumerate() {
             l.labelled(
                 &format!("{}. ", i + 1),
-                o,
+                printed_objective(o),
                 Style {
                     indent: 8.0,
                     ..body
@@ -2422,6 +2424,22 @@ mod tests {
         // The PDF draws it too (English only: no CJK font needed).
         let pdf = pdf(&sheet(Audience::Student)).unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn objectives_print_without_their_own_i_can() {
+        let mut s = sheet(Audience::Student);
+        s.objectives = vec![
+            "I can identify the key elements of the story.".into(),
+            "Retell the story in order.".into(),
+        ];
+        let xml = document(docx(&s).unwrap());
+        // 「Today I can …」 then the line without its own "I can"; another line as it is.
+        assert!(xml.contains("Today I can …"));
+        assert!(xml.contains(">1. identify the key elements of the story.<"));
+        assert!(!xml.contains("I can identify"));
+        assert!(xml.contains(">2. Retell the story in order.<"));
+        assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
     }
 
     fn document(bytes: Vec<u8>) -> String {

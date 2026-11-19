@@ -392,6 +392,25 @@ pub fn i_can_line(en: &str) -> Option<String> {
     None
 }
 
+/// "I can" at the start of a students' line: any case, spaces or tabs between and after the
+/// words, or a colon ("I can: identify …"). What follows must start with something printable.
+/// The web preview uses the same pattern (`printedObjective`, web/src/lib/objectives.ts).
+static I_CAN_LEAD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^[ \t]*[Ii][ \t]+[Cc][Aa][Nn](?:[ \t]*[:：][ \t]*|[ \t]+)([^ \t][\s\S]*)$")
+        .expect("valid regex")
+});
+
+/// A students' line as it prints under the heading 「Today I can …」: without its own leading
+/// "I can", which the heading already says (「Today I can … / 1. I can identify …」 read it twice).
+/// The stored line keeps it (SIOP: objectives are written "I can …"). A line that does not
+/// start with "I can" ("I can't …", "Identify …"), or has nothing after it, prints unchanged.
+pub fn printed_objective(line: &str) -> &str {
+    I_CAN_LEAD
+        .captures(line)
+        .and_then(|c| c.get(1))
+        .map_or(line, |m| m.as_str())
+}
+
 /// The verbs of an "I can …" line that say what the student does: the first word after
 /// "I can", and every word right after "and" / "or" in the line.
 fn main_verbs(line: &str) -> Vec<String> {
@@ -795,6 +814,36 @@ mod tests {
             required(&new),
             [(VAR_CONTENT, LABEL_CONTENT), (VAR_LANGUAGE, LABEL_LANGUAGE)]
         );
+    }
+
+    /// The same cases as `printedObjective` in web/src/__tests__/worksheetPrint.test.ts: the
+    /// preview and the exports print a line the same way.
+    #[test]
+    fn a_printed_objective_drops_its_own_i_can() {
+        for (line, printed) in [
+            (
+                "I can identify the key elements of the story.",
+                "identify the key elements of the story.",
+            ),
+            ("i CAN predict the main idea.", "predict the main idea."),
+            ("I can: explain why.", "explain why."),
+            ("I can : explain why.", "explain why."),
+            ("I can:explain why.", "explain why."),
+            ("  I   can   compare two texts.", "compare two texts."),
+            ("I can：說明原因", "說明原因"),
+            // Not "I can" + something to print: unchanged.
+            ("Identify the key elements.", "Identify the key elements."),
+            ("I can't stop reading.", "I can't stop reading."),
+            ("I cannot wait.", "I cannot wait."),
+            ("I canvas the room.", "I canvas the room."),
+            ("I can", "I can"),
+            ("I can:", "I can:"),
+            ("I can  ", "I can  "),
+            ("We can compare.", "We can compare."),
+            ("", ""),
+        ] {
+            assert_eq!(printed_objective(line), printed, "{line:?}");
+        }
     }
 
     #[test]

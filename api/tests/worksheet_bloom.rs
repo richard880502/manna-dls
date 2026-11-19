@@ -554,7 +554,8 @@ async fn differentiated_worksheet_end_to_end() {
     for (level, code) in [("basic", "A"), ("standard", "B"), ("advanced", "C")] {
         let xml = docx(&app, &t, id, level, "student").await;
         assert!(xml.contains(&format!("Version {code}")), "{level}");
-        assert!(xml.contains("I can explain how the neighbors changed their minds."));
+        // Under 「Today I can …」, without its own "I can".
+        assert!(xml.contains(">1. explain how the neighbors changed their minds.<"));
         for name in LEVEL_NAMES {
             assert!(!xml.contains(name), "{name} in the {level} student DOCX");
         }
