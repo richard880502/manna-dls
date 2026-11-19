@@ -750,6 +750,131 @@ async fn a_fill_in_item_always_has_a_blank_to_write_in() {
 }
 
 #[tokio::test]
+async fn a_sentence_frame_is_printed_apart_not_numbered_as_a_question() {
+    const FRAME: &str = "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing, as seen in the text where ______.";
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    for (marker, lifted) in [
+        ("FAKE_WS_EXIT_FRAME", false),
+        ("FAKE_WS_EXIT_FRAME_ALWAYS", true),
+    ] {
+        let id = direct(&app, &t, &passage(marker)).await["id"]
+            .as_i64()
+            .unwrap();
+        let state = generate(&app, &t, id).await;
+        let exit = blocks(&state)
+            .into_iter()
+            .find(|b| b["kind"] == "exit_ticket")
+            .unwrap();
+
+        // Call 1 wrote the frame as a question: sent back with the problem stated.
+        let calls: Vec<(i32, Value)> = sqlx::query_as(
+            "SELECT attempt, check_results FROM ai_interactions
+              WHERE module = 'worksheet_exit_ticket'
+                AND (input_snapshot -> 'worksheet' ->> 'id')::bigint = $1 ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(&app.db)
+        .await
+        .unwrap();
+        assert_eq!(calls.len(), 2, "{marker}");
+        let wellformed = check(&calls[0].1, "items_wellformed");
+        assert_eq!(wellformed["passed"], false, "{marker}");
+        assert!(wellformed["detail"]
+            .as_str()
+            .unwrap()
+            .contains("只有句型框架"));
+
+        let items = exit["items"].as_array().unwrap();
+        assert!(
+            items
+                .iter()
+                .all(|i| !i["prompt"].as_str().unwrap().contains("I identified")),
+            "{marker}: {exit}"
+        );
+        let frames: Vec<&Value> = exit["scaffolds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["kind"] == "句型框架")
+            .collect();
+        if !lifted {
+            // The repair call wrote a real question: nothing to move.
+            assert!(frames.is_empty(), "{marker}: {exit}");
+            continue;
+        }
+        // Still a frame after the repair: it is the block's Sentence frames box, and the
+        // question asks to use it.
+        assert_eq!(frames.len(), 1, "{exit}");
+        assert_eq!(frames[0]["content"], FRAME);
+        assert_eq!(frames[0]["type"], "verbal");
+        assert_eq!(
+            items[0]["prompt"],
+            "Use the sentence frame above to write your answer."
+        );
+        assert_eq!(items[0]["answer_format"], "簡答題");
+        let repairs = calls[1].1["repairs"].to_string();
+        assert!(repairs.contains("句型框架移出題號"), "{repairs}");
+
+        // Every printed form: the box un-numbered, the questions numbered without a gap.
+        for audience in ["student", "teacher"] {
+            let printed = sheet(&app, &t, id, "standard", audience).await;
+            let nos: Vec<u64> = printed["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|b| b["items"].as_array().unwrap().clone())
+                .map(|i| i["no"].as_u64().unwrap())
+                .collect();
+            assert_eq!(nos, (1..=nos.len() as u64).collect::<Vec<_>>());
+            let last = printed["blocks"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            assert_eq!(last["kind"], "exit_ticket");
+            let support = last["supports"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["heading"] == "Sentence frames")
+                .unwrap_or_else(|| panic!("{last}"))
+                .clone();
+            assert_eq!(support["content"], FRAME);
+            assert!(last["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|i| !i["prompt"].as_str().unwrap().contains("I identified")));
+        }
+        let xml = export_docx(&app, &t, id).await;
+        assert!(xml.contains("Sentence frames"));
+        assert_eq!(
+            xml.matches("Hi! In the 3rd paragraph").count(),
+            1,
+            "printed once, in the box"
+        );
+    }
+}
+
+/// The student DOCX of the standard version, as its document XML.
+async fn export_docx(app: &common::TestApp, t: &str, id: i64) -> String {
+    let (status, _, _, bytes) = raw_get(
+        app,
+        &format!("/api/worksheets/{id}/export?format=docx&level=standard&audience=student"),
+        t,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    xml
+}
+
+#[tokio::test]
 async fn one_block_regenerates_and_undo_brings_back_the_previous_version() {
     let app = test_app!();
     let t = app.teacher("T-001", "general").await;

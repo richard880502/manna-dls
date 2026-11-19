@@ -1314,10 +1314,11 @@ async fn the_full_worksheet_still_works_and_labels_its_items() {
             assert_eq!(it["hint"], "");
         }
     }
-    // The tasks step uses prompt version 5 (version 2's Bloom label, SIOP Q4's stage, the
-    // organizers of 0029_graphic_organizers.sql and the blank of 0030_fill_in_blanks.sql).
+    // The tasks step uses prompt version 6 (version 2's Bloom label, SIOP Q4's stage, the
+    // organizers of 0029_graphic_organizers.sql, the blank of 0030_fill_in_blanks.sql and the
+    // frames of 0031_sentence_frames_apart.sql).
     let tasks = calls(&app, "worksheet_tasks").await;
-    assert_eq!(tasks[0].2["prompt"]["version_no"], 5);
+    assert_eq!(tasks[0].2["prompt"]["version_no"], 6);
     assert!(tasks[0].2["prompt"]["system"]
         .as_str()
         .unwrap()

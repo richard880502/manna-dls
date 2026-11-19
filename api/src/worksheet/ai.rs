@@ -1729,6 +1729,7 @@ async fn step_exit(
         ("tasks_summary", tasks_summary(tasks)),
     ]);
     let codes = run.objective_codes();
+    let passage = run.paragraphs.join("\n");
     let fake_context = json!({
         "task": EXIT.key,
         "exit_count": count,
@@ -1751,6 +1752,7 @@ async fn step_exit(
                 &ExitCtx {
                     objective_ids: &codes,
                     task_prompts,
+                    passage: &passage,
                 },
             )
         },
@@ -2038,6 +2040,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
                     assemble::activity_block(&id, raw, material, &levels, &objective_ids);
                 block.sop_block_id = sop_block_for(ws, &block.paragraph_ids, &mut used_seed_blocks);
                 assemble::attach_scaffolds(&mut block, set_for(&raw.block_id), &levels, &ticked);
+                assemble::lift_frames(&mut block, &run.paragraphs.join("\n"));
                 blocks.push(block);
             }
         }
@@ -2052,6 +2055,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         Ok((items, _)) => {
             let mut block = assemble::exit_block(items, &levels, &objective_ids);
             assemble::attach_scaffolds(&mut block, None, &levels, &ticked);
+            assemble::lift_frames(&mut block, &run.paragraphs.join("\n"));
             blocks.push(block);
         }
         Err(reason) => blocks.push(assemble::placeholder(
@@ -2287,6 +2291,7 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             .map(|(sets, _)| sets)
             .unwrap_or_default();
             assemble::attach_scaffolds(&mut block, sets.first(), &levels, &ticked);
+            assemble::lift_frames(&mut block, &run.paragraphs.join("\n"));
             (block, interaction_id)
         }
         BlockKind::Warmup => {
@@ -2330,6 +2335,7 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             };
             let mut block = assemble::exit_block(&items, &levels, &objective_ids);
             assemble::attach_scaffolds(&mut block, None, &levels, &ticked);
+            assemble::lift_frames(&mut block, &run.paragraphs.join("\n"));
             let notices: Vec<String> = run.uncovered_notice(&items).into_iter().collect();
             replace_block(run, &old, block, interaction_id, notices).await?;
             return Ok(());

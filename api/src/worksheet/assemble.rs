@@ -249,6 +249,71 @@ pub fn attach_scaffolds(
     }
 }
 
+// ---------------------------------------------------------------- sentence frames are not questions
+
+/// What a question that was only a sentence frame asks once the frame is in the block's box.
+pub const FRAME_TASK: &str = "Use the sentence frame above to write your answer.";
+
+/// A generated question that is only a sentence frame ([`super::checks::sentence_frame_only`],
+/// still so after the repair call) is a language scaffold, not a question: the frame goes into
+/// the block's 句型框架 scaffold, printed un-numbered in the 「Sentence frames」 box above the
+/// questions, in the versions the question was in. Right after an open question (簡答題,
+/// 段落寫作) it is that question's frame and its number goes; otherwise the question stays and
+/// asks to use the frame ([`FRAME_TASK`], a 簡答題 so it prints lines). The teacher's own
+/// questions are never touched. Returns how many frames were moved.
+pub fn lift_frames(block: &mut Block, passage: &str) -> usize {
+    let mut frames: Vec<String> = Vec::new();
+    let mut levels: Vec<Level> = Vec::new();
+    let mut items: Vec<Item> = Vec::new();
+    for mut item in std::mem::take(&mut block.items) {
+        if item.origin != Origin::Ai || !super::checks::sentence_frame_only(&item.prompt, passage) {
+            items.push(item);
+            continue;
+        }
+        frames.push(item.prompt.trim().to_string());
+        levels.extend(item.levels.iter().copied());
+        let open = |i: &Item| {
+            matches!(
+                i.answer_format.as_deref(),
+                Some(f) if f == super::FMT_SHORT || f == FMT_PARAGRAPH
+            )
+        };
+        if items.last().is_some_and(open) {
+            continue;
+        }
+        item.prompt = FRAME_TASK.to_string();
+        if !open(&item) {
+            item.answer_format = Some(super::FMT_SHORT.to_string());
+        }
+        items.push(item);
+    }
+    block.items = items;
+    if frames.is_empty() {
+        return 0;
+    }
+    let levels: Vec<Level> = Level::ALL
+        .into_iter()
+        .filter(|l| levels.contains(l))
+        .collect();
+    let content = frames.join("\n");
+    match block.scaffolds.iter_mut().find(|s| {
+        s.kind_type == ScaffoldType::Verbal && s.kind == KIND_FRAMES && s.levels == levels
+    }) {
+        Some(s) => s.content = format!("{}\n{content}", s.content.trim_end()),
+        None => block.scaffolds.push(Scaffold {
+            id: format!("{}-sf1", block.id),
+            kind_type: ScaffoldType::Verbal,
+            kind: KIND_FRAMES.to_string(),
+            content,
+            steps: Vec::new(),
+            levels,
+            auto: false,
+            origin: Origin::Ai,
+        }),
+    }
+    frames.len()
+}
+
 // ---------------------------------------------------------------- blocks from step outputs
 
 pub fn activity_block(
@@ -1263,6 +1328,99 @@ mod tests {
                 printed,
                 "{format:?} {answer:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_frame_written_as_a_question_prints_in_the_sentence_frames_box() {
+        const FRAME: &str = "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing.";
+        let frame = |id: &str, format: &str| Item {
+            prompt: FRAME.into(),
+            ..item(id, &Level::ALL, format)
+        };
+        let question = |id: &str, format: &str, prompt: &str| Item {
+            prompt: prompt.into(),
+            ..item(id, &Level::ALL, format)
+        };
+        let content = |blocks: Vec<Block>| Content {
+            blocks,
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        };
+
+        // After an open question: the frame is that question's, and its number goes.
+        let mut after_open = Block {
+            id: "b1".into(),
+            enabled: true,
+            items: vec![
+                question("q1", "簡答題", "What makes paragraph 3 a narrative?"),
+                frame("q2", FMT_BLANK),
+                question("q3", FMT_CHOICE, "Which word is a verb?"),
+            ],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut after_open, ""), 1);
+        let ids: Vec<&str> = after_open.items.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["q1", "q3"]);
+        let s = &after_open.scaffolds[0];
+        assert_eq!(
+            (s.kind_type, s.kind.as_str(), s.content.as_str()),
+            (ScaffoldType::Verbal, KIND_FRAMES, FRAME)
+        );
+        assert_eq!(s.levels, Level::ALL);
+
+        // Otherwise the question stays (an exit ticket keeps its count) and asks for the frame.
+        let mut alone = Block {
+            id: "exit".into(),
+            kind: BlockKind::ExitTicket,
+            enabled: true,
+            items: vec![
+                frame("e1", FMT_BLANK),
+                question("e2", "簡答題", "Which part was the hardest for you?"),
+            ],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut alone, ""), 1);
+        assert_eq!(alone.items[0].prompt, FRAME_TASK);
+        assert_eq!(alone.items[0].answer_format.as_deref(), Some("簡答題"));
+        assert_eq!(alone.items[0].answer, "Answer e1", "its answer stays");
+
+        // The teacher's own frame is hers.
+        let mut mine = Block {
+            id: "b2".into(),
+            enabled: true,
+            items: vec![Item {
+                origin: Origin::Teacher,
+                ..frame("t1", FMT_BLANK)
+            }],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut mine, ""), 0);
+        assert!(mine.scaffolds.is_empty());
+
+        // On paper: one box, not numbered; the questions numbered 1, 2, 3 through the sheet.
+        let sheet = project(
+            "T",
+            &content(vec![after_open, alone]),
+            Level::Standard,
+            Audience::Student,
+        );
+        let nos: Vec<usize> = sheet
+            .blocks
+            .iter()
+            .flat_map(|b| b.items.iter().map(|i| i.no))
+            .collect();
+        assert_eq!(nos, [1, 2, 3, 4]);
+        let prompts: Vec<&str> = sheet
+            .blocks
+            .iter()
+            .flat_map(|b| b.items.iter().map(|i| i.prompt.as_str()))
+            .collect();
+        assert!(prompts.iter().all(|p| !p.contains("I identified")));
+        for b in &sheet.blocks {
+            assert_eq!(b.supports.len(), 1, "{}", b.id);
+            assert_eq!(b.supports[0].heading, "Sentence frames");
+            assert_eq!(b.supports[0].content, FRAME);
         }
     }
 

@@ -1014,6 +1014,8 @@ interface WsItem {
 
 **填空題的空格**（每個寫題目的步驟都檢查：完整學習單的主要任務與 Exit ticket、照版型產生、閱讀理解題、差異化學習單、逐區修改、備課對話的修改）：填空題不印作答線，學生寫在題目的空格裡，所以題目一定要有空格——三個以上的底線（`______`、`___`）、全形 `＿＿＿`、`( )` 或 `（　）`。沒有空格 → `items_wellformed` 不通過，修正呼叫會寫明問題；修正後仍沒有 → 程式把參考答案的片語（以逗號、分號、斜線或換行分開，去掉編號與句尾標點，三個字元以上，長的先換）在題目裡逐字出現的地方（不分大小寫、整個字）換成 `______`；一個都找不到（或換完題目沒有字可讀）→ 改成簡答題（印作答線）。怎麼處理的記在該次呼叫的 `check_results.repairs`。`0030_fill_in_blanks.sql` 的提示詞新版本寫明空格一定要在題目裡、答案的字詞不可以留在題目裡。
 
+**句型框架不是題目**（完整學習單的主要任務與 Exit ticket）：語言鷹架（句型框架，SIOP Q2／T4）印在區塊的「Sentence frames」方框裡（`scaffolds` 的 `句型框架`），不編題號。模型把句型框架本身寫成一題時（題目有空格、用學生的口吻 I／my／we、沒有問號、沒有一句以指示或疑問詞開頭，而且不是逐字取自教材的克漏字；`checks::sentence_frame_only`）→ `items_wellformed` 不通過，修正呼叫會寫明要寫出要學生做什麼、不要用 Hi! 之類的招呼語開頭；修正後仍是句型框架 → 組成區塊時（`assemble::lift_frames`）框架移到這一區的 `句型框架` 鷹架（印的版本＝那一題印的版本），前一題是簡答題或段落寫作時這一題拿掉（那是前一題的框架），否則這一題改成「Use the sentence frame above to write your answer.」（簡答題，印作答線），所以 Exit ticket 的題數與目標檢核不變；後面的題號連續。教師自己寫的題目不動。`0031_sentence_frames_apart.sql` 的提示詞新版本（Exit ticket、主要任務、逐區修改、備課對話的修改）寫明句型框架不能單獨當一題、題目不用招呼語開頭；兩種修改沒有放鷹架的欄位，句型框架接在它要幫助的那一題最後。
+
 ```ts
 interface WsScaffold {
   id: string; type: WsScaffoldType;
@@ -3343,6 +3345,8 @@ interface ObjectiveDraft {
 | `FAKE_WS_NO_BLANK` | 逐段任務第一次的第一個填空題是完整的句子、沒有空格（修正呼叫後有空格） |
 | `FAKE_WS_NO_BLANK_ALWAYS` | 兩次都這樣（伺服器把句子裡的參考答案換成 `______`） |
 | `FAKE_WS_BLANK_LOST` | 兩次的第一個填空題都沒有空格，也沒有參考答案的字（伺服器改成簡答題） |
+| `FAKE_WS_EXIT_FRAME` | Exit ticket 第一次的第一題只有句型框架（修正呼叫後是一般的題目） |
+| `FAKE_WS_EXIT_FRAME_ALWAYS` | 兩次都這樣（框架印在 Exit ticket 的 Sentence frames 方框，這一題改成請學生用框架作答） |
 
 ## 程式進入點
 

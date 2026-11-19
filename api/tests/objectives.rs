@@ -414,8 +414,9 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
         user.contains(&format!("O2（語言目標）：{LANGUAGE}")),
         "{user}"
     );
-    // Version 2 (0022_siop_objectives.sql); version 3 adds the 填空題 blank (0030_fill_in_blanks.sql).
-    assert_eq!(calls[0].3["prompt"]["version_no"], 3);
+    // Version 2 (0022_siop_objectives.sql); version 3 adds the 填空題 blank (0030_fill_in_blanks.sql),
+    // version 4 that a sentence frame is not a question (0031_sentence_frames_apart.sql).
+    assert_eq!(calls[0].3["prompt"]["version_no"], 4);
 
     // Q4: one block per paragraph, 示範 → 共同練習 → 同儕練習 → 獨立應用, said in the notes.
     let activities: Vec<&Value> = blocks.iter().filter(|b| b["kind"] == "activity").collect();
@@ -431,8 +432,9 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
     let tasks = interactions(&app, "worksheet_tasks").await;
     assert_eq!(tasks.len(), 1, "in order: no repair call");
     // Version 4 (0029_graphic_organizers.sql) is version 3 with the organizer section; version 5
-    // (0030_fill_in_blanks.sql) adds the 填空題 blank.
-    assert_eq!(tasks[0].3["prompt"]["version_no"], 5);
+    // (0030_fill_in_blanks.sql) adds the 填空題 blank, version 6 (0031_sentence_frames_apart.sql)
+    // that a sentence frame is not a question.
+    assert_eq!(tasks[0].3["prompt"]["version_no"], 6);
     assert!(tasks[0].3["prompt"]["system"]
         .as_str()
         .unwrap()

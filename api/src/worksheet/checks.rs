@@ -441,6 +441,145 @@ fn blank_check(
     }
 }
 
+// ---------------------------------------------------------------- 句型框架 written as a question
+
+/// Words a sentence starts with when it asks the student to do something (an instruction or a
+/// question word): a prompt with such a sentence is a question, even when it carries a frame.
+const INSTRUCTION_WORDS: [&str; 64] = [
+    "add",
+    "answer",
+    "ask",
+    "change",
+    "check",
+    "choose",
+    "circle",
+    "compare",
+    "complete",
+    "copy",
+    "correct",
+    "create",
+    "decide",
+    "describe",
+    "design",
+    "discuss",
+    "draw",
+    "explain",
+    "fill",
+    "find",
+    "finish",
+    "give",
+    "highlight",
+    "how",
+    "identify",
+    "imagine",
+    "introduce",
+    "label",
+    "list",
+    "look",
+    "make",
+    "mark",
+    "match",
+    "name",
+    "note",
+    "number",
+    "order",
+    "pick",
+    "practice",
+    "predict",
+    "present",
+    "put",
+    "read",
+    "report",
+    "respond",
+    "retell",
+    "rewrite",
+    "say",
+    "select",
+    "share",
+    "show",
+    "sort",
+    "state",
+    "summarize",
+    "talk",
+    "tell",
+    "think",
+    "underline",
+    "use",
+    "what",
+    "when",
+    "where",
+    "why",
+    "write",
+];
+
+/// Whether `prompt` is written in the student's voice ("I …", "my …", "we …").
+fn first_person(prompt: &str) -> bool {
+    prompt
+        .split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '’'))
+        .any(|w| {
+            let w = w.replace('’', "'");
+            matches!(w.as_str(), "I" | "I'm" | "I've" | "I'd" | "I'll")
+                || matches!(
+                    w.to_lowercase().as_str(),
+                    "my" | "me" | "myself" | "we" | "our"
+                )
+        })
+}
+
+/// Whether a sentence of `prompt` starts with an instruction or a question word.
+fn gives_instruction(prompt: &str) -> bool {
+    prompt
+        .split(['.', '!', '?', ':', ';', '\n', '：', '。'])
+        .filter_map(|sentence| {
+            sentence
+                .split(|c: char| !c.is_alphabetic())
+                .find(|w| !w.is_empty())
+                .map(str::to_lowercase)
+        })
+        .any(|w| INSTRUCTION_WORDS.contains(&w.as_str()))
+}
+
+/// Whether the text between the blanks of `prompt` is quoted from the material (three words or
+/// more word for word): a cloze of the text, not a frame written for the student.
+fn quotes_material(prompt: &str, passage: &str) -> bool {
+    let passage = norm(passage).to_lowercase();
+    BLANK_MARKER.split(prompt).any(|piece| {
+        let piece = piece.trim_matches(|c: char| !c.is_alphanumeric());
+        word_count(piece) >= 3 && passage.contains(&norm(piece).to_lowercase())
+    })
+}
+
+/// Whether a question is nothing but a sentence frame: a language scaffold in the student's voice
+/// with blanks to complete (「I think ___ because ___.」, 「Hi! In the 3rd paragraph, the author
+/// describes ______. … I identified ______ as …」), with no question or instruction of its own,
+/// and not quoted from the material (a cloze of a first-person text is a real question). On the
+/// sheet a frame supports a task; numbered as a question of its own it reads as one (SIOP Q2, T4).
+pub(crate) fn sentence_frame_only(prompt: &str, passage: &str) -> bool {
+    has_blank_marker(prompt)
+        && !prompt.contains(['?', '？'])
+        && first_person(prompt)
+        && !gives_instruction(prompt)
+        && !quotes_material(prompt, passage)
+}
+
+/// A question that is only a sentence frame fails `items_wellformed`: the repair call is told to
+/// write what the student does. The question is kept here; when it is still only a frame, the
+/// block is assembled with the frame in its 「Sentence frames」 box, not numbered
+/// ([`crate::worksheet::assemble::lift_frames`]).
+fn frame_check(prompt: &str, passage: &str, iname: &str, field: &str, t: &mut Tally) {
+    if !sentence_frame_only(prompt, passage) {
+        return;
+    }
+    t.fail(
+        "items_wellformed",
+        format!(
+            "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題。{field} 要寫出要學生做什麼（完整的題目或指示，例如 \"Explain one feature of narrative writing in paragraph 3.\"）；不要只寫句型框架，也不要用 Hi!、Hello! 這類招呼語開頭。",
+            clip_chars(prompt, 80)
+        ),
+        "句型框架移出題號，印在這一區的 Sentence frames 方框（不編號）",
+    );
+}
+
 fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
     match it.answer_format.as_str() {
         f if f == FMT_CHOICE => {
@@ -711,6 +850,7 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 "prompt_en",
                 &mut t,
             );
+            frame_check(&item.prompt_en, &passage, &iname, "prompt_en", &mut t);
             if let Err(why) = item_wellformed(&item) {
                 t.fail(
                     "items_wellformed",
@@ -1317,6 +1457,8 @@ pub struct ExitCtx<'a> {
     pub objective_ids: &'a [String],
     /// Prompts of the main tasks: the exit ticket must not repeat them.
     pub task_prompts: &'a [String],
+    /// The material, paragraphs joined (a cloze of it is not a sentence frame).
+    pub passage: &'a str,
 }
 
 const EXIT_CHECKS: [&str; 9] = [
@@ -1397,6 +1539,7 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
             "prompt_en",
             &mut t,
         );
+        frame_check(&item.prompt_en, ctx.passage, &name, "prompt_en", &mut t);
         if item.answer_format == FMT_CHOICE && item.options.len() < 2 {
             t.fail(
                 "items_wellformed",
@@ -3278,12 +3421,74 @@ mod tests {
             &ExitCtx {
                 objective_ids: &[],
                 task_prompts: &[],
+                passage: "",
             },
         );
         assert_eq!(failed(&e.results), ["items_wellformed"]);
         let items = e.output.unwrap();
         assert_eq!(items[0].answer_format, FMT_BLANK);
         assert_eq!(items[1].answer_format, FMT_SHORT);
+    }
+
+    #[test]
+    fn a_sentence_frame_alone_is_not_a_question() {
+        let passage = "I went to the market with my mother. The neighbors thought the umbrellas would be gone.";
+        for frame in [
+            // The teacher's report: printed as question 20.
+            "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing, as seen in the text where ______.",
+            "I think ______ because ______.",
+            "Today I learned that ___.",
+            "In my opinion, the ending is ______ because ______.",
+        ] {
+            assert!(sentence_frame_only(frame, passage), "{frame}");
+        }
+        for question in [
+            // Not the student's voice: a fill-in question about the text.
+            "The neighbors thought the ______ would be gone.",
+            // First person, but quoted from the material: a cloze.
+            "I ______ to the market with my mother.",
+            // A question or an instruction of its own, with a frame to use.
+            "What do I think about the ______?",
+            "Use the frame to answer: I think ______ because ______.",
+            "Complete the sentence: I identified ______ as a feature of the story.",
+            "Explain your choice. I chose ______ because ______.",
+            // No blank to complete.
+            "I think the story is sad.",
+        ] {
+            assert!(!sentence_frame_only(question, passage), "{question}");
+        }
+    }
+
+    #[test]
+    fn an_exit_question_that_is_only_a_frame_is_sent_back() {
+        let frame = "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing.";
+        let mut first = exit_item("E1", "形成性評量", frame, Some("the setting"));
+        first.answer_format = FMT_SHORT.into();
+        let mut second = exit_item(
+            "E2",
+            "學生反思",
+            "Which part of today's text was the hardest for you?",
+            None,
+        );
+        second.answer_format = FMT_SHORT.into();
+        let raw = RawExit {
+            estimated_minutes: 3,
+            items: vec![first, second],
+        };
+        let e = evaluate_exit(
+            &raw,
+            &ExitCtx {
+                objective_ids: &[],
+                task_prompts: &[],
+                passage: &paragraphs().join("\n"),
+            },
+        );
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        assert!(e.problems[0].contains("只有句型框架"), "{:?}", e.problems);
+        assert!(e.problems[0].contains("招呼語"));
+        assert!(e.repairs[0].starts_with("句型框架移出題號"));
+        // Kept: the block is assembled with the frame in its box (assemble::lift_frames).
+        assert_eq!(e.output.unwrap()[0].prompt_en, frame);
     }
 
     fn exit_item(id: &str, purpose: &str, prompt: &str, answer: Option<&str>) -> RawExitItem {
@@ -3660,6 +3865,7 @@ mod tests {
         let ctx = ExitCtx {
             objective_ids: &objectives,
             task_prompts: &prompts,
+            passage: "",
         };
         let good = RawExit {
             estimated_minutes: 3,
@@ -3715,6 +3921,7 @@ mod tests {
         let ctx = ExitCtx {
             objective_ids: &objectives,
             task_prompts: &[],
+            passage: "",
         };
         let raw = RawExit {
             estimated_minutes: 3,
@@ -3747,6 +3954,7 @@ mod tests {
         let none = ExitCtx {
             objective_ids: &[],
             task_prompts: &[],
+            passage: "",
         };
         assert!(!evaluate_exit(&raw, &none).needs_repair());
     }
