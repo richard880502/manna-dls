@@ -47,7 +47,8 @@ class DeploymentTests(unittest.TestCase):
         memory = self.config(ROOT / "memory-sidecar")
         falkordb = memory["services"]["falkordb"]
         # network_mode keeps Coolify from adding its per-resource network to this service.
-        self.assertEqual(falkordb["network_mode"], f"{memory['name']}_memory-private")
+        self.assertEqual(falkordb["network_mode"], memory["networks"]["memory-private"]["name"])
+        self.assertEqual(memory["networks"]["memory-private"]["name"], "manna-memory-private")
         self.assertNotIn("networks", falkordb)
         self.assertEqual(falkordb["hostname"], "falkordb")
         self.assertEqual(falkordb["image"], FALKORDB)
