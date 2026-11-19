@@ -353,13 +353,13 @@ describe("首頁: a tool from the quick box drafts objectives first", () => {
     const dialog = within(screen.getByRole("dialog", { name: "貼上文字" }));
     await user.type(dialog.getByRole("textbox", { name: "貼上教材文字" }), "Bees help plants.");
     await user.click(dialog.getByRole("button", { name: "附上" }));
-    await user.click(within(screen.getByRole("radiogroup", { name: "要做什麼" })).getByRole("radio", { name: "課堂活動" }));
+    await user.click(within(screen.getByRole("radiogroup", { name: "要做什麼" })).getByRole("radio", { name: "完整學習單" }));
     await user.type(screen.getByRole("textbox", { name: "給 Manna 的要求" }), "多一點討論");
     await user.click(screen.getByRole("button", { name: "送出" }));
 
     await waitFor(() => expect(contentBox()).toHaveValue(content.text));
     expect(api.lastBody("POST", DRAFTS)).toEqual({
-      kind: "activity",
+      kind: "worksheet",
       material: { title: "", text: "Bees help plants." },
       request: "多一點討論",
       progress_id: expect.any(String),
@@ -368,7 +368,7 @@ describe("首頁: a tool from the quick box drafts objectives first", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
     expect(api.lastBody("POST", SESSIONS)).toEqual({
       entry: "home",
-      kind: "activity",
+      kind: "worksheet",
       request: "多一點討論",
       material: { title: "", text: "Bees help plants." },
       options: { content_objective: content.text, language_objective: language.text },

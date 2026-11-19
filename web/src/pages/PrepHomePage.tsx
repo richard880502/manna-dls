@@ -37,7 +37,7 @@ import {
   REQUEST_MAX,
   SAMPLE_CHIP_LABEL,
   TAKE_AS_SAMPLE,
-  TOOLS,
+  HOME_TOOLS,
   TOOL_BLURB,
   TOOL_CHIP,
   TOOL_NAME,
@@ -306,9 +306,9 @@ function QuickBox() {
     const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
     if (!forward && !back) return;
     event.preventDefault();
-    const next = (index + (forward ? 1 : -1) + TOOLS.length) % TOOLS.length;
+    const next = (index + (forward ? 1 : -1) + HOME_TOOLS.length) % HOME_TOOLS.length;
     tileRefs.current[next]?.focus();
-    pickTool(TOOLS[next]!);
+    pickTool(HOME_TOOLS[next]!);
   }
 
   /**
@@ -443,7 +443,7 @@ function QuickBox() {
       )}
 
       <div className="tool-tiles" role="radiogroup" aria-label="要做什麼">
-        {TOOLS.map((t, i) => (
+        {HOME_TOOLS.map((t, i) => (
           <button
             key={t}
             type="button"
@@ -451,11 +451,11 @@ function QuickBox() {
             aria-checked={tool === t}
             aria-labelledby={`${ids}-${t}-name`}
             aria-describedby={`${ids}-${t}-blurb`}
-            tabIndex={tool === t || (tool === null && i === 0) ? 0 : -1}
+            tabIndex={tool === t || (i === 0 && !(HOME_TOOLS as readonly (Tool | null)[]).includes(tool)) ? 0 : -1}
             ref={(el) => {
               tileRefs.current[i] = el;
             }}
-            className={`tool-tile${t === "mimic" ? " is-featured" : ""}`}
+            className="tool-tile"
             disabled={busy}
             onClick={() => pickTool(t)}
             onKeyDown={(e) => onTileKeyDown(e, i)}
@@ -472,6 +472,9 @@ function QuickBox() {
           </button>
         ))}
       </div>
+      <p className="home-others">
+        閱讀理解題、差異化學習單、課堂活動、教學套件：學習單做好後，在對話裡接著做；也可以直接在上面的框寫出來。
+      </p>
       {fullFormPath && (
         <p className="home-more">
           <Link className="text-link is-plain" to={fullFormPath} state={carry}>
@@ -531,8 +534,8 @@ function QuickBox() {
 }
 
 /**
- * 首頁: a greeting with the quick box, the six tools as one radiogroup of tiles under it (the only
- * place tools are listed; 更多設定 goes to the full form), and the latest prep sessions.
+ * 首頁: a greeting with the quick box, the two tools as one radiogroup of tiles under it (the other four
+ * are offered in the conversation or by typing them; 更多設定 goes to the full form), and the latest prep sessions.
  */
 export function PrepHomePage() {
   return (
