@@ -1260,6 +1260,7 @@ fn check_revision(
             title: change.title.clone(),
             instructions: change.instructions.clone(),
             scaffold: String::new(),
+            supports: Vec::new(),
             items: change.items.clone(),
         };
         let e = evaluate_section(&section, &ctx);

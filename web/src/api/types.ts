@@ -1607,6 +1607,8 @@ export interface WsScaffold {
   /** 系統自動加入的程序鷹架 */
   auto: boolean;
   origin: WsOrigin;
+  /** 印在它上面的標題（照版型產生時是原學習單的標題）；沒有時印種類的英文標題 */
+  heading?: string;
 }
 
 export interface WsBlock {
@@ -2064,10 +2066,31 @@ export interface WsTemplateSection {
   text_scope: string;
   /** 固定的鷹架種類 */
   scaffolds: string[];
+  /** 原學習單在這一區印出、有自己標題的提示框，依原本順序（沒有時不出現） */
+  supports?: WsTemplateSupport[];
   instruction_style: string;
+  /** 有題號的題目的樣式；句型框架不算 */
   item_patterns: string[];
   /** 需要老師提供影片、錄音、圖片或另一篇文字 */
   needs_external_material: boolean;
+}
+
+export type WsTemplateSupportRole =
+  | "directions"
+  | "sentence_frame"
+  | "sharing_frame"
+  | "word_bank"
+  | "hints"
+  | "guiding_questions"
+  | "example";
+
+/** 原學習單的一個提示框（例如 Directions、Sentence Frame for Sharing） */
+export interface WsTemplateSupport {
+  /** 原學習單上的標題，逐字 */
+  heading: string;
+  role: WsTemplateSupportRole;
+  /** 內容的通用樣式 */
+  pattern: string;
 }
 
 export interface WsTemplate {

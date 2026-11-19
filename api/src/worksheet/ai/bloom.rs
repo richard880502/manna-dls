@@ -764,6 +764,7 @@ fn level_scaffolds(
         levels: levels.to_vec(),
         auto: draft.steps.is_empty(),
         origin: Origin::Ai,
+        heading: None,
     }];
     if !draft.example.trim().is_empty() {
         let shown: Vec<Level> = match output {
@@ -784,6 +785,7 @@ fn level_scaffolds(
                 levels: shown,
                 auto: false,
                 origin: Origin::Ai,
+                heading: None,
             });
         }
     }
@@ -807,6 +809,7 @@ fn level_scaffolds(
                 levels: vec![*level],
                 auto: false,
                 origin: Origin::Ai,
+                heading: None,
             });
         }
     }

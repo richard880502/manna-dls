@@ -21,6 +21,8 @@
 //! | `FAKE_WS_NO_BLANK`       | tasks: the first 填空題 has its whole sentence and no blank on call 1 (repaired by the second) |
 //! | `FAKE_WS_NO_BLANK_ALWAYS`| tasks: the same in both calls (the server blanks the answer out of the sentence) |
 //! | `FAKE_WS_BLANK_LOST`     | tasks: the first 填空題 has no blank and not its answer either, in both calls (the server makes it a 簡答題) |
+//! | `FAKE_WS_FRAME_STEPS`    | scaffolds: on call 1 every 句型框架 has two directions and a 「Use this frame:」 lead (repaired by the second) |
+//! | `FAKE_WS_FRAME_STEPS_ALWAYS` | scaffolds: the same in both calls (the directions join the block's steps, the lead goes) |
 //! | `FAKE_BLOCK`             | every step: output with nothing usable                              |
 //! | `FAKE_RUNAWAY`           | every step: call 1 runs to `max_tokens` in whitespace (see `ai::fake`) |
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)          |
@@ -38,9 +40,15 @@
 //! | `FAKE_BLOCK`             | extraction: unreadable output in both calls (the template fails); in a section's title: that block fails |
 //! | `FAKE_RUNAWAY`           | every call: the first attempt runs to `max_tokens` (the retry succeeds) |
 //! | `FAKE_TPL_BAD_BLOOM`     | generation: every block's first item has a Bloom level outside the six (the server drops it) |
+//! | `<heading>: <content>` lines | extraction: in a `## ` section, a line whose heading is Directions, Sentence Frame(s) for Sharing, Sentence Frames, Sentence Starters, Word Bank, Hints, Guiding Questions or Example is one of its support boxes |
+//! | `FAKE_TPL_FRAME_AS_ITEM` | extraction: no support boxes; a section's sharing frame is the 4th of 4 question patterns (`item_count` 4), as before supports existed (the server moves it into a box, `item_count` 3) |
+//! | `FAKE_TPL_BAD_SHAPES`    | generation, call 1: a 是非題 asking an opinion first, the sharing frame as two questions at the end (one wrapped in "Write … using the frame:"), and directions with a "Use this frame:" lead in the first box of frames (or the scaffold) while the Directions and sharing boxes stay empty (repaired by the second) |
+//! | `FAKE_TPL_BAD_SHAPES_ALWAYS` | generation: the same in both calls (the server splits, lifts and rewrites) |
+//! | `FAKE_TPL_TERMS`         | generation: odd paragraphs say "expository writing", even ones "informative writing" in the instructions (the server keeps one) |
 //!
 //! Generated items carry a Bloom level (prompt version 2): a writing item `create`, the others
-//! `remember`, `understand`, `analyze` in turn; the scaffold is an array of lines.
+//! `remember`, `understand`, `analyze` in turn; the scaffold is an array of lines. A section with
+//! support boxes gets `supports` instead: one entry per box with lines for its role.
 //!
 //! Picture slots (only when the request asks for `image_slots`, i.e. pictures are on): the tasks
 //! step gives the first block one `scene` slot; every template block gets one, except a block
@@ -560,9 +568,12 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
     let invalid = has("FAKE_BLOCK");
     let no_procedural = has("FAKE_WS_NO_PROCEDURAL");
     let leak = has("FAKE_WS_LEAK") && attempt == 1;
+    let frame_steps =
+        has("FAKE_WS_FRAME_STEPS_ALWAYS") || (has("FAKE_WS_FRAME_STEPS") && attempt == 1);
     let selected = strings(&ctx["selected_kinds"]);
     let content_of = |kind: &str| -> &'static str {
         match kind {
+            k if k == KIND_FRAMES && frame_steps => "Identify the main idea in the first sentence. Use one detail from the text as evidence.\nUse this frame: The writer says ___ in order to ___.",
             k if k == KIND_GUIDING => "Who is the paragraph about? What happens first? What changes at the end?",
             k if k == KIND_EXAMPLE => "Example (a different question): Q: Why was the street empty? A: The street was empty because the shops had closed.",
             k if k == KIND_WORD_LIST => "Word bank: reason, result, however, because, in the end",
@@ -733,17 +744,73 @@ pub fn template_outline(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) 
     })
 }
 
-/// Call B: one section per outline item, its design guessed from the title.
+/// The labelled support boxes the fake extraction recognises: a line 「<heading>: <content>」 in
+/// a section of the sample, with one of these headings (any case), and the role it gets.
+const FAKE_SUPPORT_HEADINGS: [(&str, &str); 9] = [
+    ("directions", "directions"),
+    ("sentence frame for sharing", "sharing_frame"),
+    ("sentence frames for sharing", "sharing_frame"),
+    ("sentence frames", "sentence_frame"),
+    ("sentence starters", "sentence_frame"),
+    ("word bank", "word_bank"),
+    ("hints", "hints"),
+    ("guiding questions", "guiding_questions"),
+    ("example", "example"),
+];
+
+/// The support boxes written in the section of the sample titled `title` (its lines up to the
+/// next `## ` line): `{ heading, role, pattern }`, the heading as written.
+fn fake_supports(text: &str, title: &str) -> Vec<Value> {
+    let mut inside = false;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(t) = line.strip_prefix("## ") {
+            inside = t.trim() == title;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let Some((head, content)) = line.split_once(':') else {
+            continue;
+        };
+        let key = head.trim().to_lowercase();
+        if let Some((_, role)) = FAKE_SUPPORT_HEADINGS.iter().find(|(h, _)| *h == key) {
+            out.push(json!({ "heading": head.trim(), "role": role, "pattern": content.trim() }));
+        }
+    }
+    out
+}
+
+fn kind_of_role(role: &str) -> &'static str {
+    match role {
+        "directions" => KIND_STEPS,
+        "sentence_frame" | "sharing_frame" => KIND_FRAMES,
+        "word_bank" => KIND_WORD_LIST,
+        "hints" => "提示與追問",
+        "example" => KIND_EXAMPLE,
+        _ => KIND_GUIDING,
+    }
+}
+
+/// Call B: one section per outline item, its design guessed from the title. Support boxes are
+/// read from the section's lines ([`fake_supports`]); `FAKE_TPL_FRAME_AS_ITEM` reads them the
+/// way extraction did before supports existed: no boxes, the sharing frame as the fourth of four
+/// question patterns (the server moves it back into a box).
 pub fn template_details(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     if has("FAKE_BLOCK") {
         return json!({ "sections": "unreadable" });
     }
     let bad = has("FAKE_TPL_BAD_LABEL");
+    let frame_as_item = has("FAKE_TPL_FRAME_AS_ITEM");
+    let text = ctx["text"].as_str().unwrap_or_default();
     let outline = ctx["outline"].as_array().cloned().unwrap_or_default();
     let sections: Vec<Value> = outline
         .iter()
         .map(|o| {
             let title = o["title_pattern"].as_str().unwrap_or_default();
+            let supports = fake_supports(text, title);
             let lower = title.to_lowercase();
             let per_paragraph = o["per_paragraph"] == true;
             let external = lower.contains("video") || title.contains("影片");
@@ -769,17 +836,44 @@ pub fn template_details(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) 
                 tasks.push("探究");
                 formats.push("SDGs");
             }
+            let mut scaffolds: Vec<&str> = supports
+                .iter()
+                .map(|s| kind_of_role(s["role"].as_str().unwrap_or_default()))
+                .collect();
+            if scaffolds.is_empty() {
+                scaffolds.push(KIND_GUIDING);
+            }
+            if bad {
+                scaffolds.push("高層次思考");
+            }
+            let mut item_count = if bad { 40 } else if format == FMT_PARAGRAPH { 1 } else { 3 };
+            let mut patterns = vec!["What does [人物] do in paragraph [n]?".to_string()];
+            let mut supports = supports;
+            let sharing = supports
+                .iter()
+                .position(|s| s["role"] == "sharing_frame");
+            if let (true, Some(at)) = (frame_as_item, sharing) {
+                patterns = vec![
+                    "What does [人物] do in paragraph [n]?".to_string(),
+                    "Which sentence is the topic sentence of paragraph [n]?".to_string(),
+                    "Is the topic sentence the first sentence? (True/False)".to_string(),
+                    supports[at]["pattern"].as_str().unwrap_or_default().to_string(),
+                ];
+                item_count = 4;
+                supports.clear();
+            }
             json!({
                 "title_pattern": title,
                 "purpose": "（測試）讓學生依段落找出細節並說明作者的寫法。",
                 "block_kind": block_kind,
                 "student_tasks": tasks,
                 "answer_formats": formats,
-                "item_count": if bad { 40 } else if format == FMT_PARAGRAPH { 1 } else { 3 },
+                "item_count": item_count,
                 "text_scope": if per_paragraph { "逐段" } else if external { "課文外" } else { "全文" },
-                "scaffolds": if bad { vec![KIND_GUIDING, "高層次思考"] } else { vec![KIND_GUIDING] },
+                "scaffolds": scaffolds,
+                "supports": supports,
                 "instruction_style": "英文祈使句，一句話",
-                "item_patterns": ["What does [人物] do in paragraph [n]?"],
+                "item_patterns": patterns,
                 "needs_external_material": external,
             })
         })
@@ -830,7 +924,7 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
             ["remember", "understand", "analyze"][(k - 1) % 3]
         }
     };
-    let items: Vec<Value> = (1..=count)
+    let mut items: Vec<Value> = (1..=count)
         .map(|k| {
             if external {
                 return json!({
@@ -855,17 +949,97 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
             out
         })
         .collect();
-    let scaffold: Vec<&str> = if external {
-        Vec::new()
+    let bad = !external
+        && (has("FAKE_TPL_BAD_SHAPES_ALWAYS") || (has("FAKE_TPL_BAD_SHAPES") && attempt == 1));
+    let directions_in_frames = [
+        "Identify the common idea in the first sentence.",
+        "Look for the sentence that introduces the paragraph's main point.",
+        "Use this frame: The author describes ______ to show ______.",
+    ];
+    if bad {
+        // What a real model wrote (docs/API.md「提示框」): an opinion as a 是非題 first, the sharing
+        // frame twice as a question at the end (once wrapped in a writing task).
+        let keep = (ctx["item_count"].as_u64().unwrap_or(3) as usize).saturating_sub(1);
+        items.truncate(keep);
+        items.insert(
+            0,
+            json!({
+                "answer_format": FMT_TRUE_FALSE,
+                "prompt": "Do you think the first sentence serves as a topic sentence?",
+                "options": ["True", "False"], "answer": "True", "bloom": "analyze",
+            }),
+        );
+        let frame = format!("Hi! In Paragraph {no}, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of informative writing.");
+        items.push(json!({
+            "answer_format": FMT_PARAGRAPH,
+            "prompt": format!("Write a short analysis paragraph using the frame: {frame}"),
+            "options": [], "answer": "Answers will vary.", "bloom": "analyze",
+        }));
+        items.push(json!({
+            "answer_format": FMT_SHORT, "prompt": frame, "options": [],
+            "answer": "Answers will vary.", "bloom": "analyze",
+        }));
+    }
+    // `FAKE_TPL_TERMS`: odd paragraphs call the genre by another name.
+    let genre = if has("FAKE_TPL_TERMS") && no % 2 == 1 {
+        " Notice how this expository writing is built."
+    } else if has("FAKE_TPL_TERMS") {
+        " Notice how this informative writing is built."
     } else {
-        vec!["Look for the key words in the paragraph first."]
+        ""
     };
     let mut out = json!({
         "title": title.replace("[n]", &no.to_string()),
-        "instructions": format!("Read {label} and answer the questions."),
-        "scaffold": scaffold,
+        "instructions": format!("Read {label} and answer the questions.{genre}"),
         "items": items,
     });
+    let boxes = section["supports"].as_array().cloned().unwrap_or_default();
+    if boxes.is_empty() {
+        out["scaffold"] = if external {
+            json!([])
+        } else if bad {
+            json!(directions_in_frames)
+        } else {
+            json!(["Look for the key words in the paragraph first."])
+        };
+    } else {
+        let words: Vec<String> = sentence
+            .split(|c: char| !c.is_alphabetic())
+            .filter(|w| w.chars().count() > 4)
+            .take(3)
+            .map(str::to_lowercase)
+            .collect();
+        let mut frames_written = false;
+        out["supports"] = boxes
+            .iter()
+            .map(|b| {
+                let role = b["role"].as_str().unwrap_or_default();
+                let lines: Vec<String> = match role {
+                    // The bad output put the steps among the frames and left these empty.
+                    "directions" if bad => Vec::new(),
+                    "sharing_frame" if bad => Vec::new(),
+                    "sentence_frame" if bad && !frames_written => {
+                        frames_written = true;
+                        directions_in_frames.iter().map(|l| l.to_string()).collect()
+                    }
+                    "directions" => vec![
+                        "Underline the sentence that tells the main idea.".to_string(),
+                        "Circle two details that support it.".to_string(),
+                    ],
+                    "sentence_frame" => vec!["The author describes ______ to show ______.".to_string()],
+                    "sharing_frame" => vec![format!(
+                        "Hi! In Paragraph {no}, the author describes ______. I identified ______ as the main idea."
+                    )],
+                    "word_bank" => vec![words.join(", ")],
+                    "hints" => vec!["Look at the first sentence of the paragraph.".to_string()],
+                    "guiding_questions" => vec!["What is the paragraph mostly about?".to_string()],
+                    _ => vec!["Example: The author describes the shop to show the setting.".to_string()],
+                };
+                json!({ "heading": b["heading"], "lines": lines })
+            })
+            .collect::<Vec<_>>()
+            .into();
+    }
     if ctx["image_slots"].as_u64().unwrap_or(0) > 0 {
         out["image_slots"] = if external {
             json!([])

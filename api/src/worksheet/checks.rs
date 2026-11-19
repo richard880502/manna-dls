@@ -15,11 +15,12 @@ use super::schemas::{
     RawBlock, RawExit, RawExitItem, RawItem, RawScaffoldSet, RawScaffolds, RawTasks, RawWarmup,
     TARGET_WARMUP, TIER_CHALLENGE, TIER_CORE, TIER_SUPPORT,
 };
+use super::template::{SupportRole, WsTemplateSupport};
 use super::tiered::{RawLinkingWords, RawTieredLevel, RawVersion};
 use super::{
-    info_function_from_label, student_tasks, ItemTier, Level, Practice, ANSWER_FORMATS,
-    EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE,
-    INSTRUCTIONAL_KINDS, PROCEDURAL_KINDS, VERBAL_KINDS,
+    info_function_from_label, student_tasks, ItemTier, Level, Practice, ScaffoldType,
+    ANSWER_FORMATS, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TABLE,
+    FMT_TRUE_FALSE, INSTRUCTIONAL_KINDS, KIND_FRAMES, KIND_STEPS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
 use crate::checks::CheckResult;
 use crate::routes::clip_chars;
@@ -562,12 +563,236 @@ pub(crate) fn sentence_frame_only(prompt: &str, passage: &str) -> bool {
         && !quotes_material(prompt, passage)
 }
 
+/// A greeting that opens a frame for sharing aloud: 「Hi!」「Hello,」「Hey」「Good morning」.
+static GREETING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)^(?:hi|hello|hey|greetings|good\s+(?:morning|afternoon|evening)|dear\s+(?:classmates|friends|everyone|all|class|teacher))\b",
+    )
+    .expect("valid regex")
+});
+
+/// The greeting-led fill-in frame in `prompt`, if it is one: a frame for sharing aloud
+/// (「Hi! In Paragraph 2, the author describes ______. … I identified ______ as …」), at the start
+/// of the prompt or wrapped in a task after a colon (「Write a short analysis paragraph using the
+/// frame: Hi! …」, 「Complete the analysis paragraph: Hi! …」). The frame must have a blank and
+/// not be quoted from the material (a cloze of a letter in the text is a real question). Returns
+/// the frame without the wrapper. A frame like this is a support, never a numbered question.
+pub(crate) fn greeting_frame(prompt: &str, passage: &str) -> Option<String> {
+    let prompt = prompt.trim();
+    if !has_blank_marker(prompt) {
+        return None;
+    }
+    let starts = std::iter::once(0).chain(
+        prompt
+            .char_indices()
+            .filter(|(_, c)| matches!(c, ':' | '：' | '\n'))
+            .map(|(i, c)| i + c.len_utf8()),
+    );
+    for start in starts {
+        let rest = prompt[start..]
+            .trim_start()
+            .trim_start_matches(['"', '“', '\'', '‘'])
+            .trim_start();
+        if GREETING.is_match(rest) && has_blank_marker(rest) && !quotes_material(rest, passage) {
+            let frame = rest.trim_end().trim_end_matches(['"', '”']).trim_end();
+            return Some(frame.to_string());
+        }
+    }
+    None
+}
+
+/// Verbs a direction (an imperative step written for the student) starts with.
+const DIRECTION_VERBS: [&str; 70] = [
+    "add",
+    "answer",
+    "ask",
+    "begin",
+    "check",
+    "choose",
+    "circle",
+    "cite",
+    "compare",
+    "complete",
+    "connect",
+    "consider",
+    "copy",
+    "count",
+    "cross",
+    "decide",
+    "describe",
+    "discuss",
+    "draw",
+    "explain",
+    "fill",
+    "find",
+    "focus",
+    "follow",
+    "give",
+    "go",
+    "highlight",
+    "identify",
+    "include",
+    "jot",
+    "label",
+    "list",
+    "listen",
+    "look",
+    "make",
+    "mark",
+    "match",
+    "mention",
+    "name",
+    "note",
+    "notice",
+    "number",
+    "pay",
+    "pick",
+    "point",
+    "put",
+    "quote",
+    "read",
+    "refer",
+    "remember",
+    "reread",
+    "retell",
+    "review",
+    "rewrite",
+    "say",
+    "scan",
+    "search",
+    "select",
+    "share",
+    "show",
+    "skim",
+    "sort",
+    "start",
+    "state",
+    "summarize",
+    "support",
+    "take",
+    "talk",
+    "underline",
+    "use",
+];
+
+/// A leading bullet, number or 「Step 1:」 before a line of a support box.
+static LINE_BULLET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)^\s*(?:[-•*·▪]\s*|\(?\d{1,2}[.)]\s+|step\s*\d{1,2}\s*[:.)\-–]?\s*)")
+        .expect("valid regex")
+});
+
+/// A lead that only points at the frame after it (「Use this frame:」「Complete the sentence
+/// frame:」): in a box of sentence frames it says nothing the heading does not.
+static FRAME_LEAD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)^\s*(?:please\s+)?(?:use|try|complete|fill\s+in|follow)\s+(?:this|these|the|the\s+following|a)\s+(?:sentence\s+)?(?:frames?|starters?|sentence\s+starters?|patterns?)(?:\s+below)?\s*[:：]\s*",
+    )
+    .expect("valid regex")
+});
+
+/// A line of a support box without its bullet or step number.
+fn without_bullet(line: &str) -> &str {
+    let line = line.trim();
+    match LINE_BULLET.find(line) {
+        Some(m) if m.end() < line.len() => line[m.end()..].trim(),
+        _ => line,
+    }
+}
+
+/// Whether `text` is a direction: an imperative step with no blank to write in and no question
+/// (「Identify the common idea about bees in the first sentence.」).
+pub(crate) fn direction_line(text: &str) -> bool {
+    let text = without_bullet(text);
+    if has_blank_marker(text) || text.contains(['?', '？']) {
+        return false;
+    }
+    text.split(|c: char| !c.is_alphabetic())
+        .find(|w| !w.is_empty())
+        .is_some_and(|w| DIRECTION_VERBS.contains(&w.to_lowercase().as_str()))
+}
+
+/// The sentences of one line: cut after 「.」「!」「?」 followed by a space and a capital letter or a
+/// quote. 「Hi! In Paragraph 2, …」 is two sentences that stay together in a frame.
+fn sentences(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    for (k, &(i, c)) in chars.iter().enumerate() {
+        if !matches!(c, '.' | '!' | '?') {
+            continue;
+        }
+        let next = chars[k + 1..].iter().find(|(_, c)| !c.is_whitespace());
+        let spaced = chars.get(k + 1).is_some_and(|(_, c)| c.is_whitespace());
+        if spaced && next.is_some_and(|(_, c)| c.is_uppercase() || "\"“'‘".contains(*c)) {
+            let end = i + c.len_utf8();
+            out.push(line[start..end].trim());
+            start = end;
+        }
+    }
+    out.push(line[start..].trim());
+    out.retain(|s| !s.is_empty());
+    out
+}
+
+/// A box of sentence frames, sorted: the frames (without a 「Use this frame:」 lead) and the
+/// directions written among them (imperative steps without a blank, whole lines or sentences of
+/// a line), which belong in a Directions box. Lines that are neither stay with the frames.
+pub(crate) fn split_frames(lines: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut frames = Vec::new();
+    let mut directions = Vec::new();
+    for line in lines.iter().flat_map(|l| l.lines()) {
+        let body = without_bullet(line);
+        if body.is_empty() {
+            continue;
+        }
+        if direction_line(body) {
+            // One step per sentence.
+            directions.extend(sentences(body).into_iter().map(str::to_string));
+            continue;
+        }
+        let mut kept: Vec<&str> = Vec::new();
+        for s in sentences(body) {
+            if direction_line(s) {
+                directions.push(s.to_string());
+            } else {
+                kept.push(s);
+            }
+        }
+        let frame = kept.join(" ");
+        let frame = FRAME_LEAD.replace(&frame, "").trim().to_string();
+        if !frame.is_empty() {
+            frames.push(frame);
+        }
+    }
+    (frames, directions)
+}
+
+/// A box of directions, sorted: the steps and the frames written among them (lines with a
+/// blank, without a 「Use this frame:」 lead).
+pub(crate) fn split_directions(lines: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut directions = Vec::new();
+    let mut frames = Vec::new();
+    for line in lines.iter().flat_map(|l| l.lines()) {
+        let body = without_bullet(line);
+        if body.is_empty() {
+            continue;
+        }
+        if has_blank_marker(body) {
+            frames.push(FRAME_LEAD.replace(body, "").trim().to_string());
+        } else {
+            directions.push(body.to_string());
+        }
+    }
+    (directions, frames)
+}
+
 /// A question that is only a sentence frame fails `items_wellformed`: the repair call is told to
 /// write what the student does. The question is kept here; when it is still only a frame, the
 /// block is assembled with the frame in its 「Sentence frames」 box, not numbered
-/// ([`crate::worksheet::assemble::lift_frames`]).
+/// ([`crate::worksheet::assemble::lift_frames`]). A greeting-led frame wrapped in a task
+/// (「Write … using the frame: Hi! …」) counts as a frame too ([`greeting_frame`]).
 fn frame_check(prompt: &str, passage: &str, iname: &str, field: &str, t: &mut Tally) {
-    if !sentence_frame_only(prompt, passage) {
+    if !sentence_frame_only(prompt, passage) && greeting_frame(prompt, passage).is_none() {
         return;
     }
     t.fail(
@@ -578,6 +803,107 @@ fn frame_check(prompt: &str, passage: &str, iname: &str, field: &str, t: &mut Ta
         ),
         "句型框架移出題號，印在這一區的 Sentence frames 方框（不編號）",
     );
+}
+
+// ---------------------------------------------------------------- 是非題: a statement to judge
+
+/// A question for the student's view: 「Do you think …」「In your opinion …」「Do you agree …」.
+static OPINION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)\b(?:do|would|did|does)\s+you\s+(?:think|believe|agree|feel)\b|\bin\s+your\s+(?:opinion|view)\b|\bwhat\s+do\s+you\s+think\b",
+    )
+    .expect("valid regex")
+});
+
+/// 「Do you think X?」「Do you agree that X?」「Is it true that X?」: X is the statement to judge.
+static TF_STATEMENT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)^\s*(?:(?:do|would)\s+you\s+(?:think|believe|feel)\s+(?:that\s+)?|(?:do|would)\s+you\s+agree\s+that\s+|is\s+it\s+true\s+that\s+)([^?？]+?)\s*[?？]\s*$",
+    )
+    .expect("valid regex")
+});
+
+/// Whether a 是非題 is not a statement to judge: it asks a question (「Is the second sentence the
+/// topic sentence?」) or the student's opinion (「Do you think this sentence serves as a topic
+/// sentence?」), which True / False cannot answer.
+pub(crate) fn true_false_question(prompt: &str) -> bool {
+    prompt.contains(['?', '？']) || OPINION.is_match(prompt)
+}
+
+/// What the code makes of a 是非題 that asks a question, when the repair call wrote one again.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TrueFalseFix {
+    /// 「Do you think X?」 → the statement 「X.」 (still a 是非題, the same answer).
+    Statement(String),
+    /// Anything else: a 簡答題 asking Yes or No with a reason ([`YES_NO_REASON`]).
+    YesNo(String),
+}
+
+/// What a 是非題 that asked a question asks once it is a 簡答題.
+pub const YES_NO_REASON: &str = "Answer Yes or No, and give one reason from the text.";
+
+pub(crate) fn true_false_fix(prompt: &str) -> TrueFalseFix {
+    if let Some(c) = TF_STATEMENT.captures(prompt.trim()) {
+        let clause = c[1].trim();
+        if clause.split_whitespace().count() >= 3 && !OPINION.is_match(clause) {
+            let mut chars = clause.chars();
+            let first: String = chars
+                .next()
+                .map(|f| f.to_uppercase().collect())
+                .unwrap_or_default();
+            return TrueFalseFix::Statement(format!(
+                "{first}{}.",
+                chars.as_str().trim_end_matches(['.', '。'])
+            ));
+        }
+    }
+    TrueFalseFix::YesNo(format!("{} {YES_NO_REASON}", prompt.trim()))
+}
+
+/// A 是非題 must be a statement students judge from the text (「The second sentence of Paragraph 1
+/// is the topic sentence.」), not a question or a question for their opinion. One that is fails
+/// `items_wellformed` (the repair call is told how to write it) and is fixed in code
+/// ([`true_false_fix`]): the statement in 「Do you think X?」 is judged instead, otherwise the item
+/// becomes a 簡答題 asking Yes or No with a reason (options go; True / False answers become Yes /
+/// No). `field` is the prompt's name in the schema.
+fn true_false_check(
+    format: &mut String,
+    prompt: &mut String,
+    options: &mut Vec<String>,
+    answer: Option<&mut String>,
+    (iname, field): (&str, &str),
+    t: &mut Tally,
+) {
+    if format != FMT_TRUE_FALSE || !true_false_question(prompt) {
+        return;
+    }
+    let problem = format!(
+        "{iname} 是是非題，但 {field} 是問句或問學生的意見（「{}」），學生無法用 True／False 回答：是非題要寫成一句可以依課文判斷對錯的直述句（例如 \"The second sentence of Paragraph 1 is the topic sentence.\"）；要問學生的看法時改成簡答題，請學生回答 Yes 或 No 並說明理由。",
+        clip_chars(prompt, 80)
+    );
+    match true_false_fix(prompt) {
+        TrueFalseFix::Statement(s) => {
+            t.fail("items_wellformed", problem, "把問句改成要判斷對錯的直述句");
+            *prompt = s;
+        }
+        TrueFalseFix::YesNo(s) => {
+            t.fail(
+                "items_wellformed",
+                problem,
+                "改成簡答題：回答 Yes 或 No 並說明理由",
+            );
+            *prompt = s;
+            *format = FMT_SHORT.to_string();
+            options.clear();
+            if let Some(answer) = answer {
+                match answer.trim() {
+                    "True" => *answer = "Yes.".to_string(),
+                    "False" => *answer = "No.".to_string(),
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
@@ -848,6 +1174,14 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 &answer,
                 &iname,
                 "prompt_en",
+                &mut t,
+            );
+            true_false_check(
+                &mut item.answer_format,
+                &mut item.prompt_en,
+                &mut item.options,
+                Some(&mut item.answer_en),
+                (&iname, "prompt_en"),
                 &mut t,
             );
             frame_check(&item.prompt_en, &passage, &iname, "prompt_en", &mut t);
@@ -1239,13 +1573,18 @@ pub struct ScaffoldsCtx<'a> {
     pub answers: &'a [String],
 }
 
-const SCAFFOLD_CHECKS: [&str; 5] = [
+const SCAFFOLD_CHECKS: [&str; 6] = [
     "targets_match_blocks_and_warmup",
     "each_target_has_procedural",
     "kinds_from_spec_sets",
     "english_only",
     "no_answer_leak",
+    "supports_wellformed",
 ];
+
+/// Most steps a procedural scaffold of the scaffolds step keeps once directions written in a
+/// sentence-frame box have joined it.
+const MAX_STEPS_WITH_DIRECTIONS: usize = 8;
 
 /// `text` without its parenthesised Chinese glosses ("routine (常規)", "routine（常規）"), when
 /// that leaves English only; `None` when there is Chinese elsewhere too.
@@ -1380,8 +1719,9 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
             out.truncate(2);
             out
         };
-        let verbal = support(&s.verbal, &VERBAL_KINDS, "語言鷹架");
+        let mut verbal = support(&s.verbal, &VERBAL_KINDS, "語言鷹架");
         let instructional = support(&s.instructional, &INSTRUCTIONAL_KINDS, "教學鷹架");
+        let directions = frames_without_directions(&target, &mut verbal, &mut t);
         let mut procedural = Vec::new();
         for p in &s.procedural {
             let mut steps = clean_all(&p.steps_en);
@@ -1415,6 +1755,29 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
             }
         }
         procedural.truncate(2);
+        if !directions.is_empty() {
+            let at = procedural
+                .iter()
+                .position(|p| p.kind == KIND_STEPS)
+                .unwrap_or(0);
+            match procedural.get_mut(at) {
+                Some(p) => {
+                    for d in directions {
+                        if !p.steps_en.iter().any(|x| norm(x) == norm(&d)) {
+                            p.steps_en.push(d);
+                        }
+                    }
+                    p.steps_en.truncate(MAX_STEPS_WITH_DIRECTIONS);
+                }
+                None => procedural.push(super::schemas::RawProcedure {
+                    kind: KIND_STEPS.to_string(),
+                    steps_en: directions
+                        .into_iter()
+                        .take(MAX_STEPS_WITH_DIRECTIONS)
+                        .collect(),
+                }),
+            }
+        }
         if procedural.is_empty() {
             t.fail(
                 "each_target_has_procedural",
@@ -1449,6 +1812,38 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
     }
     let output = if sets.is_empty() { None } else { Some(sets) };
     t.finish(output)
+}
+
+/// A 句型框架 support of the scaffolds step holds frames only. Directions written in it
+/// (imperative steps without a blank, 「Identify the topic sentence.」) fail
+/// `supports_wellformed` and are returned, to join the target's procedural steps (the block's
+/// directions); a 「Use this frame:」 lead goes. A support left without frames is dropped.
+fn frames_without_directions(
+    target: &str,
+    verbal: &mut Vec<super::schemas::RawSupport>,
+    t: &mut Tally,
+) -> Vec<String> {
+    let mut moved = Vec::new();
+    for sup in verbal.iter_mut().filter(|s| s.kind == KIND_FRAMES) {
+        let (frames, directions) = split_frames(std::slice::from_ref(&sup.content_en));
+        if !directions.is_empty() {
+            t.fail(
+                "supports_wellformed",
+                format!(
+                    "{target} 的句型框架裡寫了作答步驟（「{}」）：句型框架只寫有空格 ___ 讓學生完成的句子，不要寫步驟或指示；步驟寫在程序鷹架的 steps_en。",
+                    clip_chars(&directions.join(" "), 100)
+                ),
+                "步驟移到這一區的分步指示",
+            );
+            moved.extend(directions);
+        }
+        let content = frames.join("\n");
+        if content != sup.content_en.trim() {
+            sup.content_en = content;
+        }
+    }
+    verbal.retain(|s| !s.content_en.trim().is_empty());
+    moved
 }
 
 // ---------------------------------------------------------------- (f) exit ticket
@@ -1537,6 +1932,14 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
             &answer,
             &name,
             "prompt_en",
+            &mut t,
+        );
+        true_false_check(
+            &mut item.answer_format,
+            &mut item.prompt_en,
+            &mut item.options,
+            item.sample_answer_en.as_mut(),
+            (&name, "prompt_en"),
             &mut t,
         );
         frame_check(&item.prompt_en, ctx.passage, &name, "prompt_en", &mut t);
@@ -1764,6 +2167,14 @@ fn item_checks(item: &mut CleanSectionItem, iname: &str, t: &mut Tally) -> bool 
         "prompt",
         t,
     );
+    true_false_check(
+        &mut item.answer_format,
+        &mut item.prompt,
+        &mut item.options,
+        Some(&mut item.answer),
+        (iname, "prompt"),
+        t,
+    );
     if item.answer_format == FMT_CHOICE {
         normalize_choice(&mut item.options, &mut item.answer);
         let distinct: HashSet<&str> = item.options.iter().map(|o| o.trim()).collect();
@@ -1826,6 +2237,17 @@ pub fn evaluate_section(
     ctx: &SectionCtx<'_>,
 ) -> Eval<CleanSection> {
     let mut t = Tally::new(&SECTION_CHECKS);
+    let (out, _) = section_core(raw, ctx, &mut t);
+    finish_section(out, ctx, t, |out| out)
+}
+
+/// The title, instructions, scaffold text and items of a generated block, cleaned and checked
+/// (see [`evaluate_section`]); also whether the block is about syllables.
+fn section_core(
+    raw: &crate::worksheet::template::RawSectionOut,
+    ctx: &SectionCtx<'_>,
+    t: &mut Tally,
+) -> (CleanSection, bool) {
     let mut out = CleanSection {
         title: clean(&raw.title),
         instructions: clean(&raw.instructions),
@@ -1842,14 +2264,24 @@ pub fn evaluate_section(
         ],
         syllable_section,
         ctx,
-        &mut t,
+        t,
     );
     for (ii, it) in raw.items.iter().enumerate() {
         let iname = format!("第 {} 題", ii + 1);
-        if let Some(item) = section_item(it, &iname, syllable_section, ctx, &mut t) {
+        if let Some(item) = section_item(it, &iname, syllable_section, ctx, t) {
             out.items.push(item);
         }
     }
+    (out, syllable_section)
+}
+
+/// At most the section's item count (the first ones), at least one item.
+fn finish_section<T>(
+    mut out: CleanSection,
+    ctx: &SectionCtx<'_>,
+    mut t: Tally,
+    wrap: impl FnOnce(CleanSection) -> T,
+) -> Eval<T> {
     if out.items.len() > ctx.item_count {
         t.fixed(
             "item_count_within_template",
@@ -1870,7 +2302,376 @@ pub fn evaluate_section(
         );
         return t.finish(None);
     }
-    t.finish(Some(out))
+    t.finish(Some(wrap(out)))
+}
+
+// ---------------------------------------------------------------- a template block's support boxes
+
+const TEMPLATE_SECTION_CHECKS: [&str; 9] = [
+    "labels_from_spec_sets",
+    "items_wellformed",
+    "organizer_wellformed",
+    "answer_not_in_prompt",
+    "item_count_within_template",
+    "has_items",
+    "no_invented_material",
+    "syllables_match_dictionary",
+    "supports_wellformed",
+];
+
+/// One support box of a template block, checked: what it prints as, under which heading.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CleanSupport {
+    /// The sample's heading; `None` prints the kind's own heading (a template read before
+    /// supports, or a box of frames the code had to add).
+    pub heading: Option<String>,
+    /// What the box is for (`None`: a kind no role prints as).
+    pub role: Option<SupportRole>,
+    pub kind_type: ScaffoldType,
+    pub kind: String,
+    pub lines: Vec<String>,
+}
+
+impl CleanSupport {
+    fn of_role(heading: Option<String>, role: SupportRole) -> Self {
+        Self {
+            heading,
+            role: Some(role),
+            kind_type: role.kind_type(),
+            kind: role.kind().to_string(),
+            lines: Vec::new(),
+        }
+    }
+
+    fn is_frames(&self) -> bool {
+        self.kind == KIND_FRAMES
+    }
+
+    /// What the box is called in a message to the model.
+    fn name(&self) -> String {
+        self.heading.clone().unwrap_or_else(|| self.kind.clone())
+    }
+}
+
+/// A checked template block: its text and items, and its support boxes in print order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateSection {
+    pub section: CleanSection,
+    pub supports: Vec<CleanSupport>,
+}
+
+/// What a template block's support boxes are checked against.
+pub struct SupportsCtx<'a> {
+    /// The section's boxes, in the sample's order. Empty for a template read before supports:
+    /// the block's one scaffold (`scaffold` lines) is then of the `legacy` kind.
+    pub supports: &'a [WsTemplateSupport],
+    pub legacy: (ScaffoldType, &'a str),
+}
+
+fn same_heading(a: &str, b: &str) -> bool {
+    norm(a).to_lowercase() == norm(b).to_lowercase()
+}
+
+/// Checks a block generated from a template section like [`evaluate_section`], and its support
+/// boxes: one box per box of the section (its lines, under the section's heading), or the one
+/// scaffold of a template read before supports. Every box holds what its role says
+/// (`supports_wellformed`): directions written in a box of sentence frames go to a Directions box
+/// (the section's, or a new one before the frames), frames written among directions go to the
+/// frames; a box the section has but the output left empty is reported. A question that is a
+/// greeting-led frame for sharing aloud (「Hi! In Paragraph 2, …」, also wrapped in a task such as
+/// 「Write … using the frame: …」) or only a sentence frame fails `items_wellformed` and leaves
+/// the numbering: the greeting frame goes into the sharing-frame box, the other into a box of
+/// sentence frames (as [`crate::worksheet::assemble::lift_frames`] does it, the question it
+/// supports keeps its place). Boxes left empty are not printed.
+pub fn evaluate_template_section(
+    raw: &crate::worksheet::template::RawSectionOut,
+    ctx: &SectionCtx<'_>,
+    sup: &SupportsCtx<'_>,
+) -> Eval<TemplateSection> {
+    let mut t = Tally::new(&TEMPLATE_SECTION_CHECKS);
+    let (mut out, syllable_section) = section_core(raw, ctx, &mut t);
+    let mut supports = supports_of(raw, &out.scaffold, sup, syllable_section, ctx, &mut t);
+    sort_supports(&mut supports, &mut t);
+    lift_template_frames(&mut out.items, &mut supports, ctx.passage, &mut t);
+    if !sup.supports.is_empty() {
+        report_empty_boxes(&supports, &mut t);
+    }
+    supports.retain(|s| !s.lines.is_empty());
+    finish_section(out, ctx, t, |section| TemplateSection { section, supports })
+}
+
+/// The boxes as written: one per box of the section (matched by heading, else by position), or
+/// the legacy scaffold. Each line is cleaned and checked like the block's own text.
+fn supports_of(
+    raw: &crate::worksheet::template::RawSectionOut,
+    scaffold: &str,
+    sup: &SupportsCtx<'_>,
+    syllable_section: bool,
+    ctx: &SectionCtx<'_>,
+    t: &mut Tally,
+) -> Vec<CleanSupport> {
+    let mut checked = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| {
+                let mut l = clean(l);
+                section_text_checks([("supports", &mut l)], syllable_section, ctx, t);
+                l
+            })
+            .filter(|l| !l.is_empty())
+            .collect()
+    };
+    if sup.supports.is_empty() {
+        let (kind_type, kind) = sup.legacy;
+        let lines: Vec<String> = scaffold.lines().map(str::to_string).collect();
+        return vec![CleanSupport {
+            heading: None,
+            role: SupportRole::of_kind(kind),
+            kind_type,
+            kind: kind.to_string(),
+            lines: checked(&lines),
+        }];
+    }
+    let mut used = vec![false; raw.supports.len()];
+    let mut out = Vec::new();
+    for (i, ts) in sup.supports.iter().enumerate() {
+        let pick = raw
+            .supports
+            .iter()
+            .enumerate()
+            .position(|(j, r)| !used[j] && same_heading(&r.heading, &ts.heading))
+            .or_else(|| (i < used.len() && !used[i]).then_some(i));
+        let lines = match pick {
+            Some(j) => {
+                used[j] = true;
+                checked(&raw.supports[j].lines)
+            }
+            None => Vec::new(),
+        };
+        let mut b = CleanSupport::of_role(Some(ts.heading.clone()), ts.role);
+        b.lines = lines;
+        out.push(b);
+    }
+    out
+}
+
+/// Every box holds what its role says: directions out of the boxes of frames, frames out of the
+/// boxes of directions, each to a box of its own (see [`evaluate_template_section`]). A box of
+/// the section that is still empty is reported (the sample prints it).
+fn sort_supports(supports: &mut Vec<CleanSupport>, t: &mut Tally) {
+    // A greeting-led frame belongs in the sharing-frame box, whatever box it was written in
+    // (a template read before supports wrote it in its one scaffold, e.g. 「Words in context:
+    // Sentence Frame: Hi! …」). Sent back only when the section has that box to write it in.
+    let has_sharing = supports
+        .iter()
+        .any(|s| s.role == Some(SupportRole::SharingFrame));
+    let mut greetings: Vec<(String, String)> = Vec::new();
+    for s in supports.iter_mut().filter(|s| {
+        s.role != Some(SupportRole::SharingFrame) && s.kind_type != ScaffoldType::Procedural
+    }) {
+        let name = s.name();
+        let mut kept = Vec::new();
+        for line in std::mem::take(&mut s.lines) {
+            match greeting_frame(&line, "") {
+                Some(frame) => greetings.push((name.clone(), frame)),
+                None => kept.push(line),
+            }
+        }
+        s.lines = kept;
+    }
+    for (name, frame) in greetings {
+        let problem = format!(
+            "「{name}」裡寫了口頭分享用的句型（「{}」）：Hi! 開頭的分享句型寫在分享句型的提示框。",
+            clip_chars(&frame, 80)
+        );
+        let repair = "分享句型移到分享句型方框";
+        if has_sharing {
+            t.fail("supports_wellformed", problem, repair);
+        } else {
+            t.fixed("supports_wellformed", problem, repair);
+        }
+        push_new(&mut frame_box(supports, true).lines, frame);
+    }
+    let mut directions: Vec<String> = Vec::new();
+    for s in supports.iter_mut().filter(|s| s.is_frames()) {
+        let (frames, moved) = split_frames(&s.lines);
+        if !moved.is_empty() {
+            t.fail(
+                "supports_wellformed",
+                format!(
+                    "「{}」是句型框架，卻寫了作答步驟（「{}」）：句型框架只寫有空格 ______ 讓學生完成的句子，不要寫步驟或「Use this frame:」；步驟寫在 Directions（directions）的提示框。",
+                    s.name(),
+                    clip_chars(&moved.join(" "), 100)
+                ),
+                "步驟移到 Directions 方框",
+            );
+            directions.extend(moved);
+        }
+        s.lines = frames;
+    }
+    let mut frames: Vec<String> = Vec::new();
+    for s in supports
+        .iter_mut()
+        .filter(|s| s.kind_type == ScaffoldType::Procedural)
+    {
+        let (steps, moved) = split_directions(&s.lines);
+        if !moved.is_empty() {
+            t.fail(
+                "supports_wellformed",
+                format!(
+                    "「{}」是作答步驟，卻寫了句型框架（「{}」）：步驟只寫簡短的祈使句，不要有空格；句型框架寫在句型框架的提示框。",
+                    s.name(),
+                    clip_chars(&moved.join(" "), 100)
+                ),
+                "句型框架移到句型框架方框",
+            );
+            frames.extend(moved);
+        }
+        s.lines = steps;
+    }
+    if !directions.is_empty() {
+        let at = match supports
+            .iter()
+            .position(|s| s.kind_type == ScaffoldType::Procedural)
+        {
+            Some(at) => at,
+            None => {
+                let at = supports.iter().position(|s| s.is_frames()).unwrap_or(0);
+                supports.insert(
+                    at,
+                    CleanSupport::of_role(
+                        Some(SupportRole::Directions.default_heading().to_string()),
+                        SupportRole::Directions,
+                    ),
+                );
+                at
+            }
+        };
+        for d in directions {
+            push_new(&mut supports[at].lines, d);
+        }
+    }
+    for f in frames {
+        match greeting_frame(&f, "") {
+            Some(g) => push_new(&mut frame_box(supports, true).lines, g),
+            None => push_new(&mut frame_box(supports, false).lines, f),
+        }
+    }
+}
+
+/// A box of the section that is still empty is reported (the sample prints it); it is not
+/// printed.
+fn report_empty_boxes(supports: &[CleanSupport], t: &mut Tally) {
+    for s in supports.iter().filter(|s| s.lines.is_empty()) {
+        t.fail(
+            "supports_wellformed",
+            format!(
+                "「{}」這個提示框沒有內容；原學習單在這一區有這個提示框，要依它的用途寫出來。",
+                s.name()
+            ),
+            "這個提示框不印",
+        );
+    }
+}
+
+/// Adds `line` unless the box already has it.
+fn push_new(lines: &mut Vec<String>, line: String) {
+    if !lines.iter().any(|l| norm(l) == norm(&line)) {
+        lines.push(line);
+    }
+}
+
+/// The box a frame goes into: the sharing-frame box for a greeting-led frame, otherwise the box
+/// of sentence frames (any box of frames that is not for sharing). One the section does not have
+/// is added at the end: 「Sentence Frame for Sharing」, or a box under the kind's own heading.
+fn frame_box(supports: &mut Vec<CleanSupport>, sharing: bool) -> &mut CleanSupport {
+    let at = if sharing {
+        supports
+            .iter()
+            .position(|s| s.role == Some(SupportRole::SharingFrame))
+    } else {
+        supports
+            .iter()
+            .position(|s| s.role == Some(SupportRole::SentenceFrame))
+            .or_else(|| {
+                supports
+                    .iter()
+                    .position(|s| s.is_frames() && s.role != Some(SupportRole::SharingFrame))
+            })
+    };
+    let at = match at {
+        Some(at) => at,
+        None => {
+            supports.push(if sharing {
+                CleanSupport::of_role(
+                    Some(SupportRole::SharingFrame.default_heading().to_string()),
+                    SupportRole::SharingFrame,
+                )
+            } else {
+                CleanSupport::of_role(None, SupportRole::SentenceFrame)
+            });
+            supports.len() - 1
+        }
+    };
+    &mut supports[at]
+}
+
+/// Frames written as questions leave the numbering (see [`evaluate_template_section`]). The
+/// sharing-frame box gets the first greeting frame only when it has none of its own (the model
+/// wrote the frame twice otherwise).
+fn lift_template_frames(
+    items: &mut Vec<CleanSectionItem>,
+    supports: &mut Vec<CleanSupport>,
+    passage: &str,
+    t: &mut Tally,
+) {
+    let open = |i: &CleanSectionItem| {
+        i.answer_format == FMT_SHORT || i.answer_format == super::FMT_PARAGRAPH
+    };
+    let mut kept: Vec<CleanSectionItem> = Vec::new();
+    for (k, mut item) in std::mem::take(items).into_iter().enumerate() {
+        let iname = format!("第 {} 題", k + 1);
+        if let Some(frame) = greeting_frame(&item.prompt, passage) {
+            let b = frame_box(supports, true);
+            t.fail(
+                "items_wellformed",
+                format!(
+                    "{iname}（「{}」）是口頭分享用的句型框架，不是題目：寫在「{}」的提示框（不編題號），不要寫成一題，也不要包成「Write … using the frame: …」「Complete the analysis paragraph: …」這樣的題目；題目不要用 Hi!、Hello! 這類招呼語開頭。",
+                    clip_chars(&item.prompt, 80),
+                    b.name()
+                ),
+                "移出題號，印在分享句型的方框（不編號）",
+            );
+            if b.lines.is_empty() {
+                b.lines.push(frame);
+            }
+            continue;
+        }
+        if sentence_frame_only(&item.prompt, passage) {
+            t.fail(
+                "items_wellformed",
+                format!(
+                    "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題，寫在句型框架的提示框；prompt 要寫出要學生做什麼（完整的題目或指示）。",
+                    clip_chars(&item.prompt, 80)
+                ),
+                "句型框架移出題號，印在這一區的句型框架方框（不編號）",
+            );
+            push_new(&mut frame_box(supports, false).lines, item.prompt.clone());
+            if kept.last().is_some_and(open) {
+                continue;
+            }
+            item.prompt = crate::worksheet::assemble::FRAME_TASK.to_string();
+            if !open(&item) {
+                item.answer_format = FMT_SHORT.to_string();
+                item.options.clear();
+                item.organizer = None;
+            }
+            kept.push(item);
+            continue;
+        }
+        kept.push(item);
+    }
+    *items = kept;
 }
 
 /// The checks of a section's own text: in a section about syllables, the dictionary's division
@@ -2835,6 +3636,7 @@ mod tests {
             title: "Task I. Syllable Separation and Oral Reading".into(),
             instructions: "Separate the words into syllables (e.g., be-ha-vior).".into(),
             scaffold: "".into(),
+            supports: Vec::new(),
             items: vec![
                 out_item(FMT_BLANK, "dramatic", &[], "dra-ma-tic"),
                 out_item(FMT_BLANK, "invisible", &[], "in-vis-i-ble"),
@@ -2882,6 +3684,7 @@ mod tests {
             title: "Paragraph 1: Details".into(),
             instructions: "Answer.".into(),
             scaffold: "".into(),
+            supports: Vec::new(),
             items: vec![out_item(FMT_BLANK, "Word?", &[], "dra-ma-tic")],
         };
         let out = evaluate_section(&other, &ctx).output.unwrap();
@@ -2895,6 +3698,7 @@ mod tests {
             title: "Paragraph 1: Details".into(),
             instructions: "請閱讀第一段並回答。".into(),
             scaffold: "".into(),
+            supports: Vec::new(),
             items: vec![
                 out_item(
                     FMT_CHOICE,
@@ -2929,6 +3733,7 @@ mod tests {
             title: "Watch https://youtube.com/x".into(),
             instructions: "Watch the video your teacher gives you.".into(),
             scaffold: "".into(),
+            supports: Vec::new(),
             items: vec![
                 out_item(
                     "簡答題",
@@ -3380,6 +4185,7 @@ mod tests {
             title: "Paragraph 2".into(),
             instructions: "Answer.".into(),
             scaffold: "".into(),
+            supports: Vec::new(),
             items: vec![out_item(
                 FMT_BLANK,
                 "Her neighbors laughed at the idea.",
@@ -3693,7 +4499,11 @@ mod tests {
             scaffolds: vec![
                 RawScaffoldSet {
                     target: "warm_up".into(),
-                    verbal: vec![],
+                    // Directions written among the frames (a teacher's 「Sentence frames」 box).
+                    verbal: vec![RawSupport {
+                        kind: "句型框架".into(),
+                        content_en: "Circle the key word in the title.\nUse this frame: I think ___ because ___.".into(),
+                    }],
                     instructional: vec![],
                     procedural: vec![steps(&["Read.", "Talk."])],
                 },
@@ -3744,6 +4554,12 @@ mod tests {
         assert_eq!(sets.len(), 2);
         assert_eq!(sets[1].verbal.len(), 1);
         assert!(sets[1].instructional.is_empty() && sets[1].procedural.is_empty());
+        // The direction joined the steps; the frame stays, without its lead.
+        assert_eq!(
+            sets[0].procedural[0].steps_en,
+            ["Read.", "Talk.", "Circle the key word in the title."]
+        );
+        assert_eq!(sets[0].verbal[0].content_en, "I think ___ because ___.");
     }
 
     #[test]
@@ -4364,5 +5180,438 @@ mod tests {
         assert!(evaluate_bloom_check(&RawBloomCheck { items: vec![] }, &ids)
             .output
             .is_none());
+    }
+
+    // ------------------------------------------------------------ support boxes, greetings, 是非題
+
+    /// The sharing frame of the teacher's report.
+    const SHARING: &str = "Hi! In Paragraph 1, the author describes _____. After reading it carefully, I identified _____ as one of the main characteristics of informative writing.";
+
+    #[test]
+    fn a_greeting_frame_is_found_alone_or_wrapped_in_a_task() {
+        let passage = "Bees carry pollen from flower to flower. Hi Tom, I will be ______ late.";
+        assert_eq!(greeting_frame(SHARING, passage).as_deref(), Some(SHARING));
+        for wrapped in [
+            format!("Write a short analysis paragraph using the frame: {SHARING}"),
+            format!("Complete the analysis paragraph: {SHARING}"),
+            format!("Complete the analysis paragraph：\n“{SHARING}”"),
+        ] {
+            assert_eq!(
+                greeting_frame(&wrapped, passage).as_deref(),
+                Some(SHARING),
+                "{wrapped}"
+            );
+        }
+        assert!(greeting_frame("Hello, my name is ______.", passage).is_some());
+        for not_one in [
+            // No blank.
+            "Hi! In Paragraph 1, the author describes bees.",
+            // A question that happens to start with "Hi…".
+            "History tells us ______ about bees.",
+            // A cloze of a letter in the material.
+            "Hi Tom, I will be ______ late.",
+            "What does the author describe in Paragraph 1? ______",
+        ] {
+            assert!(greeting_frame(not_one, passage).is_none(), "{not_one}");
+        }
+    }
+
+    #[test]
+    fn directions_and_frames_are_told_apart() {
+        // The box printed under 「Sentence frames」 in the teacher's report.
+        let written: Vec<String> = [
+            "Identify the common idea about bees in the first sentence.",
+            "Look for the sentence that introduces the paragraph's main point.",
+            "Use a detail about pollen, seeds, or fruit as evidence.",
+            "Use this frame: The author describes _____ to show _____.",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let (frames, directions) = split_frames(&written);
+        assert_eq!(frames, ["The author describes _____ to show _____."]);
+        assert_eq!(directions, written[..3]);
+        // Sentences of one line; a greeting stays with its frame; a starter without a blank stays.
+        let (frames, directions) = split_frames(&[
+            "1. Underline the topic sentence. The topic sentence is ______ because ______.".into(),
+            SHARING.into(),
+            "- I agree with the author.".into(),
+        ]);
+        assert_eq!(
+            frames,
+            [
+                "The topic sentence is ______ because ______.",
+                SHARING,
+                "I agree with the author."
+            ]
+        );
+        assert_eq!(directions, ["Underline the topic sentence."]);
+        // A box of directions with a frame in it.
+        let (steps, frames) = split_directions(&[
+            "Step 1: Read the paragraph.".into(),
+            "Use the frame: The author describes ______.".into(),
+        ]);
+        assert_eq!(steps, ["Read the paragraph."]);
+        assert_eq!(frames, ["The author describes ______."]);
+        assert!(direction_line("Circle two details."));
+        assert!(!direction_line("Circle the ______."));
+        assert!(!direction_line("Why is it the topic sentence?"));
+        assert!(!direction_line("The author describes bees."));
+    }
+
+    #[test]
+    fn a_true_false_item_is_a_statement_to_judge() {
+        let opinion = "Do you think this sentence serves as a topic sentence?";
+        assert!(true_false_question(opinion));
+        assert!(true_false_question(
+            "Is the second sentence the topic sentence?"
+        ));
+        assert!(true_false_question(
+            "In your opinion, the ending is the best part."
+        ));
+        assert!(!true_false_question(
+            "The second sentence of Paragraph 1 is the topic sentence."
+        ));
+        assert_eq!(
+            true_false_fix(opinion),
+            TrueFalseFix::Statement("This sentence serves as a topic sentence.".into())
+        );
+        assert_eq!(
+            true_false_fix("Is it true that bees carry pollen?"),
+            TrueFalseFix::Statement("Bees carry pollen.".into())
+        );
+        assert_eq!(
+            true_false_fix("Do you agree with the author?"),
+            TrueFalseFix::YesNo(format!("Do you agree with the author? {YES_NO_REASON}"))
+        );
+
+        // A template block (and every path that shares `item_checks`).
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Paragraph 1".into(),
+            instructions: "Answer.".into(),
+            scaffold: String::new(),
+            supports: Vec::new(),
+            items: vec![
+                out_item(FMT_TRUE_FALSE, opinion, &["True", "False"], "True"),
+                out_item(
+                    FMT_TRUE_FALSE,
+                    "Is the second sentence the topic sentence?",
+                    &["True", "False"],
+                    "False",
+                ),
+            ],
+        };
+        let ctx = SectionCtx {
+            passage: "",
+            item_count: 3,
+            needs_external: false,
+        };
+        let e = evaluate_section(&raw, &ctx);
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        assert!(e.problems[0].contains("直述句"), "{:?}", e.problems);
+        let items = e.output.unwrap().items;
+        assert_eq!(
+            (items[0].answer_format.as_str(), items[0].prompt.as_str()),
+            (FMT_TRUE_FALSE, "This sentence serves as a topic sentence.")
+        );
+        assert_eq!(items[0].answer, "True");
+        assert_eq!(items[1].answer_format, FMT_SHORT);
+        assert!(items[1].prompt.ends_with(YES_NO_REASON));
+        assert!(items[1].options.is_empty());
+        assert_eq!(items[1].answer, "No.");
+
+        // The main tasks.
+        let p = paragraphs();
+        let mut tf = item(FMT_TRUE_FALSE, opinion, "True");
+        tf.options = vec!["True".into(), "False".into()];
+        let raw = RawTasks {
+            blocks: staged(vec![
+                block(&[1], "發現資訊", vec![tf]),
+                block(
+                    &[2],
+                    "分析資訊",
+                    vec![item("簡答題", "Why did they laugh?", "They were sure.")],
+                ),
+                block(
+                    &[3],
+                    "整理資訊",
+                    vec![item("簡答題", "What happened?", "Twelve disappeared.")],
+                ),
+            ]),
+        };
+        let e = evaluate_tasks(&raw, &tasks_ctx(&p, &[]));
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        let blocks = e.output.unwrap();
+        assert_eq!(
+            blocks[0].items[0].prompt_en,
+            "This sentence serves as a topic sentence."
+        );
+    }
+
+    fn box_of(heading: &str, role: SupportRole) -> WsTemplateSupport {
+        WsTemplateSupport {
+            heading: heading.into(),
+            role,
+            pattern: String::new(),
+        }
+    }
+
+    fn written(heading: &str, lines: &[&str]) -> crate::worksheet::template::RawSupportOut {
+        crate::worksheet::template::RawSupportOut {
+            heading: heading.into(),
+            lines: lines.iter().map(|l| l.to_string()).collect(),
+        }
+    }
+
+    fn printed(out: &TemplateSection) -> Vec<(Option<&str>, Vec<&str>)> {
+        out.supports
+            .iter()
+            .map(|s| {
+                (
+                    s.heading.as_deref(),
+                    s.lines.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// The shapes of the teacher's report: an opinion as a 是非題, the sharing frame numbered
+    /// twice (once wrapped in a writing task), and the directions printed as sentence frames.
+    fn reported_items() -> Vec<crate::worksheet::template::RawOutItem> {
+        vec![
+            out_item(
+                FMT_TRUE_FALSE,
+                "Do you think this sentence serves as a topic sentence?",
+                &["True", "False"],
+                "True",
+            ),
+            out_item(
+                FMT_SHORT,
+                "What do bees carry from flower to flower?",
+                &[],
+                "Pollen.",
+            ),
+            out_item(
+                FMT_PARAGRAPH,
+                &format!("Write a short analysis paragraph using the frame: {SHARING}"),
+                &[],
+                "Answers will vary.",
+            ),
+            out_item(FMT_SHORT, SHARING, &[], "Answers will vary."),
+        ]
+    }
+
+    const REPORTED_BOX: [&str; 4] = [
+        "Identify the common idea about bees in the first sentence.",
+        "Look for the sentence that introduces the paragraph's main point.",
+        "Use a detail about pollen, seeds, or fruit as evidence.",
+        "Use this frame: The author describes _____ to show _____.",
+    ];
+
+    #[test]
+    fn a_template_block_prints_each_box_of_the_sample_apart() {
+        let boxes = [
+            box_of("Directions", SupportRole::Directions),
+            box_of("Sentence Frames", SupportRole::SentenceFrame),
+            box_of("Sentence Frame for Sharing", SupportRole::SharingFrame),
+        ];
+        let sup = SupportsCtx {
+            supports: &boxes,
+            legacy: (ScaffoldType::Verbal, KIND_GUIDING_FOR_TESTS),
+        };
+        let ctx = SectionCtx {
+            passage: "Bees carry pollen from flower to flower.",
+            item_count: 3,
+            needs_external: false,
+        };
+        // Written well: each box under its heading, in the sample's order (matched by heading).
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Paragraph 1".into(),
+            instructions: "Read paragraph 1.".into(),
+            scaffold: String::new(),
+            supports: vec![
+                written(
+                    "Sentence Frames",
+                    &["The author describes _____ to show _____."],
+                ),
+                written("Directions", &["Underline the topic sentence."]),
+                written("Sentence Frame for Sharing", &[SHARING]),
+            ],
+            items: vec![out_item(
+                FMT_SHORT,
+                "What do bees carry from flower to flower?",
+                &[],
+                "Pollen.",
+            )],
+        };
+        let e = evaluate_template_section(&raw, &ctx, &sup);
+        assert!(!e.needs_repair(), "{:?}", e.problems);
+        let out = e.output.unwrap();
+        assert_eq!(
+            printed(&out),
+            [
+                (Some("Directions"), vec!["Underline the topic sentence."]),
+                (
+                    Some("Sentence Frames"),
+                    vec!["The author describes _____ to show _____."]
+                ),
+                (Some("Sentence Frame for Sharing"), vec![SHARING]),
+            ]
+        );
+        assert_eq!(out.supports[0].kind_type, ScaffoldType::Procedural);
+        assert_eq!(out.supports[2].kind, KIND_FRAMES);
+
+        // The reported shapes: the directions leave the frames for the Directions box, the
+        // sharing frame leaves the numbering for its box, the opinion becomes a statement.
+        let bad = crate::worksheet::template::RawSectionOut {
+            supports: vec![
+                written("Directions", &[]),
+                written("Sentence Frames", &REPORTED_BOX),
+                written("Sentence Frame for Sharing", &[]),
+            ],
+            items: reported_items(),
+            ..raw.clone()
+        };
+        let e = evaluate_template_section(&bad, &ctx, &sup);
+        let names = failed(&e.results);
+        assert_eq!(names, ["items_wellformed", "supports_wellformed"]);
+        assert!(e
+            .problems
+            .iter()
+            .any(|p| p.contains("口頭分享用的句型框架")));
+        assert!(e.problems.iter().any(|p| p.contains("卻寫了作答步驟")));
+        let out = e.output.unwrap();
+        assert_eq!(
+            printed(&out),
+            [
+                (Some("Directions"), REPORTED_BOX[..3].to_vec()),
+                (
+                    Some("Sentence Frames"),
+                    vec!["The author describes _____ to show _____."]
+                ),
+                (Some("Sentence Frame for Sharing"), vec![SHARING]),
+            ]
+        );
+        let prompts: Vec<&str> = out
+            .section
+            .items
+            .iter()
+            .map(|i| i.prompt.as_str())
+            .collect();
+        assert_eq!(
+            prompts,
+            [
+                "This sentence serves as a topic sentence.",
+                "What do bees carry from flower to flower?"
+            ]
+        );
+        assert!(out
+            .section
+            .items
+            .iter()
+            .all(|i| greeting_frame(&i.prompt, "").is_none()));
+
+        // A box the output left empty is reported and not printed.
+        let empty = crate::worksheet::template::RawSectionOut {
+            supports: vec![
+                written("Directions", &["Underline the topic sentence."]),
+                written("Sentence Frames", &[]),
+                written("Sentence Frame for Sharing", &[SHARING]),
+            ],
+            ..raw
+        };
+        let e = evaluate_template_section(&empty, &ctx, &sup);
+        assert_eq!(failed(&e.results), ["supports_wellformed"]);
+        assert_eq!(e.output.unwrap().supports.len(), 2);
+    }
+
+    const KIND_GUIDING_FOR_TESTS: &str = "引導問題";
+
+    #[test]
+    fn a_template_read_before_supports_gets_the_same_boxes() {
+        // The teacher's template as it was stored: 句型框架 first, no boxes, the sharing frame
+        // among the questions.
+        let sup = SupportsCtx {
+            supports: &[],
+            legacy: (ScaffoldType::Verbal, KIND_FRAMES),
+        };
+        let ctx = SectionCtx {
+            passage: "Bees carry pollen from flower to flower.",
+            item_count: 4,
+            needs_external: false,
+        };
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Paragraph 1".into(),
+            instructions: "Read paragraph 1.".into(),
+            scaffold: REPORTED_BOX.join("\n"),
+            supports: Vec::new(),
+            items: reported_items(),
+        };
+        let e = evaluate_template_section(&raw, &ctx, &sup);
+        assert_eq!(
+            failed(&e.results),
+            ["items_wellformed", "supports_wellformed"]
+        );
+        let out = e.output.unwrap();
+        assert_eq!(
+            printed(&out),
+            [
+                (Some("Directions"), REPORTED_BOX[..3].to_vec()),
+                (None, vec!["The author describes _____ to show _____."]),
+                (Some("Sentence Frame for Sharing"), vec![SHARING]),
+            ]
+        );
+        assert_eq!(out.section.items.len(), 2);
+        // A plain frame in the student's voice is lifted as #71 does it: right after an open
+        // question its number goes.
+        let raw = crate::worksheet::template::RawSectionOut {
+            scaffold: "The author says ______.".into(),
+            items: vec![
+                out_item(FMT_SHORT, "Why do bees matter?", &[], "They carry pollen."),
+                out_item(
+                    FMT_SHORT,
+                    "I think ______ because ______.",
+                    &[],
+                    "Answers vary.",
+                ),
+            ],
+            ..raw
+        };
+        let e = evaluate_template_section(&raw, &ctx, &sup);
+        let out = e.output.unwrap();
+        assert_eq!(out.section.items.len(), 1);
+        // A first kind that is not 句型框架 (a real-model run on main): the sharing frame written
+        // in its box goes to its own box, without a repair call (the scaffold had no other place).
+        let words = SupportsCtx {
+            supports: &[],
+            legacy: (ScaffoldType::Verbal, "透過上下文解釋詞義"),
+        };
+        let raw_words = crate::worksheet::template::RawSectionOut {
+            scaffold: "Step 1: Look for the sentence that tells the main idea.\nSentence Frame: Hi! In Paragraph 1, the author describes ______.".into(),
+            items: vec![out_item(FMT_SHORT, "Why do bees matter?", &[], "They carry pollen.")],
+            ..raw.clone()
+        };
+        let e = evaluate_template_section(&raw_words, &ctx, &words);
+        assert!(!e.needs_repair(), "{:?}", e.problems);
+        assert_eq!(
+            printed(&e.output.unwrap()),
+            [
+                (
+                    None,
+                    vec!["Step 1: Look for the sentence that tells the main idea."]
+                ),
+                (
+                    Some("Sentence Frame for Sharing"),
+                    vec!["Hi! In Paragraph 1, the author describes ______."]
+                ),
+            ]
+        );
+        assert_eq!(
+            printed(&out),
+            [(
+                None,
+                vec!["The author says ______.", "I think ______ because ______."]
+            )]
+        );
     }
 }

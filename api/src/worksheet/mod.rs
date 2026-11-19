@@ -729,6 +729,26 @@ pub struct Scaffold {
     /// A procedural scaffold added by the system without the teacher asking (spec §3.3).
     pub auto: bool,
     pub origin: Origin,
+    /// The heading printed over it, when it is not the kind's own English heading
+    /// (`assemble::support_heading`): a block made from a template prints the sample's own
+    /// headings ("Directions", "Sentence Frame for Sharing"). A procedural scaffold with a
+    /// heading prints as a box of lines under it instead of the block's numbered steps. Absent
+    /// from the JSON when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading: Option<String>,
+}
+
+/// Longest heading a scaffold may print over it.
+pub const MAX_SCAFFOLD_HEADING_CHARS: usize = 80;
+
+impl Scaffold {
+    /// The heading of its own, trimmed; `None` when it has none (or only blanks).
+    pub fn own_heading(&self) -> Option<&str> {
+        self.heading
+            .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1112,6 +1132,15 @@ impl Content {
             }
             for s in &mut b.scaffolds {
                 check_text("鷹架", &s.content)?;
+                s.heading = s.own_heading().map(str::to_string);
+                if s.heading
+                    .as_deref()
+                    .is_some_and(|h| h.chars().count() > MAX_SCAFFOLD_HEADING_CHARS)
+                {
+                    return Err(format!(
+                        "鷹架的標題最多 {MAX_SCAFFOLD_HEADING_CHARS} 個字。"
+                    ));
+                }
                 if s.steps.len() > 12 {
                     return Err("一個程序鷹架最多 12 個步驟。".to_string());
                 }

@@ -858,6 +858,59 @@ async fn a_sentence_frame_is_printed_apart_not_numbered_as_a_question() {
     }
 }
 
+/// A teacher found directions printed in a 「Sentence frames」 box. The scaffolds step sends them
+/// back; written there again, they join the block's steps and the frame keeps only frames.
+#[tokio::test]
+async fn directions_written_as_sentence_frames_join_the_steps() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(&app, &t, &passage("FAKE_WS_FRAME_STEPS_ALWAYS")).await["id"]
+        .as_i64()
+        .unwrap();
+    let state = generate(&app, &t, id).await;
+    let calls: Vec<(i32, Value)> = sqlx::query_as(
+        "SELECT attempt, check_results FROM ai_interactions
+          WHERE module = 'worksheet_scaffolds' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(calls.len(), 2, "sent back once");
+    let wellformed = check(&calls[0].1, "supports_wellformed");
+    assert_eq!(wellformed["passed"], false);
+    assert!(wellformed["detail"]
+        .as_str()
+        .unwrap()
+        .contains("句型框架裡寫了作答步驟"));
+    let activities: Vec<Value> = blocks(&state)
+        .into_iter()
+        .filter(|b| b["kind"] == "activity")
+        .collect();
+    assert!(!activities.is_empty());
+    for b in &activities {
+        let scaffolds = b["scaffolds"].as_array().unwrap();
+        let frames = scaffolds
+            .iter()
+            .find(|s| s["kind"] == "句型框架")
+            .unwrap_or_else(|| panic!("{b}"));
+        assert_eq!(frames["content"], "The writer says ___ in order to ___.");
+        let steps: Vec<&str> = scaffolds
+            .iter()
+            .filter(|s| s["type"] == "procedural")
+            .flat_map(|s| s["steps"].as_array().unwrap())
+            .map(|s| s.as_str().unwrap())
+            .collect();
+        for direction in [
+            "Identify the main idea in the first sentence.",
+            "Use one detail from the text as evidence.",
+        ] {
+            assert!(steps.contains(&direction), "{steps:?}");
+        }
+    }
+    let printed = sheet(&app, &t, id, "standard", "student").await;
+    assert!(!printed.to_string().contains("Use this frame"));
+}
+
 /// The student DOCX of the standard version, as its document XML.
 async fn export_docx(app: &common::TestApp, t: &str, id: i64) -> String {
     let (status, _, _, bytes) = raw_get(

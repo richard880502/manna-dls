@@ -1060,3 +1060,385 @@ async fn the_template_cannot_change_while_generating() {
     assert_eq!(blocks(&state).len(), 1);
     assert_eq!(state["template"]["id"], id);
 }
+
+// ---------------------------------------------------------------- support boxes (docs/API.md「提示框」)
+
+/// A sample like the teacher's: a per-paragraph analysis block with a Directions part and a
+/// Sentence Frame for Sharing part, each under its own heading.
+fn sample_with_boxes(marker: &str) -> String {
+    format!(
+        "Name: ______ No: ______\n\n\
+         ## [n] Paragraph Analysis\n\
+         1. What is the common idea about bees in the first sentence?\n\
+         2. Which sentence is the topic sentence? (A) True (B) False\n\
+         Directions: Identify [關鍵概念] in the first sentence.\n\
+         Sentence Frame for Sharing: Hi! In Paragraph [n], the author describes _____. I identified _____ as one of the main characteristics of informative writing.\n\n\
+         ## Writing: [主題]\nWrite 80 words. {marker}"
+    )
+}
+
+#[tokio::test]
+async fn extraction_keeps_the_samples_support_boxes() {
+    let app = test_app!();
+    let t = app.teacher("T-TPL-SUP-1", "general").await;
+    let m = paste(&app, &t, "Bees Analysis Worksheet", &sample_with_boxes("")).await;
+    let v = extract(&app, &t, m).await;
+    assert_eq!(v["status"], "ready", "{v}");
+    let s = &v["content"]["sections"][0];
+    assert_eq!(s["per_paragraph"], true);
+    assert_eq!(
+        s["supports"],
+        json!([
+            { "heading": "Directions", "role": "directions",
+              "pattern": "Identify [關鍵概念] in the first sentence." },
+            { "heading": "Sentence Frame for Sharing", "role": "sharing_frame",
+              "pattern": "Hi! In Paragraph [n], the author describes _____. I identified _____ as one of the main characteristics of informative writing." },
+        ])
+    );
+    assert_eq!(
+        s["scaffolds"],
+        json!(["清楚的分步指示及完成順序", "句型框架"])
+    );
+    // A section without boxes has none in its JSON.
+    assert!(v["content"]["sections"][1].get("supports").is_none());
+    // The model's call asked for the boxes before the question patterns.
+    let rows = snapshots(&app, "worksheet_template_details").await;
+    assert!(rows[0].2["prompt"]["system"]
+        .as_str()
+        .unwrap()
+        .contains("提示框（supports）"));
+
+    // Read the way it was before supports: the sharing frame comes back as a question pattern;
+    // the server makes it a box again and counts one question less.
+    let m = paste(
+        &app,
+        &t,
+        "Bees Analysis Worksheet 2",
+        &sample_with_boxes("FAKE_TPL_FRAME_AS_ITEM"),
+    )
+    .await;
+    let v = extract(&app, &t, m).await;
+    let s = &v["content"]["sections"][0];
+    assert_eq!(s["item_count"], 3, "{s}");
+    assert!(s["item_patterns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| !p.as_str().unwrap().starts_with("Hi!")));
+    let boxes: Vec<(&str, &str)> = s["supports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| (b["heading"].as_str().unwrap(), b["role"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        boxes,
+        [
+            ("Directions", "directions"),
+            ("Sentence Frame for Sharing", "sharing_frame")
+        ]
+    );
+}
+
+/// The teacher's per-paragraph analysis block: a 是非題 and short answers, 3 questions, and
+/// (with `boxes`) the sample's three support boxes.
+fn analysis_template(boxes: bool) -> Value {
+    let mut s = section(
+        "s1",
+        "[n] Paragraph Analysis",
+        "activity",
+        &["是非題", "簡答題"],
+        3,
+    );
+    s["per_paragraph"] = json!(true);
+    s["text_scope"] = json!("逐段");
+    s["scaffolds"] = json!(["句型框架", "提示與追問"]);
+    if boxes {
+        s["supports"] = json!([
+            { "heading": "Directions", "role": "directions", "pattern": "Identify [關鍵概念]." },
+            { "heading": "Sentence Frames", "role": "sentence_frame",
+              "pattern": "The author describes _____ to show _____." },
+            { "heading": "Sentence Frame for Sharing", "role": "sharing_frame",
+              "pattern": "Hi! In Paragraph [n], the author describes _____." },
+        ]);
+    }
+    content(vec![s])
+}
+
+async fn worksheet_from(app: &common::TestApp, t: &str, template: i64, text: &str) -> i64 {
+    let (s, ws) = app
+        .post(
+            "/api/worksheets",
+            Some(t),
+            json!({ "template_id": template, "material": { "title": "Bees", "text": text } }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{ws}");
+    ws["id"].as_i64().unwrap()
+}
+
+async fn student_sheet(app: &common::TestApp, t: &str, id: i64) -> Value {
+    let (s, sheet) = app
+        .get(
+            &format!("/api/worksheets/{id}/sheet?level=standard&audience=student"),
+            Some(t),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{sheet}");
+    sheet
+}
+
+fn headings(b: &Value) -> Vec<String> {
+    b["supports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["heading"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// No printed question is a greeting-led frame.
+fn no_numbered_greeting(sheet: &Value) {
+    for b in sheet["blocks"].as_array().unwrap() {
+        for it in b["items"].as_array().unwrap() {
+            let p = it["prompt"].as_str().unwrap();
+            assert!(!p.contains("Hi!"), "{p}");
+            assert!(!p.starts_with("Do you think"), "{p}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn each_box_prints_under_the_samples_heading_and_frames_are_never_numbered() {
+    let app = test_app!();
+    let t = app.teacher("T-TPL-SUP-2", "general").await;
+    let tpl = ready_template(&app, &t).await;
+    let id = tpl["id"].as_i64().unwrap();
+    let (s, v) = put_content(&app, &t, id, analysis_template(true)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    // The model writes the reported shapes in both calls: the server sorts them out.
+    let ws = worksheet_from(
+        &app,
+        &t,
+        id,
+        &format!("{} FAKE_TPL_BAD_SHAPES_ALWAYS", passage()),
+    )
+    .await;
+    let state = generate(&app, &t, ws).await;
+    let bs = blocks(&state);
+    assert_eq!(bs.len(), 4, "one per paragraph");
+    for (i, b) in bs.iter().enumerate() {
+        let n = i + 1;
+        let sc = b["scaffolds"].as_array().unwrap();
+        let shape: Vec<(&str, &str, &str)> = sc
+            .iter()
+            .map(|s| {
+                (
+                    s["type"].as_str().unwrap(),
+                    s["kind"].as_str().unwrap(),
+                    s["heading"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("procedural", "清楚的分步指示及完成順序", "Directions"),
+                ("verbal", "句型框架", "Sentence Frames"),
+                ("verbal", "句型框架", "Sentence Frame for Sharing"),
+            ],
+            "{b}"
+        );
+        assert_eq!(
+            sc[0]["steps"],
+            json!([
+                "Identify the common idea in the first sentence.",
+                "Look for the sentence that introduces the paragraph's main point."
+            ])
+        );
+        assert_eq!(
+            sc[1]["content"],
+            "The author describes ______ to show ______."
+        );
+        assert!(sc[2]["content"].as_str().unwrap().starts_with(&format!(
+            "Hi! In Paragraph {n}, the author describes ______."
+        )));
+        let items = b["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3, "{b}");
+        assert_eq!(
+            (
+                items[0]["answer_format"].as_str(),
+                items[0]["prompt"].as_str()
+            ),
+            (
+                Some("是非題"),
+                Some("The first sentence serves as a topic sentence.")
+            )
+        );
+    }
+    // Every call was sent back once, with what was wrong.
+    let rows: Vec<(i32, String, Value)> = sqlx::query_as(
+        "SELECT attempt, status, check_results FROM ai_interactions
+          WHERE module = 'worksheet_template_section' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 8);
+    let first = rows.iter().find(|r| r.0 == 1).unwrap();
+    assert_eq!(first.1, "blocked");
+    let failed: Vec<&str> = first.2["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["passed"] == false)
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(failed, ["items_wellformed", "supports_wellformed"]);
+    // On paper: the sample's headings, in its order; the greeting frame in its box only.
+    let sheet = student_sheet(&app, &t, ws).await;
+    for b in sheet["blocks"].as_array().unwrap() {
+        assert_eq!(
+            headings(b),
+            [
+                "Directions",
+                "Sentence Frames",
+                "Sentence Frame for Sharing"
+            ]
+        );
+        assert_eq!(b["steps"], json!([]));
+        assert_eq!(b["items"].as_array().unwrap().len(), 3);
+    }
+    no_numbered_greeting(&sheet);
+    let nos: Vec<u64> = sheet["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|b| b["items"].as_array().unwrap().clone())
+        .map(|i| i["no"].as_u64().unwrap())
+        .collect();
+    assert_eq!(nos, (1..=12).collect::<Vec<u64>>());
+
+    // Repaired by the second call: its boxes are used as written.
+    let ws = worksheet_from(&app, &t, id, &format!("{} FAKE_TPL_BAD_SHAPES", passage())).await;
+    let state = generate(&app, &t, ws).await;
+    let b = &blocks(&state)[1];
+    let sc = b["scaffolds"].as_array().unwrap();
+    assert_eq!(
+        sc[0]["steps"],
+        json!([
+            "Underline the sentence that tells the main idea.",
+            "Circle two details that support it."
+        ])
+    );
+    assert_eq!(
+        sc[2]["content"],
+        "Hi! In Paragraph 2, the author describes ______. I identified ______ as the main idea."
+    );
+    no_numbered_greeting(&student_sheet(&app, &t, ws).await);
+}
+
+#[tokio::test]
+async fn a_template_read_before_supports_prints_directions_and_the_sharing_frame_apart() {
+    let app = test_app!();
+    let t = app.teacher("T-TPL-SUP-3", "general").await;
+    let tpl = ready_template(&app, &t).await;
+    let id = tpl["id"].as_i64().unwrap();
+    let (s, v) = put_content(&app, &t, id, analysis_template(false)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let ws = worksheet_from(
+        &app,
+        &t,
+        id,
+        &format!("{} FAKE_TPL_BAD_SHAPES_ALWAYS", passage()),
+    )
+    .await;
+    let state = generate(&app, &t, ws).await;
+    for b in blocks(&state) {
+        let sc = b["scaffolds"].as_array().unwrap();
+        let shape: Vec<(&str, Option<&str>)> = sc
+            .iter()
+            .map(|s| (s["kind"].as_str().unwrap(), s["heading"].as_str()))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("清楚的分步指示及完成順序", Some("Directions")),
+                ("句型框架", None),
+                ("句型框架", Some("Sentence Frame for Sharing")),
+            ],
+            "{b}"
+        );
+    }
+    let sheet = student_sheet(&app, &t, ws).await;
+    for b in sheet["blocks"].as_array().unwrap() {
+        assert_eq!(
+            headings(b),
+            [
+                "Directions",
+                "Sentence frames",
+                "Sentence Frame for Sharing"
+            ]
+        );
+    }
+    no_numbered_greeting(&sheet);
+}
+
+#[tokio::test]
+async fn one_sheet_uses_the_templates_name_for_the_genre() {
+    let app = test_app!();
+    let t = app.teacher("T-TPL-SUP-4", "general").await;
+    let tpl = ready_template(&app, &t).await;
+    let id = tpl["id"].as_i64().unwrap();
+    let mut c = analysis_template(true);
+    c["style_notes"] = json!(["每段分析 informative writing 的特徵"]);
+    let (s, v) = put_content(&app, &t, id, c).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let ws = worksheet_from(&app, &t, id, &format!("{} FAKE_TPL_TERMS", passage())).await;
+    let state = generate(&app, &t, ws).await;
+    for b in blocks(&state) {
+        let instructions = b["instructions"].as_str().unwrap();
+        assert!(
+            instructions.contains("informative writing"),
+            "{instructions}"
+        );
+        assert!(!instructions.contains("expository"), "{instructions}");
+    }
+}
+
+/// A template read before supports, whose question patterns hold the sample's labelled boxes:
+/// the boxes print under those labels, not as questions (the stored template is not changed).
+#[tokio::test]
+async fn a_template_read_before_supports_gets_its_labelled_boxes() {
+    let app = test_app!();
+    let t = app.teacher("T-TPL-SUP-5", "general").await;
+    let tpl = ready_template(&app, &t).await;
+    let id = tpl["id"].as_i64().unwrap();
+    let mut c = analysis_template(false);
+    c["sections"][0]["item_count"] = json!(2);
+    c["sections"][0]["item_patterns"] = json!([
+        "Directions: Underline the topic sentence.",
+        "Do you think [句子] serves as the topic sentence? (A) True (B) False",
+        "Sentence Frame for Sharing: Hi! In Paragraph [n], the author describes _____.",
+    ]);
+    let (s, v) = put_content(&app, &t, id, c).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["content"]["sections"][0].get("supports").is_none());
+    let ws = worksheet_from(&app, &t, id, &passage()).await;
+    generate(&app, &t, ws).await;
+    let sheet = student_sheet(&app, &t, ws).await;
+    for b in sheet["blocks"].as_array().unwrap() {
+        assert_eq!(
+            headings(b),
+            ["Directions", "Sentence Frame for Sharing"],
+            "{b}"
+        );
+        assert_eq!(b["items"].as_array().unwrap().len(), 2);
+    }
+    no_numbered_greeting(&sheet);
+    let (_, v) = app
+        .get(&format!("/api/worksheet-templates/{id}"), Some(&t))
+        .await;
+    assert!(v["content"]["sections"][0].get("supports").is_none());
+}
