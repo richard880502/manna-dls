@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { CreateClassRequest, LessonRun, SchoolClass } from "../api/types";
@@ -92,7 +92,8 @@ function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
  * 班級 (`/classes`; the home page until 備課 took `/`, docs/DESIGN_OVERHAUL.md): one focal block, the next lesson of the class
  * taught most recently, with 「開始上課」; then the classes as ruled rows; then the lessons that
  * were taught but not written up yet. A teacher with no class is invited to create the first one,
- * prefilled from the preference survey (P6); the invitation can be skipped.
+ * prefilled from the preference survey (P6), opens in the 新增班級 dialog; the invitation can be
+ * skipped.
  */
 export function ClassesPage() {
   const { teacher, preferences } = useApp();
@@ -133,6 +134,12 @@ export function ClassesPage() {
   const focalNext = focal?.next_action ?? null;
   const lastTaught = focal ? runs.find((r) => r.class_id === focal.id && r.ended_at !== null) : undefined;
   const unreviewed = runs.filter((r) => r.ended_at !== null && r.review_completed_at === null);
+
+  /** 新增班級 (the header, the first-class invitation, or the skipped line): the dialog. */
+  function openAdd(event: MouseEvent<HTMLButtonElement>) {
+    opener.current = event.currentTarget;
+    setAdding(true);
+  }
 
   function skip() {
     setSkipped(true);
@@ -197,15 +204,7 @@ export function ClassesPage() {
               所有單元
             </Link>
             {classes && active.length > 0 && (
-              <button
-                type="button"
-                className="text-link"
-                aria-haspopup="dialog"
-                onClick={(event) => {
-                  opener.current = event.currentTarget;
-                  setAdding(true);
-                }}
-              >
+              <button type="button" className="text-link" aria-haspopup="dialog" onClick={openAdd}>
                 新增班級
               </button>
             )}
@@ -221,20 +220,20 @@ export function ClassesPage() {
             <p className="lead">
               班級只需要一個名稱。之後每個班級會有自己的進度與上課紀錄，同一份單元可以給不同班級用。平台不存任何學生資料。
             </p>
-            <ClassForm
-              initial={emptyClassValues(track, isFirst ? p6 : "")}
-              submitLabel="建立班級"
-              onSubmit={create}
-              onCancel={skip}
-              cancelLabel="先略過"
-              profileHint={isFirst && p6 ? "已帶入你在備課偏好寫的班級特性，可修改。" : undefined}
-            />
+            <div className="button-row">
+              <button type="button" className="primary-button" aria-haspopup="dialog" onClick={openAdd}>
+                新增班級
+              </button>
+              <button type="button" className="text-link is-plain" onClick={skip}>
+                先略過
+              </button>
+            </div>
           </section>
         )}
         {classes && active.length === 0 && skipped && (
           <p className="empty-line">
             還沒有班級。可以先到<Link to="/units">備課庫</Link>準備單元，之後再
-            <button type="button" className="text-link" onClick={() => setSkipped(false)}>
+            <button type="button" className="text-link" aria-haspopup="dialog" onClick={openAdd}>
               新增班級
             </button>
             。
@@ -244,10 +243,11 @@ export function ClassesPage() {
         {adding && (
           <Dialog title="新增班級" returnFocus={backToOpener} onClose={() => setAdding(false)}>
             <ClassForm
-              initial={emptyClassValues(track)}
+              initial={emptyClassValues(track, isFirst ? p6 : "")}
               submitLabel="建立班級"
               onSubmit={create}
               onCancel={() => setAdding(false)}
+              profileHint={isFirst && p6 ? "已帶入你在備課偏好寫的班級特性，可修改。" : undefined}
             />
           </Dialog>
         )}

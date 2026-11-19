@@ -202,7 +202,7 @@ export function ClassForm({
           {saving ? "儲存中…" : submitLabel}
         </button>
         {cancel && (
-          <button type="button" className="ghost-button" onClick={cancel} disabled={saving}>
+          <button type="button" className="text-link is-plain" onClick={cancel} disabled={saving}>
             {cancelLabel}
           </button>
         )}

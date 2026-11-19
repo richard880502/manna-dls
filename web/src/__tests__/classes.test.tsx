@@ -253,8 +253,12 @@ describe("creating a class", () => {
     const user = userEvent.setup();
     renderApp("/classes");
 
-    const invite = within(await screen.findByRole("region", { name: "先建立你的第一個班級" }));
-    expect(invite.getByRole("button", { name: "先略過" })).toBeInTheDocument();
+    const region = within(await screen.findByRole("region", { name: "先建立你的第一個班級" }));
+    expect(region.getByRole("button", { name: "先略過" })).toBeInTheDocument();
+    // The invitation is a button: the form opens in the 新增班級 dialog.
+    expect(region.queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(region.getByRole("button", { name: "新增班級" }));
+    const invite = within(screen.getByRole("dialog", { name: "新增班級" }));
     expect(invite.getByRole("textbox", { name: "班級特性（選填）" })).toHaveValue("問卷寫的：高一普通班，程度落差大");
     expect(invite.getByText(/已帶入你在備課偏好寫的班級特性，可修改。/)).toBeInTheDocument();
     expect(invite.getByText("請不要輸入學生姓名或其他個人資料。")).toBeInTheDocument();
@@ -289,7 +293,9 @@ describe("creating a class", () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     renderApp("/classes");
-    const invite = within(await screen.findByRole("region", { name: "先建立你的第一個班級" }));
+    const region = within(await screen.findByRole("region", { name: "先建立你的第一個班級" }));
+    await user.click(region.getByRole("button", { name: "新增班級" }));
+    const invite = within(screen.getByRole("dialog", { name: "新增班級" }));
     await user.type(invite.getByRole("textbox", { name: "班級名稱" }), "閱讀選修 A");
     const profile = invite.getByRole("textbox", { name: "班級特性（選填）" });
     await user.clear(profile);
@@ -323,9 +329,10 @@ describe("creating a class", () => {
     const empty = within(screen.getByText(/還沒有班級。/));
     expect(empty.getByRole("link", { name: "備課庫" })).toHaveAttribute("href", "/units");
     expect(api.callsTo("POST", "/api/classes")).toHaveLength(0);
-    // …and the invitation comes back on request.
+    // …and 新增班級 there opens the dialog, still prefilled from P6.
     await user.click(empty.getByRole("button", { name: "新增班級" }));
-    expect(screen.getByRole("region", { name: "先建立你的第一個班級" })).toBeInTheDocument();
+    const dialog = within(screen.getByRole("dialog", { name: "新增班級" }));
+    expect(dialog.getByRole("textbox", { name: "班級特性（選填）" })).toHaveValue("問卷寫的：高一普通班，程度落差大");
   });
 
   it("a later class starts with an empty profile (P6 is only the first class's default)", async () => {
