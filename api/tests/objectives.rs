@@ -748,6 +748,45 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
         .unwrap()
         .to_string();
     assert!(user.contains("請不要重複這些"), "{user}");
+
+    // 換掉沒勾的: the kept lines (as the teacher edited them) go into the request.
+    let partial = draft(
+        &app,
+        &t,
+        json!({
+            "kind": "comprehension", "material": material(""),
+            "avoid": [v["objectives"][1]["text"]],
+            "keep": [{ "code": "C1", "text": "I can explain the main idea in my own words." }],
+        }),
+    )
+    .await;
+    assert_eq!(partial["status"], "shown");
+    let user = interactions(&app, "objective_draft").await[2].3["prompt"]["user"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(user.contains("請不要重複這些"), "{user}");
+    assert!(
+        user.contains("- C1：I can explain the main idea in my own words."),
+        "{user}"
+    );
+    // A kept line needs a code of the set and a line; at most three, one per code.
+    for keep in [
+        json!([{ "code": "C3", "text": "I can x." }]),
+        json!([{ "code": "C1", "text": "  " }]),
+        json!([{ "code": "C1", "text": "a" }, { "code": "C1", "text": "b" }]),
+        json!([{ "code": "C1", "text": "a" }, { "code": "C2", "text": "b" },
+               { "code": "L1", "text": "c" }, { "code": "L2", "text": "d" }]),
+    ] {
+        let (s, _) = app
+            .post(
+                "/api/objective-drafts",
+                Some(&t),
+                json!({ "kind": "comprehension", "material": material(""), "keep": keep }),
+            )
+            .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{keep}");
+    }
 }
 
 #[tokio::test]

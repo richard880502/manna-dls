@@ -46,11 +46,16 @@ export const CATEGORY_LABEL: Record<ObjectiveCategory, string> = {
 /** The panel's words (fixed). */
 export const DRAFTS_HEADING = "Manna 先幫你草擬目標";
 export const DRAFTING_LINE = "Manna 正在依文章草擬內容目標與語言目標，並逐項檢查…";
-export const DRAFTS_LEAD = "Manna 依文章擬了一組，都通過了 SIOP 的檢查。直接用，或在框裡改；清空那一項就不放。";
+export const DRAFTS_LEAD = "Manna 依文章擬了一組，都通過了 SIOP 的檢查。勾選要用的目標，也可以在框裡改。";
 export const DRAFTS_READY_LINE = "Manna 擬了一組目標，看一下再產生。";
 export const DRAFTS_READY_FILL_LINE = "Manna 擬了一組目標，看一下再填入。";
-export const USE_DRAFTS = "用這組目標產生";
-export const USE_DRAFTS_FILL = "用這組目標";
+/** The primary says how many are checked (「用勾選的 2 個目標產生」). */
+export const useDrafts = (n: number, fill: boolean) => `用勾選的 ${n} 個目標${fill ? "" : "產生"}`;
+export const NOTHING_CHECKED = "還沒勾選任何目標。勾一個，或按「不用目標」。";
+export const NOTHING_CHECKED_GENERATE = "還沒勾選任何目標。勾一個，或按「不用目標，直接產生」。";
+export const useCheckboxLabel = (kind: ObjectiveType, code: string) => `使用 ${OBJECTIVE_KIND_LABEL[kind]} ${code}`;
+export const REDRAW_UNCHECKED = "換掉沒勾的";
+export const REDRAW_FAILED = "這次沒有換成，目標維持原樣。你可以再試一次，或自己改。";
 export const SKIP_DRAFTS = "不用目標，直接產生";
 export const SKIP_DRAFTS_FILL = "不用目標";
 export const ANOTHER_SET = "換一組";
@@ -100,10 +105,11 @@ export function finalText(draft: ObjectiveDraft, choice: DraftChoice | undefined
 export function fieldsFrom(
   drafts: ObjectiveDraft[],
   choices: Record<number, DraftChoice>,
+  unchecked: ReadonlySet<number> = new Set(),
 ): { content: string; language: string } {
   const lines = (kind: ObjectiveType) =>
     drafts
-      .filter((d) => d.kind === kind)
+      .filter((d) => d.kind === kind && !unchecked.has(d.index))
       .map((d) => finalText(d, choices[d.index]))
       .filter((t): t is string => t !== null)
       .join("\n");
@@ -112,15 +118,17 @@ export function fieldsFrom(
 
 /**
  * The decisions to record for the drafts: 採用 adopt; 修改 revise with the edited line (adopt
- * when nothing changed); 改寫 reject with her own line; 不用目標 skip for every draft.
+ * when nothing changed); 改寫 reject with her own line; 不用目標 skip for every draft; a draft
+ * she did not check (`unchecked`) skip, whatever its box says.
  */
 export function decisionsFor(
   drafts: ObjectiveDraft[],
   choices: Record<number, DraftChoice>,
   skipped: boolean,
+  unchecked: ReadonlySet<number> = new Set(),
 ): DecisionRequest[] {
   return drafts.map((d) => {
-    if (skipped) return { item_index: d.index, decision: "skip" };
+    if (skipped || unchecked.has(d.index)) return { item_index: d.index, decision: "skip" };
     const choice = choices[d.index];
     if (!choice || choice.decision === "adopt") return { item_index: d.index, decision: "adopt" };
     const text = choice.text.trim();
@@ -167,3 +175,72 @@ export const syncedObjectives = (
 /** Whether the fields hold any objective. */
 export const hasObjectives = (content: string | null | undefined, language: string | null | undefined) =>
   objectiveLines(content ?? "").length + objectiveLines(language ?? "").length > 0;
+
+/** A decision for one draft, against the draft call that wrote it (a set after 換掉沒勾的 has drafts of more than one). */
+export interface DraftDecision {
+  interaction_id: number;
+  request: DecisionRequest;
+}
+
+/** Where a draft shown in the panel comes from: the draft call and its `index` in it. */
+export interface DraftSource {
+  interaction_id: number | null;
+  index: number;
+}
+
+/** The decisions with the call each belongs to (a draft without a call is not recorded). */
+export function decisionsAt(requests: DecisionRequest[], sources: Record<number, DraftSource>): DraftDecision[] {
+  return requests.flatMap((request) => {
+    const src = request.item_index === undefined ? undefined : sources[request.item_index];
+    return src && src.interaction_id !== null
+      ? [{ interaction_id: src.interaction_id, request: { ...request, item_index: src.index } }]
+      : [];
+  });
+}
+
+/**
+ * 換掉沒勾的: the set after the unchecked drafts (`redraw`) are replaced by the new ones of the
+ * same kind (the one with the same code first, then in order); the kept drafts stay where they are. A new line equal to a kept one is not
+ * used, and a place with no new draft of its kind left is dropped. A new draft takes the code of
+ * the place it fills and a fresh `index` (`fresh` maps it to its index in the new call).
+ */
+export function mergeRedraw(
+  current: ObjectiveDraft[],
+  redraw: ReadonlySet<number>,
+  incoming: ObjectiveDraft[],
+): { drafts: ObjectiveDraft[]; fresh: Record<number, number> } {
+  const norm = (t: string) => t.trim().toLowerCase();
+  const keptLines = new Set(current.filter((d) => !redraw.has(d.index)).map((d) => norm(d.text)));
+  const pool: Record<ObjectiveType, ObjectiveDraft[]> = { content: [], language: [] };
+  for (const d of incoming) if (!keptLines.has(norm(d.text))) pool[d.kind].push(d);
+  let next = Math.max(-1, ...current.map((d) => d.index)) + 1;
+  const drafts: ObjectiveDraft[] = [];
+  const fresh: Record<number, number> = {};
+  for (const d of current) {
+    if (!redraw.has(d.index)) {
+      drafts.push(d);
+      continue;
+    }
+    const same = pool[d.kind].findIndex((n) => n.code === d.code);
+    const n = pool[d.kind].splice(same >= 0 ? same : 0, 1)[0];
+    if (!n) continue;
+    fresh[next] = n.index;
+    drafts.push({ ...n, index: next++, code: d.code });
+  }
+  return { drafts, fresh };
+}
+
+/**
+ * SIOP R1 (both kinds, and the 語言目標 serves a 內容目標): what to tell the teacher when the
+ * checked drafts have only one kind while the set has both. A hint, not a block: she decides
+ * (G2); the generators work with either field.
+ */
+export function checkedSetNote(drafts: ObjectiveDraft[], checked: ObjectiveDraft[]): string | null {
+  const has = (list: ObjectiveDraft[], kind: ObjectiveType) => list.some((d) => d.kind === kind);
+  if (checked.length === 0) return null;
+  if (!has(checked, "content") && has(drafts, "content"))
+    return "只勾了語言目標。SIOP 建議內容目標與語言目標各寫一個以上：語言目標是用來幫學生達成內容目標的。";
+  if (!has(checked, "language") && has(drafts, "language"))
+    return "只勾了內容目標。SIOP 建議內容目標與語言目標各寫一個以上，語言目標幫學生用得出內容目標需要的語言。";
+  return null;
+}

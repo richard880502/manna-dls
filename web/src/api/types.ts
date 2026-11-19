@@ -2623,6 +2623,8 @@ export interface ObjectiveDraftRequest {
   request?: string;
   /** 「換一組」：上一組的句子，不要重複 */
   avoid?: string[];
+  /** 「換掉沒勾的」：教師留下來的目標（代號是目前這一組的 C1、C2、L1、L2，句子是她現在的版本）；新的要和它們搭配 */
+  keep?: { code: string; text: string }[];
   /** 頁面自己取的鍵（8–64 個英數、- 或 _），等待時用 GET /api/objective-drafts/progress/:key 看進度 */
   progress_id?: string;
 }

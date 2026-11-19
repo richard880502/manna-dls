@@ -89,6 +89,8 @@ pub struct DraftInput {
     pub request: String,
     /// Lines of an earlier draft the teacher wants other than (「換一組」).
     pub avoid: Vec<String>,
+    /// 換掉沒勾的: (code, line) of the objectives the teacher keeps; the new ones go with them.
+    pub keep: Vec<(String, String)>,
 }
 
 /// `POST /api/objective-drafts` (docs/API.md「SIOP 目標」).
@@ -570,6 +572,7 @@ async fn round(
             "paragraphs": input.material.paragraphs.iter().map(|p| p.text.clone()).collect::<Vec<_>>(),
             "round": no,
             "avoid": input.avoid,
+            "keep": input.keep.iter().map(|(c, t)| json!({ "code": c, "text": t })).collect::<Vec<_>>(),
             "strategy_first": strategy_first,
         }),
         max_tokens: DRAFT_MAX_TOKENS,
@@ -738,6 +741,30 @@ fn redo_note(r: &Round) -> String {
     note
 }
 
+/// What 換一組 and 換掉沒勾的 add to the request: the lines to write other than, and the lines the
+/// teacher keeps (the new ones go with them: no repeat, no clash, and the set still has both
+/// kinds, with each 語言目標 supporting a 內容目標). The set is still drafted and checked whole.
+fn avoid_note(avoid: &[String], keep: &[(String, String)]) -> String {
+    let list = |items: Vec<String>| items.join("\n");
+    let mut note = String::new();
+    if !avoid.is_empty() {
+        note.push_str(&format!(
+            "教師想換一組目標，請不要重複這些：\n{}",
+            list(avoid.iter().map(|a| format!("- {a}")).collect())
+        ));
+    }
+    if !keep.is_empty() {
+        if !note.is_empty() {
+            note.push_str("\n\n");
+        }
+        note.push_str(&format!(
+            "教師已經選定下面這些目標要留下來（照教師現在的句子，不要改寫也不要重複）。請照原本的格式寫一整組，在對應的代號寫上它們的意思，其餘的位置寫新的目標：新的目標要和留下來的搭配成一組，內容不重複、不互相衝突；語言目標仍要說明它支持哪一個內容目標。\n{}",
+            list(keep.iter().map(|(c, t)| format!("- {c}：{t}")).collect())
+        ));
+    }
+    note
+}
+
 /// Drafts the objectives (G2) and shows only the ones that pass R1 and R3 (G3).
 ///
 /// `progress` hears every step change (docs/API.md「產生進度」); the caller settles it with the
@@ -780,19 +807,7 @@ pub async fn run(
     let context = context.into_vec();
     let recent = recent_categories(db, input.teacher_id).await?;
     let strategy_first = strategy_first(&recent);
-    let avoid_note = if input.avoid.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "教師想換一組目標，請不要重複這些：\n{}",
-            input
-                .avoid
-                .iter()
-                .map(|a| format!("- {a}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    };
+    let avoid_note = avoid_note(&input.avoid, &input.keep);
     let vars: HashMap<&'static str, String> = HashMap::from([
         ("purpose", purpose(&input.kind).to_string()),
         ("school_track", track_label(&input.track).to_string()),

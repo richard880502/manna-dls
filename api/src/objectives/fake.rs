@@ -10,7 +10,7 @@
 //! | `FAKE_OBJ_R3_ALWAYS`   | judge: every 語言目標 is `no_relation`, in both rounds (only the 內容目標 are shown) |
 //! | `FAKE_BLOCK`           | draft: Chinese in every students' line, both attempts (nothing usable) |
 //!
-//! A draft with `avoid` (「換一組」) writes another set; round 2 writes other wording, so that a
+//! A draft with `avoid` (「換一組」) or `keep` (「換掉沒勾的」) writes another set; round 2 writes other wording, so that a
 //! test can tell the rounds apart.
 
 use serde_json::{json, Value};
@@ -26,7 +26,8 @@ fn title(ctx: &Value) -> String {
 
 pub fn draft(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let round = ctx["round"].as_i64().unwrap_or(1);
-    let other = ctx["avoid"].as_array().is_some_and(|a| !a.is_empty());
+    let other = ctx["avoid"].as_array().is_some_and(|a| !a.is_empty())
+        || ctx["keep"].as_array().is_some_and(|a| !a.is_empty());
     let t = title(ctx);
     let (c_en, c_zh) = if other {
         (

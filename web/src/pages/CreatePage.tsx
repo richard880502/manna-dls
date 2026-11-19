@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { CreatePrepSessionRequest, DecisionRequest, ObjectiveDraftRequest } from "../api/types";
+import type { CreatePrepSessionRequest, ObjectiveDraftRequest } from "../api/types";
 import { BloomPicker } from "../components/bloom/BloomPicker";
 import {
   DEFAULT_PRESET,
@@ -37,7 +37,7 @@ import {
 } from "../components/template/SampleChooser";
 import { TemplateSelect, useReadyTemplates } from "../components/template/TemplateSelect";
 import { useApp } from "../context/AppContext";
-import { objectiveOptions } from "../lib/objectives";
+import { objectiveOptions, type DraftDecision } from "../lib/objectives";
 import { ocrBusyError, ocrBusyLine, ocrOpen } from "../lib/ocr";
 import {
   EXEMPLAR_TEXT,
@@ -330,19 +330,19 @@ function Generator({ tool }: { tool: Tool }) {
   }
 
   /** 用這組目標: the drafts as the teacher left them go into the two fields, her choices recorded. */
-  function fillFields(outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) {
+  function fillFields(outcome: DraftOutcome, decisions: DraftDecision[]) {
     if (outcome.has.content) setContentObjective(outcome.content);
     if (outcome.has.language) setLanguageObjective(outcome.language);
     drafts.close();
-    void recordDecisions(interactionId, decisions);
+    void recordDecisions(decisions);
   }
 
   /** After the drafts: the fields as the teacher left them, her choices recorded, then 產生. */
-  async function adoptDrafts(outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) {
+  async function adoptDrafts(outcome: DraftOutcome, decisions: DraftDecision[]) {
     setContentObjective(outcome.content);
     setLanguageObjective(outcome.language);
     drafts.close();
-    await recordDecisions(interactionId, decisions);
+    await recordDecisions(decisions);
     await send(outcome.content, outcome.language);
   }
 
@@ -413,15 +413,13 @@ function Generator({ tool }: { tool: Tool }) {
           fill={fillMode}
           state={drafts.state}
           disabled={busy}
-          onUse={(outcome, decisions, interactionId) =>
-            fillMode ? fillFields(outcome, decisions, interactionId) : void adoptDrafts(outcome, decisions, interactionId)
-          }
-          onSkip={(decisions, interactionId) => {
+          onUse={(outcome, decisions) => (fillMode ? fillFields(outcome, decisions) : void adoptDrafts(outcome, decisions))}
+          onSkip={(decisions) => {
             drafts.close();
-            void recordDecisions(interactionId, decisions);
+            void recordDecisions(decisions);
             if (!fillMode) void send("", "");
           }}
-          onAnother={() => void drafts.another()}
+          onAnother={(plan) => void drafts.another(plan)}
           onCancel={drafts.close}
         />
       )}

@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import type {
-  DecisionRequest,
   ObjectiveDraft,
   ObjectiveDraftRequest,
   ObjectiveDraftResult,
@@ -12,6 +11,17 @@ import { ocrBusyError } from "../../lib/ocr";
 import {
   ANOTHER_SET,
   CATEGORY_LABEL,
+  NOTHING_CHECKED,
+  NOTHING_CHECKED_GENERATE,
+  REDRAW_FAILED,
+  REDRAW_UNCHECKED,
+  checkedSetNote,
+  decisionsAt,
+  mergeRedraw,
+  useCheckboxLabel,
+  useDrafts,
+  type DraftDecision,
+  type DraftSource,
   DRAFTING_LINE,
   DRAFTS_HEADING,
   DRAFTS_LEAD,
@@ -22,8 +32,6 @@ import {
   OBJECTIVE_MAX,
   SKIP_DRAFTS,
   SKIP_DRAFTS_FILL,
-  USE_DRAFTS,
-  USE_DRAFTS_FILL,
   choiceFor,
   decisionsFor,
   fieldsFrom,
@@ -33,7 +41,18 @@ import {
 export type DraftState =
   /** `key`: the progress key sent with the request; `progress`: its steps, once the server has them. */
   | { phase: "drafting"; key: string; progress: RunProgress | null }
-  | { phase: "ready"; result: ObjectiveDraftResult }
+  | {
+      phase: "ready";
+      result: ObjectiveDraftResult;
+      /** For each draft shown: the draft call and the `index` it has there (the decisions go there). */
+      sources: Record<number, DraftSource>;
+      /** Lines the teacher already edited (kept through 換掉沒勾的), by draft index. */
+      edits: Record<number, string>;
+      /** Drafts that start unchecked (back from a redraw that did not happen). */
+      unchecked: number[];
+      /** A new set each time: the panel starts over with it. */
+      round: number;
+    }
   | { phase: "failed"; message: string };
 
 /** How often the drafting's progress is asked for. Tests shorten it. */
@@ -63,6 +82,7 @@ export interface DraftOutcome {
 export function useObjectiveDraft() {
   const [state, setState] = useState<DraftState | null>(null);
   const seq = useRef(0);
+  const rounds = useRef(0);
   const last = useRef<ObjectiveDraftRequest | null>(null);
 
   // While Manna drafts: ask how far she is (docs/API.md「產生進度」).
@@ -85,6 +105,18 @@ export function useObjectiveDraft() {
     };
   }, [drafting]);
 
+  function readyFrom(result: ObjectiveDraftResult): DraftState {
+    rounds.current += 1;
+    return {
+      phase: "ready",
+      result,
+      sources: Object.fromEntries(result.objectives.map((d) => [d.index, { interaction_id: result.interaction_id, index: d.index }])),
+      edits: {},
+      unchecked: [],
+      round: rounds.current,
+    };
+  }
+
   async function run(body: ObjectiveDraftRequest): Promise<boolean> {
     const id = ++seq.current;
     last.current = body;
@@ -97,7 +129,7 @@ export function useObjectiveDraft() {
         setState(null);
         return false;
       }
-      setState(hasDrafts(result) ? { phase: "ready", result } : { phase: "failed", message: result.message ?? DRAFT_FAILED });
+      setState(hasDrafts(result) ? readyFrom(result) : { phase: "failed", message: result.message ?? DRAFT_FAILED });
       return true;
     } catch (err) {
       if (id !== seq.current) return true;
@@ -110,13 +142,89 @@ export function useObjectiveDraft() {
     }
   }
 
+  /**
+   * 換掉沒勾的: only the unchecked drafts are written again. The checked ones (as edited) go with
+   * the request as `keep`, so the new ones do not repeat or clash with them; they stay in place,
+   * and the unchecked ones are recorded as skipped. When Manna cannot, the panel is as it was.
+   */
+  async function redraw(plan: RedrawPlan): Promise<boolean> {
+    const base = last.current;
+    const before = state;
+    if (!base || before?.phase !== "ready") return true;
+    const drafts = before.result.objectives;
+    const off = new Set(plan.redraw);
+    const text = (d: ObjectiveDraft) => plan.texts[d.index] ?? d.text;
+    const asWas = (message: string | null): DraftState => ({
+      ...before,
+      result: { ...before.result, message },
+      edits: plan.texts,
+      unchecked: [...plan.unchecked],
+    });
+    const id = ++seq.current;
+    const key = progressKey();
+    setState({ phase: "drafting", key, progress: null });
+    try {
+      const result = await api.draftObjectives({
+        ...base,
+        avoid: [...new Set(drafts.filter((d) => off.has(d.index)).flatMap((d) => [text(d), d.text]))],
+        keep: drafts.filter((d) => !off.has(d.index)).map((d) => ({ code: d.code, text: text(d).trim() })),
+        progress_id: key,
+      });
+      if (id !== seq.current) return true;
+      if (!hasDrafts(result)) {
+        setState(asWas(result.status === "disabled" ? REDRAW_FAILED : (result.message ?? REDRAW_FAILED)));
+        return true;
+      }
+      const merged = mergeRedraw(drafts, off, result.objectives);
+      const sources: Record<number, DraftSource> = {};
+      const edits: Record<number, string> = {};
+      for (const d of merged.drafts) {
+        const from = merged.fresh[d.index];
+        if (from === undefined) {
+          sources[d.index] = before.sources[d.index] ?? { interaction_id: null, index: d.index };
+          edits[d.index] = plan.texts[d.index] ?? d.text;
+        } else {
+          sources[d.index] = { interaction_id: result.interaction_id, index: from };
+        }
+      }
+      void recordDecisions(
+        decisionsAt(
+          drafts.filter((d) => off.has(d.index)).map((d) => ({ item_index: d.index, decision: "skip" as const })),
+          before.sources,
+        ),
+      );
+      rounds.current += 1;
+      setState({
+        phase: "ready",
+        result: { ...result, objectives: merged.drafts },
+        sources,
+        edits,
+        unchecked: [],
+        round: rounds.current,
+      });
+      return true;
+    } catch (err) {
+      if (id !== seq.current) return true;
+      if (ocrBusyError(err)) {
+        setState(null);
+        throw err;
+      }
+      setState(asWas(errorMessage(err)));
+      return true;
+    }
+  }
+
   return {
     state,
     start: run,
-    /** 換一組: the same request, with the lines shown now to be written other than. */
-    another: () => {
+    /**
+     * 換一組: the same request, with the lines shown now to be written other than. With a `plan`
+     * (some drafts checked, some not) only the unchecked ones are redrawn.
+     */
+    another: (plan?: RedrawPlan) => {
       const body = last.current;
       if (!body || state?.phase !== "ready") return Promise.resolve(true);
+      if (plan) return redraw(plan);
       return run({ ...body, avoid: state.result.objectives.map((o) => o.text) });
     },
     /** Closes the panel; a draft still on its way is ignored. */
@@ -128,19 +236,30 @@ export function useObjectiveDraft() {
 }
 
 /** Records the teacher's choices; a failure never holds up the generation. */
-export async function recordDecisions(interactionId: number | null, decisions: DecisionRequest[]): Promise<void> {
-  if (interactionId === null || decisions.length === 0) return;
-  await Promise.allSettled(decisions.map((d) => api.sendDecision(interactionId, d)));
+export async function recordDecisions(decisions: DraftDecision[]): Promise<void> {
+  if (decisions.length === 0) return;
+  await Promise.allSettled(decisions.map((d) => api.sendDecision(d.interaction_id, d.request)));
+}
+
+/** What 換掉沒勾的 needs from the panel: which drafts to write again, and the lines as they read now. */
+export interface RedrawPlan {
+  /** `index` of the drafts to replace (unchecked, or checked with an empty box). */
+  redraw: number[];
+  /** Every draft's line as the teacher has it now. */
+  texts: Record<number, string>;
+  /** `index` of the unchecked ones (they stay unchecked if the redraw does not happen). */
+  unchecked: number[];
 }
 
 interface ObjectiveDraftsProps {
   state: DraftState;
   disabled: boolean;
-  /** 用這組目標(產生): the drafts as they now read (unchanged: adopted, edited: revised, cleared: rejected). */
-  onUse: (outcome: DraftOutcome, decisions: DecisionRequest[], interactionId: number | null) => void;
+  /** 用勾選的 N 個目標(產生): the checked drafts as they now read (unchanged: adopted, edited: revised; unchecked: skipped). */
+  onUse: (outcome: DraftOutcome, decisions: DraftDecision[]) => void;
   /** 不用目標，直接產生. */
-  onSkip: (decisions: DecisionRequest[], interactionId: number | null) => void;
-  onAnother: () => void;
+  onSkip: (decisions: DraftDecision[]) => void;
+  /** 換一組 (no plan) or 換掉沒勾的 (with one). */
+  onAnother: (plan?: RedrawPlan) => void;
   /** 收起: back to the form, nothing decided (nothing recorded). */
   onCancel: () => void;
   /** Inside a card of the page (/create), not a card of its own. */
@@ -149,28 +268,44 @@ interface ObjectiveDraftsProps {
   fill?: boolean;
 }
 
-/** One draft: Manna's line in an editable field (gold), with the students' Chinese and how to check it. */
+/** One draft: a checkbox to use it, Manna's line in an editable field (gold; dimmed when unchecked), with the students' Chinese and how to check it. */
 function DraftField({
   draft,
   value,
+  checked,
   disabled,
   onChange,
+  onCheck,
 }: {
   draft: ObjectiveDraft;
   value: string;
+  checked: boolean;
   disabled: boolean;
   onChange: (value: string) => void;
+  onCheck: (checked: boolean) => void;
 }) {
   const id = useId();
   const kind = OBJECTIVE_KIND_LABEL[draft.kind];
   const name = `${kind} ${draft.code}`;
   return (
-    <div className="manna-well objective-draft" role="group" aria-label={name}>
-      <label className="manna-label" htmlFor={id}>
-        <span className="star" aria-hidden="true" />
-        {name}
-        {draft.category ? ` · ${CATEGORY_LABEL[draft.category]}` : ""}
-      </label>
+    <div className={checked ? "manna-well objective-draft" : "manna-well objective-draft is-off"} role="group" aria-label={name}>
+      <div className="objective-draft-head">
+        <label className="manna-label" htmlFor={id}>
+          <span className="star" aria-hidden="true" />
+          {name}
+          {draft.category ? ` · ${CATEGORY_LABEL[draft.category]}` : ""}
+        </label>
+        <label className="objective-draft-use">
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            aria-label={useCheckboxLabel(draft.kind, draft.code)}
+            onChange={(e) => onCheck(e.target.checked)}
+          />
+          使用
+        </label>
+      </div>
       <textarea
         id={id}
         rows={2}
@@ -191,16 +326,38 @@ function DraftField({
 }
 
 function ReadyDrafts({
-  result,
+  state,
   disabled,
   fill,
   onUse,
   onSkip,
   onAnother,
-}: Pick<ObjectiveDraftsProps, "disabled" | "fill" | "onUse" | "onSkip" | "onAnother"> & { result: ObjectiveDraftResult }) {
+}: Pick<ObjectiveDraftsProps, "disabled" | "fill" | "onUse" | "onSkip" | "onAnother"> & {
+  state: Extract<DraftState, { phase: "ready" }>;
+}) {
+  const { result, sources } = state;
   const drafts = result.objectives;
-  const [texts, setTexts] = useState<Record<number, string>>(() => Object.fromEntries(drafts.map((d) => [d.index, d.text])));
-  const choices = () => Object.fromEntries(drafts.map((d) => [d.index, choiceFor(d, texts[d.index] ?? d.text)]));
+  const noteId = useId();
+  const [texts, setTexts] = useState<Record<number, string>>(() => ({
+    ...Object.fromEntries(drafts.map((d) => [d.index, d.text])),
+    ...state.edits,
+  }));
+  const [off, setOff] = useState<ReadonlySet<number>>(() => new Set(state.unchecked));
+  const text = (d: ObjectiveDraft) => texts[d.index] ?? d.text;
+  // A checked box with nothing written in it is not a goal to use.
+  const using = drafts.filter((d) => !off.has(d.index) && text(d).trim() !== "");
+  const n = using.length;
+  const partial = n > 0 && n < drafts.length;
+  const choices = () => Object.fromEntries(drafts.map((d) => [d.index, choiceFor(d, text(d))]));
+  const unused = new Set(drafts.filter((d) => !using.includes(d)).map((d) => d.index));
+  const note = checkedSetNote(drafts, using);
+  const toggle = (index: number, on: boolean) =>
+    setOff((all) => {
+      const next = new Set(all);
+      if (on) next.delete(index);
+      else next.add(index);
+      return next;
+    });
   return (
     <>
       <p className="lead">{DRAFTS_LEAD}</p>
@@ -212,50 +369,74 @@ function ReadyDrafts({
             <DraftField
               key={d.index}
               draft={d}
-              value={texts[d.index] ?? d.text}
+              value={text(d)}
+              checked={!off.has(d.index)}
               disabled={disabled}
               onChange={(value) => setTexts((all) => ({ ...all, [d.index]: value }))}
+              onCheck={(on) => toggle(d.index, on)}
             />
           )),
+      )}
+      {note && (
+        <p className="quiet-note" role="note">
+          {note}
+        </p>
       )}
       <div className="button-row objective-drafts-actions">
         <button
           type="button"
           className="primary-button"
-          disabled={disabled}
+          disabled={disabled || n === 0}
+          aria-describedby={n === 0 ? noteId : undefined}
           onClick={() =>
             onUse(
               {
-                ...fieldsFrom(drafts, choices()),
+                ...fieldsFrom(drafts, choices(), off),
                 has: { content: drafts.some((d) => d.kind === "content"), language: drafts.some((d) => d.kind === "language") },
               },
-              decisionsFor(drafts, choices(), false),
-              result.interaction_id,
+              decisionsAt(decisionsFor(drafts, choices(), false, off), sources),
             )
           }
         >
-          {fill ? USE_DRAFTS_FILL : USE_DRAFTS}
-        </button>
-        <button type="button" className="text-link is-plain" disabled={disabled} onClick={onAnother}>
-          {ANOTHER_SET}
+          {useDrafts(n, fill ?? false)}
         </button>
         <button
           type="button"
           className="text-link is-plain"
           disabled={disabled}
-          onClick={() => onSkip(decisionsFor(drafts, choices(), true), result.interaction_id)}
+          onClick={() =>
+            onAnother(
+              partial
+                ? { redraw: [...unused], texts: Object.fromEntries(drafts.map((d) => [d.index, text(d)])), unchecked: [...off] }
+                : undefined,
+            )
+          }
+        >
+          {partial ? REDRAW_UNCHECKED : ANOTHER_SET}
+        </button>
+        <button
+          type="button"
+          className="text-link is-plain"
+          disabled={disabled}
+          onClick={() => onSkip(decisionsAt(decisionsFor(drafts, choices(), true), sources))}
         >
           {fill ? SKIP_DRAFTS_FILL : SKIP_DRAFTS}
         </button>
       </div>
+      {n === 0 && (
+        <p className="quiet-note" id={noteId}>
+          {fill ? NOTHING_CHECKED : NOTHING_CHECKED_GENERATE}
+        </p>
+      )}
     </>
   );
 }
 
 /**
  * G2/G3: Manna's drafts (only the ones that passed the R1 and R3 checks), each an editable line:
- * leave it (adopt), edit it (revise) or clear it (not used). One primary — 用這組目標(產生) —
- * with 換一組 and 不用目標，直接產生 as quiet links.
+ * each with a checkbox (checked: used, unchanged = adopt, edited = revise; unchecked: skipped,
+ * dimmed but still editable). One primary — 用勾選的 N 個目標(產生) — with 換一組 (換掉沒勾的 when
+ * some are checked) and 不用目標，直接產生 as quiet links.
  */
 export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onCancel, embedded = false, fill = false }: ObjectiveDraftsProps) {
   const ids = useId();
@@ -298,7 +479,7 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
           />
           {!fill && (
             <div className="button-row objective-drafts-actions">
-              <button type="button" className="text-link is-plain" onClick={() => onSkip([], null)}>
+              <button type="button" className="text-link is-plain" onClick={() => onSkip([])}>
                 {SKIP_DRAFTS}
               </button>
             </div>
@@ -312,7 +493,7 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
           </p>
           {!fill && (
             <div className="button-row objective-drafts-actions">
-              <button type="button" className="primary-button" disabled={disabled} onClick={() => onSkip([], null)}>
+              <button type="button" className="primary-button" disabled={disabled} onClick={() => onSkip([])}>
                 {SKIP_DRAFTS}
               </button>
             </div>
@@ -321,8 +502,8 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
       )}
       {state.phase === "ready" && (
         <ReadyDrafts
-          key={state.result.interaction_id ?? 0}
-          result={state.result}
+          key={state.round}
+          state={state}
           disabled={disabled}
           fill={fill}
           onUse={onUse}
