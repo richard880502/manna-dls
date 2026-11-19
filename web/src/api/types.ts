@@ -2949,3 +2949,23 @@ export interface AdminLibraryUpdate {
   category?: string;
   tags?: string[];
 }
+
+export interface TeacherMemory {
+  id: number;
+  kind: string;
+  value: string;
+  statement: string;
+  valid_at: string;
+  invalid_at: string | null;
+  superseded_by: number | null;
+  invalidation_reason: "replaced" | "removed" | null;
+  interaction_id: number;
+}
+export interface MemoryState {
+  memories: TeacherMemory[];
+  enabled: boolean;
+  graph_enabled: boolean;
+  index: { revision: number; indexed_revision: number; error: string | null } | null;
+}
+export interface MemoryCandidate { id: number; statement: string; replaces_id: number | null }
+export interface MemorySettings { enabled: boolean; graph_enabled: boolean }

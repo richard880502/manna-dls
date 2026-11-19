@@ -3638,3 +3638,8 @@ interface RunProgress {
 - 附圖只用在 `revise` 與逐區修改，「問 Manna」不收圖。逐區修改的建議卡只顯示附上的小縮圖（網頁）。
 - 模型不能新增超過一區 2 個位置，也不能真正刪除位置（「移除」是不印）。
 - 沒有用 tool call（gemma 支援，但其他呼叫都是 strict JSON schema，維持一致）。
+
+## 教師長期記憶（Issue #82）
+
+Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 的可重建 Graphiti 索引、
+研究開關、模型轉發及完整端點契約，見 [TEACHER_MEMORY.md](TEACHER_MEMORY.md)。

@@ -101,6 +101,7 @@ pub struct Config {
     /// Pictures on worksheets (`IMAGE_*`, `OPENAI_API_KEY`, docs/API.md「學習單的圖片」). Never
     /// fails: a bad setting turns pictures off.
     pub images: ImageConfig,
+    pub memory: crate::memory::graph::MemoryConfig,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -268,6 +269,7 @@ impl Config {
             platform_library_bytes,
             ocr: OcrConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
             images: ImageConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
+            memory: crate::memory::graph::MemoryConfig::from_lookup(get),
         })
     }
 
@@ -296,6 +298,7 @@ impl Config {
             platform_library_bytes: DEFAULT_PLATFORM_LIBRARY_BYTES,
             ocr: OcrConfig::disabled(),
             images: ImageConfig::disabled(),
+            memory: crate::memory::graph::MemoryConfig::default(),
         }
     }
 

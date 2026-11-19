@@ -445,6 +445,7 @@ async fn mark_done(
     interaction_id: Option<i64>,
     context: &[AiContextItem],
 ) -> sqlx::Result<()> {
+    let context = crate::memory::context(db, interaction_id, context).await?;
     sqlx::query(
         "UPDATE worksheet_jobs
             SET status = 'done', outcome = $2, message = $3, interaction_id = $4, context = $5,
@@ -472,6 +473,7 @@ async fn mark_held(
     interaction_id: Option<i64>,
     context: &[AiContextItem],
 ) -> sqlx::Result<()> {
+    let context = crate::memory::context(db, interaction_id, context).await?;
     sqlx::query(
         "UPDATE worksheet_jobs
             SET outcome = $2, message = $3, interaction_id = $4, context = $5,

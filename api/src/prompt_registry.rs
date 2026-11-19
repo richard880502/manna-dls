@@ -146,6 +146,14 @@ const CORE_VARS: &[VarSpec] = vars![
 ];
 
 pub static REGISTRY: &[PromptInfo] = &[
+    PromptInfo {
+        key: "teacher_memory_extract",
+        name_zh: "整理教師長期出題習慣",
+        group: G_PREP,
+        description: "將老師輸入整理成封閉代碼，判斷是否為長期習慣及要取代的版本；必須由老師確認後才記住。原始草稿不保留。",
+        uses_user_template: true,
+        vars: &[],
+    },
     // ------------------------------------------------------------ 學習單產生
     PromptInfo {
         key: "worksheet_tasks",

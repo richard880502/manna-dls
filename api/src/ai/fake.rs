@@ -84,6 +84,7 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
     };
     let ctx = &req.fake_context;
     let json = match ctx["task"].as_str() {
+        Some("teacher_memory_extract") => crate::memory::fake_extract(ctx),
         Some("core_assist") => core_assist(ctx, invalid),
         Some("plan_suggest") => plan_suggest(
             ctx,

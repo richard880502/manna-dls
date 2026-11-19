@@ -1235,6 +1235,7 @@ async fn admin_prompts_imports_and_permissions() {
             "siop_selfcheck",
             "sop_objectives",
             "sop_passage_analysis",
+            "teacher_memory_extract",
             "worksheet_block_revise",
             "worksheet_bloom_check",
             "worksheet_bloom_level",
@@ -1280,7 +1281,7 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_scaffolds v2, worksheet_tasks v7, worksheet_template_details v3,
         // worksheet_template_outline v2 and worksheet_template_section v5 since
         // 0036_template_supports.sql.
-        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 4, 1, 5, 5, 2, 2, 7, 3, 2, 5, 3, 1, 1, 1]
+        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 1, 4, 1, 5, 5, 2, 2, 7, 3, 2, 5, 3, 1, 1, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

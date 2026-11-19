@@ -1915,3 +1915,13 @@
   }
 }
 
+
+/* Confirmed teaching habits and their immutable history. */
+.teacher-memories { margin-top: 2rem; }
+.teacher-memories textarea { width: 100%; margin: .5rem 0 1rem; }
+.memory-list { list-style: none; padding: 0; }
+.memory-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: 1rem 0; border-bottom: 1px solid var(--color-rule); }
+.memory-list li > div { flex: 1 1 15rem; }
+.memory-list small { display: block; margin-top: .35rem; }
+.memory-preview { margin: 1.25rem 0; padding: 1.25rem; border: 1px solid var(--color-rule); border-radius: 12px; }
+.teacher-memories details { margin-top: 1.5rem; }

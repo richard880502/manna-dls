@@ -1,0 +1,55 @@
+# Optional Phase 2 overlay: docker compose -f docker-compose.yml -f docker-compose.memory.yml up -d --build
+# Enable only in staging first. The PI's separate setting still defaults to OFF.
+services:
+  app:
+    environment:
+      GRAPHITI_URL: http://memory:8000
+      GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:?Set a random service secret}
+      MEMORY_PROXY_URL: http://app:8080/api/internal/memory/v1
+    networks:
+      - default
+      - memory-internal
+
+  memory:
+    build: ./memory-sidecar
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:?Set a random service secret}
+      MEMORY_PROXY_URL: http://app:8080/api/internal/memory/v1
+      FALKORDB_HOST: falkordb
+      GRAPHITI_TELEMETRY_ENABLED: "false"
+      SEMAPHORE_LIMIT: "2"
+    networks:
+      - memory-internal
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; r=urllib.request.Request('http://localhost:8000/health',headers={'Authorization':'Bearer '+os.environ['GRAPHITI_TOKEN']}); urllib.request.urlopen(r,timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  falkordb:
+    image: falkordb/falkordb:v4.12.0@sha256:7927eb194df0fadf70e2deb6c20c8178743ec92aacd739c790f8a35ce5dee613
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      FALKORDB_ARGS: "THREAD_COUNT 2"
+    volumes:
+      - memory-graph:/data
+    networks:
+      - memory-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+networks:
+  memory-internal:
+    internal: true
+
+volumes:
+  memory-graph:

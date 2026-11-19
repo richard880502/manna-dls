@@ -1,6 +1,7 @@
 import { loadToken } from "../lib/storage";
 import type {
   Account,
+  MemoryState, MemoryCandidate, MemorySettings,
   AdminSettings,
   AiResult,
   ApiErrorBody,
@@ -344,6 +345,14 @@ export const api = {
 
   // 教師
   me: () => get<Teacher>("/me"),
+  memories: () => get<MemoryState>("/me/memories"),
+  previewMemory: (text: string) => post<MemoryCandidate>("/me/memories/preview", { text }),
+  confirmMemory: (candidate_id: number) => post<{ id: number }>("/me/memories", { candidate_id, confirmed: true }),
+  removeMemory: (id: number) => del<OkResponse>(`/me/memories/${id}`),
+  memorySettings: () => get<MemorySettings>("/admin/memory-settings"),
+  saveMemorySettings: (enabled: boolean) => put<MemorySettings>("/admin/memory-settings", { enabled }),
+  memoryIndex: () => get<{ pending: number; failed: number }>("/admin/memory-index"),
+  rebuildMemoryIndex: () => post<OkResponse>("/admin/memory-index/rebuild", {}),
   preferenceQuestions: () => get<PreferenceQuestionsResponse>("/preferences/questions"),
   /** null＝尚未做初次設定 */
   myPreferences: () => get<Preferences | null>("/me/preferences"),

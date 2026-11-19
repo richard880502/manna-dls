@@ -56,6 +56,7 @@ async fn run() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     report_storage(&config.storage);
     let state = AppState::new(pool, config);
+    manna_api::memory::graph::spawn_worker(state.clone());
     // Index whatever is not embedded yet (first deploy, model change, interrupted run). In the
     // background: a slow or failing embedding provider must not delay startup.
     kb_embeddings::spawn_sync(&state, "startup", None, false);

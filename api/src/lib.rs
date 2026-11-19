@@ -14,6 +14,7 @@ pub mod embedding;
 pub mod error;
 pub mod kb_embeddings;
 pub mod materials;
+pub mod memory;
 pub mod objectives;
 pub mod preferences;
 pub mod prep;

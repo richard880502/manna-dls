@@ -910,8 +910,11 @@ fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
     match it.answer_format.as_str() {
         f if f == FMT_CHOICE => {
             let distinct: HashSet<&str> = it.options.iter().map(|o| o.trim()).collect();
-            if it.options.len() != 4 || distinct.len() != 4 {
-                Err("選擇題要有 4 個不重複的選項")
+            if !(2..=5).contains(&it.options.len())
+                || distinct.len() != it.options.len()
+                || distinct.contains("")
+            {
+                Err("選擇題要有 2–5 個不重複且非空白的選項")
             } else if !it.options.iter().any(|o| o.trim() == it.answer_en.trim()) {
                 Err("選擇題的 answer_en 必須與其中一個選項完全相同")
             } else {
@@ -926,10 +929,10 @@ fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
             }
         }
         f if f == FMT_MATCHING => {
-            if it.options.len() >= 3 {
+            if it.options.len() >= 2 {
                 Ok(())
             } else {
-                Err("配對題的 options 至少要 3 個")
+                Err("配對題的 options 至少要 2 個")
             }
         }
         _ => Ok(()),
@@ -3576,6 +3579,24 @@ mod tests {
     use crate::worksheet::schemas::{RawProcedure, RawSupport};
     use crate::worksheet::{FMT_PARAGRAPH, FMT_SHORT};
 
+    #[test]
+    fn choice_habits_allow_two_to_five_distinct_nonempty_options_with_an_answer() {
+        let mut item: RawItem = serde_json::from_value(serde_json::json!({
+            "item_id":"q1","answer_format":FMT_CHOICE,"tier":"core","prompt_en":"Choose.",
+            "options":["One","Two","Three"],"answer_en":"One","evidence":null
+        }))
+        .unwrap();
+        assert!(item_wellformed(&item).is_ok());
+        item.options = vec!["One".into(), "Two".into()];
+        assert!(item_wellformed(&item).is_ok());
+        item.options.push("Two".into());
+        assert!(item_wellformed(&item).is_err());
+        item.options = vec!["One".into(), " ".into()];
+        assert!(item_wellformed(&item).is_err());
+        item.options = vec!["Two".into(), "Three".into()];
+        assert!(item_wellformed(&item).is_err());
+    }
+
     fn out_item(
         format: &str,
         prompt: &str,
@@ -3980,7 +4001,7 @@ mod tests {
         );
         spliced.evidence = Some("In the first month ... unexpected followed.".into());
         let mut mcq = item("選擇題", "Pick one.", "A");
-        mcq.options = vec!["A".into(), "B".into()];
+        mcq.options = vec!["A".into(), "A".into()];
         let leak = item(
             "簡答題",
             "They were sure every umbrella would be gone. What were they sure about?",
