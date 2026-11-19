@@ -1209,8 +1209,9 @@ async fn admin_prompts_imports_and_permissions() {
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 
     // Prompts: latest per key; new versions increment.
-    let (s, prompts) = app.get("/api/admin/prompts", Some(&pi)).await;
+    let (s, listed) = app.get("/api/admin/prompts", Some(&pi)).await;
     assert_eq!(s, StatusCode::OK);
+    let prompts = listed["prompts"].clone();
     let keys: Vec<&str> = prompts
         .as_array()
         .unwrap()
@@ -1290,13 +1291,13 @@ async fn admin_prompts_imports_and_permissions() {
         .post(
             "/api/admin/prompts",
             Some(&pi),
-            json!({ "prompt_key": "plan_suggest", "system_text": "新版系統提示", "user_template": "{{lesson_title}}\n{{knowledge_items}}" }),
+            json!({ "prompt_key": "plan_suggest", "system_text": "新版系統提示", "user_template": "{{lesson_title}}\n{{steps}}\n{{knowledge_items}}\n{{allowed_codes}}" }),
         )
         .await;
     assert_eq!(s, StatusCode::OK, "{created}");
     assert_eq!(created["version_no"], 3);
-    let (_, prompts) = app.get("/api/admin/prompts", Some(&pi)).await;
-    let plan = prompts
+    let (_, listed) = app.get("/api/admin/prompts", Some(&pi)).await;
+    let plan = listed["prompts"]
         .as_array()
         .unwrap()
         .iter()

@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::auth::{self, AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
-use crate::prompts::PromptVersion;
+use crate::prompt_registry;
 use crate::routes::log_usage;
 use crate::settings;
 use crate::AppState;
@@ -249,18 +249,74 @@ pub async fn put_settings(
 
 // ---------------------------------------------------------------- prompts
 
+/// A prompt version as the management page sees it: the text plus who saved it and why.
+/// `created_by_research_id` is the author's research id (names are never read here); `by_me`
+/// marks the signed-in PI's own versions.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PromptRow {
+    pub id: i64,
+    pub prompt_key: String,
+    pub version_no: i32,
+    pub system_text: String,
+    pub user_template: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub note: Option<String>,
+    pub restored_from: Option<i32>,
+    pub created_by_research_id: Option<String>,
+    pub by_me: bool,
+}
+
+const PROMPT_COLUMNS: &str = "v.id, v.prompt_key, v.version_no, v.system_text, v.user_template,
+        v.created_at, v.note, v.restored_from,
+        t.research_id AS created_by_research_id, COALESCE(v.created_by = $1, false) AS by_me";
+
+#[derive(Debug, Serialize)]
+pub struct PromptList {
+    /// The latest version of every key (keys the registry does not know included).
+    pub prompts: Vec<PromptRow>,
+    pub groups: Vec<&'static str>,
+    pub registry: Vec<&'static prompt_registry::PromptInfo>,
+}
+
 pub async fn list_prompts(
     State(state): State<AppState>,
     teacher: AuthTeacher,
-) -> AppResult<Json<Vec<PromptVersion>>> {
+) -> AppResult<Json<PromptList>> {
     teacher.require_pi()?;
-    let rows = sqlx::query_as(
-        "SELECT DISTINCT ON (prompt_key)
-                id, prompt_key, version_no, system_text, user_template, created_at
-           FROM prompt_versions ORDER BY prompt_key, version_no DESC",
-    )
+    let prompts = sqlx::query_as(&format!(
+        "SELECT DISTINCT ON (v.prompt_key) {PROMPT_COLUMNS}
+           FROM prompt_versions v LEFT JOIN teachers t ON t.id = v.created_by
+          ORDER BY v.prompt_key, v.version_no DESC"
+    ))
+    .bind(teacher.id())
     .fetch_all(&state.db)
     .await?;
+    Ok(Json(PromptList {
+        prompts,
+        groups: prompt_registry::GROUPS.to_vec(),
+        registry: prompt_registry::REGISTRY.iter().collect(),
+    }))
+}
+
+/// Every version of one key, newest first.
+pub async fn list_prompt_versions(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(key): ApiPath<String>,
+) -> AppResult<Json<Vec<PromptRow>>> {
+    teacher.require_pi()?;
+    let rows = sqlx::query_as(&format!(
+        "SELECT {PROMPT_COLUMNS}
+           FROM prompt_versions v LEFT JOIN teachers t ON t.id = v.created_by
+          WHERE v.prompt_key = $2 ORDER BY v.version_no DESC"
+    ))
+    .bind(teacher.id())
+    .bind(&key)
+    .fetch_all(&state.db)
+    .await?;
+    if rows.is_empty() {
+        return Err(AppError::not_found("找不到這個提示詞。"));
+    }
     Ok(Json(rows))
 }
 
@@ -269,6 +325,22 @@ pub struct NewPrompt {
     pub prompt_key: String,
     pub system_text: String,
     pub user_template: String,
+    /// 這次改了什麼 (at most [`NOTE_MAX_CHARS`]).
+    #[serde(default)]
+    pub note: Option<String>,
+    /// The version_no this one restores (its text was copied from there).
+    #[serde(default)]
+    pub restored_from: Option<i32>,
+}
+
+pub const NOTE_MAX_CHARS: usize = 200;
+
+#[derive(Debug, Serialize)]
+pub struct SavedPrompt {
+    #[serde(flatten)]
+    pub version: PromptRow,
+    /// `{{names}}` in the saved text that the code never fills (saved anyway).
+    pub unknown_variables: Vec<String>,
 }
 
 fn valid_prompt_key(k: &str) -> bool {
@@ -278,11 +350,33 @@ fn valid_prompt_key(k: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// Why a new version of `key` is refused for its variables (400 text), or the `{{names}}` the
+/// code never fills.
+fn variable_problems(
+    key: &str,
+    system_text: &str,
+    user_template: &str,
+) -> Result<Vec<String>, String> {
+    let check = prompt_registry::check_variables(key, system_text, user_template);
+    if !check.missing.is_empty() {
+        let list = check
+            .missing
+            .iter()
+            .map(|v| format!("{{{{{}}}}}（{}）", v.name, v.label))
+            .collect::<Vec<_>>()
+            .join("、");
+        return Err(format!(
+            "這個提示詞少了程式一定會填、而且不能沒有的變數：{list}。請把它們放回系統提示詞或使用者範本，再儲存。"
+        ));
+    }
+    Ok(check.unknown)
+}
+
 pub async fn create_prompt(
     State(state): State<AppState>,
     teacher: AuthTeacher,
     ApiJson(req): ApiJson<NewPrompt>,
-) -> AppResult<Json<PromptVersion>> {
+) -> AppResult<Json<SavedPrompt>> {
     teacher.require_pi()?;
     let key = req.prompt_key.trim();
     if !valid_prompt_key(key) {
@@ -290,28 +384,86 @@ pub async fn create_prompt(
             "prompt_key 只能使用小寫英文、數字與底線。",
         ));
     }
-    if req.system_text.trim().is_empty() || req.user_template.trim().is_empty() {
+    let info = prompt_registry::find(key);
+    if req.system_text.trim().is_empty() {
+        return Err(AppError::bad_request("系統提示詞不可空白。"));
+    }
+    if req.user_template.trim().is_empty() && info.is_none_or(|i| i.uses_user_template) {
         return Err(AppError::bad_request("系統提示詞與使用者範本都不可空白。"));
     }
+    let note = req
+        .note
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_string);
+    if note
+        .as_ref()
+        .is_some_and(|n| n.chars().count() > NOTE_MAX_CHARS)
+    {
+        return Err(AppError::bad_request(format!(
+            "「這次改了什麼」最多 {NOTE_MAX_CHARS} 字。"
+        )));
+    }
+    let unknown = variable_problems(key, &req.system_text, &req.user_template)
+        .map_err(AppError::bad_request)?;
     let mut tx = state.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
         .bind(key)
         .execute(&mut *tx)
         .await?;
-    let row: PromptVersion = sqlx::query_as(
-        "INSERT INTO prompt_versions (prompt_key, version_no, system_text, user_template, created_by)
+    if let Some(from) = req.restored_from {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM prompt_versions WHERE prompt_key = $1 AND version_no = $2)",
+        )
+        .bind(key)
+        .bind(from)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !exists {
+            return Err(AppError::bad_request("找不到要還原的那個版本。"));
+        }
+    }
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO prompt_versions
+                (prompt_key, version_no, system_text, user_template, created_by, note, restored_from)
          VALUES ($1, (SELECT COALESCE(MAX(version_no), 0) + 1 FROM prompt_versions WHERE prompt_key = $1),
-                 $2, $3, $4)
-         RETURNING id, prompt_key, version_no, system_text, user_template, created_at",
+                 $2, $3, $4, $5, $6)
+         RETURNING id",
     )
     .bind(key)
     .bind(&req.system_text)
     .bind(&req.user_template)
     .bind(teacher.id())
+    .bind(&note)
+    .bind(req.restored_from)
     .fetch_one(&mut *tx)
     .await?;
+    let row: PromptRow = sqlx::query_as(&format!(
+        "SELECT {PROMPT_COLUMNS}
+           FROM prompt_versions v LEFT JOIN teachers t ON t.id = v.created_by
+          WHERE v.id = $2"
+    ))
+    .bind(teacher.id())
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    log_usage(
+        &mut *tx,
+        teacher.id(),
+        "prompt_version_created",
+        json!({
+            "prompt_key": row.prompt_key,
+            "version_no": row.version_no,
+            "restored_from": req.restored_from,
+        }),
+    )
+    .await?;
     tx.commit().await?;
-    Ok(Json(row))
+    Ok(Json(SavedPrompt {
+        version: row,
+        unknown_variables: unknown,
+    }))
 }
 
 // ---------------------------------------------------------------- CSV imports

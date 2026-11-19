@@ -52,6 +52,7 @@ import type {
   PlanSuggestOutput,
   PreferenceQuestionsResponse,
   Preferences,
+  PromptList,
   PromptVersion,
   RecordEvent,
   RecordOp,
@@ -64,6 +65,7 @@ import type {
   SaveLessonVersionRequest,
   SavePreferencesRequest,
   SaveSopMaterialRequest,
+  SavedPrompt,
   SavedSop,
   ScaffoldEventRequest,
   SchoolClass,
@@ -667,8 +669,10 @@ export const api = {
     /** 變更角色；對方下一次操作時生效。自己的角色、最後一位主持人 → 409 */
     updateAccountRole: (id: number, role: Role) =>
       request<Account>("PATCH", `/admin/accounts/${id}`, { json: { role } }),
-    listPrompts: () => get<PromptVersion[]>("/admin/prompts"),
-    createPrompt: (body: CreatePromptRequest) => post<PromptVersion>("/admin/prompts", body),
+    listPrompts: () => get<PromptList>("/admin/prompts"),
+    /** 一個 key 的所有版本，新的在前 */
+    promptVersions: (key: string) => get<PromptVersion[]>(`/admin/prompts/${encodeURIComponent(key)}/versions`),
+    createPrompt: (body: CreatePromptRequest) => post<SavedPrompt>("/admin/prompts", body),
     importTeacherCases: (csv: string) =>
       request<ImportResult>("POST", "/admin/teacher-cases/import", {
         text: csv,

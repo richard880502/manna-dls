@@ -1,10 +1,11 @@
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { Account, ImportResult, PromptVersion, Role, SchoolTrack } from "../api/types";
+import type { Account, ImportResult, Role, SchoolTrack } from "../api/types";
+import { PromptsEditor } from "../components/admin/PromptsEditor";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { useApp } from "../context/AppContext";
-import { ROLE_LABELS, SCHOOL_TRACK_LABELS, formatDate, formatDateTime } from "../lib/labels";
+import { ROLE_LABELS, SCHOOL_TRACK_LABELS, formatDate } from "../lib/labels";
 import { can } from "../lib/permissions";
 
 const ROLES: Role[] = ["teacher", "pi", "kb_manager", "ra", "rater", "engineer"];
@@ -405,124 +406,5 @@ function CsvImport({
       )}
       <ErrorText message={error} />
     </section>
-  );
-}
-
-function PromptsEditor() {
-  const [prompts, setPrompts] = useState<PromptVersion[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [newKey, setNewKey] = useState("");
-
-  useEffect(() => {
-    let alive = true;
-    api.admin
-      .listPrompts()
-      .then((list) => alive && setPrompts(list))
-      .catch((err: unknown) => alive && setError(errorMessage(err)));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  function onSaved(saved: PromptVersion) {
-    setPrompts((prev) => {
-      const others = (prev ?? []).filter((p) => p.prompt_key !== saved.prompt_key);
-      return [...others, saved].sort((a, b) => a.prompt_key.localeCompare(b.prompt_key));
-    });
-  }
-
-  return (
-    <section className="panel-card prompts-panel" aria-labelledby="prompts-heading">
-      <div className="card-heading">
-        <h2 id="prompts-heading">提示詞版本</h2>
-        <span className="soft-tag">每個 key 的最新版</span>
-      </div>
-      <ErrorText message={error} />
-      {!prompts && !error && <Loading />}
-      {prompts?.map((p) => (
-        <PromptCard key={`${p.prompt_key}-${p.version_no}`} prompt={p} onSaved={onSaved} />
-      ))}
-      <div className="new-prompt">
-        <label className="field-label" htmlFor="new-prompt-key">
-          新增提示詞 key
-        </label>
-        <div className="inline-form">
-          <input
-            id="new-prompt-key"
-            value={newKey}
-            onChange={(e) => setNewKey(e.target.value)}
-            placeholder="例如：core_assist"
-          />
-        </div>
-        {newKey.trim() && (
-          <PromptCard
-            key={`new-${newKey.trim()}`}
-            prompt={{
-              id: 0,
-              prompt_key: newKey.trim(),
-              version_no: 0,
-              system_text: "",
-              user_template: "",
-              created_at: "",
-            }}
-            onSaved={(p) => {
-              onSaved(p);
-              setNewKey("");
-            }}
-          />
-        )}
-      </div>
-    </section>
-  );
-}
-
-function PromptCard({ prompt, onSaved }: { prompt: PromptVersion; onSaved: (p: PromptVersion) => void }) {
-  const [systemText, setSystemText] = useState(prompt.system_text);
-  const [userTemplate, setUserTemplate] = useState(prompt.user_template);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const changed = systemText !== prompt.system_text || userTemplate !== prompt.user_template;
-  const idBase = `prompt-${prompt.prompt_key}`;
-
-  async function save() {
-    setBusy(true);
-    setError(null);
-    try {
-      const saved = await api.admin.createPrompt({
-        prompt_key: prompt.prompt_key,
-        system_text: systemText,
-        user_template: userTemplate,
-      });
-      onSaved(saved);
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <article className="prompt-card-admin">
-      <div className="card-heading">
-        <strong>{prompt.prompt_key}</strong>
-        <span className="soft-tag">
-          {prompt.version_no > 0 ? `v${prompt.version_no} · ${formatDateTime(prompt.created_at)}` : "新 key"}
-        </span>
-      </div>
-      <label className="field-label" htmlFor={`${idBase}-system`}>
-        system_text
-      </label>
-      <textarea id={`${idBase}-system`} rows={5} value={systemText} onChange={(e) => setSystemText(e.target.value)} />
-      <label className="field-label" htmlFor={`${idBase}-user`}>
-        user_template
-      </label>
-      <textarea id={`${idBase}-user`} rows={5} value={userTemplate} onChange={(e) => setUserTemplate(e.target.value)} />
-      <div className="button-row admin-actions">
-        <button type="button" className="primary-button" onClick={() => void save()} disabled={busy || !changed}>
-          {busy ? "儲存中…" : "儲存為新版本"}
-        </button>
-      </div>
-      <ErrorText message={error} />
-    </article>
   );
 }

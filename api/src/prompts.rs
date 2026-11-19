@@ -78,6 +78,22 @@ pub fn has_placeholder(template: &str, name: &str) -> bool {
     false
 }
 
+/// The distinct placeholder names in `template`, in order of first appearance.
+pub fn placeholders(template: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else { break };
+        let name = after[..end].trim();
+        if !name.is_empty() && !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+        rest = &after[end + 2..];
+    }
+    out
+}
+
 /// Renders the user message and appends every `(name, label)` whose placeholder appears in
 /// neither the system text nor the user template, as `label：value`. Guarantees that context
 /// every AI call must carry (class profile, length preference, …) reaches the model even with

@@ -510,12 +510,54 @@ export interface PromptVersion {
   system_text: string;
   user_template: string;
   created_at: string;
+  /** 這次改了什麼（選填，最多 200 字） */
+  note?: string | null;
+  /** 這一版是從哪一版還原的（version_no） */
+  restored_from?: number | null;
+  /** 儲存的人（研究編號）；初始版本沒有 */
+  created_by_research_id?: string | null;
+  /** 是目前登入的主持人自己存的 */
+  by_me?: boolean;
+}
+
+/** One `{{variable}}` the code fills into a prompt. */
+export interface PromptVar {
+  name: string;
+  label: string;
+  /** 程式一定會填、而且不能沒有：新版本少了它會被拒絕 */
+  required: boolean;
+  /** 缺少時程式會自動補在訊息最後 */
+  auto: boolean;
+}
+
+export interface PromptInfo {
+  key: string;
+  name_zh: string;
+  group: string;
+  description: string;
+  /** false：程式只讀 system_text，使用者範本可以留空 */
+  uses_user_template: boolean;
+  vars: PromptVar[];
+}
+
+export interface PromptList {
+  /** 每個 key 的最新版（含還沒登記的 key） */
+  prompts: PromptVersion[];
+  groups: string[];
+  registry: PromptInfo[];
 }
 
 export interface CreatePromptRequest {
   prompt_key: string;
   system_text: string;
   user_template: string;
+  note?: string;
+  restored_from?: number;
+}
+
+export interface SavedPrompt extends PromptVersion {
+  /** 存下了，但文字裡有程式不會填的 {{名稱}} */
+  unknown_variables: string[];
 }
 
 export interface ImportResult {

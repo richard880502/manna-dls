@@ -107,8 +107,11 @@ interface PlanSuggestOutput { kb_empty: boolean; suggestions: PlanSuggestion[]; 
 | 方法 | 路徑 | 請求 | 回應 |
 |---|---|---|---|
 | POST | `/api/admin/invites` | `{ research_id: string; school_track: SchoolTrack; role?: Role }` | `{ code: string }`（明碼只回這一次，DB 只存雜湊） |
-| GET | `/api/admin/prompts` | – | `Array<{ id; prompt_key; version_no; system_text; user_template; created_at }>`（每個 key 的最新版） |
-| POST | `/api/admin/prompts` | `{ prompt_key: string; system_text: string; user_template: string }` | 新版本（version_no + 1） |
+| GET | `/api/admin/prompts` | – | `{ prompts: PromptRow[]; groups: string[]; registry: PromptInfo[] }`：每個 key 的最新版（含還沒登記的 key）；`registry`（`api/src/prompt_registry.rs`）是每個 key 的中文名稱、分組、說明、`uses_user_template` 與變數（`required` 必要、`auto` 缺少時程式自動補在訊息最後） |
+| GET | `/api/admin/prompts/{key}/versions` | – | `PromptRow[]`：這個 key 的所有版本，新的在前；沒有這個 key → 404 |
+| POST | `/api/admin/prompts` | `{ prompt_key; system_text; user_template; note?: string（≤200 字，這次改了什麼）; restored_from?: number（還原自哪一版）}` | 新版本（version_no + 1；從不修改或刪除舊版）＋ `unknown_variables: string[]`（程式不會填的 `{{名稱}}`，只警告、照樣儲存）。系統提示詞空白、使用者範本空白（`uses_user_template = false` 的 key 除外）、note 太長、`restored_from` 不存在 → 400；少了 registry 標為 `required` 的變數 → 400（訊息列出變數）。寫入 `usage_logs` 事件 `prompt_version_created`（`prompt_key`、`version_no`、`restored_from`） |
+
+`PromptRow` = `{ id; prompt_key; version_no; system_text; user_template; created_at; note; restored_from; created_by_research_id（只給研究編號，不給姓名）; by_me }`。
 | POST | `/api/admin/knowledge/import` | `Content-Type: text/csv`，欄位：`item_code,category,school_track,title,content,source_doc,source_version,source_page` | `{ imported: number; sha256: string }`（Phase 2.0 起多了選填欄位、`dry_run` 與更多回應欄位，並開放給 `kb_manager`） |
 | POST | `/api/admin/teacher-cases/import` | `Content-Type: text/csv`，欄位：`case_code,school_track,grade,topic,summary,details,approved` | `{ imported: number; sha256: string }` |
 

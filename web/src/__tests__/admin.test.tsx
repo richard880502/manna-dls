@@ -28,16 +28,20 @@ describe("admin page (pi)", () => {
       "GET /api/me": pi,
       "GET /api/admin/settings": { route_choice_enabled: true },
       "GET /api/admin/accounts": accounts,
-      "GET /api/admin/prompts": [
-        {
-          id: 1,
-          prompt_key: "core_assist",
-          version_no: 2,
-          system_text: "你是 Manna",
-          user_template: "{{question}}",
-          created_at: "2026-11-11T08:00:00Z",
-        },
-      ],
+      "GET /api/admin/prompts": {
+        groups: [],
+        registry: [],
+        prompts: [
+          {
+            id: 1,
+            prompt_key: "core_assist",
+            version_no: 2,
+            system_text: "你是 Manna",
+            user_template: "{{question}}",
+            created_at: "2026-11-11T08:00:00Z",
+          },
+        ],
+      },
       "POST /api/admin/prompts": (call: MockCall) => ({
         id: 2,
         version_no: 3,
@@ -63,7 +67,8 @@ describe("admin page (pi)", () => {
       role: "teacher",
     });
 
-    const system = await screen.findByLabelText("system_text");
+    await user.click(await screen.findByText("core_assist", { selector: "summary code" }));
+    const system = await screen.findByLabelText(/系統提示詞/);
     await user.type(system, "，不提供答案");
     await user.click(screen.getByRole("button", { name: "儲存為新版本" }));
     await waitFor(() =>
@@ -73,7 +78,7 @@ describe("admin page (pi)", () => {
         user_template: "{{question}}",
       }),
     );
-    expect(await screen.findByText(/v3/)).toBeInTheDocument();
+    expect(await screen.findByText(/已儲存為 v3/)).toBeInTheDocument();
 
     const csv = "case_code,school_track,grade,topic,summary,details,approved\nC-1,both,高二,閱讀,摘要,細節,true\n";
     const cases = within(screen.getByRole("region", { name: "匯入教師備課經驗" }));
@@ -99,7 +104,7 @@ describe("admin page (pi)", () => {
       "GET /api/me": pi,
       "GET /api/admin/settings": { route_choice_enabled: true },
       "GET /api/admin/accounts": accounts,
-      "GET /api/admin/prompts": [],
+      "GET /api/admin/prompts": { prompts: [], groups: [], registry: [] },
       "POST /api/admin/invites": { code: "KBKB-1234" },
     });
     const user = userEvent.setup();
@@ -124,7 +129,7 @@ describe("admin page (pi)", () => {
       "GET /api/admin/settings": { route_choice_enabled: true },
       "GET /api/admin/accounts": accounts,
       "PUT /api/admin/settings": (call: MockCall) => call.body,
-      "GET /api/admin/prompts": [],
+      "GET /api/admin/prompts": { prompts: [], groups: [], registry: [] },
     });
     const user = userEvent.setup();
     renderApp("/admin");
@@ -165,7 +170,7 @@ describe("帳號與角色 (pi)", () => {
     ...baseRoutes(),
     "GET /api/me": pi,
     "GET /api/admin/settings": { route_choice_enabled: true },
-    "GET /api/admin/prompts": [],
+    "GET /api/admin/prompts": { prompts: [], groups: [], registry: [] },
     "GET /api/admin/accounts": accounts,
     "PATCH /api/admin/accounts/7": patch,
   });
