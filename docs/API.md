@@ -2582,7 +2582,7 @@ interface PrepTurn {
 
 ### `entry`（研究紀錄用）
 
-`POST /api/prep-sessions` 可帶 `entry?: "home" | "create"`：哪一頁開始這個對話（首頁的快速框、或 `/create/:tool`）。只寫進 `prep_session_created` 的 `entry`，並固定帶 `ui_version: 2`（導覽改版後的介面）。其他值（別的字串、別的型別）一律忽略，記成 `null`，不是錯誤；舊的客戶端不帶 `entry` 也照常。沒有資料表變動。
+`POST /api/prep-sessions` 可帶 `entry?: "home" | "create"`：哪一頁開始這個對話（首頁的快速框、或 `/create/:tool`）。只寫進 `prep_session_created` 的 `entry`，並固定帶 `ui_version: 3`（首頁只剩「完整學習單」「照我的學習單做」兩張卡片；`2` 是導覽改版後六張卡片的首頁）。其他值（別的字串、別的型別）一律忽略，記成 `null`，不是錯誤；舊的客戶端不帶 `entry` 也照常。沒有資料表變動。
 
 ## 照版型產生：每一題的 Bloom 層次
 

@@ -349,7 +349,7 @@ pub async fn create(
                 "session_id": session.id, "kind": kind, "material_id": session.material_id,
                 "class_id": session.class_id, "template_id": session.template_id,
                 "template_material_id": sample_id,
-                "entry": known_entry(req.entry.as_ref()), "ui_version": 2,
+                "entry": known_entry(req.entry.as_ref()), "ui_version": 3,
             }),
         )
         .await?;

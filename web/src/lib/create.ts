@@ -14,6 +14,12 @@ export type Tool = (typeof TOOLS)[number];
 export const KIND_TOOLS = ["comprehension", "tiered", "activity", "kit", "worksheet"] as const;
 export type KindTool = (typeof KIND_TOOLS)[number];
 
+/**
+ * The tools the home page shows as tiles, in order. The other four stay reachable (the
+ * conversation's 接下來可以 chips, typed words in the quick box, and /create/:tool).
+ */
+export const HOME_TOOLS = ["worksheet", "mimic"] as const satisfies readonly Tool[];
+
 export const isTool = (value: string | undefined): value is Tool => (TOOLS as readonly string[]).includes(value ?? "");
 
 /** The session kind a tool makes (照我的學習單做 makes a 完整學習單). */
@@ -38,12 +44,12 @@ export const TOOL_NAME: Record<Tool, string> = { mimic: "照我的學習單做",
 
 /** One line per tool: under its name on the home page's tiles. */
 export const TOOL_BLURB: Record<Tool, string> = {
-  mimic: "上傳你以前的學習單，Manna 照它的樣式為新課文出題",
+  mimic: "上傳你以前用過的學習單，Manna 照它的版面和樣式，為新課文做一份",
   comprehension: "依 Bloom 六個層次出題，附答案與文本依據",
   tiered: "同一篇文章，基礎／一般／進階三個版本",
   activity: "引起動機到統整的一節課流程",
   kit: "活動流程＋差異化學習單＋教師版答案，一次下載",
-  worksheet: "完整學習單，可以照你的版型",
+  worksheet: "由 Manna 設計版面：暖身、逐段任務，到 Exit ticket",
 };
 
 /** The generator's subtitle: what the tool makes from what. */
