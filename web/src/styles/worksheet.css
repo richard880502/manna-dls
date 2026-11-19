@@ -1044,37 +1044,37 @@
  * One colour per level, every one an existing token: light and cool for remembering, warm and
  * dark for evaluating and creating. 未標 is the neutral well with a dashed edge. The pairs below
  * keep 4.5:1 or better for the text on them. */
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-remember {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-remember {
   --bloom-bg: var(--color-accent-wash-2);
   --bloom-ink: var(--color-accent-press);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-understand {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-understand {
   --bloom-bg: var(--color-accent-rule);
   --bloom-ink: var(--color-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-apply {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-apply {
   --bloom-bg: var(--color-success-rule);
   --bloom-ink: var(--color-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-analyze {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-analyze {
   --bloom-bg: var(--color-manna-rule);
   --bloom-ink: var(--color-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-evaluate {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-evaluate {
   --bloom-bg: var(--color-warn-ink);
   --bloom-ink: var(--color-accent-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-create {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-create {
   --bloom-bg: var(--color-error);
   --bloom-ink: var(--color-accent-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch).is-none {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-none {
   --bloom-bg: var(--color-paper-2);
   --bloom-ink: var(--color-muted);
   --bloom-edge: var(--color-field-edge);

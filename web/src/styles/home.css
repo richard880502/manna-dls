@@ -686,35 +686,12 @@
 }
 
 /* ================= 認知層次（Bloom）: preset cards with stacked bars ================= */
-/* Six colours from the palette, in Bloom order: two blues, a green, gold, red, brown. */
-.bloom-seg.is-remember,
-.bloom-dot.is-remember {
-  --bloom: var(--color-accent-rule);
-}
-
-.bloom-seg.is-understand,
-.bloom-dot.is-understand {
-  --bloom: var(--color-accent);
-}
-
-.bloom-seg.is-apply,
-.bloom-dot.is-apply {
-  --bloom: var(--color-success-rule);
-}
-
-.bloom-seg.is-analyze,
-.bloom-dot.is-analyze {
-  --bloom: var(--color-star);
-}
-
-.bloom-seg.is-evaluate,
-.bloom-dot.is-evaluate {
-  --bloom: var(--color-error);
-}
-
-.bloom-seg.is-create,
-.bloom-dot.is-create {
-  --bloom: var(--color-manna-ink);
+/* One palette for every Bloom mark: the colours (--bloom-bg, --bloom-ink) are set per level in
+   worksheet.css, so the preset bars, the legend dots, the worksheet's bar and its swatches always
+   agree. */
+.bloom-seg,
+.bloom-dot {
+  --bloom: var(--bloom-bg);
 }
 
 .bloom-picker {
@@ -1002,7 +979,7 @@
   margin-top: var(--space-md);
 }
 
-/* The 理解 segment is the deep blue of the legend dot; its count needs light ink to stay readable. */
-.bloom-bar .bloom-seg.is-understand {
-  color: var(--color-accent-ink);
+/* A count on a segment takes the level's own ink, which keeps 4.5:1 on its colour. */
+.bloom-bar .bloom-seg {
+  color: var(--bloom-ink);
 }
