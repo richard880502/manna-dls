@@ -1,10 +1,33 @@
-//! OpenAI-compatible chat completions (for the NCHC / 國網中心 model).
+//! OpenAI-compatible chat completions: the NCHC / 國網中心 model, and OpenAI's own API
+//! (`AI_PROVIDER=openai`, GPT-5 and later).
 
 use serde_json::{json, Value};
 
 use super::{clip, LlmRequest, LlmResponse, ProviderError};
 
+/// OpenAI's own API. The text model's address is fixed: only the model and key are settings.
+pub const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// Room added to an OpenAI reasoning model's token limit: `max_completion_tokens` counts the
+/// reasoning as well as the answer, and a limit sized for the answer alone ends with nothing.
+pub const REASONING_ROOM: u32 = 16_000;
+
+/// How a reasoning model is asked: `Some(effort)` for OpenAI's own API (`AI_EFFORT`, mapped to
+/// what it takes), `None` for an OpenAI-compatible server (NCHC), which takes `max_tokens` and a
+/// temperature.
+pub fn reasoning_effort(effort: &str) -> &'static str {
+    match effort {
+        "low" => "low",
+        "medium" => "medium",
+        _ => "high",
+    }
+}
+
 pub fn build_body(model: &str, req: &LlmRequest) -> Value {
+    build_body_for(model, req, None)
+}
+
+pub fn build_body_for(model: &str, req: &LlmRequest, reasoning: Option<&str>) -> Value {
     let mut body = json!({
         "model": model,
         "messages": [
@@ -16,11 +39,22 @@ pub fn build_body(model: &str, req: &LlmRequest) -> Value {
             "json_schema": { "name": req.schema_name, "schema": req.schema, "strict": true }
         }
     });
-    if let Some(max_tokens) = req.max_tokens {
-        body["max_tokens"] = json!(max_tokens);
-    }
-    if let Some(temperature) = req.temperature {
-        body["temperature"] = json!(temperature);
+    match reasoning {
+        Some(effort) => {
+            // GPT-5 and later: their own token field (reasoning included), their own sampling.
+            body["reasoning_effort"] = json!(reasoning_effort(effort));
+            if let Some(max_tokens) = req.max_tokens {
+                body["max_completion_tokens"] = json!(max_tokens.saturating_add(REASONING_ROOM));
+            }
+        }
+        None => {
+            if let Some(max_tokens) = req.max_tokens {
+                body["max_tokens"] = json!(max_tokens);
+            }
+            if let Some(temperature) = req.temperature {
+                body["temperature"] = json!(temperature);
+            }
+        }
     }
     body
 }
@@ -59,12 +93,15 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
     let content = choice["message"]["content"]
         .as_str()
         .ok_or_else(|| ProviderError::InvalidOutput("no message content".into()))?;
-    let json: Value = serde_json::from_str(content.trim()).map_err(|e| {
+    let mut json: Value = serde_json::from_str(content.trim()).map_err(|e| {
         ProviderError::InvalidOutput(format!(
             "output is not valid JSON: {e}; raw: {}",
             clip(content, 4000)
         ))
     })?;
+    // A NUL character (`\u0000`) is valid JSON but PostgreSQL refuses it in JSONB and text, which
+    // failed a whole worksheet run (gpt-5.6-sol, 2026-11-19). It never carries meaning: drop it.
+    super::strip_nul(&mut json);
     Ok(LlmResponse {
         json,
         model_version,
@@ -76,9 +113,12 @@ pub async fn call(
     base_url: &str,
     api_key: Option<&str>,
     model: &str,
+    reasoning: Option<&str>,
     req: &LlmRequest,
 ) -> Result<LlmResponse, ProviderError> {
-    let mut rb = http.post(endpoint(base_url)).json(&build_body(model, req));
+    let mut rb = http
+        .post(endpoint(base_url))
+        .json(&build_body_for(model, req, reasoning));
     if let Some(key) = api_key {
         rb = rb.bearer_auth(key);
     }
@@ -163,5 +203,44 @@ mod tests {
             parse_response(503, "busy"),
             Err(ProviderError::Http { status: 503, .. })
         ));
+    }
+    #[test]
+    fn openai_reasoning_models_get_their_own_token_field_and_no_temperature() {
+        let req = LlmRequest {
+            system: "s".into(),
+            user: "u".into(),
+            schema_name: "x",
+            schema: json!({"type": "object"}),
+            fake_context: json!({}),
+            attempt: 1,
+            max_tokens: Some(4000),
+            temperature: Some(0.4),
+        };
+        let b = build_body_for("gpt-5.6-terra", &req, Some("medium"));
+        assert_eq!(b["reasoning_effort"], "medium");
+        assert_eq!(b["max_completion_tokens"], 4000 + REASONING_ROOM);
+        assert!(b.get("max_tokens").is_none());
+        assert!(b.get("temperature").is_none());
+        assert_eq!(b["response_format"]["json_schema"]["strict"], true);
+        // NCHC is unchanged.
+        let n = build_body("gemma", &req);
+        assert_eq!(n["max_tokens"], 4000);
+        assert_eq!(n["temperature"], json!(0.4f32));
+        assert!(n.get("reasoning_effort").is_none());
+        // The settings' efforts map onto what OpenAI takes.
+        assert_eq!(reasoning_effort("low"), "low");
+        assert_eq!(reasoning_effort("xhigh"), "high");
+        assert_eq!(reasoning_effort("max"), "high");
+    }
+
+    #[test]
+    fn nul_characters_are_dropped_from_the_output() {
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "choices": [{"finish_reason": "stop", "message": {"content": "{\"items\":[{\"prompt\":\"a\\u0000b\",\"k\\u0000\":[\"\\u0000\"]}]}"}}]
+        })
+        .to_string();
+        let r = parse_response(200, &body).unwrap();
+        assert_eq!(r.json, json!({"items": [{"prompt": "ab", "k": [""]}]}));
     }
 }

@@ -42,6 +42,7 @@ cd web && pnpm install && pnpm dev
 | `fake` | 測試與 CI，固定輸出、不連網 |
 | `anthropic` | 示範環境。必須同時設 `DEMO_MODE=true`，否則後端拒絕啟動（規格禁止把真實教師資料送境外） |
 | `openai_compatible` | 國網中心模型（拿到 API 後設定 `OPENAI_COMPAT_BASE_URL`、`OPENAI_COMPAT_API_KEY`） |
+| `openai` | OpenAI 的 GPT-5 以後模型（2026-11-19 起正式環境用 `AI_MODEL=gpt-5.6-terra`）。用配圖已經設好的 `OPENAI_API_KEY`，不需要另設網址；思考程度用 `AI_EFFORT`（`low`／`medium`／`high`，預設 `medium`）。資料會送到境外，經主持人同意才使用。要換回國網：`AI_PROVIDER=openai_compatible`、`AI_MODEL=gemma-4-31B-it` |
 
 ### 語意索引（混合檢索）
 

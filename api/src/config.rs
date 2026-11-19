@@ -17,6 +17,10 @@ pub enum AiProviderKind {
     Anthropic,
     /// OpenAI-compatible chat completions (the NCHC model).
     OpenAiCompatible,
+    /// OpenAI's own API (`https://api.openai.com/v1`, `OPENAI_API_KEY`, the key the pictures
+    /// already use), for GPT-5 and later: a reasoning effort from `AI_EFFORT`, room for the
+    /// reasoning in the token limit, no temperature. Overseas: the PI accepted it (2026-11-19).
+    OpenAi,
 }
 
 impl AiProviderKind {
@@ -26,6 +30,7 @@ impl AiProviderKind {
             Self::Fake => "fake",
             Self::Anthropic => "anthropic",
             Self::OpenAiCompatible => "openai_compatible",
+            Self::OpenAi => "openai",
         }
     }
 
@@ -35,6 +40,7 @@ impl AiProviderKind {
             "fake" => Some(Self::Fake),
             "anthropic" => Some(Self::Anthropic),
             "openai_compatible" | "openai-compatible" => Some(Self::OpenAiCompatible),
+            "openai" => Some(Self::OpenAi),
             _ => None,
         }
     }
@@ -76,6 +82,9 @@ pub struct Config {
     pub anthropic_api_key: Option<String>,
     pub openai_compat_base_url: Option<String>,
     pub openai_compat_api_key: Option<String>,
+    /// `OPENAI_API_KEY`: the text model's key with `AI_PROVIDER=openai` (the pictures read it
+    /// themselves). Never logged.
+    pub openai_api_key: Option<String>,
     pub demo_mode: bool,
     pub admin_bootstrap_code: Option<String>,
     pub rag_top_k: usize,
@@ -164,7 +173,7 @@ impl Config {
             AiProviderKind::parse(&provider_raw).ok_or_else(|| ConfigError::Invalid {
                 var: "AI_PROVIDER",
                 value: provider_raw.clone(),
-                reason: "expected anthropic, openai_compatible, fake or none",
+                reason: "expected anthropic, openai_compatible, openai, fake or none",
             })?;
         let demo_mode = parse_bool("DEMO_MODE", get("DEMO_MODE"))?;
 
@@ -173,7 +182,7 @@ impl Config {
             (None, AiProviderKind::Anthropic) => "claude-opus-5-5".into(),
             (None, AiProviderKind::Fake) => "fake-model".into(),
             (None, AiProviderKind::None) => String::new(),
-            (None, AiProviderKind::OpenAiCompatible) => {
+            (None, AiProviderKind::OpenAiCompatible | AiProviderKind::OpenAi) => {
                 return Err(ConfigError::Missing("AI_MODEL"));
             }
         };
@@ -213,6 +222,7 @@ impl Config {
         let anthropic_api_key = get("ANTHROPIC_API_KEY");
         let openai_compat_base_url = get("OPENAI_COMPAT_BASE_URL");
         let openai_compat_api_key = get("OPENAI_COMPAT_API_KEY");
+        let openai_api_key = get("OPENAI_API_KEY");
 
         match ai_provider {
             AiProviderKind::Anthropic => {
@@ -229,6 +239,11 @@ impl Config {
                     return Err(ConfigError::Missing("OPENAI_COMPAT_BASE_URL"));
                 }
             }
+            AiProviderKind::OpenAi => {
+                if openai_api_key.is_none() {
+                    return Err(ConfigError::Missing("OPENAI_API_KEY"));
+                }
+            }
             AiProviderKind::Fake | AiProviderKind::None => {}
         }
 
@@ -243,6 +258,7 @@ impl Config {
             anthropic_api_key,
             openai_compat_base_url,
             openai_compat_api_key,
+            openai_api_key,
             demo_mode,
             admin_bootstrap_code: get("ADMIN_BOOTSTRAP_CODE").map(|c| c.trim().to_string()),
             rag_top_k,
@@ -271,6 +287,7 @@ impl Config {
             anthropic_api_key: None,
             openai_compat_base_url: None,
             openai_compat_api_key: None,
+            openai_api_key: None,
             demo_mode: false,
             admin_bootstrap_code: None,
             rag_top_k: 8,
@@ -398,6 +415,25 @@ mod tests {
     fn invalid_values_are_rejected() {
         assert!(cfg(&[DB, ("AI_PROVIDER", "gpt")]).is_err());
         assert!(cfg(&[DB, ("AI_EFFORT", "extreme")]).is_err());
+        // OpenAI's own API: a model and OPENAI_API_KEY (no base URL setting).
+        assert_eq!(
+            cfg(&[DB, ("AI_PROVIDER", "openai"), ("AI_MODEL", "gpt-5.6-terra")]).err(),
+            Some(ConfigError::Missing("OPENAI_API_KEY"))
+        );
+        assert_eq!(
+            cfg(&[DB, ("AI_PROVIDER", "openai"), ("OPENAI_API_KEY", "sk-x")]).err(),
+            Some(ConfigError::Missing("AI_MODEL"))
+        );
+        let o = cfg(&[
+            DB,
+            ("AI_PROVIDER", "openai"),
+            ("AI_MODEL", "gpt-5.6-terra"),
+            ("OPENAI_API_KEY", "sk-very-secret"),
+        ])
+        .unwrap();
+        assert_eq!(o.ai_provider, AiProviderKind::OpenAi);
+        assert_eq!(o.ai_provider.as_str(), "openai");
+        assert!(!format!("{o:?}").contains("sk-very-secret"));
         assert!(cfg(&[DB, ("PORT", "eighty")]).is_err());
         assert!(cfg(&[DB, ("DEMO_MODE", "maybe")]).is_err());
         assert!(cfg(&[DB, ("RAG_TOP_K", "0")]).is_err());
