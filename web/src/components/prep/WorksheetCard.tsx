@@ -24,6 +24,7 @@ import { RunProgressSlot } from "../RunProgress";
 import { OcrProgress } from "../material/Ocr";
 import { BloomDistribution } from "../worksheet/Bloom";
 import { ExportMenu } from "../worksheet/ExportMenu";
+import { BlockHistoryButton } from "../worksheet/BlockHistory";
 import { BlockReviseArea, LostNotes, ReviseByNotesButton, useBlockRevise } from "../worksheet/BlockRevise";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { anyOpen } from "../worksheet/SlotPicture";
@@ -335,6 +336,21 @@ export function WorksheetCard({
             加註記
           </button>
           <ReviseByNotesButton blockId={b.id} ctl={revise} disabled={held} />
+          {wsId !== null && (
+            <BlockHistoryButton
+              worksheetId={wsId}
+              blockId={b.id}
+              label={`修改歷程（${name}）`}
+              className="decision-button"
+              disabled={held}
+              onAdopted={(done) => {
+                setState(done.worksheet);
+                setImages(done.worksheet.images ?? null);
+                setLocalKey((n) => n + 1);
+                setFlash(new Set([b.id]));
+              }}
+            />
+          )}
           {state?.undoable.includes(b.id) && !held && (
             <button type="button" className="decision-button" onClick={() => void undo(b.id)}>
               復原上一版

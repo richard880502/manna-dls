@@ -20,6 +20,7 @@ pub mod sop;
 pub mod suggestions;
 pub mod templates;
 pub mod units;
+pub mod worksheet_history;
 pub mod worksheet_revise;
 pub mod worksheet_vocab;
 pub mod worksheets;
@@ -121,6 +122,15 @@ pub fn api_router() -> Router<AppState> {
         .route(
             "/worksheets/{id}/blocks/{block_id}/undo",
             post(worksheets::undo_block),
+        )
+        // 修改歷程
+        .route(
+            "/worksheets/{id}/blocks/{block_id}/history",
+            get(worksheet_history::block_history),
+        )
+        .route(
+            "/worksheets/{id}/blocks/{block_id}/adopt",
+            post(worksheet_history::adopt_version),
         )
         // 逐區修改與註記
         .route(

@@ -120,6 +120,9 @@ import type {
   WsProposal,
   WsProposalAccepted,
   ReviseWorksheetBlockRequest,
+  AdoptWsBlockVersionRequest,
+  WsBlockAdopted,
+  WsBlockHistory,
   PrepImage,
   PrepSession,
   PrepSessionList,
@@ -435,6 +438,11 @@ export const api = {
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/regenerate`),
   undoWorksheetBlock: (id: number, blockId: string) =>
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/undo`),
+  // 修改歷程
+  worksheetBlockHistory: (id: number, blockId: string) =>
+    get<WsBlockHistory>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/history`),
+  adoptWorksheetBlockVersion: (id: number, blockId: string, body: AdoptWsBlockVersionRequest) =>
+    post<WsBlockAdopted>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/adopt`, body),
   // 逐區修改與註記
   listWorksheetComments: (id: number) => get<WorksheetComment[]>(`/worksheets/${id}/comments`),
   createWorksheetComment: (id: number, body: CreateWorksheetCommentRequest) =>

@@ -15,6 +15,7 @@ pub mod checks;
 pub mod comments;
 pub mod export;
 pub mod fake;
+pub mod history;
 pub mod images;
 pub mod material;
 pub mod organizer;

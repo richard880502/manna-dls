@@ -14,6 +14,8 @@ import type {
   WorksheetState,
   WsAudience,
   WsBlock,
+  WsBlockHistory,
+  WsHistoryStep,
   WsItem,
   WsProposal,
   WsSheet,
@@ -669,5 +671,116 @@ describe("編輯器: 採用之後的復原與同一輪的各次建議", () => {
     await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/88/accept`)).toHaveLength(1));
     expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(0);
     await waitFor(() => expect(editorBlock().queryByRole("region", { name: "Manna 的修改建議" })).toBeNull());
+  });
+});
+
+describe("編輯器: 修改歷程", () => {
+  const step = (over: Partial<WsHistoryStep>): WsHistoryStep => ({
+    kind: "original",
+    label: "原本",
+    at: "2026-11-15T08:00:00Z",
+    version_no: 1,
+    proposal_id: null,
+    current: false,
+    detail: "",
+    merged_version_nos: [],
+    undone: false,
+    adopted_later_version_no: null,
+    block: content().blocks[1]!,
+    pictures: null,
+    picture_actions: [],
+    adopt: { possible: true, clean: true, warn_older: false, draws_pictures: false, pictures_unknown: true, reason: null },
+    ...over,
+  });
+  const history = (): WsBlockHistory => ({
+    block_id: "b2",
+    version_no: 3,
+    busy: false,
+    steps: [
+      step({
+        kind: "manual",
+        label: "你手動修改",
+        version_no: 3,
+        current: true,
+        at: "2026-11-15T10:00:00Z",
+        adopt: { possible: false, clean: true, warn_older: false, draws_pictures: false, pictures_unknown: true, reason: "這就是現在的版本。" },
+      }),
+      step({
+        kind: "proposal_rejected",
+        label: "Manna 的提案（沒採用）",
+        version_no: null,
+        proposal_id: 90,
+        at: "2026-11-15T09:00:00Z",
+        detail: "已把第 3 題改簡單。",
+        picture_actions: [{ action: "add", slot_id: "", text: "加一張圖：蜜蜂" }],
+        adopt: { possible: true, clean: false, warn_older: true, draws_pictures: true, pictures_unknown: false, reason: null },
+      }),
+      step({ version_no: 1 }),
+    ],
+  });
+
+  it("lists the steps, steps through previews, warns before adopting an old proposal and adopts a past version", async () => {
+    const api = mockApi(
+      editorRoutes(worksheet(), {
+        [`GET ${WS}/blocks/b2/history`]: history(),
+        [`POST ${WS}/blocks/b2/adopt`]: () => ({
+          version_no: 4,
+          kind: "version",
+          pictures: [],
+          worksheet: worksheet({ version_no: 4 }),
+        }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    await user.click(await editorBlock().findByRole("button", { name: "修改歷程（區塊 B）" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "修改歷程" }));
+    const list = within(await dialog.findByRole("list", { name: "這一區的修改歷程" }));
+    expect(list.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      expect.stringContaining("你手動修改"),
+      expect.stringContaining("Manna 的提案（沒採用）"),
+      expect.stringContaining("原本"),
+    ]);
+    expect(dialog.getByText("第 1 步（共 3 步）")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "採用這個版本" })).toBeDisabled();
+    // ‹ › step through the previews.
+    await user.click(dialog.getByRole("button", { name: "較舊的一步" }));
+    expect(dialog.getByText("第 2 步（共 3 步）")).toBeInTheDocument();
+    expect(dialog.getByText("已把第 3 題改簡單。")).toBeInTheDocument();
+    // A proposal made from older content, with picture actions that never ran: asks first.
+    await user.click(dialog.getByRole("button", { name: "採用這個版本" }));
+    expect(dialog.getByText(/這個版本是根據比較早的內容改的，採用後會取代這一區之後的修改/)).toBeInTheDocument();
+    expect(dialog.getByText(/會用到 AI 產圖/)).toBeInTheDocument();
+    expect(api.callsTo("POST", `${WS}/blocks/b2/adopt`)).toHaveLength(0);
+    await user.click(dialog.getByRole("button", { name: "先不要" }));
+    // A past version adopts at once.
+    await user.click(dialog.getByRole("button", { name: "較舊的一步" }));
+    await user.click(dialog.getByRole("button", { name: "採用這個版本" }));
+    await waitFor(() => expect(api.lastBody("POST", `${WS}/blocks/b2/adopt`)).toEqual({ version_no: 1 }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "修改歷程" })).toBeNull());
+  });
+
+  it("adopts a rejected proposal by its id after confirming", async () => {
+    const api = mockApi(
+      editorRoutes(worksheet(), {
+        [`GET ${WS}/blocks/b2/history`]: history(),
+        [`POST ${WS}/blocks/b2/adopt`]: () => ({
+          version_no: 4,
+          kind: "proposal",
+          pictures: [],
+          worksheet: worksheet({ version_no: 4 }),
+        }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    await user.click(await editorBlock().findByRole("button", { name: "修改歷程（區塊 B）" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "修改歷程" }));
+    await user.click(await dialog.findByRole("button", { name: /Manna 的提案（沒採用）/ }));
+    await user.click(dialog.getByRole("button", { name: "採用這個版本" }));
+    await user.click(dialog.getByRole("button", { name: "仍要採用" }));
+    await waitFor(() => expect(api.lastBody("POST", `${WS}/blocks/b2/adopt`)).toEqual({ proposal_id: 90 }));
   });
 });
