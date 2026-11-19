@@ -85,6 +85,14 @@ export function summaryLine(total: number, counts: BloomCounts): string {
  * only fills the fields. Her choices are recorded as decisions on the draft. While the panel is
  * open the bar's 產生 is hidden, so the page has one primary button.
  */
+/**
+ * What the home page's 更多設定 hands over (history state): the article already attached there and,
+ * for 照我的學習單做, the sample. The form starts filled in with them.
+ */
+export interface CreateCarry {
+  carry?: { choice: MaterialChoice | null; sample: Sample | null };
+}
+
 function Generator({ tool }: { tool: Tool }) {
   const ids = useId();
   const navigate = useNavigate();
@@ -104,8 +112,11 @@ function Generator({ tool }: { tool: Tool }) {
   const drafts = useObjectiveDraft();
   /** The panel was opened by 請 Manna 擬一組: its primary fills the fields instead of generating. */
   const [fillMode, setFillMode] = useState(false);
-  const [text, setText] = useState("");
-  const [picked, setPicked] = useState<MaterialChoice | null>(null);
+  const carried = (location.state as CreateCarry | null)?.carry;
+  const [text, setText] = useState(() => (carried?.choice?.way === "paste" ? carried.choice.text : ""));
+  const [picked, setPicked] = useState<MaterialChoice | null>(() =>
+    carried?.choice && carried.choice.way !== "paste" && carried.choice.picked ? carried.choice : null,
+  );
   const [dialog, setDialog] = useState<"upload" | "library" | null>(null);
   /** undefined: follow the current class (if it is one of the teacher's). */
   const [classPick, setClassPick] = useState<number | null | undefined>(undefined);
@@ -115,7 +126,7 @@ function Generator({ tool }: { tool: Tool }) {
   const [count, setCount] = useState<number | null>(null);
   const [formats, setFormats] = useState<string[]>([]);
   const [templateId, setTemplateId] = useState<number | null>(null);
-  const [sample, setSample] = useState<Sample | null>(null);
+  const [sample, setSample] = useState<Sample | null>(() => (tool === "mimic" ? (carried?.sample ?? null) : null));
   const [sampleError, setSampleError] = useState<string | null>(null);
   /** Why ?material=<id> could not fill the article slot. */
   const [materialError, setMaterialError] = useState<string | null>(null);
