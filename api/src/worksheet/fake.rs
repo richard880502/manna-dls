@@ -14,8 +14,13 @@
 //! | `FAKE_WS_LEAK`           | scaffolds: call 1 puts a reference answer into a scaffold           |
 //! | `FAKE_WS_TARGET_ALIAS`   | scaffolds: targets spelled "Warm-up" / "b1", plus a "warmup" set nobody asked for |
 //! | `FAKE_WS_EXIT_PARTIAL`   | exit ticket: only the first objective is checked, in both calls (E1: a notice says which are not) |
+//! | `FAKE_WS_EXIT_FRAME`     | exit ticket: on call 1 the first question is only a sentence frame ([`EXIT_FRAME`]; repaired by the second) |
+//! | `FAKE_WS_EXIT_FRAME_ALWAYS` | exit ticket: the same in both calls (the frame goes into the block's Sentence frames box) |
 //! | `FAKE_WS_PRACTICE_OFF`   | tasks: every block is 獨立應用 on the first attempt (Q4: repaired by the second) |
 //! | `FAKE_WS_PRACTICE_ALWAYS`| tasks: the same in both calls (the server relabels the blocks in order) |
+//! | `FAKE_WS_NO_BLANK`       | tasks: the first 填空題 has its whole sentence and no blank on call 1 (repaired by the second) |
+//! | `FAKE_WS_NO_BLANK_ALWAYS`| tasks: the same in both calls (the server blanks the answer out of the sentence) |
+//! | `FAKE_WS_BLANK_LOST`     | tasks: the first 填空題 has no blank and not its answer either, in both calls (the server makes it a 簡答題) |
 //! | `FAKE_BLOCK`             | every step: output with nothing usable                              |
 //! | `FAKE_RUNAWAY`           | every step: call 1 runs to `max_tokens` in whitespace (see `ai::fake`) |
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)          |
@@ -314,6 +319,9 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let splice = has("FAKE_WS_SPLICE_ALWAYS");
     let practice_off =
         has("FAKE_WS_PRACTICE_ALWAYS") || (has("FAKE_WS_PRACTICE_OFF") && attempt == 1);
+    let no_blank = has("FAKE_WS_NO_BLANK_ALWAYS") || (has("FAKE_WS_NO_BLANK") && attempt == 1);
+    let blank_lost = has("FAKE_WS_BLANK_LOST");
+    let mut blank_marked = false;
     let paragraphs = ctx["paragraphs"].as_array().cloned().unwrap_or_default();
     let only: Option<Vec<i64>> = ctx["only"]
         .as_array()
@@ -379,6 +387,19 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             let mut support = item(FMT_SHORT, &label, &sentence, k, "support");
             support["prompt_en"] = json!(format!("Underline the key sentence in {label}. Copy it here. (Question {k})"));
             items.push(support);
+            // The first 填空題 of the sheet without its blank (markers above).
+            if (no_blank || blank_lost) && !blank_marked {
+                if let Some(it) = items.iter_mut().find(|i| i["answer_format"] == FMT_BLANK) {
+                    let prompt = it["prompt_en"].as_str().unwrap_or_default().to_string();
+                    let answer = it["answer_en"].as_str().unwrap_or_default().to_string();
+                    it["prompt_en"] = json!(if blank_lost {
+                        prompt.replace(" ______", "")
+                    } else {
+                        prompt.replace("______", &answer)
+                    });
+                    blank_marked = true;
+                }
+            }
             k += 1;
             let mut challenge = item(FMT_SHORT, &label, &sentence, k, "challenge");
             challenge["prompt_en"] = json!(format!(
@@ -616,7 +637,10 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
     json!({ "scaffolds": sets })
 }
 
-pub fn exit_ticket(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+/// The sentence frame a teacher found printed as a numbered question (`FAKE_WS_EXIT_FRAME`).
+pub const EXIT_FRAME: &str = "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing, as seen in the text where ______.";
+
+pub fn exit_ticket(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     if has("FAKE_BLOCK") {
         return json!({ "estimated_minutes": 3, "items": [{
             "item_id": "E1", "purpose": "形成性評量", "prompt_en": "今天學到什麼？",
@@ -653,6 +677,9 @@ pub fn exit_ticket(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
             "objective_refs": [], "sample_answer_en": null,
         }),
     ];
+    if has("FAKE_WS_EXIT_FRAME_ALWAYS") || (has("FAKE_WS_EXIT_FRAME") && attempt == 1) {
+        items[0]["prompt_en"] = json!(EXIT_FRAME);
+    }
     items.truncate(count.clamp(2, 3));
     json!({ "estimated_minutes": if count <= 2 { 3 } else { 5 }, "items": items })
 }

@@ -304,6 +304,282 @@ pub(crate) fn normalize_choice(options: &mut [String], answer: &mut String) {
     }
 }
 
+// ---------------------------------------------------------------- 填空題: a blank to write in
+
+/// The blank the prompts ask a fill-in item to show where the answer goes.
+pub const BLANK: &str = "______";
+
+/// A place to write in a prompt: three underscores or more (「______」, what every prompt asks
+/// for; full-width 「＿＿＿」 too) or empty brackets 「( )」「（　）」「（）」.
+static BLANK_MARKER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"_{3,}|＿{3,}|\([ \t\x{3000}]+\)|（[ \t\x{3000}]*）").expect("valid regex")
+});
+
+/// Whether a prompt has a blank for the student to write in.
+pub(crate) fn has_blank_marker(prompt: &str) -> bool {
+    BLANK_MARKER.is_match(prompt)
+}
+
+/// A number the model puts before an answer's parts: 「(1) 」「1. 」「2) 」.
+static ANSWER_NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^(?:\(\d+\)|\d+[.)])\s*").expect("valid regex")
+});
+
+/// The phrases of a reference answer that could be blanked out: the parts between commas,
+/// semicolons, slashes or line breaks, without numbering, quotes or end punctuation, three
+/// characters or more, longest first (so "vivid image of the scene" goes before "vivid").
+fn answer_phrases(answer: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in answer.split([',', ';', '/', '|', '\n', '，', '；', '、']) {
+        let part = ANSWER_NUMBER.replace(part.trim(), "");
+        let mut phrase = part
+            .trim_matches(|c: char| c.is_whitespace() || "\"'“”‘’.!?。:：()（）".contains(c))
+            .to_string();
+        for lead in ["and ", "or "] {
+            if phrase.to_lowercase().starts_with(lead) {
+                phrase = phrase[lead.len()..].trim_start().to_string();
+            }
+        }
+        if phrase.chars().count() >= 3 && !out.iter().any(|o| o.eq_ignore_ascii_case(&phrase)) {
+            out.push(phrase);
+        }
+    }
+    out.sort_by_key(|p| std::cmp::Reverse(p.chars().count()));
+    out
+}
+
+/// What the code does with a 填空題 that still has no blank after the repair call.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum MissingBlank {
+    /// The prompt with every phrase of the reference answer it contains (any case, whole words)
+    /// replaced by 「______」.
+    Blanked(String),
+    /// No phrase of the answer is in the prompt (or blanking would leave nothing to read): the
+    /// item becomes a 簡答題, which at least prints answer lines.
+    ShortAnswer,
+}
+
+/// The deterministic fallback for a 填空題 without a blank (see [`MissingBlank`]).
+pub(crate) fn missing_blank(prompt: &str, answer: &str) -> MissingBlank {
+    let mut text = prompt.to_string();
+    let mut blanked = false;
+    for phrase in answer_phrases(answer) {
+        let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+        let body = phrase
+            .split_whitespace()
+            .map(regex::escape)
+            .collect::<Vec<_>>()
+            .join(r"\s+");
+        let pattern = format!(
+            "(?i){}{body}{}",
+            if word(phrase.chars().next()) {
+                r"\b"
+            } else {
+                ""
+            },
+            if word(phrase.chars().last()) {
+                r"\b"
+            } else {
+                ""
+            },
+        );
+        let Ok(re) = regex::Regex::new(&pattern) else {
+            continue;
+        };
+        if re.is_match(&text) {
+            text = re.replace_all(&text, BLANK).into_owned();
+            blanked = true;
+        }
+    }
+    let left = BLANK_MARKER
+        .replace_all(&text, "")
+        .chars()
+        .filter(|c| c.is_alphabetic())
+        .count();
+    if blanked && left >= 3 {
+        MissingBlank::Blanked(text)
+    } else {
+        MissingBlank::ShortAnswer
+    }
+}
+
+/// A 填空題 must show a blank to write in. One without fails `items_wellformed` (the repair call
+/// is told why) and is fixed in code: the reference answer's phrases are blanked out of the
+/// prompt, or, with none to blank, the item becomes a 簡答題. `field` is the prompt's name in the
+/// schema (prompt_en / prompt).
+fn blank_check(
+    format: &mut String,
+    prompt: &mut String,
+    answer: &str,
+    iname: &str,
+    field: &str,
+    t: &mut Tally,
+) {
+    if format != FMT_BLANK || has_blank_marker(prompt) {
+        return;
+    }
+    let problem = format!(
+        "{iname} 是填空題，但 {field} 裡沒有空格，學生沒有地方寫答案：要把答案原本的位置換成 ______，答案的字詞不可以留在 {field} 裡（不要把完整的句子抄進題目、再另外列出答案）。"
+    );
+    match missing_blank(prompt, answer) {
+        MissingBlank::Blanked(text) => {
+            t.fail(
+                "items_wellformed",
+                problem,
+                "把題目裡參考答案的字詞換成 ______",
+            );
+            *prompt = text;
+        }
+        MissingBlank::ShortAnswer => {
+            t.fail(
+                "items_wellformed",
+                problem,
+                "題目裡沒有參考答案的字詞可以挖空，改成簡答題（印作答線）",
+            );
+            *format = FMT_SHORT.to_string();
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 句型框架 written as a question
+
+/// Words a sentence starts with when it asks the student to do something (an instruction or a
+/// question word): a prompt with such a sentence is a question, even when it carries a frame.
+const INSTRUCTION_WORDS: [&str; 64] = [
+    "add",
+    "answer",
+    "ask",
+    "change",
+    "check",
+    "choose",
+    "circle",
+    "compare",
+    "complete",
+    "copy",
+    "correct",
+    "create",
+    "decide",
+    "describe",
+    "design",
+    "discuss",
+    "draw",
+    "explain",
+    "fill",
+    "find",
+    "finish",
+    "give",
+    "highlight",
+    "how",
+    "identify",
+    "imagine",
+    "introduce",
+    "label",
+    "list",
+    "look",
+    "make",
+    "mark",
+    "match",
+    "name",
+    "note",
+    "number",
+    "order",
+    "pick",
+    "practice",
+    "predict",
+    "present",
+    "put",
+    "read",
+    "report",
+    "respond",
+    "retell",
+    "rewrite",
+    "say",
+    "select",
+    "share",
+    "show",
+    "sort",
+    "state",
+    "summarize",
+    "talk",
+    "tell",
+    "think",
+    "underline",
+    "use",
+    "what",
+    "when",
+    "where",
+    "why",
+    "write",
+];
+
+/// Whether `prompt` is written in the student's voice ("I …", "my …", "we …").
+fn first_person(prompt: &str) -> bool {
+    prompt
+        .split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '’'))
+        .any(|w| {
+            let w = w.replace('’', "'");
+            matches!(w.as_str(), "I" | "I'm" | "I've" | "I'd" | "I'll")
+                || matches!(
+                    w.to_lowercase().as_str(),
+                    "my" | "me" | "myself" | "we" | "our"
+                )
+        })
+}
+
+/// Whether a sentence of `prompt` starts with an instruction or a question word.
+fn gives_instruction(prompt: &str) -> bool {
+    prompt
+        .split(['.', '!', '?', ':', ';', '\n', '：', '。'])
+        .filter_map(|sentence| {
+            sentence
+                .split(|c: char| !c.is_alphabetic())
+                .find(|w| !w.is_empty())
+                .map(str::to_lowercase)
+        })
+        .any(|w| INSTRUCTION_WORDS.contains(&w.as_str()))
+}
+
+/// Whether the text between the blanks of `prompt` is quoted from the material (three words or
+/// more word for word): a cloze of the text, not a frame written for the student.
+fn quotes_material(prompt: &str, passage: &str) -> bool {
+    let passage = norm(passage).to_lowercase();
+    BLANK_MARKER.split(prompt).any(|piece| {
+        let piece = piece.trim_matches(|c: char| !c.is_alphanumeric());
+        word_count(piece) >= 3 && passage.contains(&norm(piece).to_lowercase())
+    })
+}
+
+/// Whether a question is nothing but a sentence frame: a language scaffold in the student's voice
+/// with blanks to complete (「I think ___ because ___.」, 「Hi! In the 3rd paragraph, the author
+/// describes ______. … I identified ______ as …」), with no question or instruction of its own,
+/// and not quoted from the material (a cloze of a first-person text is a real question). On the
+/// sheet a frame supports a task; numbered as a question of its own it reads as one (SIOP Q2, T4).
+pub(crate) fn sentence_frame_only(prompt: &str, passage: &str) -> bool {
+    has_blank_marker(prompt)
+        && !prompt.contains(['?', '？'])
+        && first_person(prompt)
+        && !gives_instruction(prompt)
+        && !quotes_material(prompt, passage)
+}
+
+/// A question that is only a sentence frame fails `items_wellformed`: the repair call is told to
+/// write what the student does. The question is kept here; when it is still only a frame, the
+/// block is assembled with the frame in its 「Sentence frames」 box, not numbered
+/// ([`crate::worksheet::assemble::lift_frames`]).
+fn frame_check(prompt: &str, passage: &str, iname: &str, field: &str, t: &mut Tally) {
+    if !sentence_frame_only(prompt, passage) {
+        return;
+    }
+    t.fail(
+        "items_wellformed",
+        format!(
+            "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題。{field} 要寫出要學生做什麼（完整的題目或指示，例如 \"Explain one feature of narrative writing in paragraph 3.\"）；不要只寫句型框架，也不要用 Hi!、Hello! 這類招呼語開頭。",
+            clip_chars(prompt, 80)
+        ),
+        "句型框架移出題號，印在這一區的 Sentence frames 方框（不編號）",
+    );
+}
+
 fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
     match it.answer_format.as_str() {
         f if f == FMT_CHOICE => {
@@ -321,13 +597,6 @@ fn item_wellformed(it: &RawItem) -> Result<(), &'static str> {
                 Ok(())
             } else {
                 Err("是非題的 answer_en 必須是 True 或 False")
-            }
-        }
-        f if f == FMT_BLANK => {
-            if it.prompt_en.contains("___") {
-                Ok(())
-            } else {
-                Err("填空題的 prompt_en 要用 ______ 表示空格")
             }
         }
         f if f == FMT_MATCHING => {
@@ -572,6 +841,16 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             if item.answer_format == FMT_CHOICE {
                 normalize_choice(&mut item.options, &mut item.answer_en);
             }
+            let answer = item.answer_en.clone();
+            blank_check(
+                &mut item.answer_format,
+                &mut item.prompt_en,
+                &answer,
+                &iname,
+                "prompt_en",
+                &mut t,
+            );
+            frame_check(&item.prompt_en, &passage, &iname, "prompt_en", &mut t);
             if let Err(why) = item_wellformed(&item) {
                 t.fail(
                     "items_wellformed",
@@ -1178,6 +1457,8 @@ pub struct ExitCtx<'a> {
     pub objective_ids: &'a [String],
     /// Prompts of the main tasks: the exit ticket must not repeat them.
     pub task_prompts: &'a [String],
+    /// The material, paragraphs joined (a cloze of it is not a sentence frame).
+    pub passage: &'a str,
 }
 
 const EXIT_CHECKS: [&str; 9] = [
@@ -1249,6 +1530,16 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
             );
             continue;
         }
+        let answer = item.sample_answer_en.clone().unwrap_or_default();
+        blank_check(
+            &mut item.answer_format,
+            &mut item.prompt_en,
+            &answer,
+            &name,
+            "prompt_en",
+            &mut t,
+        );
+        frame_check(&item.prompt_en, ctx.passage, &name, "prompt_en", &mut t);
         if item.answer_format == FMT_CHOICE && item.options.len() < 2 {
             t.fail(
                 "items_wellformed",
@@ -1464,6 +1755,15 @@ fn item_checks(item: &mut CleanSectionItem, iname: &str, t: &mut Tally) -> bool 
         );
         return false;
     }
+    let answer = item.answer.clone();
+    blank_check(
+        &mut item.answer_format,
+        &mut item.prompt,
+        &answer,
+        iname,
+        "prompt",
+        t,
+    );
     if item.answer_format == FMT_CHOICE {
         normalize_choice(&mut item.options, &mut item.answer);
         let distinct: HashSet<&str> = item.options.iter().map(|o| o.trim()).collect();
@@ -1884,14 +2184,6 @@ fn shared_item(
         item.options = vec!["True".to_string(), "False".to_string()];
     }
     if !item_checks(&mut item, iname, t) {
-        return None;
-    }
-    if item.answer_format == FMT_BLANK && !item.prompt.contains("___") {
-        t.fail(
-            "items_wellformed",
-            format!("{iname}（填空題）的 prompt 要用 ______ 表示空格。"),
-            "拿掉這一題",
-        );
         return None;
     }
     let evidence = clean(raw.evidence);
@@ -2949,6 +3241,270 @@ mod tests {
     }
 
     #[test]
+    fn blanks_are_recognised_in_every_form_the_sheet_prints() {
+        for prompt in [
+            "The town was ______.",
+            "The town was ___ and ___.",
+            "The town was ＿＿＿.",
+            "The town was ( ).",
+            "The town was (   ).",
+            "The town was （　）.",
+            "The town was （）.",
+        ] {
+            assert!(has_blank_marker(prompt), "{prompt}");
+        }
+        for prompt in [
+            "The town was quiet.",
+            "The town_was quiet.",
+            "Call f() twice.",
+            "The town was __ quiet.",
+        ] {
+            assert!(!has_blank_marker(prompt), "{prompt}");
+        }
+    }
+
+    #[test]
+    fn a_fill_in_without_a_blank_is_blanked_from_its_answer_or_made_a_short_answer() {
+        // The teacher's report: the full sentences, the answer's phrases listed apart.
+        let prompt = "Narrative writing helps readers understand a sequence of events and the emotions of the characters... When a text creates a vivid image of the scene, it becomes more engaging and persuasive.";
+        let answer = "Narrative writing, understand a sequence of events and the emotions of the characters, vivid image of the scene, engaging, persuasive";
+        assert_eq!(
+            missing_blank(prompt, answer),
+            MissingBlank::Blanked(
+                "______ helps readers ______... When a text creates a ______, it becomes more ______ and ______."
+                    .into()
+            )
+        );
+        // Any case, whole words only, numbering and end punctuation of the answer ignored.
+        assert_eq!(
+            missing_blank(
+                "The stand was outside her shop. Outside, it rained; the outsider waited.",
+                "(1) outside."
+            ),
+            MissingBlank::Blanked(
+                "The stand was ______ her shop. ______, it rained; the outsider waited.".into()
+            )
+        );
+        assert_eq!(
+            missing_blank(
+                "Mrs. Lin put an umbrella stand outside.",
+                "1. umbrella stand; 2) a"
+            ),
+            MissingBlank::Blanked("Mrs. Lin put an ______ outside.".into()),
+            "a part shorter than three characters is not blanked"
+        );
+        // Nothing of the answer in the prompt, or nothing left to read: a 簡答題.
+        assert_eq!(
+            missing_blank("Mrs. Lin put an umbrella stand", "outside"),
+            MissingBlank::ShortAnswer
+        );
+        assert_eq!(
+            missing_blank("Narrative writing.", "narrative writing"),
+            MissingBlank::ShortAnswer
+        );
+        assert_eq!(missing_blank("Why?", ""), MissingBlank::ShortAnswer);
+    }
+
+    #[test]
+    fn a_fill_in_needs_a_blank_in_every_generator() {
+        let p = paragraphs();
+        let passage = p.join("\n");
+        // 完整學習單 (tasks): a blank passes; none fails and is blanked from the answer; none and
+        // no answer in the prompt fails and becomes a 簡答題.
+        let raw = RawTasks {
+            blocks: staged(vec![block(
+                &[1],
+                "發現資訊",
+                vec![
+                    item(
+                        "填空題",
+                        "Mrs. Lin put an umbrella stand ______ her shop.",
+                        "outside",
+                    ),
+                    item(
+                        "填空題",
+                        "Mrs. Lin put an umbrella stand outside her shop.",
+                        "outside",
+                    ),
+                    item(
+                        "填空題",
+                        "What did Mrs. Lin put outside?",
+                        "an umbrella stand",
+                    ),
+                ],
+            )]),
+        };
+        let one = TasksCtx {
+            only: Some(&[1]),
+            ..tasks_ctx(&p, &[])
+        };
+        let e = evaluate_tasks(&raw, &one);
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        assert!(
+            e.problems.iter().all(|p| p.contains("沒有空格")),
+            "{:?}",
+            e.problems
+        );
+        let items = &e.output.unwrap()[0].items;
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[0].prompt_en,
+            "Mrs. Lin put an umbrella stand ______ her shop."
+        );
+        assert_eq!(
+            items[1].prompt_en,
+            "Mrs. Lin put an umbrella stand ______ her shop."
+        );
+        assert_eq!(items[1].answer_format, "填空題");
+        assert_eq!(items[2].answer_format, FMT_SHORT);
+        assert!(e
+            .repairs
+            .iter()
+            .any(|r| r.starts_with("把題目裡參考答案的字詞換成 ______")));
+        assert!(e
+            .repairs
+            .iter()
+            .any(|r| r.starts_with("題目裡沒有參考答案的字詞可以挖空，改成簡答題")));
+        // With the blank everywhere, nothing fails.
+        let raw = RawTasks {
+            blocks: staged(vec![block(
+                &[1],
+                "發現資訊",
+                vec![item("填空題", "The stand was outside her ( ).", "shop")],
+            )]),
+        };
+        assert!(!evaluate_tasks(&raw, &one).needs_repair());
+
+        // 照版型產生, 逐區修改 and the prep revise (evaluate_section / evaluate_revision).
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Paragraph 2".into(),
+            instructions: "Answer.".into(),
+            scaffold: "".into(),
+            items: vec![out_item(
+                FMT_BLANK,
+                "Her neighbors laughed at the idea.",
+                &[],
+                "laughed",
+            )],
+        };
+        let ctx = SectionCtx {
+            passage: &passage,
+            item_count: 5,
+            needs_external: false,
+        };
+        let e = evaluate_section(&raw, &ctx);
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        let out = e.output.unwrap();
+        assert_eq!(out.items[0].prompt, "Her neighbors ______ at the idea.");
+        assert_eq!(out.items[0].answer_format, FMT_BLANK);
+
+        // Exit ticket: a reflection has no answer to blank: a 簡答題.
+        let raw = RawExit {
+            estimated_minutes: 3,
+            items: vec![
+                exit_item(
+                    "E1",
+                    "形成性評量",
+                    "Today I learned that ______.",
+                    Some("trust matters"),
+                ),
+                exit_item(
+                    "E2",
+                    "學生反思",
+                    "The hardest part of today was the reading.",
+                    None,
+                ),
+            ],
+        };
+        let e = evaluate_exit(
+            &raw,
+            &ExitCtx {
+                objective_ids: &[],
+                task_prompts: &[],
+                passage: "",
+            },
+        );
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        let items = e.output.unwrap();
+        assert_eq!(items[0].answer_format, FMT_BLANK);
+        assert_eq!(items[1].answer_format, FMT_SHORT);
+    }
+
+    #[test]
+    fn a_sentence_frame_alone_is_not_a_question() {
+        let passage = "I went to the market with my mother. The neighbors thought the umbrellas would be gone.";
+        for frame in [
+            // The teacher's report: printed as question 20.
+            "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing, as seen in the text where ______.",
+            "I think ______ because ______.",
+            "Today I learned that ___.",
+            "In my opinion, the ending is ______ because ______.",
+        ] {
+            assert!(sentence_frame_only(frame, passage), "{frame}");
+        }
+        for question in [
+            // Not the student's voice: a fill-in question about the text.
+            "The neighbors thought the ______ would be gone.",
+            // First person, but quoted from the material: a cloze.
+            "I ______ to the market with my mother.",
+            // A question or an instruction of its own, with a frame to use.
+            "What do I think about the ______?",
+            "Use the frame to answer: I think ______ because ______.",
+            "Complete the sentence: I identified ______ as a feature of the story.",
+            "Explain your choice. I chose ______ because ______.",
+            // No blank to complete.
+            "I think the story is sad.",
+        ] {
+            assert!(!sentence_frame_only(question, passage), "{question}");
+        }
+    }
+
+    #[test]
+    fn an_exit_question_that_is_only_a_frame_is_sent_back() {
+        let frame = "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing.";
+        let mut first = exit_item("E1", "形成性評量", frame, Some("the setting"));
+        first.answer_format = FMT_SHORT.into();
+        let mut second = exit_item(
+            "E2",
+            "學生反思",
+            "Which part of today's text was the hardest for you?",
+            None,
+        );
+        second.answer_format = FMT_SHORT.into();
+        let raw = RawExit {
+            estimated_minutes: 3,
+            items: vec![first, second],
+        };
+        let e = evaluate_exit(
+            &raw,
+            &ExitCtx {
+                objective_ids: &[],
+                task_prompts: &[],
+                passage: &paragraphs().join("\n"),
+            },
+        );
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        assert!(e.problems[0].contains("只有句型框架"), "{:?}", e.problems);
+        assert!(e.problems[0].contains("招呼語"));
+        assert!(e.repairs[0].starts_with("句型框架移出題號"));
+        // Kept: the block is assembled with the frame in its box (assemble::lift_frames).
+        assert_eq!(e.output.unwrap()[0].prompt_en, frame);
+    }
+
+    fn exit_item(id: &str, purpose: &str, prompt: &str, answer: Option<&str>) -> RawExitItem {
+        RawExitItem {
+            item_id: id.into(),
+            purpose: purpose.into(),
+            prompt_en: prompt.into(),
+            answer_format: FMT_BLANK.into(),
+            options: vec![],
+            student_tasks: vec!["學習反思".into()],
+            objective_refs: vec![],
+            sample_answer_en: answer.map(str::to_string),
+        }
+    }
+
+    #[test]
     fn spliced_evidence_is_cut_to_its_verbatim_piece_without_a_repair_call() {
         let p = paragraphs();
         let passage = p.join("\n");
@@ -3309,6 +3865,7 @@ mod tests {
         let ctx = ExitCtx {
             objective_ids: &objectives,
             task_prompts: &prompts,
+            passage: "",
         };
         let good = RawExit {
             estimated_minutes: 3,
@@ -3364,6 +3921,7 @@ mod tests {
         let ctx = ExitCtx {
             objective_ids: &objectives,
             task_prompts: &[],
+            passage: "",
         };
         let raw = RawExit {
             estimated_minutes: 3,
@@ -3396,6 +3954,7 @@ mod tests {
         let none = ExitCtx {
             objective_ids: &[],
             task_prompts: &[],
+            passage: "",
         };
         assert!(!evaluate_exit(&raw, &none).needs_repair());
     }
@@ -3465,7 +4024,7 @@ mod tests {
                 ),
                 // a format the level may not use
                 bloom_item(FMT_PARAGRAPH, "Write about it.", &[], "Answers vary.", P1),
-                // a fill-in item without a blank
+                // a fill-in item without a blank, its answer nowhere in it: a 簡答題
                 bloom_item(
                     FMT_BLANK,
                     "Mrs. Lin put an umbrella stand",
@@ -3492,12 +4051,14 @@ mod tests {
             ]
         );
         let out = e.output.unwrap();
-        assert_eq!(out.items.len(), 2);
+        assert_eq!(out.items.len(), 3);
         assert_eq!(out.items[0].item.evidence.as_deref(), Some(P1));
         assert_eq!(
             out.items[1].item.evidence.as_deref(),
             Some("In the first month, twelve umbrellas did disappear")
         );
+        assert_eq!(out.items[2].item.answer_format, FMT_SHORT);
+        assert!(e.repairs.iter().any(|r| r.contains("改成簡答題")));
         assert_eq!(out.items[0].paragraph_nos, [2], "unknown codes are dropped");
         assert_eq!(out.items[0].hint, "Look at paragraph 2.");
 

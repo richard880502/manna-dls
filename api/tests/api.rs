@@ -1270,8 +1270,12 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_image_slots v2 since 0026_images_always_drawn.sql. worksheet_vocab_gloss and
         // worksheet_vocab_replace v1 since 0028_vocab_level_actions.sql. worksheet_bloom_level v3,
         // worksheet_tasks v4, worksheet_template_section v3 and worksheet_tiered_level v2 since
-        // 0029_graphic_organizers.sql.
-        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 1, 1, 1, 1, 1, 1, 3, 2, 2, 1, 4, 2, 1, 3, 2, 1, 1, 1]
+        // 0029_graphic_organizers.sql. prep_revise v2, worksheet_block_revise v2,
+        // worksheet_bloom_level v4, worksheet_exit_ticket v3, worksheet_tasks v5,
+        // worksheet_template_section v4 and worksheet_tiered_level v3 since 0030_fill_in_blanks.sql.
+        // prep_revise v3, worksheet_block_revise v3, worksheet_exit_ticket v4 and worksheet_tasks
+        // v6 since 0031_sentence_frames_apart.sql.
+        vec![1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 3, 1, 1, 1, 3, 1, 4, 4, 2, 1, 6, 2, 1, 4, 3, 1, 1, 1]
     );
     let v1_kept: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prompt_versions WHERE version_no = 1

@@ -17,6 +17,22 @@ export const CONTENT_OBJECTIVE_PLACEHOLDER = "例如：I can explain how the wri
 export const LANGUAGE_OBJECTIVE_PLACEHOLDER = "例如：I can underline signal words like for example and such as.";
 export const OBJECTIVES_HINT = "一行一項，各寫一項就好。兩格都空著，按「產生」時 Manna 會先依文章擬一組，讓你看過再產生。";
 
+/**
+ * "I can" at the start of a students' line: any case, spaces or tabs between and after the words,
+ * or a colon ("I can: identify …"), followed by something printable. The exports use the same
+ * pattern (`printed_objective`, api/src/objectives/mod.rs).
+ */
+const I_CAN_LEAD = /^[ \t]*[Ii][ \t]+[Cc][Aa][Nn](?:[ \t]*[:：][ \t]*|[ \t]+)([^ \t][\s\S]*)$/;
+
+/**
+ * A students' line as it prints under the heading 「Today I can …」: without its own leading "I can",
+ * which the heading already says. The stored line keeps it (SIOP: objectives are written
+ * "I can …"); a line that does not start with "I can", or has nothing after it, prints unchanged.
+ */
+export function printedObjective(line: string): string {
+  return I_CAN_LEAD.exec(line)?.[1] ?? line;
+}
+
 export const OBJECTIVE_KIND_LABEL: Record<ObjectiveType, string> = { content: "內容目標", language: "語言目標" };
 
 /** R2's four kinds, in Manna's order (a learning strategy first). */

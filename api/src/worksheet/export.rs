@@ -18,10 +18,14 @@ use std::sync::OnceLock;
 
 mod organizer;
 
-use super::assemble::{Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport, SheetTable};
+use super::assemble::{
+    printed_answer, printed_option, Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport,
+    SheetTable,
+};
 use super::organizer::SheetOrganizer;
 use super::tiered::{student_version_name, SupportKind};
 use super::{Audience, BlockKind, FMT_ORGANIZER, FMT_TABLE};
+use crate::objectives::printed_objective;
 use crate::retrieval::is_cjk;
 
 pub const DOCX_TYPE: &str =
@@ -73,10 +77,6 @@ fn heading(b: &SheetBlock) -> String {
     } else {
         format!("{}. {}", b.label, b.title)
     }
-}
-
-fn option_letter(i: usize) -> char {
-    (b'A' + (i % 26) as u8) as char
 }
 
 /// Where a question is answered: a table (表格整理), a drawn organizer (圖像組織 with one), a
@@ -340,10 +340,7 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
     ));
     for (i, o) in it.options.iter().enumerate() {
         out.push_str(&para(
-            &[run(
-                &format!("({}) {o}", option_letter(i)),
-                RunStyle::default(),
-            )],
+            &[run(&printed_option(o, i), RunStyle::default())],
             &ParaStyle {
                 indent: 700,
                 ..ParaStyle::default()
@@ -435,8 +432,9 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
         };
         let gold_bold = RunStyle { bold: true, ..gold };
         if let Some(a) = &it.answer {
+            let a = printed_answer(it.answer_format.as_deref(), a, &it.options);
             out.push_str(&para(
-                &[run("Answer: ", gold_bold), run(a, gold)],
+                &[run("Answer: ", gold_bold), run(&a, gold)],
                 &ParaStyle {
                     indent: 400,
                     before: 60,
@@ -689,6 +687,7 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
             },
         ));
         for (i, o) in sheet.objectives.iter().enumerate() {
+            let o = printed_objective(o);
             body.push_str(&para(
                 &[run(&format!("{}.\t{o}", i + 1), RunStyle::default())],
                 &ParaStyle {
@@ -1803,7 +1802,7 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     }
     for (i, o) in it.options.iter().enumerate() {
         l.paragraph(
-            &format!("({}) {o}", option_letter(i)),
+            &printed_option(o, i),
             Style {
                 indent: indent + 14.0,
                 after: 1.0,
@@ -1860,7 +1859,8 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
             ..body
         };
         if let Some(a) = &it.answer {
-            l.labelled("Answer: ", a, gold, Weight::Bold);
+            let a = printed_answer(it.answer_format.as_deref(), a, &it.options);
+            l.labelled("Answer: ", &a, gold, Weight::Bold);
         }
         if let Some(sc) = &it.scoring {
             l.labelled("Scoring: ", sc, gold, Weight::Bold);
@@ -1938,7 +1938,7 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         for (i, o) in sheet.objectives.iter().enumerate() {
             l.labelled(
                 &format!("{}. ", i + 1),
-                o,
+                printed_objective(o),
                 Style {
                     indent: 8.0,
                     ..body
@@ -2422,6 +2422,44 @@ mod tests {
         // The PDF draws it too (English only: no CJK font needed).
         let pdf = pdf(&sheet(Audience::Student)).unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn objectives_print_without_their_own_i_can() {
+        let mut s = sheet(Audience::Student);
+        s.objectives = vec![
+            "I can identify the key elements of the story.".into(),
+            "Retell the story in order.".into(),
+        ];
+        let xml = document(docx(&s).unwrap());
+        // 「Today I can …」 then the line without its own "I can"; another line as it is.
+        assert!(xml.contains("Today I can …"));
+        assert!(xml.contains(">1. identify the key elements of the story.<"));
+        assert!(!xml.contains("I can identify"));
+        assert!(xml.contains(">2. Retell the story in order.<"));
+        assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
+    }
+
+    #[test]
+    fn choices_print_lettered_once_and_the_key_names_the_letter() {
+        let mut s = sheet(Audience::Teacher);
+        let it = &mut s.blocks[0].items[0];
+        it.answer_format = Some("選擇題".into());
+        it.options = vec![
+            "A. Paris".into(),
+            "B. London".into(),
+            "Rome".into(),
+            "Tokyo".into(),
+        ];
+        it.answer = Some("London".into());
+        let xml = document(docx(&s).unwrap());
+        for choice in ["(A) Paris", "(B) London", "(C) Rome", "(D) Tokyo"] {
+            assert!(xml.contains(&format!(">{choice}<")), "{choice}");
+        }
+        assert!(!xml.contains("(A) A. Paris") && !xml.contains("(B) B. London"));
+        assert!(xml.contains(">Answer: <") && xml.contains(">(B) London<"));
+        // The PDF prints through the same helpers.
+        assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
     }
 
     fn document(bytes: Vec<u8>) -> String {

@@ -7,6 +7,7 @@ import {
   MAX_TABLE_COLUMNS,
   MAX_TABLE_ROWS,
   columnsFromPrompt,
+  optionLabel,
   tableOf,
   usesChoices,
 } from "../../lib/worksheet";
@@ -82,7 +83,7 @@ export function ChoicesArea({
           // oxlint-disable-next-line react/no-array-index-key -- plain strings, edited in place
           <li key={i}>
             <span className="ws-choice-letter" aria-hidden="true">
-              ({letter(i)})
+              {optionLabel(i)}
             </span>
             <SheetText
               label={`選項 ${letter(i)}（題目 ${no}）`}

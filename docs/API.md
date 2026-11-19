@@ -973,7 +973,7 @@ interface WorksheetMaterial {
 interface WsObjective {
   id: string; type: "content" | "language";
   text: string;                 // 教師看的說明（可中文）
-  student_facing_en: string;    // 印在學習單「Today I can …」的英文
+  student_facing_en: string;    // 印在學習單「Today I can …」的英文（存成 "I can …"；印在標題下時去掉開頭的 I can，見下）
   origin: WsOrigin;
   sop_id: string | null;        // 從課例帶入時，對應的 SOP 目標 id
 }
@@ -1005,10 +1005,16 @@ interface WsItem {
 **作答方式怎麼印**（投影、預覽、DOCX、PDF 一致；編輯器照同樣的規則畫）：
 
 - `options` 只在**選擇題、是非題、配對題**（與沒有作答方式的舊題目）印出，空白的選項不印；其他作答方式的題目若還有選項，留在資料裡但不印（教師換回去時就回來）。
+- 印出的選項依序加上 `(A)`、`(B)`、`(C)`、`(D)`…（投影的 `options` 是選項本身的文字，字母由印的地方加：`assemble::printed_option`／`printedOption`）。選項自己開頭已有同位置的字母標籤（`A. …`、`(A) …`、`A) …`、`（A）…`、`A、…`）時先去掉，不會印成「(A) A. …」。教師版**選擇題**的參考答案是其中一個選項時印成「(B) London」，和學生版的字母一致（`printed_answer`／`printedAnswer`）；其他作答方式的答案照原樣。
+- 學習目標印在「Today I can …」下面時，每一行開頭的「I can」（不分大小寫，也接受「I can:」與多餘空白）不重複印（`objectives::printed_objective`／`printedObjective`）；不是以 I can 開頭的行照原樣。編輯器裡可以改的目標欄位仍顯示完整的「I can …」。
 - **表格整理**印成表格：題目的 `table`；沒有時用題目最後一個冒號後以「/」或「|」分開的 2–6 個短欄名（生成器的寫法：`Complete the table: Who? / What happened? / Why?`，結尾的 `(Question 3)` 不算），再沒有就是兩欄、沒有欄名；列數預設 3。有任何欄名時第一列印欄名。投影的題目多一個 `table: { columns, rows }`（只有表格整理有），作答行數是 0。
 - **圖像組織**印一個作答框；**簡答題**依版本印 2／3／4 行，**段落寫作**再多 2 行；其他作答方式不印作答線。
 - 編輯器換作答方式時保留題目、答案、依據、提示與各版本的支持：換成是非題 → 選項變成 True／False，原本的選項放進 `kept_options`；換成選擇題／配對題且沒有選項（或只有 True／False）→ 放回 `kept_options`，沒有就給 4／3 個空白選項；`table` 不論作答方式都留著。
 - 存檔檢查：`table` 要有 1–6 欄、1–12 列，欄名最多 200 字；`kept_options` 與 `options` 一樣最多 12 個。
+
+**填空題的空格**（每個寫題目的步驟都檢查：完整學習單的主要任務與 Exit ticket、照版型產生、閱讀理解題、差異化學習單、逐區修改、備課對話的修改）：填空題不印作答線，學生寫在題目的空格裡，所以題目一定要有空格——三個以上的底線（`______`、`___`）、全形 `＿＿＿`、`( )` 或 `（　）`。沒有空格 → `items_wellformed` 不通過，修正呼叫會寫明問題；修正後仍沒有 → 程式把參考答案的片語（以逗號、分號、斜線或換行分開，去掉編號與句尾標點，三個字元以上，長的先換）在題目裡逐字出現的地方（不分大小寫、整個字）換成 `______`；一個都找不到（或換完題目沒有字可讀）→ 改成簡答題（印作答線）。怎麼處理的記在該次呼叫的 `check_results.repairs`。`0030_fill_in_blanks.sql` 的提示詞新版本寫明空格一定要在題目裡、答案的字詞不可以留在題目裡。
+
+**句型框架不是題目**（完整學習單的主要任務與 Exit ticket）：語言鷹架（句型框架，SIOP Q2／T4）印在區塊的「Sentence frames」方框裡（`scaffolds` 的 `句型框架`），不編題號。模型把句型框架本身寫成一題時（題目有空格、用學生的口吻 I／my／we、沒有問號、沒有一句以指示或疑問詞開頭，而且不是逐字取自教材的克漏字；`checks::sentence_frame_only`）→ `items_wellformed` 不通過，修正呼叫會寫明要寫出要學生做什麼、不要用 Hi! 之類的招呼語開頭；修正後仍是句型框架 → 組成區塊時（`assemble::lift_frames`）框架移到這一區的 `句型框架` 鷹架（印的版本＝那一題印的版本），前一題是簡答題或段落寫作時這一題拿掉（那是前一題的框架），否則這一題改成「Use the sentence frame above to write your answer.」（簡答題，印作答線），所以 Exit ticket 的題數與目標檢核不變；後面的題號連續。教師自己寫的題目不動。`0031_sentence_frames_apart.sql` 的提示詞新版本（Exit ticket、主要任務、逐區修改、備課對話的修改）寫明句型框架不能單獨當一題、題目不用招呼語開頭；兩種修改沒有放鷹架的欄位，句型框架接在它要幫助的那一題最後。
 
 ```ts
 interface WsScaffold {
@@ -3336,6 +3342,11 @@ interface ObjectiveDraft {
 | `FAKE_WS_EXIT_PARTIAL` | Exit ticket 兩次都只檢核第一個目標（E1：加提醒） |
 | `FAKE_WS_PRACTICE_OFF` | 逐段任務第一次全部標成獨立應用（Q4：修復後照順序） |
 | `FAKE_WS_PRACTICE_ALWAYS` | 兩次都全部標成獨立應用（伺服器依位置重新標） |
+| `FAKE_WS_NO_BLANK` | 逐段任務第一次的第一個填空題是完整的句子、沒有空格（修正呼叫後有空格） |
+| `FAKE_WS_NO_BLANK_ALWAYS` | 兩次都這樣（伺服器把句子裡的參考答案換成 `______`） |
+| `FAKE_WS_BLANK_LOST` | 兩次的第一個填空題都沒有空格，也沒有參考答案的字（伺服器改成簡答題） |
+| `FAKE_WS_EXIT_FRAME` | Exit ticket 第一次的第一題只有句型框架（修正呼叫後是一般的題目） |
+| `FAKE_WS_EXIT_FRAME_ALWAYS` | 兩次都這樣（框架印在 Exit ticket 的 Sentence frames 方框，這一題改成請學生用框架作答） |
 
 ## 程式進入點
 

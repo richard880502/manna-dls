@@ -249,6 +249,71 @@ pub fn attach_scaffolds(
     }
 }
 
+// ---------------------------------------------------------------- sentence frames are not questions
+
+/// What a question that was only a sentence frame asks once the frame is in the block's box.
+pub const FRAME_TASK: &str = "Use the sentence frame above to write your answer.";
+
+/// A generated question that is only a sentence frame ([`super::checks::sentence_frame_only`],
+/// still so after the repair call) is a language scaffold, not a question: the frame goes into
+/// the block's 句型框架 scaffold, printed un-numbered in the 「Sentence frames」 box above the
+/// questions, in the versions the question was in. Right after an open question (簡答題,
+/// 段落寫作) it is that question's frame and its number goes; otherwise the question stays and
+/// asks to use the frame ([`FRAME_TASK`], a 簡答題 so it prints lines). The teacher's own
+/// questions are never touched. Returns how many frames were moved.
+pub fn lift_frames(block: &mut Block, passage: &str) -> usize {
+    let mut frames: Vec<String> = Vec::new();
+    let mut levels: Vec<Level> = Vec::new();
+    let mut items: Vec<Item> = Vec::new();
+    for mut item in std::mem::take(&mut block.items) {
+        if item.origin != Origin::Ai || !super::checks::sentence_frame_only(&item.prompt, passage) {
+            items.push(item);
+            continue;
+        }
+        frames.push(item.prompt.trim().to_string());
+        levels.extend(item.levels.iter().copied());
+        let open = |i: &Item| {
+            matches!(
+                i.answer_format.as_deref(),
+                Some(f) if f == super::FMT_SHORT || f == FMT_PARAGRAPH
+            )
+        };
+        if items.last().is_some_and(open) {
+            continue;
+        }
+        item.prompt = FRAME_TASK.to_string();
+        if !open(&item) {
+            item.answer_format = Some(super::FMT_SHORT.to_string());
+        }
+        items.push(item);
+    }
+    block.items = items;
+    if frames.is_empty() {
+        return 0;
+    }
+    let levels: Vec<Level> = Level::ALL
+        .into_iter()
+        .filter(|l| levels.contains(l))
+        .collect();
+    let content = frames.join("\n");
+    match block.scaffolds.iter_mut().find(|s| {
+        s.kind_type == ScaffoldType::Verbal && s.kind == KIND_FRAMES && s.levels == levels
+    }) {
+        Some(s) => s.content = format!("{}\n{content}", s.content.trim_end()),
+        None => block.scaffolds.push(Scaffold {
+            id: format!("{}-sf1", block.id),
+            kind_type: ScaffoldType::Verbal,
+            kind: KIND_FRAMES.to_string(),
+            content,
+            steps: Vec::new(),
+            levels,
+            auto: false,
+            origin: Origin::Ai,
+        }),
+    }
+    frames.len()
+}
+
 // ---------------------------------------------------------------- blocks from step outputs
 
 pub fn activity_block(
@@ -752,6 +817,71 @@ pub fn without_heading<'a>(content: &'a str, heading: &str) -> &'a str {
     }
 }
 
+/// The label printed before the `index`-th choice of a question: 「(A)」「(B)」… (the sheet's
+/// convention: DOCX, PDF, the editor and the preview all print it; options are stored without it).
+pub fn option_label(index: usize) -> String {
+    format!("({})", (b'A' + (index % 26) as u8) as char)
+}
+
+/// A letter label at the start of a choice the model (or a teacher) wrote: 「(A) …」「（A）…」,
+/// 「A. …」「A) …」「A: …」 (a space after these) or 「A．…」「A、…」「A：…」. The web uses the same
+/// pattern (`OPTION_LABEL` in web/src/lib/worksheet.ts).
+static OPTION_LABEL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"^[ \t]*(?:[(（][ \t]*([A-Za-z])[ \t]*[)）][ \t]*|([A-Za-z])(?:[.):][ \t]+|[．、：][ \t]*))([^ \t][\s\S]*)$",
+    )
+    .expect("valid regex")
+});
+
+/// The letter and the text of a choice that starts with a letter label, if it does.
+fn split_option_label(text: &str) -> Option<(char, &str)> {
+    let c = OPTION_LABEL.captures(text)?;
+    let letter = c.get(1).or(c.get(2))?.as_str().chars().next()?;
+    Some((letter.to_ascii_uppercase(), c.get(3)?.as_str()))
+}
+
+/// The `index`-th choice without a letter label of its own (「A. Paris」 as the first choice is
+/// 「Paris」), so that it is not lettered twice. Only the label of its own position goes: 「B. 1066」
+/// as the first choice, or 「A.D. 1066」 (no space after the dot), stays as it is.
+pub fn without_option_label(text: &str, index: usize) -> &str {
+    let own = (b'A' + (index % 26) as u8) as char;
+    match split_option_label(text) {
+        Some((letter, rest)) if letter == own => rest,
+        _ => text,
+    }
+}
+
+/// The `index`-th choice as printed: 「(A) Paris」.
+pub fn printed_option(text: &str, index: usize) -> String {
+    format!(
+        "{} {}",
+        option_label(index),
+        without_option_label(text, index)
+    )
+}
+
+/// The answer of a 選擇題 as the teacher version prints it: with the label of the choice it is
+/// (「(B) London」), so the key matches the letters on the sheet. Answers are stored as the
+/// choice's text (checks.rs); one written with a label of its own, or in another case, is still
+/// recognised. Any other answer, and the answer of every other format, prints as it is.
+pub fn printed_answer(format: Option<&str>, answer: &str, options: &[String]) -> String {
+    if format != Some(FMT_CHOICE) {
+        return answer.to_string();
+    }
+    let bare = split_option_label(answer)
+        .map_or(answer, |(_, rest)| rest)
+        .trim();
+    options
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (i, without_option_label(o, i).trim()))
+        .find(|(_, o)| !o.is_empty() && o.to_lowercase() == bare.to_lowercase())
+        .map_or_else(
+            || answer.to_string(),
+            |(i, o)| format!("{} {o}", option_label(i)),
+        )
+}
+
 pub(crate) fn letter(index: usize) -> String {
     let c = (b'A' + (index % 26) as u8) as char;
     if index < 26 {
@@ -1141,6 +1271,158 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The same cases as `printedOption` / `printedAnswer` in
+    /// web/src/__tests__/worksheetPrint.test.ts: the preview and the exports letter alike.
+    #[test]
+    fn choices_print_lettered_once() {
+        for (text, index, printed) in [
+            ("Paris", 0, "(A) Paris"),
+            ("London", 1, "(B) London"),
+            ("A. Paris", 0, "(A) Paris"),
+            ("(A) Paris", 0, "(A) Paris"),
+            ("（B）London", 1, "(B) London"),
+            ("( c ) Rome", 2, "(C) Rome"),
+            ("b) London", 1, "(B) London"),
+            ("D: Tokyo", 3, "(D) Tokyo"),
+            ("C．Rome", 2, "(C) Rome"),
+            ("C、Rome", 2, "(C) Rome"),
+            // Not its own position, no space after the dot, or nothing after the label: kept.
+            ("B. London", 0, "(A) B. London"),
+            ("A.D. 1066", 0, "(A) A.D. 1066"),
+            ("A lot of rain", 0, "(A) A lot of rain"),
+            ("A.", 0, "(A) A."),
+            ("(A)", 0, "(A) (A)"),
+            ("True", 0, "(A) True"),
+        ] {
+            assert_eq!(printed_option(text, index), printed, "{text:?} at {index}");
+        }
+        assert_eq!(option_label(0), "(A)");
+        assert_eq!(option_label(11), "(L)");
+    }
+
+    #[test]
+    fn a_choice_answer_prints_with_its_letter() {
+        let options: Vec<String> = ["Paris", "London", "Rome", "Tokyo"]
+            .map(String::from)
+            .to_vec();
+        let lettered: Vec<String> = ["A. Paris", "B. London", "C. Rome", "D. Tokyo"]
+            .map(String::from)
+            .to_vec();
+        for (format, answer, opts, printed) in [
+            (Some(FMT_CHOICE), "London", &options, "(B) London"),
+            (Some(FMT_CHOICE), " london ", &options, "(B) London"),
+            (Some(FMT_CHOICE), "B. London", &options, "(B) London"),
+            (Some(FMT_CHOICE), "(D) Tokyo", &options, "(D) Tokyo"),
+            (Some(FMT_CHOICE), "Rome", &lettered, "(C) Rome"),
+            // Not one of the choices (or only a letter): as written.
+            (Some(FMT_CHOICE), "Berlin", &options, "Berlin"),
+            (Some(FMT_CHOICE), "B", &options, "B"),
+            // Other formats keep their answer.
+            (Some(FMT_TRUE_FALSE), "True", &options, "True"),
+            (Some("簡答題"), "London", &options, "London"),
+            (None, "London", &options, "London"),
+        ] {
+            assert_eq!(
+                printed_answer(format, answer, opts),
+                printed,
+                "{format:?} {answer:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_written_as_a_question_prints_in_the_sentence_frames_box() {
+        const FRAME: &str = "Hi! In the 3rd paragraph, the author describes ______. After reading it carefully, I identified ______ as one of the main characteristics of narrative writing.";
+        let frame = |id: &str, format: &str| Item {
+            prompt: FRAME.into(),
+            ..item(id, &Level::ALL, format)
+        };
+        let question = |id: &str, format: &str, prompt: &str| Item {
+            prompt: prompt.into(),
+            ..item(id, &Level::ALL, format)
+        };
+        let content = |blocks: Vec<Block>| Content {
+            blocks,
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        };
+
+        // After an open question: the frame is that question's, and its number goes.
+        let mut after_open = Block {
+            id: "b1".into(),
+            enabled: true,
+            items: vec![
+                question("q1", "簡答題", "What makes paragraph 3 a narrative?"),
+                frame("q2", FMT_BLANK),
+                question("q3", FMT_CHOICE, "Which word is a verb?"),
+            ],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut after_open, ""), 1);
+        let ids: Vec<&str> = after_open.items.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["q1", "q3"]);
+        let s = &after_open.scaffolds[0];
+        assert_eq!(
+            (s.kind_type, s.kind.as_str(), s.content.as_str()),
+            (ScaffoldType::Verbal, KIND_FRAMES, FRAME)
+        );
+        assert_eq!(s.levels, Level::ALL);
+
+        // Otherwise the question stays (an exit ticket keeps its count) and asks for the frame.
+        let mut alone = Block {
+            id: "exit".into(),
+            kind: BlockKind::ExitTicket,
+            enabled: true,
+            items: vec![
+                frame("e1", FMT_BLANK),
+                question("e2", "簡答題", "Which part was the hardest for you?"),
+            ],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut alone, ""), 1);
+        assert_eq!(alone.items[0].prompt, FRAME_TASK);
+        assert_eq!(alone.items[0].answer_format.as_deref(), Some("簡答題"));
+        assert_eq!(alone.items[0].answer, "Answer e1", "its answer stays");
+
+        // The teacher's own frame is hers.
+        let mut mine = Block {
+            id: "b2".into(),
+            enabled: true,
+            items: vec![Item {
+                origin: Origin::Teacher,
+                ..frame("t1", FMT_BLANK)
+            }],
+            ..Block::default()
+        };
+        assert_eq!(lift_frames(&mut mine, ""), 0);
+        assert!(mine.scaffolds.is_empty());
+
+        // On paper: one box, not numbered; the questions numbered 1, 2, 3 through the sheet.
+        let sheet = project(
+            "T",
+            &content(vec![after_open, alone]),
+            Level::Standard,
+            Audience::Student,
+        );
+        let nos: Vec<usize> = sheet
+            .blocks
+            .iter()
+            .flat_map(|b| b.items.iter().map(|i| i.no))
+            .collect();
+        assert_eq!(nos, [1, 2, 3, 4]);
+        let prompts: Vec<&str> = sheet
+            .blocks
+            .iter()
+            .flat_map(|b| b.items.iter().map(|i| i.prompt.as_str()))
+            .collect();
+        assert!(prompts.iter().all(|p| !p.contains("I identified")));
+        for b in &sheet.blocks {
+            assert_eq!(b.supports.len(), 1, "{}", b.id);
+            assert_eq!(b.supports[0].heading, "Sentence frames");
+            assert_eq!(b.supports[0].content, FRAME);
+        }
+    }
 
     fn item(id: &str, levels: &[Level], format: &str) -> Item {
         Item {
