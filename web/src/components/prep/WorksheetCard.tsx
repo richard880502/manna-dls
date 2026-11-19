@@ -111,6 +111,13 @@ export function WorksheetCard({
       setLocalKey((n) => n + 1);
       setFlash(new Set([done.proposal.block_id]));
     },
+    versionNo: state?.version_no ?? null,
+    onUndone: (next) => {
+      setState(next);
+      setImages(next.images ?? null);
+      setLocalKey((n) => n + 1);
+      setFlash(new Set());
+    },
   });
 
   useEffect(() => {
@@ -287,7 +294,10 @@ export function WorksheetCard({
     if (wsId === null) return;
     setUndoError(null);
     try {
-      setState(await api.undoWorksheetBlock(wsId, blockId));
+      const next = await api.undoWorksheetBlock(wsId, blockId);
+      setState(next);
+      // The pictures go back with the text.
+      setImages(next.images ?? null);
       setLocalKey((n) => n + 1);
     } catch (err) {
       setUndoError(errorMessage(err));

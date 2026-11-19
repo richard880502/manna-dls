@@ -49,6 +49,8 @@ pub const STATUS_FAILED: &str = "failed";
 pub const MSG_STALE_RUN: &str = "這次修改中斷了（可能是系統剛更新）。請再請 Manna 改一次。";
 pub const MSG_CHANGED_MEANWHILE: &str =
     "這一區在 Manna 改好之後又被改過了，所以這個修改沒有套用。可以再請 Manna 改一次。";
+/// An earlier attempt of the round whose block was changed since.
+pub const MSG_EARLIER_CHANGED: &str = "這一區之後改過了，這個版本不能直接採用。";
 pub const MSG_ANOTHER_RUNNING: &str = "Manna 正在改另一區，好了之後再送出。";
 
 // ---------------------------------------------------------------- what the model writes
@@ -571,6 +573,12 @@ pub struct Proposal {
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub decided_at: Option<DateTime<Utc>>,
+    /// When the teacher took the accepted proposal back (復原); it stays `accepted`.
+    pub undone_at: Option<DateTime<Utc>>,
+    /// The earlier attempts of the same round (oldest first) that 再改一次 set aside: made from
+    /// the same block, not adopted or given up yet. Any of them can still be adopted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub earlier: Vec<Proposal>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -594,11 +602,15 @@ struct Row {
     created_at: DateTime<Utc>,
     finished_at: Option<DateTime<Utc>>,
     decided_at: Option<DateTime<Utc>>,
+    undone_at: Option<DateTime<Utc>>,
+    set_aside_at: Option<DateTime<Utc>>,
+    round_closed_at: Option<DateTime<Utc>>,
 }
 
 const COLS: &str = "id, worksheet_id, block_id, base_version_no, base_block, instruction,
     comment_ids, whole_block, round, status, proposed, reply, error, interaction_id,
-    accepted_version_no, created_at, finished_at, decided_at, picture_actions";
+    accepted_version_no, created_at, finished_at, decided_at, picture_actions, undone_at,
+    set_aside_at, round_closed_at";
 
 impl From<Row> for Proposal {
     fn from(r: Row) -> Self {
@@ -626,6 +638,8 @@ impl From<Row> for Proposal {
             created_at: r.created_at,
             finished_at: r.finished_at,
             decided_at: r.decided_at,
+            undone_at: r.undone_at,
+            earlier: Vec::new(),
         }
     }
 }
@@ -664,6 +678,23 @@ pub async fn open(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<Proposal>>
     let mut images = crate::prep::images::for_proposals(db, &ids).await?;
     for p in &mut proposals {
         p.images = images.remove(&p.id).unwrap_or_default();
+    }
+    // The attempts 再改一次 set aside stay adoptable until the round ends.
+    let earlier: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT {COLS} FROM worksheet_block_proposals
+          WHERE worksheet_id = $1 AND set_aside_at IS NOT NULL AND round_closed_at IS NULL
+            AND status = 'rejected' AND proposed IS NOT NULL ORDER BY id"
+    ))
+    .bind(worksheet_id)
+    .fetch_all(db)
+    .await?;
+    let earlier: Vec<Proposal> = earlier.into_iter().map(Proposal::from).collect();
+    for p in &mut proposals {
+        p.earlier = earlier
+            .iter()
+            .filter(|e| e.block_id == p.block_id && e.id < p.id && e.before == p.before)
+            .cloned()
+            .collect();
     }
     Ok(proposals)
 }
@@ -732,6 +763,7 @@ pub async fn set_aside_previous(
     let set_aside = sqlx::query(
         "UPDATE worksheet_block_proposals
             SET status = CASE WHEN status = 'proposed' THEN 'rejected' ELSE status END,
+                set_aside_at = CASE WHEN status = 'proposed' THEN now() ELSE set_aside_at END,
                 decided_at = now()
           WHERE id = $1 AND decided_at IS NULL AND status IN ('proposed', 'failed', 'stale')",
     )
@@ -850,12 +882,20 @@ pub async fn finish(
 }
 
 pub enum Accepted {
-    /// Written as a new version (`cause = "revise"`). `added` and `content` (the version as
-    /// saved) are for running the picture actions.
+    /// Written as a new version (`cause = "revise"`), unless the block's own content did not
+    /// change (`changed = false`: only pictures). `added` and `content` (the version as saved)
+    /// are for running the picture actions; `history_id` is the kept earlier state of the block
+    /// (an undo takes it back), which also needs the pictures' part once they have run.
     Done {
         proposal: Box<Proposal>,
         added: Added,
         content: Box<Content>,
+        changed: bool,
+        history_id: Option<i64>,
+        version_no: i32,
+        /// Which attempt of the round was adopted, out of how many, and their proposal ids.
+        attempt: (usize, usize),
+        round_ids: Vec<i64>,
     },
     /// The block changed since the proposal was made: nothing was written.
     Stale(Box<Proposal>),
@@ -883,12 +923,32 @@ pub async fn accept(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("找不到這個修改。"))?;
+    // An attempt that 再改一次 set aside can still be adopted while its round is open.
+    let earlier_attempt = row.status == STATUS_REJECTED
+        && row.set_aside_at.is_some()
+        && row.round_closed_at.is_none()
+        && row.proposed.is_some();
     match row.status.as_str() {
         STATUS_PROPOSED => {}
         STATUS_RUNNING => {
             return Err(AppError::Conflict(
                 "Manna 還在改這一區，好了之後再採用。".to_string(),
             ))
+        }
+        _ if earlier_attempt => {
+            let running: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM worksheet_block_proposals
+                                 WHERE worksheet_id = $1 AND block_id = $2 AND status = 'running')",
+            )
+            .bind(worksheet_id)
+            .bind(&row.block_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if running {
+                return Err(AppError::Conflict(
+                    "Manna 還在改這一區，好了之後再採用。".to_string(),
+                ));
+            }
         }
         _ => return Err(AppError::Conflict("這個修改已經處理過了。".to_string())),
     }
@@ -912,6 +972,10 @@ pub async fn accept(
         .iter()
         .position(|b| b.id == proposal.block_id && *b == proposal.before);
     let Some(pos) = pos else {
+        if earlier_attempt {
+            // Nothing changes: the other attempts of the round may still fit.
+            return Err(AppError::Conflict(MSG_EARLIER_CHANGED.to_string()));
+        }
         sqlx::query(
             "UPDATE worksheet_block_proposals SET status = 'stale', error = $2 WHERE id = $1",
         )
@@ -928,28 +992,105 @@ pub async fn accept(
     content
         .normalise()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("revised block failed validation: {e}")))?;
-    // A proposal that only redraws or removes pictures changes no text and adds no slot: it
-    // writes no version (the pictures are handled after this returns).
-    let version_no = if content.blocks[pos] == previous {
-        latest_no
-    } else {
-        sqlx::query(
-            "INSERT INTO worksheet_block_history (worksheet_id, block_id, block, interaction_id)
-             VALUES ($1, $2, $3, $4)",
+    // A proposal that only redraws or removes pictures changes no text and adds no slot: its
+    // step is written once its pictures have run (`record_picture_step`), if they changed any.
+    let changed = content.blocks[pos] != previous;
+    let (version_no, history_id) = if changed {
+        let saved = store::insert_version_from(
+            &mut tx,
+            worksheet_id,
+            &content,
+            "revise",
+            Some(serde_json::json!({
+                "cause": "block_proposal", "proposal_id": id, "interaction_id": interaction_id,
+                "round": proposal.round, "block_ids": [proposal.block_id],
+            })),
+        )
+        .await?;
+        let history_id: i64 = sqlx::query_scalar(
+            "INSERT INTO worksheet_block_history
+               (worksheet_id, block_id, block, interaction_id, proposal_id, version_no, after_block)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
         )
         .bind(worksheet_id)
         .bind(&previous.id)
         .bind(Json(&previous))
         .bind(interaction_id)
+        .bind(id)
+        .bind(saved.version_no)
+        .bind(Json(&content.blocks[pos]))
+        .fetch_one(&mut *tx)
+        .await?;
+        (saved.version_no, Some(history_id))
+    } else {
+        (latest_no, None)
+    };
+    // The round: this attempt and the others made from the same block. Adopting one ends it.
+    let candidates: Vec<(i64, Value, String)> = sqlx::query_as(
+        "SELECT id, base_block, status FROM worksheet_block_proposals
+          WHERE worksheet_id = $1 AND block_id = $2 AND round_closed_at IS NULL
+            AND proposed IS NOT NULL
+            AND ((status = 'rejected' AND set_aside_at IS NOT NULL) OR status = 'proposed')
+          ORDER BY id",
+    )
+    .bind(worksheet_id)
+    .bind(&proposal.block_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let round_ids: Vec<i64> = candidates
+        .iter()
+        .filter(|(_, base, _)| {
+            serde_json::from_value::<Block>(base.clone()).is_ok_and(|b| b == proposal.before)
+        })
+        .map(|(i, _, _)| *i)
+        .collect();
+    let attempt_no = round_ids.iter().position(|i| *i == id).map_or(1, |k| k + 1);
+    let round_ids = if round_ids.contains(&id) {
+        round_ids
+    } else {
+        vec![id]
+    };
+    // A newer attempt still proposed is turned down for this one (its own reject is recorded;
+    // the earlier rejections stay as they were).
+    let newer: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT id, interaction_id FROM worksheet_block_proposals
+          WHERE worksheet_id = $1 AND block_id = $2 AND status = 'proposed' AND id <> $3",
+    )
+    .bind(worksheet_id)
+    .bind(&proposal.block_id)
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (other, other_interaction) in newer {
+        sqlx::query(
+            "UPDATE worksheet_block_proposals
+                SET status = 'rejected', decided_at = now(), round_closed_at = now()
+              WHERE id = $1",
+        )
+        .bind(other)
         .execute(&mut *tx)
         .await?;
-        store::insert_version(&mut tx, worksheet_id, &content, "revise")
-            .await?
-            .version_no
-    };
+        decision(
+            &mut *tx,
+            other_interaction,
+            teacher_id,
+            "reject",
+            "學習單：採用了同一輪的另一次建議",
+        )
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE worksheet_block_proposals SET round_closed_at = now()
+          WHERE id = ANY($1) AND id <> $2 AND round_closed_at IS NULL",
+    )
+    .bind(&round_ids)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "UPDATE worksheet_block_proposals
-            SET status = 'accepted', accepted_version_no = $2, decided_at = now()
+            SET status = 'accepted', accepted_version_no = $2, decided_at = now(),
+                round_closed_at = now()
           WHERE id = $1",
     )
     .bind(id)
@@ -979,7 +1120,105 @@ pub async fn accept(
         proposal: Box::new(get(db, worksheet_id, id).await?),
         added,
         content: Box::new(content),
+        changed,
+        history_id,
+        version_no,
+        attempt: (attempt_no, round_ids.len()),
+        round_ids,
     })
+}
+
+/// What the pictures of an accepted proposal did, once they have run: kept with the step so an
+/// undo can give the pictures back too, and so an earlier step can be restored with its pictures.
+///
+/// * a step that changed the block already has its version and kept state: the pictures' part is
+///   added to them;
+/// * a proposal that changed only pictures gets its step now (a version with the same content,
+///   `cause = "revise"`, and a kept state), if any picture really changed.
+///
+/// Returns the version the proposal ended up in.
+pub async fn record_picture_step(
+    db: &PgPool,
+    proposal: &Proposal,
+    done: &PicturesDone,
+) -> AppResult<i32> {
+    let ws_id = proposal.worksheet_id;
+    let snapshot = crate::worksheet::images::undo::snapshot_json(&done.after);
+    if done.changed {
+        if let Some(history_id) = done.history_id {
+            if !done.undo.is_empty() {
+                sqlx::query("UPDATE worksheet_block_history SET picture_undo = $2 WHERE id = $1")
+                    .bind(history_id)
+                    .bind(done.undo.to_json())
+                    .execute(db)
+                    .await?;
+            }
+        }
+        store::set_version_pictures(db, ws_id, done.version_no, &snapshot).await?;
+        return Ok(done.version_no);
+    }
+    if done.undo.is_empty() {
+        return Ok(done.version_no);
+    }
+    let mut tx = db.begin().await?;
+    sqlx::query("SELECT id FROM worksheets WHERE id = $1 FOR UPDATE")
+        .bind(ws_id)
+        .execute(&mut *tx)
+        .await?;
+    let latest: (Value,) = sqlx::query_as(
+        "SELECT content FROM worksheet_versions WHERE worksheet_id = $1
+          ORDER BY version_no DESC LIMIT 1",
+    )
+    .bind(ws_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let content: Content = serde_json::from_value(latest.0).unwrap_or_default();
+    let saved = store::insert_version_from(
+        &mut tx,
+        ws_id,
+        &content,
+        "revise",
+        Some(serde_json::json!({
+            "cause": "block_proposal_pictures", "proposal_id": proposal.id,
+            "interaction_id": proposal.interaction_id, "round": proposal.round,
+            "block_ids": [proposal.block_id],
+        })),
+    )
+    .await?;
+    store::set_version_pictures(&mut *tx, ws_id, saved.version_no, &snapshot).await?;
+    if let Some(block) = content.block(&proposal.block_id) {
+        sqlx::query(
+            "INSERT INTO worksheet_block_history
+               (worksheet_id, block_id, block, interaction_id, proposal_id, version_no,
+                after_block, picture_undo)
+             VALUES ($1, $2, $3, $4, $5, $6, $3, $7)",
+        )
+        .bind(ws_id)
+        .bind(&proposal.block_id)
+        .bind(Json(block))
+        .bind(proposal.interaction_id)
+        .bind(proposal.id)
+        .bind(saved.version_no)
+        .bind(done.undo.to_json())
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query("UPDATE worksheet_block_proposals SET accepted_version_no = $2 WHERE id = $1")
+        .bind(proposal.id)
+        .bind(saved.version_no)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(saved.version_no)
+}
+
+/// The pictures of an accepted proposal after they ran (see [`record_picture_step`]).
+pub struct PicturesDone {
+    pub changed: bool,
+    pub history_id: Option<i64>,
+    pub version_no: i32,
+    pub undo: crate::worksheet::images::undo::PictureUndo,
+    pub after: crate::worksheet::images::undo::Snapshot,
 }
 
 /// 放棄 (or, for a failed or stale one, 知道了): nothing is written; the notes stay open.
@@ -1004,6 +1243,17 @@ pub async fn reject(
                 decided_at = now()
           WHERE id = $1 AND decided_at IS NULL",
     )
+    .bind(id)
+    .execute(db)
+    .await?;
+    // 放棄 (or 知道了) ends the round: the attempts set aside before can not be adopted any more.
+    sqlx::query(
+        "UPDATE worksheet_block_proposals SET round_closed_at = now()
+          WHERE worksheet_id = $1 AND block_id = $2 AND round_closed_at IS NULL
+            AND (set_aside_at IS NOT NULL OR id = $3)",
+    )
+    .bind(worksheet_id)
+    .bind(&p.block_id)
     .bind(id)
     .execute(db)
     .await?;

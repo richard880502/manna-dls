@@ -1112,7 +1112,7 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/generate` | `{}` | 202 `WorksheetState`：建立四個步驟的背景工作並立刻回來。已在執行時回傳同一批 |
 | GET | `/api/worksheets/:id/jobs` | – | `{ running, jobs: WsJob[], version_no }`（輪詢用） |
 | POST | `/api/worksheets/:id/blocks/:block_id/regenerate` | `{}` | 202 `WorksheetState`：只重新產生這一個區塊 |
-| POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生之前的那一版；沒有上一版 → 409 |
+| POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生（或採用）之前的那一版，採用的圖片動作也一起復原；沒有上一版 → 409；採用之後這一區又改過 → 409（見「復原與修改歷程」） |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
 | GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
@@ -1163,7 +1163,7 @@ interface WsSheet {
 ### 單一區塊重新產生與復原
 
 - `regenerate`：活動區塊＝對那幾段重跑 `tasks`（只要這個區塊）再跑 `scaffolds`；暖身＝`warmup`＋`scaffolds`；Exit ticket＝`exit_ticket`。temperature 依這份學習單先前產生的次數遞增（閘道會快取相同的請求）。
-- 取代之前，先把目前的區塊存進 `worksheet_block_history`。`undo` 取回最近一筆並把它從歷史移除（可一路復原到最早）。兩者都產生新的學習單版本（`regenerate`／`undo`），所以整份的版本紀錄也還在。
+- 取代之前，先把目前的區塊存進 `worksheet_block_history`。`undo` 取回最近一筆**還沒復原的**並在那一列記上 `undone_at`（**不刪除**；可一路復原到最早）。兩者都產生新的學習單版本（`regenerate`／`undo`），所以整份的版本紀錄也還在。詳見「復原與修改歷程」。
 - 重新產生失敗時區塊維持原樣，`WsJob.message` 說明原因。
 
 ## 結果編修
@@ -1386,7 +1386,7 @@ interface WsGloss { word: string; pos: string; meaning_zh: string; definition_en
 
 ## usage_logs 新事件
 
-`worksheet_created`、`worksheet_generated`、`worksheet_block_regenerated`、`worksheet_block_undone`、`worksheet_sop_synced`、`worksheet_linked`、`worksheet_vocabulary_checked`、`worksheet_vocabulary_applied`、`worksheet_exported`（payload 只有 id、版本、格式等，不含內容）。
+`worksheet_created`、`worksheet_generated`、`worksheet_block_regenerated`、`worksheet_block_undone`（含復原採用：`proposal_id`、`undone_version_no`、`pictures_reverted`）、`worksheet_sop_synced`、`worksheet_linked`、`worksheet_vocabulary_checked`、`worksheet_vocabulary_applied`、`worksheet_exported`（payload 只有 id、版本、格式等，不含內容）。
 
 ## 前端
 
@@ -3164,8 +3164,18 @@ interface WsProposal {
 | POST | `/api/worksheets/:id/blocks/:block_id/revise` | `{ instruction?, comment_ids?, whole_block? }` | 202 `WsProposal`（`running`）。要有 `instruction`（≤2000）或註記：`comment_ids` 的每一則都要在這一區、`open`、`share_with_ai`（否則 400）；兩者都沒給時用這一區所有待處理、提供給 AI 的註記，一則都沒有 → 400。區塊不在 → 404；學習單正在產生 → 409；已有修改在跑 → 409（「Manna 正在改另一區…」）。這一區還在等決定的建議先放到一旁（`proposed` 記為 `rejected`，並寫一筆 `teacher_decisions` reject），所以「再改一次」就是再送一次 |
 | GET | `/api/worksheets/:id/proposals` | – | `WsProposal[]`：每一區最新的那一個，只列還在等教師的（`running`、`proposed`，以及還沒關掉的 `failed`、`stale`） |
 | GET | `/api/worksheets/:id/proposals/:pid` | – | `WsProposal`（輪詢用） |
-| POST | `/api/worksheets/:id/proposals/:pid/accept` | `{}` | `{ proposal, worksheet: WorksheetState }`。在一個交易裡：確認最新版本裡這一區**和 `before` 完全相同**（之後被改過 → 這個建議變成 `stale`，回 409，什麼都不寫）→ 舊區塊進 `worksheet_block_history` → 新版本（`cause = "revise"`）→ 這次用到的註記標成 `applied` → `teacher_decisions` 記 `adopt`。其他區塊之間改過不影響。不是 `proposed` → 409；學習單正在產生 → 409 |
+| POST | `/api/worksheets/:id/proposals/:pid/accept` | `{}` | `{ proposal, pictures, worksheet: WorksheetState }`。在一個交易裡：確認最新版本裡這一區**和 `before` 完全相同**（之後被改過 → 這個建議變成 `stale`，回 409，什麼都不寫）→ 新版本（`cause = "revise"`，`source` 見「復原與修改歷程」）→ 舊區塊進 `worksheet_block_history`（附 `proposal_id`、採用後的區塊 `after_block`）→ 這次用到的註記標成 `applied` → 同一輪的其他建議關閉 → `teacher_decisions` 記 `adopt`。其他區塊之間改過不影響。可以採用的是 `proposed`，或「再改一次」放到一旁、同一輪還沒結束的 `rejected`（見「同一輪的各次建議」）；其他 → 409；學習單正在產生 → 409 |
 | POST | `/api/worksheets/:id/proposals/:pid/reject` | `{}` | `WsProposal`。`proposed` → `rejected`（記 `teacher_decisions` reject），註記維持待處理；`failed`／`stale` 只是關掉（「知道了」）。`running` 或已經決定過 → 409 |
+
+### 同一輪的各次建議（`0034_append_only_history.sql`）
+
+「再改一次」不會讓前面的建議消失。這一區從上次改動以來（`base_block` 相同、還沒採用也沒放棄）的所有建議叫**同一輪**：
+
+- `WsProposal.earlier`（只在 `GET /proposals` 的每一項上，沒有就省略）：同一輪較早的建議（`rejected`、`proposed` 內容都還在，舊的在前）。前端在建議框標題做「‹ 第 2 次（共 3 次） ›」，預設顯示最新一次，每一次各有自己的差異、說明、要求與圖片動作。
+- `worksheet_block_proposals.set_aside_at`：被「再改一次」放到一旁的時間（`status = rejected`，仍保留 `proposed` 內容）；`round_closed_at`：這一輪結束的時間（採用其中一次，或教師按「放棄」「知道了」）。結束後那一輪的建議都不能再採用（409「這個修改已經處理過了。」）。
+- 採用一個較早的建議：用同一個 `accept` 端點。一樣要求這一區和那個建議的 `before` 完全相同，否則 **409「這一區之後改過了，這個版本不能直接採用。」**，什麼都不改（同一輪的其他建議不受影響）；Manna 還在改這一區 → 409。成功時：被採用的記 `accepted`；還在 `proposed` 的最新一次記 `rejected` 並寫一筆 `teacher_decisions` reject（「採用了同一輪的另一次建議」）；其他已被放到一旁的只記 `round_closed_at`。**先前「再改一次」那筆 reject 原樣保留，只新增一筆 `adopt`**（同一個 `ai_interaction` 先有 reject 再有 adopt，晚採用的資料也留著）。圖片動作照採用的方式執行。
+- 「放棄」結束整輪；「再改一次」用目前顯示的那一次的要求再問，新的一次加進同一輪。
+- 研究紀錄：`usage_logs` `worksheet_block_revise_accepted` 的 payload 多 `attempt_no`（採用的是第幾次）、`attempts`（同一輪共幾次）、`attempt_proposal_ids`（同一輪的 proposal id，舊的在前）。
 
 ## 一次修改（`worksheet_block_revise`）
 
@@ -3442,6 +3452,29 @@ interface RunProgress {
 
 測試：`api/tests/mywork_previews.rs`（沒有 poppler 的機器上，需要圖片的部分改查 503；CI 會裝 poppler 並檢查圖片）。
 
+## 復原與修改歷程（`0034_append_only_history.sql`）
+
+**每一步都保留，復原不刪任何東西。**
+
+- `worksheet_versions` 本來就只新增。新欄位：`source JSONB`（這個版本是什麼做的）與 `pictures JSONB`（那一步每個 slot 目前用的圖，`{ slot_id: worksheet_images.id }`，那一步的圖片都處理完才寫一次）。舊的版本兩欄都是 `null`。`cause` 多一個 `restore`（保留給「回到這一步」）。`GET /api/worksheets/:id/versions` 的每一項多 `source`。
+- `source` 一定有 `cause`，再加上相關的編號：
+
+  | `source.cause` | 其他欄位 |
+  |---|---|
+  | `block_proposal` | `proposal_id`、`interaction_id`、`round`、`block_ids`（`worksheet_versions.cause = "revise"`） |
+  | `block_proposal_pictures` | 同上；只改了圖片的建議，內容與前一版相同（`cause = "revise"`） |
+  | `prep_turn` | `turn_id`、`interaction_id`、`block_ids`（備課對話整份修改，`cause = "revise"`） |
+  | `regenerate` | `interaction_id`、`block_ids` |
+  | `vocabulary` | `block_ids` |
+  | `undo` | `history_id`、`proposal_id`、`interaction_id`、`undone_version_no`（被復原的那一步寫成的版本）、`from_version_no`（復原前的最新版本）、`block_ids` |
+  | `generate`、`edit`、`created` | 只有 `cause` |
+
+- `worksheet_block_history`（復原用的堆疊）新欄位：`proposal_id`、`version_no`（那一步寫的版本）、`after_block`（那一步寫入的區塊，採用才有）、`picture_undo`（`{ slots: [{ slot_id, added, before, after }] }`：那一步動到的圖片位置，前後各用哪一列 `worksheet_images`）、`undone_at`、`undone_in_version_no`。只有 `undone_at` 為 `null` 的列才是堆疊（`WorksheetState.undoable`）。`worksheet_block_proposals.undone_at`：採用後被復原的時間（`status` 維持 `accepted`），`WsProposal.undone_at`。
+- **採用現在一定是一步**：只改圖片的建議（以前不寫版本、不進歷史）也寫一個內容與前一版相同的版本（`source.cause = "block_proposal_pictures"`）和一列歷史，前提是圖片真的有變；圖片動作全部被略過就什麼都不寫。`accepted_version_no` 是那個版本。
+- **復原（`POST …/blocks/:block_id/undo`）**，一個交易：取這一區最新一列沒復原的歷史 → 若那一列有 `after_block` 而這一區現在和它不同 → **409「這一區在採用之後又改過了，沒辦法直接復原到採用前；先把這一區改回採用後的樣子，再按復原。」**；若那一步動過的圖片現在已不是它留下的那一張（又重畫、上傳或移除過）→ **409「這一區的圖片在採用之後又動過了，沒辦法直接復原到採用前。」**；學習單正在產生 → 409。通過後：區塊（文字與圖片位置）換回採用前的樣子；圖片：那一步新增的 slot 隨區塊拿掉，重畫或移除的 slot 把**前一列** `worksheet_images` 設回 `current = TRUE`（現在那一列設為不是目前的；仍在畫的那一張結束）——**不呼叫圖片模型，也不刪任何一列**；寫新版本（`cause = "undo"`，內容沒變也寫）、`pictures` 快照、歷史那一列記 `undone_at`／`undone_in_version_no`、提案記 `undone_at`；有 `interaction_id` 時記一筆 `teacher_decisions` reject（「學習單：復原上一版」，和以前一樣）。重新產生、備課對話修改、字詞動作寫的歷史沒有 `after_block`，復原的行為和以前完全一樣。
+- 研究紀錄：`usage_logs` `worksheet_block_undone` 的 payload：`{ worksheet_id, block_id, version_no, from_version_no, undone_version_no, proposal_id, interaction_id, pictures_reverted }`。
+- 前端：採用之後，那一區下方出現「已採用 Manna 的修改。」與「復原」（`role=status`，焦點移到這則訊息），直到這一區又被任何動作改動（版本號變了）、再改、重新產生或復原；區塊工具裡的「復原上一版」照舊。
+
 ## 改圖片與附上圖片（`0032_revise_pictures_and_uploads.sql`）
 
 老師在備課對話說「B 區加一張蜜蜂在花上的圖」「這張圖重畫，不要有文字」，或附上截圖說明要改哪裡。兩條修改路徑（對話框的 `revise` 輪次、逐區的 `worksheet_block_revise`）的輸出多了 `picture_actions`，prompt 各多一版（`COALESCE(MAX(version_no),0)+1`：在當下最新的文字後面接上圖片規則與 `{{picture_rules}}`、`{{pictures_note}}`、`{{attachments_note}}`）。模型只提出動作，伺服器檢查，**採用／同意之前什麼都不畫、不移除**。
@@ -3471,8 +3504,8 @@ interface RunProgress {
 
 ### 確認流程
 
-- **逐區修改**：`WsProposal.picture_actions`（`PictureAction[]`，含 `text`）隨建議一起顯示；只有圖片動作的建議也能採用（`block` 與原區塊相同、`changes` 全為 `kept`）。**採用**時，同一個交易把 `add` 的新 slot 加進區塊（和文字修改同一個新版本；沒有文字也沒有新 slot 就不寫新版本），交易後依序：`add` 的圖排進產圖佇列（`enqueue`，受每份學習單的自動產圖上限與 `IMAGE_CONCURRENCY` 限制）、`redraw` 走 `regenerate`（受 `max_regenerations` 限制）、`remove` 走 `remove`。回應 `{ proposal, pictures: PictureOutcome[], worksheet }`。放棄 → 什麼都不做。
-- **對話框 `revise` 輪次**維持原本的做法：修改直接套用（寫成一個新版本，編輯器可以復原），所以圖片動作也**直接**執行（新 slot 與文字改動同一個版本，之後排進佇列；redraw、remove 緊接著做），結果寫在 `result.pictures` 與 `reply`（「圖片：加了 1 張圖、重畫了 1 張圖（畫好會自動出現）」）。`remove` 與 `重畫` 不會進版本歷史（和老師自己按按鈕一樣），要找回圖片按「重畫」。
+- **逐區修改**：`WsProposal.picture_actions`（`PictureAction[]`，含 `text`）隨建議一起顯示；只有圖片動作的建議也能採用（`block` 與原區塊相同、`changes` 全為 `kept`）。**採用**時，同一個交易把 `add` 的新 slot 加進區塊（和文字修改同一個新版本；沒有文字也沒有新 slot 時，圖片處理完才寫一個內容相同的版本，圖片真的有變才寫），交易後依序：`add` 的圖排進產圖佇列（`enqueue`，受每份學習單的自動產圖上限與 `IMAGE_CONCURRENCY` 限制）、`redraw` 走 `regenerate`（受 `max_regenerations` 限制）、`remove` 走 `remove`。回應 `{ proposal, pictures: PictureOutcome[], worksheet }`。放棄 → 什麼都不做。
+- **對話框 `revise` 輪次**維持原本的做法：修改直接套用（寫成一個新版本，編輯器可以復原），所以圖片動作也**直接**執行（新 slot 與文字改動同一個版本，之後排進佇列；redraw、remove 緊接著做），結果寫在 `result.pictures` 與 `reply`（「圖片：加了 1 張圖、重畫了 1 張圖（畫好會自動出現）」）。`remove` 與 `重畫` 不會進版本歷史（和老師自己按按鈕一樣），要找回圖片按「重畫」。（逐區修改採用的圖片動作則會記錄，採用後可以復原，見「復原與修改歷程」。）
 - `PictureOutcome = { action, text, status: "queued" | "removed" | "skipped", message }`。`skipped` 的原因（重畫已到上限、這張圖正在畫、沒有儲存空間、這一區已滿…）寫在 `message`；絕不讓整個修改失敗。畫好的圖照原本的方式出現（`GET /api/worksheets/:id/images` 輪詢）。
 - 研究紀錄：`ai_interactions.output` 照舊存模型的原始輸出（含 `picture_actions`）；套用時寫一筆 `usage_logs` `worksheet_picture_actions_applied`：`{ worksheet_id, source: "prep_turn" | "block_revise", ref, add, redraw, remove, queued, removed, skipped }`。
 

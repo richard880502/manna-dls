@@ -2052,7 +2052,15 @@ pub async fn apply(
                 .execute(&mut *tx)
                 .await?;
             }
-            let saved = store::insert_version(&mut tx, ws.id, &content, "vocabulary").await?;
+            let block_ids: Vec<&String> = changed_blocks.keys().collect();
+            let saved = store::insert_version_from(
+                &mut tx,
+                ws.id,
+                &content,
+                "vocabulary",
+                Some(serde_json::json!({ "cause": "vocabulary", "block_ids": block_ids })),
+            )
+            .await?;
             version_no = Some(saved.version_no);
         }
         for d in &decisions {

@@ -16,6 +16,7 @@ use crate::worksheet::ai::revise::{self as block_revise, ReviseRequest};
 use crate::worksheet::comments::{
     self, AnchorInput, Comment, Patch, MAX_NOTE_CHARS, STATUS_DISMISSED, STATUS_OPEN,
 };
+use crate::worksheet::images;
 use crate::worksheet::images::actions::{self, PictureOutcome};
 use crate::worksheet::revise::{self as rv, Accepted, Proposal, MSG_CHANGED_MEANWHILE};
 use crate::worksheet::store;
@@ -230,16 +231,51 @@ pub async fn accept_proposal(
             "Manna 正在產生這份學習單，好了之後再採用。".to_string(),
         ));
     }
-    let (proposal, added, saved) = match rv::accept(db, id, proposal_id, teacher.id()).await? {
-        Accepted::Done {
-            proposal,
-            added,
-            content,
-        } => (*proposal, added, *content),
-        Accepted::Stale(_) => return Err(AppError::Conflict(MSG_CHANGED_MEANWHILE.to_string())),
-    };
+    let before = images::undo::snapshot(db, id).await?;
+    let (proposal, added, saved, done, attempt, round_ids) =
+        match rv::accept(db, id, proposal_id, teacher.id()).await? {
+            Accepted::Done {
+                proposal,
+                added,
+                content,
+                changed,
+                history_id,
+                version_no,
+                attempt,
+                round_ids,
+            } => (
+                *proposal,
+                added,
+                *content,
+                (changed, history_id, version_no),
+                attempt,
+                round_ids,
+            ),
+            Accepted::Stale(_) => {
+                return Err(AppError::Conflict(MSG_CHANGED_MEANWHILE.to_string()))
+            }
+        };
     // 採用 is the teacher's yes to the pictures too: queue the new ones, redraw, remove.
     let pictures = actions::run(&state, &ws, &proposal.picture_actions, &added, &saved).await;
+    // What the pictures did is kept with the step, so 復原 can give them back.
+    let after = images::undo::snapshot(db, id).await?;
+    let added_slots: std::collections::HashSet<String> =
+        added.iter().filter_map(|(_, r)| r.clone().ok()).collect();
+    let undo = images::undo::diff(&proposal.block_id, &before, &after, &added_slots);
+    let proposal_version = rv::record_picture_step(
+        db,
+        &proposal,
+        &rv::PicturesDone {
+            changed: done.0,
+            history_id: done.1,
+            version_no: done.2,
+            undo,
+            after,
+        },
+    )
+    .await?;
+    let mut proposal = proposal;
+    proposal.accepted_version_no = Some(proposal_version);
     if !pictures.is_empty() {
         actions::log_applied(
             &state,
@@ -258,6 +294,7 @@ pub async fn accept_proposal(
         json!({
             "worksheet_id": id, "block_id": proposal.block_id, "proposal_id": proposal.id,
             "round": proposal.round, "version_no": proposal.accepted_version_no,
+            "attempt_no": attempt.0, "attempts": attempt.1, "attempt_proposal_ids": round_ids,
         }),
     )
     .await?;

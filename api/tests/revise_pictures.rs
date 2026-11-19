@@ -562,8 +562,13 @@ async fn a_picture_only_proposal_can_be_accepted_or_rejected_and_rejecting_draws
         .find(|s| s["slot_id"] == slot_id.as_str())
         .unwrap();
     assert_eq!(gone["status"], "removed");
-    // No text and no slot changed: no new version.
-    assert_eq!(worksheet(&app, &t, ws).await["version_no"], version_before);
+    // No text and no slot changed, but the removal is a step of its own: a new version with the
+    // same content (so it can be undone and shows in the history).
+    let now = worksheet(&app, &t, ws).await;
+    assert_eq!(
+        now["version_no"].as_i64().unwrap(),
+        version_before.as_i64().unwrap() + 1
+    );
 }
 
 #[tokio::test]
@@ -880,4 +885,236 @@ async fn images_sent_with_a_revise_reach_the_model_and_are_kept_for_the_session(
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+// ---------------------------------------------------------------- 採用 → 復原 (undo after accept)
+
+fn block_json(state: &Value, id: &str) -> Value {
+    state["content"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["id"] == id)
+        .unwrap()
+        .clone()
+}
+
+async fn count(app: &common::TestApp, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn accept(app: &common::TestApp, t: &str, ws: i64, pid: i64) -> Value {
+    let (s, v) = app
+        .post(
+            &format!("/api/worksheets/{ws}/proposals/{pid}/accept"),
+            Some(t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v
+}
+
+async fn undo(app: &common::TestApp, t: &str, ws: i64, block: &str) -> (StatusCode, Value) {
+    app.post(
+        &format!("/api/worksheets/{ws}/blocks/{block}/undo"),
+        Some(t),
+        json!({}),
+    )
+    .await
+}
+
+fn current_image(images: &Value, slot_id: &str) -> Value {
+    images["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["slot_id"] == slot_id)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+#[tokio::test]
+async fn undoing_an_accepted_proposal_gives_back_text_and_pictures_and_deletes_nothing() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure(|_| {}));
+    let t = app.teacher("T-UN-1", "general").await;
+    let (_, ws) = session_with_worksheet(&app, &t).await;
+    let state = worksheet(&app, &t, ws).await;
+    let (block, slot) = slots_of(&state)[0].clone();
+    let slot_id = slot["id"].as_str().unwrap().to_string();
+    let block_before = block_json(&state, &block);
+    let image_before = current_image(&wait_images(&app, &t, ws).await, &slot_id);
+    assert_eq!(image_before["status"], "done");
+
+    // Text change + a new picture + a redraw of the first one, in one proposal.
+    let p = revise_block(
+        &app,
+        &t,
+        ws,
+        &block,
+        json!({ "instruction": "改一題，加蜜蜂的圖，原本那張重畫 FAKE_REVISE_TOUCH_ALL FAKE_REVISE_PIC_ADD FAKE_REVISE_PIC_REDRAW" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    let pid = p["id"].as_i64().unwrap();
+    let done = accept(&app, &t, ws, pid).await;
+    // Right after 採用 the block can be undone.
+    assert_eq!(done["worksheet"]["undoable"], json!([block]));
+    assert_ne!(block_json(&done["worksheet"], &block), block_before);
+    wait_images(&app, &t, ws).await;
+    let redrawn = current_image(&worksheet(&app, &t, ws).await["images"], &slot_id);
+    assert_ne!(redrawn["image_id"], image_before["image_id"]);
+    let versions = count(&app, "worksheet_versions").await;
+    let images = count(&app, "worksheet_images").await;
+    let history = count(&app, "worksheet_block_history").await;
+
+    let (s, st) = undo(&app, &t, ws, &block).await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    assert_eq!(block_json(&st, &block), block_before, "text and slots");
+    assert_eq!(st["undoable"], json!([]));
+    // The earlier picture is current again: the same row, nothing redrawn.
+    let back = current_image(&st["images"], &slot_id);
+    assert_eq!(back["image_id"], image_before["image_id"]);
+    assert_eq!(back["status"], "done");
+    // The added slot went away with the block; its picture row is kept, not current.
+    let added_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM worksheet_images WHERE worksheet_id = $1 AND NOT current
+            AND slot_id <> $2",
+    )
+    .bind(ws)
+    .bind(&slot_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(added_rows >= 1);
+    assert_eq!(slots_of(&st).len(), slots_of(&state).len());
+    // Append-only: a version was added, nothing was deleted anywhere.
+    assert_eq!(count(&app, "worksheet_versions").await, versions + 1);
+    assert_eq!(count(&app, "worksheet_images").await, images);
+    assert_eq!(count(&app, "worksheet_block_history").await, history);
+    let marked: (Option<i32>, Option<i64>) = sqlx::query_as(
+        "SELECT undone_in_version_no, proposal_id FROM worksheet_block_history
+          WHERE undone_at IS NOT NULL AND worksheet_id = $1",
+    )
+    .bind(ws)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(marked.0.map(i64::from), st["version_no"].as_i64());
+    assert_eq!(marked.1, Some(pid));
+    let undone: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT undone_at FROM worksheet_block_proposals WHERE id = $1")
+            .bind(pid)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert!(undone.is_some());
+    let logged = usage(&app, "worksheet_block_undone").await;
+    assert_eq!(logged.len(), 1);
+    assert_eq!(logged[0]["proposal_id"], pid);
+    assert_eq!(logged[0]["pictures_reverted"], 2);
+    let source: Value = sqlx::query_scalar(
+        "SELECT source FROM worksheet_versions WHERE worksheet_id = $1 ORDER BY version_no DESC LIMIT 1",
+    )
+    .bind(ws)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(source["cause"], "undo");
+    assert_eq!(source["proposal_id"], pid);
+    // Only once.
+    let (s, _) = undo(&app, &t, ws, &block).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn a_picture_only_proposal_is_a_step_that_can_be_undone() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure(|_| {}));
+    let t = app.teacher("T-UN-2", "general").await;
+    let (_, ws) = session_with_worksheet(&app, &t).await;
+    let (block, slot) = slots_of(&worksheet(&app, &t, ws).await)[0].clone();
+    let slot_id = slot["id"].as_str().unwrap().to_string();
+    let image_before = current_image(&wait_images(&app, &t, ws).await, &slot_id);
+
+    let p = revise_block(
+        &app,
+        &t,
+        ws,
+        &block,
+        json!({ "instruction": "把這張圖拿掉 FAKE_REVISE_PIC_ONLY FAKE_REVISE_PIC_REMOVE" }),
+    )
+    .await;
+    let pid = p["id"].as_i64().unwrap();
+    let done = accept(&app, &t, ws, pid).await;
+    assert_eq!(
+        done["worksheet"]["undoable"],
+        json!([block]),
+        "pictures only"
+    );
+    assert_eq!(
+        done["proposal"]["accepted_version_no"],
+        done["worksheet"]["version_no"]
+    );
+    let removed = current_image(&done["worksheet"]["images"], &slot_id);
+    assert_eq!(removed["status"], "removed");
+    let images = count(&app, "worksheet_images").await;
+
+    let (s, st) = undo(&app, &t, ws, &block).await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    let back = current_image(&st["images"], &slot_id);
+    assert_eq!(back["status"], "done");
+    assert_eq!(back["image_id"], image_before["image_id"]);
+    assert_eq!(count(&app, "worksheet_images").await, images, "no new row");
+}
+
+#[tokio::test]
+async fn undo_after_the_block_changed_since_accepting_is_a_409() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure(|_| {}));
+    let t = app.teacher("T-UN-3", "general").await;
+    let (_, ws) = session_with_worksheet(&app, &t).await;
+    let state = worksheet(&app, &t, ws).await;
+    let (block, _) = slots_of(&state)[0].clone();
+    let p = revise_block(
+        &app,
+        &t,
+        ws,
+        &block,
+        json!({ "instruction": "改一題 FAKE_REVISE_TOUCH_ALL" }),
+    )
+    .await;
+    let done = accept(&app, &t, ws, p["id"].as_i64().unwrap()).await;
+    // The teacher edits the block after 採用.
+    let mut content = done["worksheet"]["content"].clone();
+    for b in content["blocks"].as_array_mut().unwrap() {
+        if b["id"] == block.as_str() {
+            b["instructions"] = json!("Changed by hand.");
+        }
+    }
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{ws}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": done["worksheet"]["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = undo(&app, &t, ws, &block).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert!(err_message(&v).contains("採用之後又改過了"), "{v}");
+    // Nothing was touched.
+    assert_eq!(
+        block_json(&worksheet(&app, &t, ws).await, &block)["instructions"],
+        "Changed by hand."
+    );
+    assert_eq!(
+        worksheet(&app, &t, ws).await["undoable"],
+        json!([block]),
+        "the step stays on the stack"
+    );
 }

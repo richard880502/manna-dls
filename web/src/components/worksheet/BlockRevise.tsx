@@ -11,6 +11,7 @@ import type {
   WsProposal,
   WsProposalAccepted,
   WsProposalChange,
+  WorksheetState,
 } from "../../api/types";
 import {
   COMMENT_STATUS_LABEL,
@@ -39,6 +40,10 @@ export interface BlockReviseOptions {
   onApplied?: (accepted: WsProposalAccepted) => void;
   /** Changes when someone else started a revision (the prep page's bottom bar): load again. */
   reloadKey?: unknown;
+  /** The worksheet's current version: 「已採用」 stays only while nothing else changed it. */
+  versionNo?: number | null;
+  /** 復原 (right after 採用) wrote a new version: the worksheet as it is now. */
+  onUndone?: (state: WorksheetState) => void;
 }
 
 export interface BlockRevise {
@@ -56,6 +61,10 @@ export interface BlockRevise {
   proposalOf: (blockId: string) => WsProposal | undefined;
   /** What 採用 did with the picture actions of a block (until the next action on it). */
   picturesOf: (blockId: string) => PictureOutcome[];
+  /** 「已採用」: true right after 採用, until the block is changed again by anything. */
+  justAccepted: (blockId: string) => boolean;
+  /** 復原 of the 採用 just made (the block's text and pictures go back as they were). */
+  undoAccepted: (blockId: string) => Promise<boolean>;
   /** Saves a note; with `revise`, asks Manna to revise the block by it right away. */
   addNote: (body: CreateWorksheetCommentRequest, revise?: boolean) => Promise<boolean>;
   updateNote: (c: WorksheetComment, patch: UpdateWorksheetCommentRequest) => Promise<void>;
@@ -81,6 +90,8 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
   const [busy, setBusy] = useState(false);
   const [seq, setSeq] = useState(0);
   const [outcomes, setOutcomes] = useState<Record<string, PictureOutcome[]>>({});
+  // The worksheet version each block's 採用 produced.
+  const [acceptedAt, setAcceptedAt] = useState<Record<string, number>>({});
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
@@ -162,6 +173,7 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
       blockId,
       async () => {
         setOutcomes((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
+        setAcceptedAt((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
         const p = await api.reviseWorksheetBlock(worksheetId!, blockId, body);
         if (alive.current) putProposal(p);
       },
@@ -178,6 +190,19 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
     notesOf: (blockId) => comments.filter((c) => blockOfNote(c) === blockId && c.anchor.block_id !== null),
     proposalOf: (blockId) => proposals.find((p) => p.block_id === blockId),
     picturesOf: (blockId) => outcomes[blockId] ?? [],
+    justAccepted: (blockId) => options.versionNo != null && acceptedAt[blockId] === options.versionNo,
+    undoAccepted: (blockId) =>
+      act(
+        blockId,
+        async () => {
+          const next = await api.undoWorksheetBlock(worksheetId!, blockId);
+          if (!alive.current) return;
+          setAcceptedAt((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
+          setOutcomes((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
+          optionsRef.current.onUndone?.(next);
+        },
+        true,
+      ),
     addNote: async (body, andRevise = false) => {
       let created: WorksheetComment | null = null;
       const saved = await act(body.block_id, async () => {
@@ -208,8 +233,10 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
           try {
             const done = await api.acceptWorksheetProposal(worksheetId!, p.id);
             if (!alive.current) return;
-            setProposals((prev) => prev.filter((x) => x.id !== p.id));
+            // Adopting any attempt ends the round: the block's other attempts go too.
+            setProposals((prev) => prev.filter((x) => x.block_id !== p.block_id));
             setOutcomes((prev) => ({ ...prev, [p.block_id]: done.pictures ?? [] }));
+            setAcceptedAt((prev) => ({ ...prev, [p.block_id]: done.worksheet.version_no }));
             optionsRef.current.onApplied?.(done);
           } finally {
             // Notes are marked applied; a proposal that went stale says so.
@@ -538,6 +565,11 @@ export function ProposalPanel({
   teacher?: boolean;
 }) {
   const p = proposal;
+  // The attempts of this round (the ones 再改一次 set aside, then the newest); the newest shows first.
+  const attempts = [...(p.earlier ?? []), p];
+  const [view, setView] = useState<{ latest: number; at: number } | null>(null);
+  const at = view && view.latest === p.id ? Math.min(view.at, attempts.length - 1) : attempts.length - 1;
+  const shown = attempts[at] ?? p;
   if (p.status === "running") {
     return (
       <p className="manna-label prep-working ws-proposal-running" role="status" lang="zh-Hant">
@@ -566,36 +598,64 @@ export function ProposalPanel({
       </div>
     );
   }
-  const pictureActions = p.picture_actions ?? [];
   if (p.status !== "proposed") return null;
+  const s = shown;
+  const pictureActions = s.picture_actions ?? [];
   // Only pictures to add, redraw or remove: there is no changed block, but 採用 still does it.
-  if ((!p.block || !p.changes) && pictureActions.length === 0) return null;
-  const after = p.block ?? p.before;
-  const changes = p.changes ?? { title: false, instructions: false, items: [] };
+  if ((!s.block || !s.changes) && pictureActions.length === 0) return null;
+  const after = s.block ?? s.before;
+  const changes = s.changes ?? { title: false, instructions: false, items: [] };
   const find = (block: WsBlock, id: string) => block.items.find((i) => i.id === id);
+  const go = (to: number) => setView({ latest: p.id, at: to });
   return (
     <section className="ws-proposal" aria-label="Manna 的修改建議" lang="zh-Hant">
       <p className="manna-label ws-proposal-head">
         <span className="star" aria-hidden="true" />
-        Manna 的修改建議{p.round > 1 ? `（第 ${p.round} 次）` : ""}：還沒有改進學習單，按「採用」才會寫入。
+        Manna 的修改建議{attempts.length === 1 && p.round > 1 ? `（第 ${p.round} 次）` : ""}：還沒有改進學習單，按「採用」才會寫入。
       </p>
-      {p.reply && <p className="ws-proposal-reply">{p.reply}</p>}
+      {attempts.length > 1 && (
+        <div className="ws-proposal-attempts" role="group" aria-label="這一區的各次建議">
+          <button
+            type="button"
+            className="text-link is-plain"
+            aria-label="上一次的建議"
+            disabled={ctl.busy || at === 0}
+            onClick={() => go(at - 1)}
+          >
+            ‹
+          </button>
+          <span role="status" aria-live="polite" aria-atomic="true">
+            第 {at + 1} 次（共 {attempts.length} 次）
+          </span>
+          <button
+            type="button"
+            className="text-link is-plain"
+            aria-label="下一次的建議"
+            disabled={ctl.busy || at === attempts.length - 1}
+            onClick={() => go(at + 1)}
+          >
+            ›
+          </button>
+        </div>
+      )}
+      {attempts.length > 1 && s.instruction && <p className="ws-proposal-asked">這次的要求：{s.instruction}</p>}
+      {s.reply && <p className="ws-proposal-reply">{s.reply}</p>}
       {changes.title && (
         <p className="ws-proposal-field">
-          標題：<ins lang="en">{after.title}</ins> <del lang="en">{p.before.title}</del>
+          標題：<ins lang="en">{after.title}</ins> <del lang="en">{s.before.title}</del>
         </p>
       )}
       {changes.instructions && (
         <p className="ws-proposal-field">
-          作答指示：<ins lang="en">{after.instructions}</ins> <del lang="en">{p.before.instructions}</del>
+          作答指示：<ins lang="en">{after.instructions}</ins> <del lang="en">{s.before.instructions}</del>
         </p>
       )}
-      <PrepImageThumbs images={p.images} />
+      <PrepImageThumbs images={s.images} />
       <ol className="ws-proposal-items" aria-label="修改後的題目">
         {changes.items.map((c) => {
-          const item = c.change === "removed" ? find(p.before, c.id) : find(after, c.id);
+          const item = c.change === "removed" ? find(s.before, c.id) : find(after, c.id);
           if (!item) return null;
-          const old = c.change === "modified" ? find(p.before, c.id) : undefined;
+          const old = c.change === "modified" ? find(s.before, c.id) : undefined;
           return (
             <li key={`${c.change}-${c.id}`} className={`is-${c.change}`}>
               <span className="anno-flag is-quiet">{CHANGE_LABEL[c.change]}</span>{" "}
@@ -630,7 +690,7 @@ export function ProposalPanel({
         </div>
       )}
       <div className="anno-actions">
-        <button type="button" className="primary-button small-button" disabled={ctl.busy} onClick={() => void ctl.accept(p)}>
+        <button type="button" className="primary-button small-button" disabled={ctl.busy} onClick={() => void ctl.accept(s)}>
           採用
         </button>
         <button type="button" className="secondary-button small-button" disabled={ctl.busy} onClick={() => void ctl.reject(p)}>
@@ -640,12 +700,36 @@ export function ProposalPanel({
           type="button"
           className="text-link is-plain"
           disabled={ctl.busy}
-          onClick={() => void ctl.retry(p)}
+          onClick={() => void ctl.retry(s)}
         >
           再改一次
         </button>
       </div>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------- right after 採用
+
+/** 「已採用 Manna 的修改。」 with 復原: shown until the block is changed again by anything. */
+function AcceptedNotice({ blockId, ctl }: { blockId: string; ctl: BlockRevise }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // 採用 removed the button that had focus: put it here, where 復原 is the next stop.
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  return (
+    <div className="ws-accepted-notice" role="status" aria-live="polite" ref={ref} tabIndex={-1} lang="zh-Hant">
+      <span>已採用 Manna 的修改。</span>{" "}
+      <button
+        type="button"
+        className="secondary-button small-button"
+        disabled={ctl.busy || ctl.running}
+        onClick={() => void ctl.undoAccepted(blockId)}
+      >
+        復原
+      </button>
+    </div>
   );
 }
 
@@ -674,10 +758,12 @@ export function BlockReviseArea({
   const notes = ctl.notesOf(blockId);
   const error = ctl.error && ctl.error.blockId === blockId ? ctl.error.message : null;
   const pictures = ctl.picturesOf(blockId);
-  if (!proposal && notes.length === 0 && !draft && !error && pictures.length === 0) return null;
+  const accepted = ctl.justAccepted(blockId);
+  if (!proposal && notes.length === 0 && !draft && !error && pictures.length === 0 && !accepted) return null;
   return (
     <div className="ws-revise-area" lang="zh-Hant">
       {proposal && <ProposalPanel proposal={proposal} ctl={ctl} teacher={teacher} />}
+      {accepted && !proposal && <AcceptedNotice blockId={blockId} ctl={ctl} />}
       {pictures.length > 0 && (
         <div className="ws-proposal-pictures" role="status" aria-label="圖片的結果">
           <PictureOutcomeList outcomes={pictures} />

@@ -821,6 +821,10 @@ pub async fn regenerate_block(
     Ok((StatusCode::ACCEPTED, Json(state_of(&state, id).await?)))
 }
 
+/// Said when the block was changed after the step that would be taken back.
+pub const MSG_CHANGED_AFTER_STEP: &str =
+    "這一區在採用之後又改過了，沒辦法直接復原到採用前；先把這一區改回採用後的樣子，再按復原。";
+
 pub async fn undo_block(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -834,17 +838,72 @@ pub async fn undo_block(
             "Manna 正在產生這份學習單，好了之後再復原。".to_string(),
         ));
     }
-    let mut content = store::latest(db, id).await?.content;
+    let step = store::peek_history(db, id, &block_id)
+        .await?
+        .ok_or_else(|| AppError::Conflict("這個區塊沒有上一版可以復原。".to_string()))?;
+    let picture_undo = images::undo::PictureUndo::from_json(step.picture_undo.as_ref());
+    if step.after_block.is_some() {
+        images::undo::check(db, id, &picture_undo).await?;
+    }
+    let mut tx = db.begin().await?;
+    sqlx::query("SELECT id FROM worksheets WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let latest: (serde_json::Value, i32) = sqlx::query_as(
+        "SELECT content, version_no FROM worksheet_versions WHERE worksheet_id = $1
+          ORDER BY version_no DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let mut content: Content = serde_json::from_value(latest.0).unwrap_or_default();
     let Some(pos) = content.blocks.iter().position(|b| b.id == block_id) else {
         return Err(AppError::not_found("找不到這個區塊。"));
     };
-    let (previous, interaction_id) = store::pop_history(db, id, &block_id)
-        .await?
-        .ok_or_else(|| AppError::Conflict("這個區塊沒有上一版可以復原。".to_string()))?;
-    content.blocks[pos] = previous;
+    // A 採用 can only be taken back while the block is as it left it.
+    if step
+        .after_block
+        .as_ref()
+        .is_some_and(|a| *a != content.blocks[pos])
+    {
+        return Err(AppError::Conflict(MSG_CHANGED_AFTER_STEP.to_string()));
+    }
+    content.blocks[pos] = step.block.clone();
     content.normalise().map_err(AppError::bad_request)?;
-    let saved = store::save_content(db, id, &content, "undo").await?;
-    if let Some(interaction_id) = interaction_id {
+    images::undo::revert(&mut tx, id, &picture_undo).await?;
+    let saved = store::insert_version_from(
+        &mut tx,
+        id,
+        &content,
+        "undo",
+        Some(json!({
+            "cause": "undo", "history_id": step.id, "proposal_id": step.proposal_id,
+            "interaction_id": step.interaction_id, "undone_version_no": step.version_no,
+            "from_version_no": latest.1, "block_ids": [block_id],
+        })),
+    )
+    .await?;
+    let pictures = images::undo::snapshot(&mut *tx, id).await?;
+    store::set_version_pictures(
+        &mut *tx,
+        id,
+        saved.version_no,
+        &images::undo::snapshot_json(&pictures),
+    )
+    .await?;
+    store::mark_undone(&mut *tx, step.id, saved.version_no).await?;
+    if let Some(proposal_id) = step.proposal_id {
+        sqlx::query(
+            "UPDATE worksheet_block_proposals SET undone_at = now()
+              WHERE id = $1 AND worksheet_id = $2 AND undone_at IS NULL",
+        )
+        .bind(proposal_id)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if let Some(interaction_id) = step.interaction_id {
         // Going back is the teacher turning the regenerated block down.
         sqlx::query(
             "INSERT INTO teacher_decisions (ai_interaction_id, teacher_id, item_index, decision, reason_note)
@@ -852,16 +911,22 @@ pub async fn undo_block(
         )
         .bind(interaction_id)
         .bind(teacher.id())
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
     }
     log_usage(
-        db,
+        &mut *tx,
         teacher.id(),
         "worksheet_block_undone",
-        json!({ "worksheet_id": id, "block_id": block_id, "version_no": saved.version_no }),
+        json!({
+            "worksheet_id": id, "block_id": block_id, "version_no": saved.version_no,
+            "from_version_no": latest.1, "undone_version_no": step.version_no,
+            "proposal_id": step.proposal_id, "interaction_id": step.interaction_id,
+            "pictures_reverted": picture_undo.slots.len(),
+        }),
     )
     .await?;
+    tx.commit().await?;
     Ok(Json(state_of(&state, id).await?))
 }
 
