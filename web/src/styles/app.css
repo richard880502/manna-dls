@@ -1578,6 +1578,200 @@
   margin-top: 0;
 }
 
+/* 提示詞版本：分組、收合的卡片、變數檢查、版本紀錄與差異（只給桌面版的後台用） */
+.prompt-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.prompt-search .field-label {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.prompt-search input {
+  flex: 1;
+  max-width: 28rem;
+}
+
+.prompt-group {
+  margin-top: var(--space-lg);
+}
+
+.prompt-group > h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-sm);
+}
+
+.prompt-item {
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+.prompt-item > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-sm) 0;
+  cursor: pointer;
+}
+
+.prompt-item-name {
+  font-weight: 600;
+}
+
+.prompt-item-key {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+
+.prompt-item-desc {
+  flex-basis: 100%;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.prompt-item > .prompt-card-admin {
+  margin-top: 0;
+  border-top: 0;
+  padding: 0 0 var(--space-md) var(--space-md);
+}
+
+.prompt-description {
+  margin: var(--space-sm) 0;
+}
+
+.prompt-vars ul {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-lg);
+}
+
+.prompt-vars code,
+.prompt-check code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.var-tag {
+  margin-left: var(--space-sm);
+  padding: 0 var(--space-xs);
+  border-radius: 3px;
+  font-size: var(--text-sm);
+}
+
+.var-required {
+  background: var(--color-error-wash);
+  color: var(--color-error);
+}
+
+.var-auto {
+  background: var(--color-paper-2);
+  color: var(--color-muted);
+}
+
+.prompt-check {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 4px;
+}
+
+.prompt-check ul {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-lg);
+}
+
+.prompt-check-error {
+  background: var(--color-error-wash);
+  color: var(--color-error);
+}
+
+.prompt-check-warn {
+  background: var(--color-warn-wash);
+  color: var(--color-warn-ink);
+}
+
+.prompt-history {
+  margin-top: var(--space-lg);
+}
+
+.version-list {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+}
+
+.version-list li {
+  padding: var(--space-xs) var(--space-sm);
+  border-top: var(--rule-hair) solid var(--color-rule);
+}
+
+.version-list li.is-selected {
+  background: var(--color-accent-wash);
+}
+
+.version-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.version-meta {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.version-note {
+  margin: var(--space-xs) 0 0;
+}
+
+.version-compare {
+  margin-top: var(--space-md);
+}
+
+.diff {
+  margin: var(--space-xs) 0 var(--space-md);
+  padding: var(--space-xs) 0;
+  max-height: 24rem;
+  overflow: auto;
+  border: var(--rule-hair) solid var(--color-rule);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.diff-line {
+  display: flex;
+  gap: var(--space-sm);
+  padding: 0 var(--space-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-mark {
+  flex: none;
+  width: 1ch;
+}
+
+.diff-add {
+  background: var(--color-success-wash);
+  color: var(--color-success);
+}
+
+.diff-del {
+  background: var(--color-error-wash);
+  color: var(--color-error);
+}
+
+.diff-same {
+  color: var(--color-muted);
+}
+
 /* ================= widths ================= */
 /* Side-by-side panels need the room a 1200px window gives beside the sidebar. */
 @media (max-width: 75rem) {
