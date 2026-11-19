@@ -4,7 +4,7 @@ import { api } from "../../api/client";
 import type { PrepSessionSummary } from "../../api/types";
 import { useApp } from "../../context/AppContext";
 import { can } from "../../lib/permissions";
-import { sessionTitle } from "../../lib/prep";
+import { PREP_SESSIONS_CHANGED, sessionTitle } from "../../lib/prep";
 import { Icon, type IconName } from "../Icon";
 
 /** How many of the latest prep sessions the sidebar lists. */
@@ -26,10 +26,19 @@ const inMore = (p: string) =>
   p === "/record" ||
   p.startsWith("/runs/");
 
-/** The teacher's latest prep sessions. Read again when a prep page opens (one may be new). */
+/**
+ * The teacher's latest prep sessions. Read again when a prep page opens (one may be new) and
+ * when one is deleted (PREP_SESSIONS_CHANGED: 我的作品 deletes without leaving its page).
+ */
 function useRecentSessions(pathname: string): PrepSessionSummary[] | null {
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
+  const [changes, setChanges] = useState(0);
   const key = pathname.startsWith("/prep") ? pathname : "elsewhere";
+  useEffect(() => {
+    const changed = () => setChanges((n) => n + 1);
+    window.addEventListener(PREP_SESSIONS_CHANGED, changed);
+    return () => window.removeEventListener(PREP_SESSIONS_CHANGED, changed);
+  }, []);
   useEffect(() => {
     let alive = true;
     api
@@ -40,7 +49,7 @@ function useRecentSessions(pathname: string): PrepSessionSummary[] | null {
     return () => {
       alive = false;
     };
-  }, [key]);
+  }, [key, changes]);
   return sessions;
 }
 

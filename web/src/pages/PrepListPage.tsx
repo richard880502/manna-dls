@@ -5,7 +5,7 @@ import type { PrepKind, PrepSessionSummary, WorksheetSummary } from "../api/type
 import { ErrorText, Loading } from "../components/common";
 import { WorkCard, WorkCardSkeleton, type WorkCardData } from "../components/mywork/WorkCard";
 import { TOOL_NAME } from "../lib/create";
-import { NEXT_LABEL, sessionTitle } from "../lib/prep";
+import { DELETE_CONFIRM, NEXT_LABEL, PREP_SESSIONS_CHANGED, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
 
 /** The filter chips. 學習單 covers every worksheet-making kind and the standalone worksheets. */
@@ -131,7 +131,10 @@ const time = (iso: string) => {
   return Number.isNaN(t) ? 0 : t;
 };
 
-/** 我的作品: every prep session and every worksheet made outside one, newest first, as cards or a list. */
+/**
+ * 我的作品: every prep session and every worksheet made outside one, newest first, as cards or a
+ * list. Every item has 刪除; a session's takes its worksheets with it.
+ */
 export function PrepListPage() {
   const [params, setParams] = useSearchParams();
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
@@ -139,7 +142,8 @@ export function PrepListPage() {
   const [error, setError] = useState<string | null>(null);
   /** Bumped by 再試一次: the lists are asked for again. */
   const [attempt, setAttempt] = useState(0);
-  const [confirming, setConfirming] = useState<number | null>(null);
+  /** The key of the item whose 刪除 waits for 確定刪除. */
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [view, setView] = useState<View>(loadView);
   /** After a delete the card (and the focused button) is gone: focus goes to the list. */
@@ -193,11 +197,21 @@ export function PrepListPage() {
     saveView(v);
   }
 
-  async function remove(id: number) {
+  /** A session goes with every worksheet made in it; a worksheet of its own goes alone. */
+  async function remove(item: Item) {
     setDeleteError(null);
     try {
-      await api.deleteWorksheet(id);
-      setWorksheets((rows) => rows?.filter((r) => r.id !== id) ?? null);
+      if (item.type === "session") {
+        const id = item.session.id;
+        await api.deletePrepSession(id);
+        setSessions((rows) => rows?.filter((r) => r.id !== id) ?? null);
+        setWorksheets((rows) => rows?.filter((r) => r.prep_session_id !== id) ?? null);
+        window.dispatchEvent(new Event(PREP_SESSIONS_CHANGED));
+      } else {
+        const id = item.worksheet.id;
+        await api.deleteWorksheet(id);
+        setWorksheets((rows) => rows?.filter((r) => r.id !== id) ?? null);
+      }
       setConfirming(null);
       listRef.current?.focus();
     } catch (err) {
@@ -205,22 +219,23 @@ export function PrepListPage() {
     }
   }
 
-  /** The delete controls of a standalone worksheet: the same in both views. */
-  function deleteControl(w: WorksheetSummary) {
+  /** The delete controls of an item: the same in both views. */
+  function deleteControl(item: Item) {
     return (
       <DeleteControl
-        name={worksheetName(w)}
-        confirming={confirming === w.id}
-        error={confirming === w.id ? deleteError : null}
+        name={item.type === "session" ? sessionTitle(item.session) : worksheetName(item.worksheet)}
+        question={item.type === "session" ? DELETE_CONFIRM : "確定刪除？"}
+        confirming={confirming === item.key}
+        error={confirming === item.key ? deleteError : null}
         onAsk={() => {
           setDeleteError(null);
-          setConfirming(w.id);
+          setConfirming(item.key);
         }}
         onCancel={() => {
           setDeleteError(null);
           setConfirming(null);
         }}
-        onConfirm={() => void remove(w.id)}
+        onConfirm={() => void remove(item)}
       />
     );
   }
@@ -298,11 +313,7 @@ export function PrepListPage() {
           {shown.length > 0 && view === "cards" && (
             <ul className="work-grid" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) => (
-                <WorkCard
-                  key={item.key}
-                  data={cardOf(item)}
-                  tools={item.type === "worksheet" ? deleteControl(item.worksheet) : undefined}
-                />
+                <WorkCard key={item.key} data={cardOf(item)} tools={deleteControl(item)} />
               ))}
             </ul>
           )}
@@ -310,9 +321,9 @@ export function PrepListPage() {
             <ul className="rows mywork-rows" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) =>
                 item.type === "session" ? (
-                  <SessionRow key={item.key} s={item.session} />
+                  <SessionRow key={item.key} s={item.session} tools={deleteControl(item)} />
                 ) : (
-                  <WorksheetRow key={item.key} w={item.worksheet} tools={deleteControl(item.worksheet)} />
+                  <WorksheetRow key={item.key} w={item.worksheet} tools={deleteControl(item)} />
                 ),
               )}
             </ul>
@@ -323,7 +334,7 @@ export function PrepListPage() {
   );
 }
 
-function SessionRow({ s }: { s: PrepSessionSummary }) {
+function SessionRow({ s, tools }: { s: PrepSessionSummary; tools: ReactNode }) {
   return (
     <li className="row">
       <div>
@@ -335,6 +346,7 @@ function SessionRow({ s }: { s: PrepSessionSummary }) {
           {[...sessionDetail(s), formatDateTime(s.updated_at)].filter(Boolean).join(" · ")}
         </p>
       </div>
+      <div className="row-tools">{tools}</div>
     </li>
   );
 }
@@ -359,6 +371,7 @@ function WorksheetRow({ w, tools }: { w: WorksheetSummary; tools: ReactNode }) {
 /** 刪除 with its confirmation, in place; a failed delete is said right beside it. */
 function DeleteControl({
   name,
+  question,
   confirming,
   error,
   onAsk,
@@ -366,6 +379,8 @@ function DeleteControl({
   onConfirm,
 }: {
   name: string;
+  /** Said before 確定刪除: what goes with it. */
+  question: string;
   confirming: boolean;
   /** A failed delete. */
   error: string | null;
@@ -389,7 +404,7 @@ function DeleteControl({
     <>
       {confirming ? (
         <span role="group" aria-label="確認刪除">
-          確定刪除？
+          {question}
           <button type="button" className="text-link is-danger" onClick={onConfirm}>
             確定刪除
           </button>

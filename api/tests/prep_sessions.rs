@@ -1070,29 +1070,73 @@ async fn patch_changes_the_context_and_the_list_is_newest_first() {
 }
 
 #[tokio::test]
-async fn deleting_a_session_keeps_its_worksheets() {
+async fn deleting_a_session_hides_it_with_its_worksheets() {
     let app = test_app!();
     let t = app.teacher("T-PREP-16", "general").await;
     let (id, ws_id, _) = worksheet_session(&app, &t).await;
-    let (_, before) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&t)).await;
+    // A worksheet made elsewhere stays.
+    let (s, other_ws) = app
+        .post(
+            "/api/worksheets",
+            Some(&t),
+            json!({ "material": { "title": "Other", "text": passage("") } }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{other_ws}");
+    let other = other_ws["id"].as_i64().unwrap();
     let path = format!("/api/prep-sessions/{id}");
     let (s, v) = app.delete(&path, Some(&t)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v, json!({ "ok": true }));
+    assert_eq!(v, json!({ "ok": true, "worksheets_deleted": 1 }));
+
+    // Gone for the teacher: the session, its worksheet, and both lists.
     let (s, _) = app.get(&path, Some(&t)).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
-    let turns: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM prep_turns")
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
-    assert_eq!(turns, 0, "turns go with the session");
-    let (s, after) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&t)).await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(after["prep_session_id"], Value::Null);
-    assert_eq!(after["content"], before["content"]);
-    assert_eq!(after["versions_count"], before["versions_count"]);
-    let (_, list) = app.get("/api/worksheets", Some(&t)).await;
-    assert_eq!(list[0]["id"], ws_id);
+    let (s, _) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
     let (_, sessions) = app.get("/api/prep-sessions", Some(&t)).await;
     assert_eq!(sessions["sessions"], json!([]));
+    let (_, list) = app.get("/api/worksheets", Some(&t)).await;
+    let ids: Vec<i64> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["id"].as_i64().unwrap())
+        .collect();
+    assert!(!ids.contains(&ws_id), "{list}");
+    assert!(ids.contains(&other), "a worksheet of its own stays: {list}");
+    // No more turns or changes on it.
+    let (s, _) = post_turn(&app, &t, id, json!({ "request": "再改一次" })).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = patch(&app, &path, &t, json!({ "title": "x" })).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = app.delete(&path, Some(&t)).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "a second delete finds nothing");
+
+    // Kept for the research record: the session, its turns and the worksheet, marked deleted.
+    let (session_deleted, turns): (bool, i64) = sqlx::query_as(
+        "SELECT s.deleted_at IS NOT NULL,
+                (SELECT COUNT(*) FROM prep_turns t WHERE t.session_id = s.id)
+           FROM prep_sessions s WHERE s.id = $1",
+    )
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(session_deleted);
+    assert!(turns > 0, "turns stay");
+    let (ws_deleted, ws_session): (bool, Option<i64>) = sqlx::query_as(
+        "SELECT deleted_at IS NOT NULL, prep_session_id FROM worksheets WHERE id = $1",
+    )
+    .bind(ws_id)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(ws_deleted);
+    assert_eq!(ws_session, Some(id), "the worksheet keeps its session");
+    let logged = usage(&app, "prep_session_deleted").await;
+    assert_eq!(
+        logged,
+        vec![json!({ "session_id": id, "worksheet_ids": [ws_id] })]
+    );
 }
