@@ -71,10 +71,12 @@ pub struct TurnRow {
 const TURN_COLS: &str = "id, session_id, seq, kind, request, status, error, worksheet_id, result,
     interaction_id, created_at, finished_at, template_id, progress";
 
-/// The session if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
+/// The session if it exists, is not deleted and belongs to `teacher_id`; otherwise 404 (no
+/// existence leak).
 pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<SessionRow> {
     sqlx::query_as(&format!(
-        "SELECT {SESSION_COLS} FROM prep_sessions WHERE id = $1 AND teacher_id = $2"
+        "SELECT {SESSION_COLS} FROM prep_sessions
+          WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL"
     ))
     .bind(id)
     .bind(teacher_id)
@@ -160,14 +162,37 @@ pub async fn update(
     Ok(())
 }
 
-/// Hard delete: the session and its turns. Worksheets made in it keep everything and lose
-/// only `prep_session_id` (`ON DELETE SET NULL`).
-pub async fn delete(db: &PgPool, id: i64) -> sqlx::Result<()> {
-    sqlx::query("DELETE FROM prep_sessions WHERE id = $1")
+/// 刪除備課: hides the session and every worksheet made in it from the teacher (404 from then
+/// on) and keeps them, with the turns, for the research record. The rows of the attached pictures
+/// go (their files must be gone already: [`super::images::purge_session`]). Logged as
+/// `prep_session_deleted`. Returns the ids of the worksheets deleted with the session.
+pub async fn delete(db: &PgPool, id: i64, teacher_id: i64) -> sqlx::Result<Vec<i64>> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE prep_sessions SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL")
         .bind(id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
-    Ok(())
+    let worksheets: Vec<i64> = sqlx::query_scalar(
+        "UPDATE worksheets SET deleted_at = now()
+          WHERE prep_session_id = $1 AND deleted_at IS NULL
+          RETURNING id",
+    )
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM prep_images WHERE session_id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    crate::routes::log_usage(
+        &mut *tx,
+        teacher_id,
+        "prep_session_deleted",
+        serde_json::json!({ "session_id": id, "worksheet_ids": worksheets }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(worksheets)
 }
 
 // ---------------------------------------------------------------- turns
@@ -672,7 +697,8 @@ const SUMMARY_SELECT: &str = "SELECT s.id, s.title, s.material_id, m.title AS ma
 /// The teacher's sessions, newest `updated_at` first.
 pub async fn list(db: &PgPool, teacher_id: i64) -> sqlx::Result<Vec<Summary>> {
     let rows: Vec<SummaryRow> = sqlx::query_as(&format!(
-        "{SUMMARY_SELECT} WHERE s.teacher_id = $1 ORDER BY s.updated_at DESC, s.id DESC"
+        "{SUMMARY_SELECT} WHERE s.teacher_id = $1 AND s.deleted_at IS NULL
+          ORDER BY s.updated_at DESC, s.id DESC"
     ))
     .bind(teacher_id)
     .fetch_all(db)

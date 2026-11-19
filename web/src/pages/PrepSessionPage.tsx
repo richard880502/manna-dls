@@ -23,6 +23,7 @@ import { useReadyTemplates } from "../components/template/TemplateSelect";
 import {
   AI_DISCLAIMER,
   DELETE_CONFIRM,
+  PREP_SESSIONS_CHANGED,
   FOLLOW_PLACEHOLDER,
   KIND_LABEL,
   NEXT_LABEL,
@@ -252,6 +253,7 @@ function PrepSessionView({ id }: { id: number }) {
     setHeadError(null);
     try {
       await api.deletePrepSession(id);
+      window.dispatchEvent(new Event(PREP_SESSIONS_CHANGED));
       navigate("/prep");
     } catch (err) {
       setHeadError(errorMessage(err));

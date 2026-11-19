@@ -1816,7 +1816,7 @@ prompt key：`worksheet_template_outline`、`worksheet_template_details`、`work
 
 - `prep_sessions`：`id`、`teacher_id`（只有擁有者能存取，其他人的 id 回 404）、`title`（≤200；預設為教材標題，沒有教材時為主題，再沒有就是第一個請求的前 40 字）、`material_id`（教材庫教材；教材刪除時變成 null）、`topic`（≤200，沒有教材時用）、`class_id`、`template_id`（刪除時都變成 null）、`options`（JSONB，出題選項，預設 `{}`）、`created_at`、`updated_at`。
 - `prep_turns`：`id`、`session_id`（刪除對話時一起刪除）、`seq`（對話內從 1 起編號）、`kind`、`request`（≤2000：老師打的字，或按鈕的名稱）、`status`（`running`｜`done`｜`failed`）、`error`（失敗原因，中文）、`worksheet_id`（這一輪做出的學習單）、`result`（JSONB）、`interaction_id`（產生結果的 `ai_interactions`）、`created_at`、`finished_at`。同一個對話同時只會有一輪在跑（部分唯一索引）。
-- **刪除對話是真的刪除**：對話與所有輪次都刪掉。在對話裡做的學習單完整保留（仍在 /worksheets），只是 `prep_session_id` 變成 null。
+- **刪除備課＝整份隱藏**（migration 0033）：對話和在對話裡做的每一份學習單在同一個交易裡標成已刪除（`prep_sessions.deleted_at`、`worksheets.deleted_at`），教師從此看不到（都回 404、不在任何清單裡），資料連同所有輪次保留給研究紀錄。教師附上的圖片（`prep_images`）仍真的刪掉：先刪儲存空間裡的檔案（失敗就整個不刪並告訴教師），再刪它們的列。學習單保存的預覽圖也刪掉。記 `prep_session_deleted`。0033 以前刪掉的對話是真的刪除，它們的學習單留在 /worksheets（`prep_session_id` 為 null）。
 - `worksheets` 新增 `prep_session_id`（做出這份學習單的對話）。`worksheet_versions.cause` 新增 `revise`。
 - `prompt_versions` 新增 `prep_activity`（第 1、2、3、4 版）、`prep_ask`、`prep_revise`、`siop_selfcheck`。`scaffolds` 新增 `SC-PREP-ACTIVITY`（第 4 版的 prompt 起用 scaffold 第 2 版）、`SC-PREP-ASK`、`SC-PREP-REVISE`、`SC-SIOP-SELFCHECK`。
 - `siop_checks`：每一輪的 SIOP 自我檢核，每檢核一次一列（見「SIOP 自我檢核」）；刪除對話時一起刪除。
@@ -1923,7 +1923,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | POST | `/api/prep-sessions` | `{ kind, request?, material_id?, material?: { title?, text }, topic?, class_id?, template_id?, options?: PrepSessionOptions }` | 201 `PrepSession`（第一輪已開始） |
 | GET | `/api/prep-sessions/:id` | – | `PrepSession`（輪詢用） |
 | PATCH | `/api/prep-sessions/:id` | `{ title?, class_id?: number \| null, template_id?: number \| null, options?: PrepSessionOptions \| null }` | `PrepSession`（之後的輪次才會用到） |
-| DELETE | `/api/prep-sessions/:id` | – | `{ ok: true }`（真的刪除；學習單保留） |
+| DELETE | `/api/prep-sessions/:id` | – | `{ ok: true, worksheets_deleted }`：對話和它的學習單一起刪除（隱藏，資料保留；見上） |
 | POST | `/api/prep-sessions/:id/turns` | `{ kind?, request }` | 202 `PrepSession` |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/kit?format=docx` | – | 教學套件的 DOCX（見 `kit`） |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | – | 這一輪最新的 `SiopCheck`（檢核中時輪詢）；還沒有 → 404（見「SIOP 自我檢核」） |
@@ -2034,7 +2034,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ## usage_logs 新事件
 
-`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`、`entry`、`ui_version`）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`、`entry`、`ui_version`）、`prep_session_deleted`（`session_id`、`worksheet_ids`：一起刪除的學習單）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
 
 ## SIOP 自我檢核
 
