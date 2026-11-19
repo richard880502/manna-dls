@@ -52,6 +52,8 @@ jobs:
               - 'docker-compose.yml'
             memory:
               - 'memory-sidecar/**'
+              - 'api/src/memory/**'
+              - 'docker-compose.yml'
             ci:
               - '.github/workflows/**'
 
@@ -141,7 +143,13 @@ jobs:
     runs-on: ubuntu-latest
     services:
       falkordb:
+        # Same digest and hardening as memory-sidecar/docker-compose.yml (no browser, password).
         image: falkordb/falkordb:v4.12.0@sha256:7927eb194df0fadf70e2deb6c20c8178743ec92aacd739c790f8a35ce5dee613
+        env:
+          BROWSER: '0'
+          REDIS_ARGS: '--requirepass ci-falkordb'
+          REDISCLI_AUTH: 'ci-falkordb'
+          FALKORDB_ARGS: 'THREAD_COUNT 2 MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000'
         ports:
           - 6379:6379
         options: >-
@@ -156,11 +164,12 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: memory-sidecar/requirements.txt
-      - run: pip install -r memory-sidecar/requirements.txt
+      - run: pip install --require-hashes -r memory-sidecar/requirements.txt
       - run: python -m unittest discover -s memory-sidecar -v
         env:
           MEMORY_SMOKE: 'true'
           FALKORDB_HOST: 127.0.0.1
+          FALKORDB_PASSWORD: ci-falkordb
       - run: docker build -t manna-memory-test memory-sidecar
 
   docker:

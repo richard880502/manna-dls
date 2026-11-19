@@ -3642,4 +3642,23 @@ interface RunProgress {
 ## 教師長期記憶（Issue #82）
 
 Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 的可重建 Graphiti 索引、
-研究開關、模型轉發及完整端點契約，見 [TEACHER_MEMORY.md](TEACHER_MEMORY.md)。
+研究開關、模型轉發及完整端點契約，見 [TEACHER_MEMORY.md](TEACHER_MEMORY.md)。摘要：
+
+| 方法／路徑 | 說明 |
+|---|---|
+| `GET /api/me/memories` | 本人全歷程、`enabled`（研究開關）、`graph_enabled`、`index`（未設定索引時 `null`） |
+| `POST /api/me/memories/preview` | `{text}`（1–1000 字）→ `{id, statement, replaces_id}`；不支援／單次要求 400 |
+| `POST /api/me/memories` | `{candidate_id, confirmed: true}` → `{id}`，與有效習慣相同時 `{id, unchanged: true}`（不新增版本）；`{candidate_id, confirmed: false}` 取消預覽 → `{ok, cancelled: true}`（記 `teacher_decisions` reject）；過期／已確認／已取消／過時 409 |
+| `DELETE /api/me/memories/{id}` | 停止使用（只標失效） |
+| `GET`／`PUT /api/admin/memory-settings` | PI；`{enabled}`，預設 false，切換寫 `usage_logs` |
+| `GET /api/admin/memory-index` | PI；`{pending, failed, graph_enabled, compatible, sidecar}`，未設定索引時計數為 0 |
+| `POST /api/admin/memory-index/rebuild` | PI；從正本重建 |
+
+- 研究開關關閉時，任何產生步驟的提示詞與學習單檢查都不變。開啟時只有出題／內容產生步驟
+  （`memory::HABIT_STEPS`）附加版本化提示詞 `teacher_memory_context`，`ai_interactions.input_snapshot.teacher_memory`
+  記錄習慣、附加的原文（`system_appended`／`user_appended`）、提示詞版本與 Graphiti 排序 metadata。
+- 選擇題／配對題的選項數檢查：預設不變；開關開啟且有確認的選項數習慣時，另外接受該數目。
+- 模型轉發 `POST /api/internal/memory/v1/chat/completions`、`/embeddings` **不在公開連接埠**：
+  只由 `INTERNAL_PORT`（預設 8081，設定索引時才開啟）提供，需 `X-Manna-Service-Token`（`GRAPHITI_TOKEN`）、
+  job token、`X-Manna-Memory-Api-Version` 與領取時的 `X-Manna-Graphiti-Version`；欄位白名單、
+  `n=1`、`max_tokens ≤ 8192`、embedding batch ≤ 64、每工作 300 次。

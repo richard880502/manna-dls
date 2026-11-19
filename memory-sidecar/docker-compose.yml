@@ -1,5 +1,7 @@
 # Independent Coolify resource: base directory /memory-sidecar, Compose location /docker-compose.yml.
-# Connect only this resource and Manna API to the pre-created external network.
+# Only the sidecar joins the pre-created external network shared with Manna API
+# (docs/TEACHER_MEMORY.md). FalkorDB is reachable from nothing but this resource's internal
+# network and needs a password (a Coolify magic variable: generated, never typed).
 services:
   memory:
     build: .
@@ -7,8 +9,10 @@ services:
     mem_limit: 512m
     environment:
       GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:?Set a random service secret}
-      MEMORY_PROXY_URL: ${MEMORY_PROXY_URL:-http://manna-api:8080/api/internal/memory/v1}
+      # Manna API's internal listener (INTERNAL_PORT 8081), never its public port.
+      MEMORY_PROXY_URL: ${MEMORY_PROXY_URL:-http://manna-api:8081/api/internal/memory/v1}
       FALKORDB_HOST: falkordb
+      FALKORDB_PASSWORD: ${SERVICE_PASSWORD_FALKORDB}
       GRAPHITI_TELEMETRY_ENABLED: "false"
       SEMAPHORE_LIMIT: "2"
     networks:
@@ -25,15 +29,25 @@ services:
       retries: 5
 
   falkordb:
+    # The FalkorDB server image with the bundled browser UI turned off (BROWSER=0).
     image: falkordb/falkordb:v4.12.0@sha256:7927eb194df0fadf70e2deb6c20c8178743ec92aacd739c790f8a35ce5dee613
     restart: unless-stopped
     mem_limit: 512m
+    # network_mode (not `networks:`) puts FalkorDB on this resource's internal network ONLY:
+    # Coolify attaches its per-resource network to every service that uses `networks:`, but
+    # leaves a service with network_mode alone. `hostname` is its DNS name there.
+    network_mode: "${COMPOSE_PROJECT_NAME}_memory-private"
+    hostname: falkordb
     environment:
-      FALKORDB_ARGS: "THREAD_COUNT 2"
+      BROWSER: "0"
+      REDIS_ARGS: "--requirepass ${SERVICE_PASSWORD_FALKORDB}"
+      # redis-cli (healthcheck) reads the password from here.
+      REDISCLI_AUTH: ${SERVICE_PASSWORD_FALKORDB}
+      # Replacing FALKORDB_ARGS drops the image defaults, so they are repeated here.
+      FALKORDB_ARGS: "THREAD_COUNT 2 MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000"
     volumes:
-      - memory-graph:/data
-    networks:
-      - memory-private
+      # The image writes its RDB/AOF files to FALKORDB_DATA_PATH, not to /data.
+      - memory-graph:/var/lib/falkordb/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

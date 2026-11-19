@@ -22,10 +22,14 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      # Optional independent manna-memory resource. Empty URL/token keeps Phase 1 only.
+      # Optional independent manna-memory resource (docs/TEACHER_MEMORY.md). Empty URL/token
+      # keeps Phase 1 only. The sidecar's model calls come back to INTERNAL_PORT, a second
+      # listener that is opened only when the index is configured, is not published here and
+      # is never routed by nginx/the proxy.
       GRAPHITI_URL: ${GRAPHITI_URL:-}
       GRAPHITI_TOKEN: ${GRAPHITI_TOKEN:-}
-      MEMORY_PROXY_URL: ${MEMORY_PROXY_URL:-http://manna-api:8080/api/internal/memory/v1}
+      INTERNAL_PORT: ${INTERNAL_PORT:-8081}
+      MEMORY_PROXY_URL: ${MEMORY_PROXY_URL:-http://manna-api:8081/api/internal/memory/v1}
       AI_PROVIDER: ${AI_PROVIDER:-none}
       AI_MODEL: ${AI_MODEL:-claude-opus-5-5}
       AI_EFFORT: ${AI_EFFORT:-medium}

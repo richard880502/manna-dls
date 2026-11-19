@@ -1,0 +1,9 @@
+# Top-level pins for the memory sidecar. requirements.txt is the hashed lock generated from
+# this file (docs/TEACHER_MEMORY.md「鎖定相依套件」); the image installs it with --require-hashes.
+graphiti-core[falkordb]==0.31.2
+httpx==0.28.1
+fastapi==0.121.3
+uvicorn==0.38.0
+# Lock SDK/driver too: graphiti 0.x and OpenAI 3.x are a moving interface.
+openai==3.55.1
+falkordb==1.8.2

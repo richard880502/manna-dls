@@ -1,8 +1,12 @@
-FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 GRAPHITI_TELEMETRY_ENABLED=false
+# Digest-pinned base (python:3.12-slim) and a hashed lock: a rebuild installs exactly the
+# reviewed packages or fails (docs/TEACHER_MEMORY.md「鎖定相依套件」).
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 GRAPHITI_TELEMETRY_ENABLED=false \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /srv
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home memory
+RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r requirements.txt \
+    && useradd --uid 10001 --create-home memory
 COPY app.py .
 USER memory
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
