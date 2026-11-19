@@ -376,6 +376,7 @@ pub fn api_router() -> Router<AppState> {
             "/admin/prompts/{key}/versions",
             get(admin::list_prompt_versions),
         )
+        .route("/admin/prompts/{key}/try", post(admin::try_prompt))
         .route(
             "/admin/teacher-cases/import",
             post(admin::import_teacher_cases).layer(DefaultBodyLimit::max(20 * 1024 * 1024)),

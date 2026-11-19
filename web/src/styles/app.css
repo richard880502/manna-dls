@@ -1772,6 +1772,53 @@
   color: var(--color-muted);
 }
 
+.try-run {
+  margin-top: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule);
+  border-radius: 4px;
+}
+
+.try-run > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.try-result {
+  margin-top: var(--space-md);
+}
+
+.try-checks {
+  list-style: none;
+  margin: var(--space-xs) 0;
+  padding: 0;
+}
+
+.try-pass {
+  color: var(--color-success);
+}
+
+.try-fail {
+  color: var(--color-error);
+}
+
+.try-detail {
+  color: var(--color-ink-2);
+}
+
+.try-output {
+  max-height: 24rem;
+  overflow: auto;
+  margin: var(--space-xs) 0;
+  padding: var(--space-sm);
+  background: var(--color-paper-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ================= widths ================= */
 /* Side-by-side panels need the room a 1200px window gives beside the sidebar. */
 @media (max-width: 75rem) {

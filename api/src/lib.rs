@@ -19,6 +19,7 @@ pub mod preferences;
 pub mod prep;
 pub mod progress;
 pub mod prompt_registry;
+pub mod prompt_try;
 pub mod prompts;
 pub mod record;
 pub mod retrieval;

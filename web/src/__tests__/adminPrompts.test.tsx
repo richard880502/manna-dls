@@ -47,6 +47,7 @@ function version(key: string, no: number, extra: Partial<PromptVersion> = {}): P
 const list = {
   groups: ["學習單產生", "照我的學習單做"],
   registry,
+  try_keys: ["worksheet_warmup"],
   prompts: [
     version("worksheet_template_section", 4),
     version("worksheet_warmup", 3, { note: "加一句", created_by_research_id: "PI-01", by_me: true }),
@@ -181,5 +182,64 @@ describe("提示詞版本 (pi)", () => {
         restored_from: 1,
       }),
     );
+  });
+
+  it("tries the unsaved draft on a sample, shows output and checks, and offers nothing for other prompts", async () => {
+    signIn();
+    const api = mockApi(
+      routes({
+        "POST /api/admin/prompts/worksheet_warmup/try": () => ({
+          run_id: 5,
+          preview: true,
+          status: "ok",
+          message: null,
+          system: "SYSTEM-TEXT",
+          user: "USER-TEXT",
+          output: { background_activities: [] },
+          checks: [
+            { name: "schema", passed: true },
+            { name: "english_only", passed: false, detail: "第 1 個活動含有中文" },
+          ],
+          notes: [],
+          unknown_variables: [],
+        }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/admin");
+    await user.click(await screen.findByText("worksheet_template_section", { selector: "summary code" }));
+    expect(screen.queryByText(/試產生：先試試看/)).not.toBeInTheDocument();
+    await user.click(screen.getByText("worksheet_template_section", { selector: "summary code" }));
+    await user.click(screen.getByText("worksheet_warmup", { selector: "summary code" }));
+    await user.click(screen.getByText(/試產生：先試試看/));
+    expect(screen.getByText(/這是預覽/)).toHaveTextContent("不會出現在任何老師的畫面");
+
+    const run = screen.getByRole("button", { name: "試產生" });
+    expect(run).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "放入範例短文" }));
+    // the edited, unsaved text is what is sent
+    const system = screen.getByLabelText(/系統提示詞/);
+    await user.type(system, "草稿");
+    await user.click(run);
+    const result = within(await screen.findByLabelText("試產生的結果"));
+    const checks = result.getByRole("list", { name: "平台檢查" });
+    expect(checks).toHaveTextContent("通過：schema");
+    expect(checks).toHaveTextContent("沒通過：english_only");
+    expect(checks).toHaveTextContent("第 1 個活動含有中文");
+    expect(result.getByText(/background_activities/)).toBeInTheDocument();
+    const body = api.lastBody("POST", "/api/admin/prompts/worksheet_warmup/try") as {
+      system_text: string;
+      sample: { passage: string };
+    };
+    expect(body.system_text).toBe("系統 v3草稿");
+    expect(body.sample.passage).toContain("Honeybees");
+    // nothing was saved
+    expect(api.callsTo("POST", "/api/admin/prompts")).toHaveLength(0);
+
+    // a draft that dropped a required variable cannot be tried
+    const userBox = screen.getByLabelText(/使用者範本/);
+    await user.clear(userBox);
+    await user.type(userBox, "沒有變數");
+    expect(screen.getByRole("button", { name: "試產生" })).toBeDisabled();
   });
 });

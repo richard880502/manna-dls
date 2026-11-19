@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../../api/client";
-import type { PromptInfo, PromptList, PromptVersion } from "../../api/types";
+import type { PromptInfo, PromptList, PromptVersion, TryResponse } from "../../api/types";
 import { formatDateTime } from "../../lib/labels";
 import { checkVariables, lineDiff } from "../../lib/promptCheck";
 import { ErrorText, Loading, Notice } from "../common";
@@ -105,6 +105,7 @@ export function PromptsEditor() {
                   key={p.prompt_key}
                   prompt={p}
                   info={byKey.get(p.prompt_key)}
+                  canTry={list.try_keys.includes(p.prompt_key)}
                   open={query.trim() !== "" && shown <= 3}
                   onSaved={onSaved}
                 />
@@ -153,11 +154,13 @@ export function PromptsEditor() {
 function PromptItem({
   prompt,
   info,
+  canTry,
   open: openByDefault,
   onSaved,
 }: {
   prompt: PromptVersion;
   info: PromptInfo | undefined;
+  canTry: boolean;
   open: boolean;
   onSaved: (p: PromptVersion) => void;
 }) {
@@ -174,7 +177,7 @@ function PromptItem({
         <span className="soft-tag">v{prompt.version_no}</span>
         {info && <span className="prompt-item-desc">{info.description}</span>}
       </summary>
-      {open && <PromptCard prompt={prompt} info={info} onSaved={onSaved} />}
+      {open && <PromptCard prompt={prompt} info={info} canTry={canTry} onSaved={onSaved} />}
     </details>
   );
 }
@@ -202,10 +205,12 @@ function VariableList({ info }: { info: PromptInfo }) {
 function PromptCard({
   prompt,
   info,
+  canTry = false,
   onSaved,
 }: {
   prompt: PromptVersion;
   info: PromptInfo | undefined;
+  canTry?: boolean;
   onSaved: (p: PromptVersion) => void;
 }) {
   const [systemText, setSystemText] = useState(prompt.system_text);
@@ -314,6 +319,14 @@ function PromptCard({
       </div>
       <ErrorText message={error} />
       {saved && <Notice tone="success">{saved}</Notice>}
+      {canTry && (
+        <TryRun
+          promptKey={prompt.prompt_key}
+          systemText={systemText}
+          userTemplate={userTemplate}
+          blocked={blank || check.missing.length > 0}
+        />
+      )}
       {prompt.version_no > 0 && <History prompt={prompt} onRestored={onSaved} />}
     </article>
   );
@@ -464,5 +477,139 @@ function DiffBlock({ title, from, to }: { title: string; from: string; to: strin
         </pre>
       )}
     </div>
+  );
+}
+
+const SAMPLE_PASSAGE = `Honeybees communicate by dancing. When a forager finds a good patch of flowers, she returns to the hive and moves in a pattern called the waggle dance.
+
+The angle of the dance shows the direction of the flowers, and its length shows the distance. Other bees watch the dance and fly to the same place.
+
+Scientists have studied this behaviour for decades. They believe it is one of the most complex forms of communication among insects.`;
+
+const STATUS_TEXT: Record<TryResponse["status"], string> = {
+  ok: "模型有回答",
+  disabled: "這個環境沒有開啟 AI",
+  timeout: "AI 沒有在時間內回應",
+  refused: "模型拒絕回答",
+  error: "這次沒有拿到可用的輸出",
+};
+
+/** 試產生：跑一次還沒儲存的草稿，看原始輸出和平台檢查的結果。只是預覽。 */
+function TryRun({
+  promptKey,
+  systemText,
+  userTemplate,
+  blocked,
+}: {
+  promptKey: string;
+  systemText: string;
+  userTemplate: string;
+  blocked: boolean;
+}) {
+  const [passage, setPassage] = useState("");
+  const [question, setQuestion] = useState("");
+  const [profile, setProfile] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<TryResponse | null>(null);
+  const idBase = `try-${promptKey}`;
+  const needsQuestion = promptKey === "prep_ask";
+  const ready = passage.trim() !== "" && (!needsQuestion || question.trim() !== "");
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      setResult(
+        await api.admin.tryPrompt(promptKey, {
+          system_text: systemText,
+          user_template: userTemplate,
+          sample: {
+            passage,
+            ...(needsQuestion ? { question } : {}),
+            ...(profile.trim() ? { class_profile: profile } : {}),
+          },
+        }),
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details className="try-run">
+      <summary>試產生：先試試看再儲存</summary>
+      <Notice>
+        這是預覽。用的是上面<strong>還沒儲存</strong>的文字，只跑一次；結果不會存成版本、不會出現在任何老師的畫面，也不會進研究資料。
+        用你貼的短文試，不會讀任何老師的資料。
+      </Notice>
+      <label className="field-label" htmlFor={`${idBase}-passage`}>
+        範例教材（英文，段落之間空一行）
+      </label>
+      <textarea id={`${idBase}-passage`} rows={6} value={passage} onChange={(e) => setPassage(e.target.value)} />
+      <div className="button-row">
+        <button type="button" className="secondary-button" onClick={() => setPassage(SAMPLE_PASSAGE)}>
+          放入範例短文
+        </button>
+      </div>
+      {needsQuestion && (
+        <>
+          <label className="field-label" htmlFor={`${idBase}-question`}>
+            老師的問題
+          </label>
+          <input id={`${idBase}-question`} value={question} onChange={(e) => setQuestion(e.target.value)} />
+        </>
+      )}
+      <label className="field-label" htmlFor={`${idBase}-profile`}>
+        班級描述（選填）
+      </label>
+      <input id={`${idBase}-profile`} value={profile} onChange={(e) => setProfile(e.target.value)} />
+      <div className="button-row">
+        <button
+          type="button"
+          className="primary-button"
+          disabled={busy || !ready || blocked}
+          onClick={() => void run()}
+        >
+          {busy ? "試產生中…" : "試產生"}
+        </button>
+        {blocked && <span className="field-hint">上面的文字還有問題（空白或少了必要的變數），先處理才能試。</span>}
+      </div>
+      <ErrorText message={error} />
+      {result && (
+        <div className="try-result" aria-label="試產生的結果">
+          <h4>
+            {STATUS_TEXT[result.status]} <span className="soft-tag">預覽</span>
+          </h4>
+          {result.message && <p>{result.message}</p>}
+          {result.checks.length > 0 && (
+            <ul className="try-checks" aria-label="平台檢查">
+              {result.checks.map((c, i) => (
+                <li key={`${c.name}-${i}`} className={c.passed ? "try-pass" : "try-fail"}>
+                  <span aria-hidden="true">{c.passed ? "✓" : "✗"}</span> {c.passed ? "通過" : "沒通過"}：<code>{c.name}</code>
+                  {c.detail && <span className="try-detail"> {c.detail}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {result.notes.length > 0 && (
+            <p className="field-hint">平台會自動修正：{result.notes.join("；")}</p>
+          )}
+          {result.output !== null && result.output !== undefined && (
+            <>
+              <strong>模型的原始輸出（還沒經過任何修補）</strong>
+              <pre className="try-output">{JSON.stringify(result.output, null, 2)}</pre>
+            </>
+          )}
+          <details>
+            <summary>實際送給模型的訊息</summary>
+            <pre className="try-output">{`【系統】\n${result.system}\n\n【使用者】\n${result.user}`}</pre>
+          </details>
+        </div>
+      )}
+    </details>
   );
 }

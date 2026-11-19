@@ -545,6 +545,8 @@ export interface PromptList {
   prompts: PromptVersion[];
   groups: string[];
   registry: PromptInfo[];
+  /** 可以「試產生」的 key */
+  try_keys: string[];
 }
 
 export interface CreatePromptRequest {
@@ -553,6 +555,36 @@ export interface CreatePromptRequest {
   user_template: string;
   note?: string;
   restored_from?: number;
+}
+
+export interface TrySample {
+  /** 英文教材（段落之間空一行） */
+  passage: string;
+  /** prep_ask：老師的問題 */
+  question?: string;
+  class_profile?: string;
+}
+
+export interface TryCheck {
+  name: string;
+  passed: boolean;
+  detail?: string;
+}
+
+/** 試產生的結果：預覽，不會存成版本、也不會給任何老師看到。 */
+export interface TryResponse {
+  run_id: number;
+  preview: true;
+  status: "ok" | "disabled" | "timeout" | "refused" | "error";
+  message: string | null;
+  /** 實際送給模型的訊息 */
+  system: string;
+  user: string;
+  /** 模型的原始 JSON（還沒經過任何檢查或修補） */
+  output: unknown;
+  checks: TryCheck[];
+  notes: string[];
+  unknown_variables: string[];
 }
 
 export interface SavedPrompt extends PromptVersion {
