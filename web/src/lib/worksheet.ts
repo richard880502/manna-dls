@@ -268,6 +268,49 @@ export function newItem(levels: WsLevel[], tiered = false): WsItem {
 const CHOICE_FORMATS = new Set(["選擇題", "是非題", "配對題"]);
 export const usesChoices = (format: string | null) => format === null || CHOICE_FORMATS.has(format);
 
+/** The label printed before the `index`-th choice: 「(A)」「(B)」… (DOCX, PDF, the editor and the
+ * preview all print it; options are stored without it). The server's `option_label`. */
+export const optionLabel = (index: number) => `(${String.fromCharCode(65 + (index % 26))})`;
+
+/**
+ * A letter label at the start of a choice the model (or a teacher) wrote: 「(A) …」「（A）…」, 「A. …」
+ * 「A) …」「A: …」 (a space after these) or 「A．…」「A、…」「A：…」. The server uses the same pattern
+ * (`OPTION_LABEL` in api/src/worksheet/assemble.rs).
+ */
+const OPTION_LABEL =
+  /^[ \t]*(?:[(（][ \t]*([A-Za-z])[ \t]*[)）][ \t]*|([A-Za-z])(?:[.):][ \t]+|[．、：][ \t]*))([^ \t][\s\S]*)$/;
+
+function splitOptionLabel(text: string): { letter: string; rest: string } | null {
+  const m = OPTION_LABEL.exec(text);
+  const letter = m?.[1] ?? m?.[2];
+  return m && letter && m[3] !== undefined ? { letter: letter.toUpperCase(), rest: m[3] } : null;
+}
+
+/** The `index`-th choice without a letter label of its own (「A. Paris」 as the first choice is
+ * 「Paris」), so that it is not lettered twice. Only the label of its own position goes. */
+export function withoutOptionLabel(text: string, index: number): string {
+  const label = splitOptionLabel(text);
+  return label && label.letter === String.fromCharCode(65 + (index % 26)) ? label.rest : text;
+}
+
+/** The `index`-th choice as printed: 「(A) Paris」. */
+export const printedOption = (text: string, index: number) => `${optionLabel(index)} ${withoutOptionLabel(text, index)}`;
+
+/**
+ * The answer of a 選擇題 as the teacher version prints it: with the label of the choice it is
+ * (「(B) London」), so the key matches the letters on the sheet. Any other answer, and the answer of
+ * every other format, prints as it is. The server's `printed_answer`.
+ */
+export function printedAnswer(format: string | null, answer: string, options: readonly string[]): string {
+  if (format !== "選擇題") return answer;
+  const bare = (splitOptionLabel(answer)?.rest ?? answer).trim().toLowerCase();
+  for (const [i, o] of options.entries()) {
+    const text = withoutOptionLabel(o, i).trim();
+    if (text !== "" && text.toLowerCase() === bare) return `${optionLabel(i)} ${text}`;
+  }
+  return answer;
+}
+
 export const TRUE_FALSE = ["True", "False"] as const;
 /** Empty choices a format starts with when the question has none: the generator writes four
  * options for 選擇題 and at least three for 配對題. */

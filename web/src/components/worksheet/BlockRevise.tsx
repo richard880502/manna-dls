@@ -25,6 +25,7 @@ import {
   type SheetSelection,
 } from "../../lib/blockRevise";
 import { clipQuote } from "../../lib/materials";
+import { printedAnswer, printedOption } from "../../lib/worksheet";
 import { ErrorText } from "../common";
 
 // ---------------------------------------------------------------- state
@@ -503,14 +504,14 @@ function ItemLines({ item, teacher }: { item: WsItem; teacher: boolean }) {
     <>
       {item.options.length > 0 && (
         <ul className="prep-sheet-options" lang="en">
-          {item.options.map((o) => (
-            <li key={o}>{o}</li>
+          {item.options.map((o, i) => (
+            <li key={o}>{printedOption(o, i)}</li>
           ))}
         </ul>
       )}
       {teacher && item.answer.trim() && (
         <p className="ws-proposal-answer">
-          參考答案：<span lang="en">{item.answer}</span>
+          參考答案：<span lang="en">{printedAnswer(item.answer_format, item.answer, item.options)}</span>
         </p>
       )}
     </>

@@ -1,7 +1,15 @@
 import type { ReactNode } from "react";
 import type { WsSheet, WsSheetBlock } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
-import { AUDIENCE_LABEL, BLOCK_KIND_LABEL, LEVEL_LABEL, studentVersionName, versionLabel } from "../../lib/worksheet";
+import {
+  AUDIENCE_LABEL,
+  BLOCK_KIND_LABEL,
+  LEVEL_LABEL,
+  printedAnswer,
+  printedOption,
+  studentVersionName,
+  versionLabel,
+} from "../../lib/worksheet";
 import { BloomChip } from "../worksheet/Bloom";
 import { GlossaryBox, glossText } from "../worksheet/Glossary";
 import { OrganizerView } from "../worksheet/Organizer";
@@ -28,7 +36,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
   b.items.forEach((it) => {
     const tag = isBloom(it.bloom) ? ` 〔Bloom：${BLOOM_LABEL[it.bloom]} ${BLOOM_EN[it.bloom]}〕` : "";
     lines.push(`${it.no}. ${it.prompt}${tag}`);
-    it.options.forEach((o) => lines.push(`   ${o}`));
+    it.options.forEach((o, i) => lines.push(`   ${printedOption(o, i)}`));
     if (it.table?.columns.some((c) => c.trim() !== "")) lines.push(`   | ${it.table.columns.join(" | ")} |`);
     if (it.hint?.trim()) lines.push(`   Hint: ${it.hint}`);
     if (it.support) {
@@ -39,7 +47,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
         lines.push(`   Word bank: ${it.support.word_bank.join(" / ")}`);
     }
     if (it.organizer) lines.push(...organizerText(it.organizer));
-    if (it.answer) lines.push(`   參考答案：${it.answer}`);
+    if (it.answer) lines.push(`   參考答案：${printedAnswer(it.answer_format, it.answer, it.options)}`);
     if (it.scoring) lines.push(`   評分說明：${it.scoring}`);
   });
   if (b.glosses?.length) lines.push("Glossary:", ...b.glosses.map((g) => `${g.word} ${glossText(g)}`));
@@ -205,8 +213,8 @@ export function SheetPreview({
                     </p>
                     {it.options.length > 0 && (
                       <ul className="prep-sheet-options">
-                        {it.options.map((o) => (
-                          <li key={o}>{o}</li>
+                        {it.options.map((o, i) => (
+                          <li key={o}>{printedOption(o, i)}</li>
                         ))}
                       </ul>
                     )}
@@ -273,7 +281,7 @@ export function SheetPreview({
                         {it.answer && (
                           <div className="ws-answer-row">
                             <span>參考答案</span>
-                            <span lang="en">{it.answer}</span>
+                            <span lang="en">{printedAnswer(it.answer_format, it.answer, it.options)}</span>
                           </div>
                         )}
                         {it.scoring && (

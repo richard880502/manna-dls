@@ -752,6 +752,71 @@ pub fn without_heading<'a>(content: &'a str, heading: &str) -> &'a str {
     }
 }
 
+/// The label printed before the `index`-th choice of a question: 「(A)」「(B)」… (the sheet's
+/// convention: DOCX, PDF, the editor and the preview all print it; options are stored without it).
+pub fn option_label(index: usize) -> String {
+    format!("({})", (b'A' + (index % 26) as u8) as char)
+}
+
+/// A letter label at the start of a choice the model (or a teacher) wrote: 「(A) …」「（A）…」,
+/// 「A. …」「A) …」「A: …」 (a space after these) or 「A．…」「A、…」「A：…」. The web uses the same
+/// pattern (`OPTION_LABEL` in web/src/lib/worksheet.ts).
+static OPTION_LABEL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"^[ \t]*(?:[(（][ \t]*([A-Za-z])[ \t]*[)）][ \t]*|([A-Za-z])(?:[.):][ \t]+|[．、：][ \t]*))([^ \t][\s\S]*)$",
+    )
+    .expect("valid regex")
+});
+
+/// The letter and the text of a choice that starts with a letter label, if it does.
+fn split_option_label(text: &str) -> Option<(char, &str)> {
+    let c = OPTION_LABEL.captures(text)?;
+    let letter = c.get(1).or(c.get(2))?.as_str().chars().next()?;
+    Some((letter.to_ascii_uppercase(), c.get(3)?.as_str()))
+}
+
+/// The `index`-th choice without a letter label of its own (「A. Paris」 as the first choice is
+/// 「Paris」), so that it is not lettered twice. Only the label of its own position goes: 「B. 1066」
+/// as the first choice, or 「A.D. 1066」 (no space after the dot), stays as it is.
+pub fn without_option_label(text: &str, index: usize) -> &str {
+    let own = (b'A' + (index % 26) as u8) as char;
+    match split_option_label(text) {
+        Some((letter, rest)) if letter == own => rest,
+        _ => text,
+    }
+}
+
+/// The `index`-th choice as printed: 「(A) Paris」.
+pub fn printed_option(text: &str, index: usize) -> String {
+    format!(
+        "{} {}",
+        option_label(index),
+        without_option_label(text, index)
+    )
+}
+
+/// The answer of a 選擇題 as the teacher version prints it: with the label of the choice it is
+/// (「(B) London」), so the key matches the letters on the sheet. Answers are stored as the
+/// choice's text (checks.rs); one written with a label of its own, or in another case, is still
+/// recognised. Any other answer, and the answer of every other format, prints as it is.
+pub fn printed_answer(format: Option<&str>, answer: &str, options: &[String]) -> String {
+    if format != Some(FMT_CHOICE) {
+        return answer.to_string();
+    }
+    let bare = split_option_label(answer)
+        .map_or(answer, |(_, rest)| rest)
+        .trim();
+    options
+        .iter()
+        .enumerate()
+        .map(|(i, o)| (i, without_option_label(o, i).trim()))
+        .find(|(_, o)| !o.is_empty() && o.to_lowercase() == bare.to_lowercase())
+        .map_or_else(
+            || answer.to_string(),
+            |(i, o)| format!("{} {o}", option_label(i)),
+        )
+}
+
 pub(crate) fn letter(index: usize) -> String {
     let c = (b'A' + (index % 26) as u8) as char;
     if index < 26 {
@@ -1141,6 +1206,65 @@ pub fn text_lines(sheet: &Sheet) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The same cases as `printedOption` / `printedAnswer` in
+    /// web/src/__tests__/worksheetPrint.test.ts: the preview and the exports letter alike.
+    #[test]
+    fn choices_print_lettered_once() {
+        for (text, index, printed) in [
+            ("Paris", 0, "(A) Paris"),
+            ("London", 1, "(B) London"),
+            ("A. Paris", 0, "(A) Paris"),
+            ("(A) Paris", 0, "(A) Paris"),
+            ("（B）London", 1, "(B) London"),
+            ("( c ) Rome", 2, "(C) Rome"),
+            ("b) London", 1, "(B) London"),
+            ("D: Tokyo", 3, "(D) Tokyo"),
+            ("C．Rome", 2, "(C) Rome"),
+            ("C、Rome", 2, "(C) Rome"),
+            // Not its own position, no space after the dot, or nothing after the label: kept.
+            ("B. London", 0, "(A) B. London"),
+            ("A.D. 1066", 0, "(A) A.D. 1066"),
+            ("A lot of rain", 0, "(A) A lot of rain"),
+            ("A.", 0, "(A) A."),
+            ("(A)", 0, "(A) (A)"),
+            ("True", 0, "(A) True"),
+        ] {
+            assert_eq!(printed_option(text, index), printed, "{text:?} at {index}");
+        }
+        assert_eq!(option_label(0), "(A)");
+        assert_eq!(option_label(11), "(L)");
+    }
+
+    #[test]
+    fn a_choice_answer_prints_with_its_letter() {
+        let options: Vec<String> = ["Paris", "London", "Rome", "Tokyo"]
+            .map(String::from)
+            .to_vec();
+        let lettered: Vec<String> = ["A. Paris", "B. London", "C. Rome", "D. Tokyo"]
+            .map(String::from)
+            .to_vec();
+        for (format, answer, opts, printed) in [
+            (Some(FMT_CHOICE), "London", &options, "(B) London"),
+            (Some(FMT_CHOICE), " london ", &options, "(B) London"),
+            (Some(FMT_CHOICE), "B. London", &options, "(B) London"),
+            (Some(FMT_CHOICE), "(D) Tokyo", &options, "(D) Tokyo"),
+            (Some(FMT_CHOICE), "Rome", &lettered, "(C) Rome"),
+            // Not one of the choices (or only a letter): as written.
+            (Some(FMT_CHOICE), "Berlin", &options, "Berlin"),
+            (Some(FMT_CHOICE), "B", &options, "B"),
+            // Other formats keep their answer.
+            (Some(FMT_TRUE_FALSE), "True", &options, "True"),
+            (Some("簡答題"), "London", &options, "London"),
+            (None, "London", &options, "London"),
+        ] {
+            assert_eq!(
+                printed_answer(format, answer, opts),
+                printed,
+                "{format:?} {answer:?}"
+            );
+        }
+    }
 
     fn item(id: &str, levels: &[Level], format: &str) -> Item {
         Item {
