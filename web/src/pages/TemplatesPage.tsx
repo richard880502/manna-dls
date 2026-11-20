@@ -1,10 +1,16 @@
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { MaterialDetail, TemplateCard as TemplateCardData } from "../api/types";
+import type {
+  Material,
+  MaterialDetail,
+  TemplateCard as TemplateCardData,
+  WsTemplateDetail,
+} from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { Dialog, useDialogGuard } from "../components/Dialog";
 import { TemplateBrowser } from "../components/library/BrowsePanel";
+import { MoreMenu } from "../components/library/Cards";
 import {
   TEMPLATE_AREA_LABEL,
   UPLOAD_SAMPLE,
@@ -15,13 +21,15 @@ import {
   type TemplateArea,
 } from "../components/library/labels";
 import { Tabs } from "../components/library/Tabs";
-import { MaterialAddForm, useMaterialLibrary } from "../components/material/MaterialLibrary";
+import { DeleteMaterialDialog } from "../components/material/DeleteMaterialDialog";
+import { MaterialAddForm, titleOf, useMaterialLibrary } from "../components/material/MaterialLibrary";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { OcrFollow } from "../components/material/Ocr";
 import { OncePerPage } from "../components/OncePerPage";
 import { mimicTemplatePath } from "../lib/create";
+import { formatDate } from "../lib/labels";
 import { ocrFailed, ocrFailedLine, ocrOpen } from "../lib/ocr";
-import { NO_TEXT_MESSAGE, TEMPLATES_INTRO } from "../lib/templates";
+import { NO_TEXT_MESSAGE, TEMPLATES_INTRO, templateDeleteConsequences } from "../lib/templates";
 
 const TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
   ["platform", TEMPLATE_AREA_LABEL.platform],
@@ -106,9 +114,182 @@ function UploadSample({ onStarted, onCancel }: { onStarted: (title: string) => v
 }
 
 /**
+ * 刪除 one of my templates (its card's ⋯), as on its page: what goes with it is said first, the
+ * uploaded file too when no other template uses it.
+ */
+function DeleteTemplateDialog({
+  card,
+  returnFocus,
+  onDone,
+  onClose,
+}: {
+  card: Pick<TemplateCardData, "id" | "title">;
+  returnFocus: () => HTMLElement | null;
+  onDone: () => void;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<WsTemplateDetail | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api
+      .getWorksheetTemplate(card.id)
+      .then((t) => alive && setDetail(t))
+      // Without the details the general warning is still said.
+      .catch(() => alive && setLoadError(true));
+    return () => {
+      alive = false;
+    };
+  }, [card.id]);
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteWorksheetTemplate(card.id);
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog
+      title={`永久刪除「${templateCardTitle(card)}」？`}
+      role="alertdialog"
+      returnFocus={returnFocus}
+      onClose={onClose}
+    >
+      <div className="material-delete">
+        {detail ? (
+          <p>{templateDeleteConsequences(detail)}</p>
+        ) : loadError ? (
+          <p>
+            刪除後無法復原：這個版型的所有版本都會刪除；原本上傳的檔案沒有別的範本在用時，也會一起永久刪除。用它做過的學習單會留著，只是不再連到版型。
+          </p>
+        ) : (
+          <Loading />
+        )}
+        <div className="button-row">
+          <button type="button" className="danger-button" disabled={busy} onClick={() => void remove()}>
+            {busy ? "刪除中…" : "永久刪除"}
+          </button>
+          <button type="button" className="text-link is-plain" disabled={busy} onClick={onClose}>
+            取消
+          </button>
+        </div>
+        <ErrorText message={error} />
+      </div>
+    </Dialog>
+  );
+}
+
+/**
+ * 沒有範本在用的原檔 (我的範本): worksheets the teacher uploaded that no template uses any more, left
+ * behind by a template deleted before its file went with it, or by an upload that never became a
+ * template. Each can be looked at and deleted for good; the section is not shown when there are
+ * none (nor when they could not be read: it is only a tidy-up).
+ */
+function OrphanSamples({
+  refreshSignal,
+  viewing,
+  onView,
+  onDeleted,
+}: {
+  refreshSignal: number;
+  viewing: number | null;
+  onView: (id: number) => void;
+  onDeleted: (sample: Material) => void;
+}) {
+  const ids = useId();
+  const [samples, setSamples] = useState<Material[] | null>(null);
+  const [deleting, setDeleting] = useState<Material | null>(null);
+  const [reloads, setReloads] = useState(0);
+  /** The 刪除 button the dialog was opened from: focus goes back there. */
+  const opener = useRef<HTMLElement | null>(null);
+  const backToOpener = useCallback(() => opener.current, []);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .listOrphanedSamples()
+      .then((list) => alive && setSamples(list))
+      .catch(() => alive && setSamples(null));
+    return () => {
+      alive = false;
+    };
+  }, [refreshSignal, reloads]);
+
+  if (!samples || samples.length === 0) return null;
+  return (
+    <section className="orphan-samples" aria-labelledby={`${ids}-heading`}>
+      <h2 id={`${ids}-heading`}>沒有範本在用的原檔</h2>
+      <p className="quiet-note">
+        你上傳過、但現在沒有範本在用的學習單檔案（範本已經刪除，或沒有做成範本）。只有你看得到；不需要的話可以刪除。
+      </p>
+      <ul className="orphan-list">
+        {samples.map((m) => {
+          const title = titleOf(m);
+          const added = `${m.origin === "upload" ? "上傳" : "加入"}於 ${formatDate(m.created_at)}`;
+          const meta = m.filename && m.filename !== m.title.trim() ? `${m.filename} · ${added}` : added;
+          return (
+            <li key={m.id} className="orphan-row" aria-label={title}>
+              <span className="orphan-name">
+                <strong>{title}</strong>
+                <span className="meta">{meta}</span>
+              </span>
+              {(m.has_file || m.text_status === "ready") && (
+                <button
+                  type="button"
+                  className="ghost-button small-button"
+                  aria-label={`查看「${title}」`}
+                  aria-expanded={viewing === m.id}
+                  aria-controls="material-viewer"
+                  onClick={() => onView(m.id)}
+                >
+                  查看
+                </button>
+              )}
+              <button
+                type="button"
+                className="text-link is-plain"
+                aria-label={`刪除「${title}」`}
+                aria-haspopup="dialog"
+                onClick={(event) => {
+                  opener.current = event.currentTarget;
+                  setDeleting(m);
+                }}
+              >
+                刪除
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {deleting && (
+        <DeleteMaterialDialog
+          card={deleting}
+          returnFocus={backToOpener}
+          onClose={() => setDeleting(null)}
+          onDone={() => {
+            setDeleting(null);
+            onDeleted(deleting);
+            setReloads((n) => n + 1);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
  * 學習單範本 (/templates): 平台範本 | 我的範本 (?tab=mine). A card shows its sections; 照這個範本做
- * opens 照我的學習單做 with it. 我的範本 also takes a new worksheet (上傳我的學習單) and shows the
- * ones Manna is still reading.
+ * opens 照我的學習單做 with it. 我的範本 also takes a new worksheet (上傳我的學習單), shows the
+ * ones Manna is still reading, deletes one of mine behind its ⋯ (更多動作 → 刪除), and lists the
+ * uploaded worksheets no template uses any more.
  */
 function Templates() {
   const ids = useId();
@@ -120,10 +301,17 @@ function Templates() {
   const [notice, setNotice] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: number; message: string } | null>(null);
   const [retrying, setRetrying] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<TemplateCardData | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
-  /** 上傳我的學習單: focus goes back there when its dialog closes. */
+  /** 上傳我的學習單 or a card's ⋯: focus goes back there when its dialog closes. */
   const opener = useRef<HTMLElement | null>(null);
   const backToOpener = useCallback(() => opener.current, []);
+
+  /** Something in 我的範本 changed: say what, and read the cards and the left-over files again. */
+  const listChanged = (message: string) => {
+    setNotice(message);
+    setChanged((n) => n + 1);
+  };
 
   const choose = (next: TemplateArea) => {
     setUploading(false);
@@ -176,8 +364,7 @@ function Templates() {
                   onCancel={() => setUploading(false)}
                   onStarted={(title) => {
                     setUploading(false);
-                    setNotice(`Manna 正在讀「${title}」的設計，讀好了就能用。`);
-                    setChanged((n) => n + 1);
+                    listChanged(`Manna 正在讀「${title}」的設計，讀好了就能用。`);
                   }}
                 />
               </Dialog>
@@ -242,14 +429,54 @@ function Templates() {
                     {USE_TEMPLATE}
                   </button>
                 )}
+                {/* Only my own templates; platform ones are managed in 教材與範本管理. */}
+                {tab === "mine" && card.scope === "personal" && (
+                  <MoreMenu
+                    label={`更多動作「${title}」`}
+                    items={[
+                      {
+                        label: "刪除",
+                        onSelect: (from) => {
+                          opener.current = from;
+                          setDeleting(card);
+                        },
+                      },
+                    ]}
+                  />
+                )}
                 {rowError?.id === card.id && <ErrorText message={rowError.message} />}
               </>
             );
           }}
         />
+
+        {tab === "mine" && (
+          <OrphanSamples
+            refreshSignal={changed}
+            viewing={viewing}
+            onView={(id) => setViewing((cur) => (cur === id ? null : id))}
+            onDeleted={(sample) => {
+              if (viewing === sample.id) setViewing(null);
+              setNotice(`已永久刪除「${titleOf(sample)}」。`);
+            }}
+          />
+        )}
       </div>
 
       <MaterialViewer mode="panel" materialId={viewing} open={viewing !== null} onClose={closeViewer} />
+
+      {deleting && (
+        <DeleteTemplateDialog
+          card={deleting}
+          returnFocus={backToOpener}
+          onClose={() => setDeleting(null)}
+          onDone={() => {
+            if (deleting.source_material && viewing === deleting.source_material.id) setViewing(null);
+            setDeleting(null);
+            listChanged(`已永久刪除「${templateCardTitle(deleting)}」。`);
+          }}
+        />
+      )}
     </section>
   );
 }

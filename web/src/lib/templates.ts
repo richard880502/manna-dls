@@ -4,6 +4,7 @@
 import type {
   Material,
   MaterialLibrary,
+  WsTemplateDetail,
   WsTemplateSection,
   WsTemplateSummary,
   WsTemplateSupport,
@@ -24,6 +25,18 @@ export const MAX_STYLE_NOTES = 8;
 export const MAX_NOTE_CHARS = 200;
 
 export const templateTitle = (t: { title: string }) => t.title.trim() || "未命名的版型";
+
+/** Said before a template is deleted (its page and its card): what goes, what stays. */
+export function templateDeleteConsequences(
+  t: Pick<WsTemplateDetail, "source_material" | "deletes_source_material">,
+): string {
+  const base = "刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型";
+  if (!t.source_material) return `${base}。`;
+  const file = `「${t.source_material.title.trim() || "未命名教材"}」`;
+  return t.deletes_source_material
+    ? `${base}；原本上傳的檔案${file}也會一起永久刪除。`
+    : `${base}；原本的檔案${file}還有別的範本在用，所以會留著。`;
+}
 
 /** What a support box of the sample is for, in the teacher's words. */
 export const SUPPORT_ROLE_LABEL: Record<WsTemplateSupportRole, string> = {

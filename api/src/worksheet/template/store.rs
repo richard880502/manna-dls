@@ -7,12 +7,13 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::types::Json;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 use super::WsTemplate;
 use crate::auth::{AuthTeacher, Capability};
 use crate::error::{AppError, AppResult};
 use crate::materials::catalog::{SCOPE_PERSONAL, SCOPE_PLATFORM};
+use crate::materials::store::{MaterialRow, COLS as MATERIAL_COLS};
 
 pub const STATUS_EXTRACTING: &str = "extracting";
 pub const STATUS_READY: &str = "ready";
@@ -310,13 +311,88 @@ pub async fn set_title(db: &PgPool, id: i64, title: &str) -> sqlx::Result<()> {
 }
 
 /// Hard delete: the template and all its versions. Worksheets made from it keep their content
-/// and lose the link (`ON DELETE SET NULL`).
-pub async fn delete(db: &PgPool, id: i64) -> sqlx::Result<()> {
+/// and lose the link (`ON DELETE SET NULL`). Its sample is the caller's business
+/// ([`lock_sample_going_with`]).
+pub async fn delete<'e, E: sqlx::PgExecutor<'e>>(executor: E, id: i64) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM worksheet_templates WHERE id = $1")
         .bind(id)
-        .execute(db)
+        .execute(executor)
         .await?;
     Ok(())
+}
+
+/// SQL condition on a template `t` and its sample `m` (the material it was read from): the sample
+/// goes when the template is deleted. Only a sample (never a lesson material) of the template's
+/// own area goes: the teacher's own sample of her own template, or the platform sample of a
+/// platform template (a teacher's copy of a platform template never takes the platform's file).
+/// And only when no other template uses it, so a shared sample goes with the last of them.
+pub const SAMPLE_GOES_SQL: &str = "m.purpose = 'worksheet_sample' AND m.scope = t.scope
+    AND (t.scope = 'platform' OR m.teacher_id = t.teacher_id)
+    AND NOT EXISTS (SELECT 1 FROM worksheet_templates o
+                     WHERE o.source_material_id = m.id AND o.id <> t.id)";
+
+/// For deleting template `id` in `tx`: locks its sample, then the template, and returns the
+/// sample when it goes with the template ([`SAMPLE_GOES_SQL`]). The locks hold until `tx` ends,
+/// so the answer stays true until the delete commits: a template made from the sample meanwhile
+/// waits (its foreign key locks the sample row). The sample is locked first, in the order a
+/// delete of the sample itself takes them (its `ON DELETE SET NULL` then writes the template).
+pub async fn lock_sample_going_with(
+    tx: &mut Transaction<'_, Postgres>,
+    id: i64,
+) -> sqlx::Result<Option<MaterialRow>> {
+    const SOURCE: &str = "SELECT source_material_id FROM worksheet_templates WHERE id = $1";
+    let source: Option<Option<i64>> = sqlx::query_scalar(SOURCE)
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if let Some(Some(material_id)) = source {
+        sqlx::query("SELECT 1 FROM materials WHERE id = $1 FOR UPDATE")
+            .bind(material_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    let locked: Option<Option<i64>> = sqlx::query_scalar(&format!("{SOURCE} FOR UPDATE"))
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    // No sample, or the sample was deleted meanwhile (the template lost it: `ON DELETE SET NULL`).
+    let Some(Some(material_id)) = source.filter(|_| locked == source) else {
+        return Ok(None);
+    };
+    // A statement of its own after the locks: it sees every template committed before them.
+    sqlx::query_as(&format!(
+        "SELECT {MATERIAL_COLS} FROM materials m
+          WHERE m.id = $2
+            AND EXISTS (SELECT 1 FROM worksheet_templates t
+                         WHERE t.id = $1 AND t.source_material_id = m.id AND {SAMPLE_GOES_SQL})"
+    ))
+    .bind(id)
+    .bind(material_id)
+    .fetch_optional(&mut **tx)
+    .await
+}
+
+/// The templates made from `material_id`: how many, and the titles of those `viewer` may read
+/// (her own and platform ones), oldest first.
+pub async fn made_from(
+    db: &PgPool,
+    material_id: i64,
+    viewer: i64,
+) -> sqlx::Result<(i64, Vec<String>)> {
+    let rows: Vec<(bool, String)> = sqlx::query_as(&format!(
+        "SELECT scope = '{SCOPE_PLATFORM}' OR teacher_id = $2, title FROM worksheet_templates
+          WHERE source_material_id = $1 ORDER BY created_at, id"
+    ))
+    .bind(material_id)
+    .bind(viewer)
+    .fetch_all(db)
+    .await?;
+    let titles = rows
+        .iter()
+        .filter(|(visible, _)| *visible)
+        .map(|(_, title)| title.clone())
+        .collect();
+    Ok((rows.len() as i64, titles))
 }
 
 /// Extractions still open long after their calls must have timed out died with the server: the
@@ -366,6 +442,9 @@ pub struct Detail {
     pub summary: Summary,
     pub error: Option<String>,
     pub content: Option<WsTemplate>,
+    /// Deleting the template also deletes `source_material` for good ([`SAMPLE_GOES_SQL`]), so
+    /// the confirmation can say so.
+    pub deletes_source_material: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -382,6 +461,7 @@ struct DetailRow {
     material_title: Option<String>,
     version_no: Option<i32>,
     content: Option<serde_json::Value>,
+    deletes_source_material: bool,
 }
 
 impl From<DetailRow> for Detail {
@@ -407,23 +487,29 @@ impl From<DetailRow> for Detail {
             },
             error: r.error,
             content,
+            deletes_source_material: r.deletes_source_material,
         }
     }
 }
 
-const DETAIL_SELECT: &str = "SELECT t.id, t.title, t.status, t.error, t.updated_at, t.scope,
-        t.category, t.tags,
-        m.id AS material_id, m.title AS material_title, v.version_no, v.content
-   FROM worksheet_templates t
-   LEFT JOIN materials m ON m.id = t.source_material_id
-   LEFT JOIN LATERAL (SELECT version_no, content FROM worksheet_template_versions
-                       WHERE template_id = t.id ORDER BY version_no DESC LIMIT 1) v ON TRUE";
+fn detail_select() -> String {
+    format!(
+        "SELECT t.id, t.title, t.status, t.error, t.updated_at, t.scope, t.category, t.tags,
+                m.id AS material_id, m.title AS material_title, v.version_no, v.content,
+                COALESCE(m.id IS NOT NULL AND {SAMPLE_GOES_SQL}, FALSE) AS deletes_source_material
+           FROM worksheet_templates t
+           LEFT JOIN materials m ON m.id = t.source_material_id
+           LEFT JOIN LATERAL (SELECT version_no, content FROM worksheet_template_versions
+                               WHERE template_id = t.id ORDER BY version_no DESC LIMIT 1) v ON TRUE"
+    )
+}
 
 /// The teacher's own (personal) templates, newest first.
 pub async fn list(db: &PgPool, teacher_id: i64) -> sqlx::Result<Vec<Summary>> {
     let rows: Vec<DetailRow> = sqlx::query_as(&format!(
-        "{DETAIL_SELECT} WHERE t.teacher_id = $1 AND t.scope = '{SCOPE_PERSONAL}'
-          ORDER BY t.created_at DESC, t.id DESC"
+        "{} WHERE t.teacher_id = $1 AND t.scope = '{SCOPE_PERSONAL}'
+          ORDER BY t.created_at DESC, t.id DESC",
+        detail_select()
     ))
     .bind(teacher_id)
     .fetch_all(db)
@@ -432,7 +518,7 @@ pub async fn list(db: &PgPool, teacher_id: i64) -> sqlx::Result<Vec<Summary>> {
 }
 
 pub async fn detail(db: &PgPool, id: i64) -> AppResult<Detail> {
-    let row: Option<DetailRow> = sqlx::query_as(&format!("{DETAIL_SELECT} WHERE t.id = $1"))
+    let row: Option<DetailRow> = sqlx::query_as(&format!("{} WHERE t.id = $1", detail_select()))
         .bind(id)
         .fetch_optional(db)
         .await?;

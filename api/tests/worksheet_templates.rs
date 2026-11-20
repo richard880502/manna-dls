@@ -1,15 +1,20 @@
 //! Phase 2.5 (docs/API.md「我的學習單版型」): extracting a template from a teacher's worksheet as
 //! a background job (with the fake provider), retry and failure, validation of edits, owner
-//! isolation, hard delete, worksheets made from a template and a library material, generation
+//! isolation, hard delete (with the uploaded sample, on the filesystem backend), the samples no
+//! template uses, worksheets made from a template and a library material, generation
 //! (per-paragraph expansion, the 16-block cap, blocks that need the teacher's material, a failed
 //! block) and single-block regeneration.
 
 #[macro_use]
 mod common;
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use common::Part;
+use manna_api::config::Config;
+use manna_api::storage::StorageConfig;
 use serde_json::{json, Value};
 
 const MSG_EXTERNAL: &str = "這一區需要你提供素材（例如影片或另一篇文章），Manna 不會自己編造。";
@@ -611,19 +616,379 @@ async fn templates_are_the_owners_only_and_delete_is_for_good() {
     let (s, ws) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&a)).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(ws["template"], Value::Null);
+    // Its sample (pasted, so no file) went with it; the lesson's material stays.
+    let (s, _) = app
+        .get(&format!("/api/materials/{material}"), Some(&a))
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = app
+        .get(&format!("/api/materials/{lesson_material}"), Some(&a))
+        .await;
+    assert_eq!(s, StatusCode::OK);
 
-    // Deleting the source material leaves a template without it (and nothing to retry from).
+    // The sample of a template is not deleted on its own: the template would lose its original.
     let tpl = ready_template(&app, &a).await;
     let m = tpl["source_material"]["id"].as_i64().unwrap();
     let (s, v) = app.delete(&format!("/api/materials/{m}"), Some(&a)).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    assert_eq!(
+        v["error"]["message"],
+        format!(
+            "這份檔案是範本「{}」的原檔，範本還在用它。要刪除的話，請刪除那個範本，原檔會一起刪除。",
+            tpl["title"].as_str().unwrap()
+        )
+    );
     let (_, v) = app
         .get(&format!("/api/worksheet-templates/{}", tpl["id"]), Some(&a))
         .await;
     assert_eq!(
-        (v["status"].as_str(), v["source_material"].clone()),
-        (Some("ready"), Value::Null)
+        (v["status"].as_str(), v["source_material"]["id"].as_i64()),
+        (Some("ready"), Some(m))
     );
+}
+
+// ---------------------------------------------------------------- the uploaded sample goes too
+
+/// A storage directory that is removed when the test ends.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new() -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("manna-templates-{}", manna_api::auth::new_token()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.0, &mut out);
+        out
+    }
+
+    fn configure(&self) -> impl FnOnce(&mut Config) + '_ {
+        |c: &mut Config| c.storage = StorageConfig::fs(self.0.clone())
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// 上傳我的學習單: a worksheet file as a sample (never in 我的教材). `marker` keeps the files apart
+/// (the same file twice is the same material).
+async fn upload_sample(app: &common::TestApp, t: &str, filename: &str, marker: &str) -> i64 {
+    let text = worksheet_text(marker);
+    let (s, v) = app
+        .post_multipart(
+            "/api/materials/upload",
+            Some(t),
+            &[
+                Part::Text("purpose", "worksheet_sample"),
+                Part::File("file", filename, text.as_bytes()),
+            ],
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["purpose"], "worksheet_sample");
+    v["id"].as_i64().unwrap()
+}
+
+/// 我的範本's 「沒有範本在用的原檔」.
+async fn orphans(app: &common::TestApp, t: &str) -> Vec<i64> {
+    let (s, v) = app
+        .get(
+            "/api/materials?purpose=worksheet_sample&orphaned=true",
+            Some(t),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v["materials"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_i64().unwrap())
+        .collect()
+}
+
+async fn count(app: &common::TestApp, sql: &str) -> i64 {
+    sqlx::query_scalar(sql).fetch_one(&app.db).await.unwrap()
+}
+
+/// The deletion events written so far, oldest first.
+async fn deletion_events(app: &common::TestApp) -> Vec<(String, Value)> {
+    sqlx::query_as(
+        "SELECT event, payload FROM usage_logs
+          WHERE event IN ('material_deleted', 'worksheet_template_deleted') ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn deleting_my_template_deletes_the_worksheet_i_uploaded_for_it() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure());
+    let t = app.teacher("T-TPL-DEL-1", "general").await;
+    let m = upload_sample(&app, &t, "Midterm worksheet.txt", "MIDTERM").await;
+    assert_eq!(dir.files().len(), 1);
+    let tpl = extract(&app, &t, m).await;
+    assert_eq!(tpl["status"], "ready", "{tpl}");
+    assert_eq!(tpl["deletes_source_material"], true);
+    let id = tpl["id"].as_i64().unwrap();
+    // A note on the sample goes with it.
+    let (_, sample) = app.get(&format!("/api/materials/{m}"), Some(&t)).await;
+    let (s, v) = app
+        .post(
+            &format!("/api/materials/{m}/annotations"),
+            Some(&t),
+            json!({ "paragraph_id": sample["paragraphs"][0]["id"], "start": 0, "end": 4,
+                    "note": "抬頭" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    let (s, v) = app
+        .delete(&format!("/api/worksheet-templates/{id}"), Some(&t))
+        .await;
+    assert_eq!((s, v), (StatusCode::OK, json!({ "ok": true })));
+
+    // The file, the template, the sample's row (its text and paragraphs) and its note are gone.
+    assert!(dir.files().is_empty(), "{:?}", dir.files());
+    for table in [
+        "worksheet_templates",
+        "worksheet_template_versions",
+        "materials",
+        "material_annotations",
+    ] {
+        assert_eq!(
+            count(&app, &format!("SELECT COUNT(*) FROM {table}")).await,
+            0,
+            "{table}"
+        );
+    }
+    for path in [
+        format!("/api/materials/{m}"),
+        format!("/api/materials/{m}/file"),
+        format!("/api/worksheet-templates/{id}"),
+    ] {
+        let (s, _) = app.get(&path, Some(&t)).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{path}");
+    }
+    // What remains: that a material was deleted (no title, no text) and the two events.
+    let record: (i64, String, bool, i32) =
+        sqlx::query_as("SELECT material_id, kind, had_file, annotations FROM material_deletions")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(record, (m, "document".to_string(), true, 1));
+    assert_eq!(
+        deletion_events(&app).await,
+        [
+            (
+                "material_deleted".to_string(),
+                json!({ "material_id": m, "kind": "document", "lessons": 0, "scope": "personal" })
+            ),
+            (
+                "worksheet_template_deleted".to_string(),
+                json!({ "template_id": id, "scope": "personal", "deleted_sample_id": m })
+            ),
+        ]
+    );
+    let named = count(
+        &app,
+        "SELECT COUNT(*) FROM usage_logs WHERE payload::text LIKE '%Midterm%' OR payload::text LIKE '%MIDTERM%'",
+    )
+    .await;
+    assert_eq!(named, 0);
+    assert!(orphans(&app, &t).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_sample_two_templates_use_goes_with_the_last_of_them() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure());
+    let t = app.teacher("T-TPL-DEL-2", "general").await;
+    let m = upload_sample(&app, &t, "Shared worksheet.txt", "SHARED").await;
+    let first = extract(&app, &t, m).await;
+    let first_id = first["id"].as_i64().unwrap();
+    let (s, second) = app
+        .post(
+            &format!("/api/worksheet-templates/{first_id}/copy"),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{second}");
+    let second_id = second["id"].as_i64().unwrap();
+    assert_eq!(second["source_material"]["id"], m);
+    for id in [first_id, second_id] {
+        let (_, v) = app
+            .get(&format!("/api/worksheet-templates/{id}"), Some(&t))
+            .await;
+        assert_eq!(v["deletes_source_material"], false, "{v}");
+    }
+    // While templates use it, the sample is not deleted on its own, nor listed as left over.
+    let (s, v) = app.delete(&format!("/api/materials/{m}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.starts_with("這份檔案是 2 個範本（"), "{message}");
+    for title in [&first["title"], &second["title"]] {
+        assert!(message.contains(title.as_str().unwrap()), "{message}");
+    }
+    assert!(orphans(&app, &t).await.is_empty());
+
+    // The first one goes: the sample stays for the other.
+    let (s, _) = app
+        .delete(&format!("/api/worksheet-templates/{first_id}"), Some(&t))
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = app.get(&format!("/api/materials/{m}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(dir.files().len(), 1);
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM material_deletions").await,
+        0
+    );
+    let (_, v) = app
+        .get(&format!("/api/worksheet-templates/{second_id}"), Some(&t))
+        .await;
+    assert_eq!(
+        (
+            v["source_material"]["id"].as_i64(),
+            &v["deletes_source_material"]
+        ),
+        (Some(m), &json!(true))
+    );
+
+    // The last one takes it along.
+    let (s, _) = app
+        .delete(&format!("/api/worksheet-templates/{second_id}"), Some(&t))
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = app.get(&format!("/api/materials/{m}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert!(dir.files().is_empty(), "{:?}", dir.files());
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM material_deletions").await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_template_delete_that_cannot_remove_the_file_deletes_nothing() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure());
+    let t = app.teacher("T-TPL-DEL-3", "general").await;
+    let m = upload_sample(&app, &t, "Keep me.txt", "KEEPME").await;
+    let id = extract(&app, &t, m).await["id"].as_i64().unwrap();
+    let path = format!("/api/worksheet-templates/{id}");
+    // Make the object undeletable: replace it with a non-empty directory.
+    let file = dir.files().pop().unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    std::fs::write(file.join("blocker"), b"x").unwrap();
+
+    let (s, v) = app.delete(&path, Some(&t)).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_eq!(
+        v["error"]["message"],
+        "原檔沒有刪除成功（儲存空間暫時無法使用），所以這份教材還沒有刪除。請稍後再試一次。"
+    );
+    // Nothing went: the template still has its sample, the sample its text.
+    let (s, tpl) = app.get(&path, Some(&t)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        (
+            tpl["status"].as_str(),
+            tpl["source_material"]["id"].as_i64()
+        ),
+        (Some("ready"), Some(m))
+    );
+    let (s, sample) = app.get(&format!("/api/materials/{m}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(sample["text"].as_str().unwrap().contains("KEEPME"));
+    assert_eq!(
+        count(&app, "SELECT COUNT(*) FROM material_deletions").await,
+        0
+    );
+    assert!(deletion_events(&app).await.is_empty());
+
+    // Once the store works again the same request deletes both.
+    std::fs::remove_dir_all(&file).unwrap();
+    let (s, v) = app.delete(&path, Some(&t)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    for path in [path, format!("/api/materials/{m}")] {
+        let (s, _) = app.get(&path, Some(&t)).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn my_samples_no_template_uses_are_listed_for_me_alone_and_deleted_for_good() {
+    let dir = TempDir::new();
+    let app = test_app!(dir.configure());
+    let a = app.teacher("T-TPL-DEL-4A", "general").await;
+    let b = app.teacher("T-TPL-DEL-4B", "general").await;
+    // Left behind by a template deleted under the old rule (the template went, the sample stayed).
+    let old = upload_sample(&app, &a, "Old worksheet.txt", "OLDONE").await;
+    let old_tpl = extract(&app, &a, old).await["id"].as_i64().unwrap();
+    sqlx::query("DELETE FROM worksheet_templates WHERE id = $1")
+        .bind(old_tpl)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // An upload that never became a template, one still in use, and a lesson material.
+    let never = upload_sample(&app, &a, "Never read.txt", "NEVER").await;
+    let used = upload_sample(&app, &a, "In use.txt", "INUSE").await;
+    extract(&app, &a, used).await;
+    paste(&app, &a, "Umbrella", &passage()).await;
+    let theirs = upload_sample(&app, &b, "B worksheet.txt", "THEIRS").await;
+
+    assert_eq!(orphans(&app, &a).await, [never, old], "newest first");
+    assert_eq!(orphans(&app, &b).await, [theirs]);
+    for query in ["?orphaned=true", "?purpose=material&orphaned=true"] {
+        let (s, v) = app.get(&format!("/api/materials{query}"), Some(&a)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{query}: {v}");
+    }
+
+    // Another teacher can neither read nor delete them.
+    let files = dir.files().len();
+    for m in [old, never] {
+        let (s, _) = app.get(&format!("/api/materials/{m}"), Some(&b)).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (s, _) = app.delete(&format!("/api/materials/{m}"), Some(&b)).await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+    assert_eq!(dir.files().len(), files);
+
+    // Their owner deletes them for good, through the material's own delete.
+    for m in [old, never] {
+        let (s, v) = app.delete(&format!("/api/materials/{m}"), Some(&a)).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+    }
+    assert_eq!(dir.files().len(), files - 2);
+    assert!(orphans(&app, &a).await.is_empty());
+    assert_eq!(orphans(&app, &b).await, [theirs]);
+    let deleted: Vec<i64> =
+        sqlx::query_scalar("SELECT material_id FROM material_deletions ORDER BY material_id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(deleted, [old, never]);
 }
 
 /// A template with a warm-up, a per-paragraph block, a block that needs the teacher's own

@@ -836,6 +836,43 @@ async fn a_platform_template_is_copied_into_my_templates() {
     let (s, v) = app.post(&format!("{path}/copy"), Some(&t), json!({})).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     assert_eq!(v["title"], "寫作引導單（我的版本）（我的版本）");
+    let copy_of_copy = id(&v);
+
+    // Deleting her copies never takes the platform's sample: the platform template keeps it.
+    let sample = platform["source_material"]["id"].as_i64().unwrap();
+    for (who, template) in [(&t, copy_id), (&t, copy_of_copy), (&kb, tpl)] {
+        let (_, v) = app
+            .get(&format!("/api/worksheet-templates/{template}"), Some(who))
+            .await;
+        assert_eq!(v["deletes_source_material"], false, "{v}");
+    }
+    for template in [copy_id, copy_of_copy] {
+        let (s, v) = app
+            .delete(&format!("/api/worksheet-templates/{template}"), Some(&t))
+            .await;
+        assert_eq!((s, v), (StatusCode::OK, json!({ "ok": true })));
+    }
+    let (s, v) = app.get(&format!("/api/materials/{sample}"), Some(&t)).await;
+    assert_eq!(
+        (s, v["scope"].as_str(), v["purpose"].as_str()),
+        (StatusCode::OK, Some("platform"), Some("worksheet_sample"))
+    );
+    let (_, v) = app
+        .get(&format!("/api/worksheet-templates/{tpl}"), Some(&kb))
+        .await;
+    assert_eq!(
+        (
+            v["source_material"]["id"].as_i64(),
+            &v["deletes_source_material"]
+        ),
+        (Some(sample), &json!(true))
+    );
+    // A teacher cannot delete the platform's sample either.
+    let (s, _) = app
+        .delete(&format!("/api/materials/{sample}"), Some(&t))
+        .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
     // A template that is not ready cannot be copied.
     let failed = id(&admin_template(&app, &kb, "壞掉的", "", &worksheet_text("FAKE_BLOCK")).await);
     let failed_v = wait_template(&app, &t, failed).await;

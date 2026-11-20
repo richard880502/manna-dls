@@ -392,12 +392,15 @@ pub async fn detail(db: &PgPool, row: MaterialRow, viewer: i64) -> sqlx::Result<
 
 /// The teacher's own (personal) materials, newest first. `purpose` keeps one purpose
 /// (`material`: 我的教材, `worksheet_sample`: her samples); `None` keeps both. With `lesson_id`,
-/// only those linked to that lesson.
+/// only those linked to that lesson. `orphaned` keeps only those no template uses: samples left
+/// behind by templates deleted before a sample went with its template, and uploads that never
+/// became a template.
 pub async fn list(
     db: &PgPool,
     teacher_id: i64,
     lesson_id: Option<i64>,
     purpose: Option<&str>,
+    orphaned: bool,
 ) -> sqlx::Result<Vec<Material>> {
     let rows: Vec<MaterialRow> = sqlx::query_as(&format!(
         "SELECT {COLS} FROM materials m
@@ -406,11 +409,14 @@ pub async fn list(
             AND ($2::BIGINT IS NULL OR EXISTS (
                  SELECT 1 FROM material_links k
                   WHERE k.material_id = m.id AND k.target_kind = 'lesson' AND k.target_id = $2))
+            AND (NOT $4 OR NOT EXISTS (
+                 SELECT 1 FROM worksheet_templates t WHERE t.source_material_id = m.id))
           ORDER BY id DESC"
     ))
     .bind(teacher_id)
     .bind(lesson_id)
     .bind(purpose)
+    .bind(orphaned)
     .fetch_all(db)
     .await?;
     summaries(db, &rows, teacher_id).await
@@ -1255,18 +1261,31 @@ pub struct Deleted {
 /// Deletes a material for good (docs/BLUEPRINT.md §13.3):
 ///
 /// 1. the original object (and its preview image, unless another material holds the same file)
-///    is removed from the store first. If that fails nothing else happens and the teacher is
-///    told, so a file can never be left behind unreachable;
-/// 2. in one transaction: the row (with the extracted text and paragraphs), its annotations and
-///    links; SOP versions that pointed at it keep `material_deleted` (「教材已刪除」) and lose the
-///    verbatim quotes taken from it; the same quotes are removed from the logged AI outputs and
-///    job results. The teacher's own analysis, objectives and tasks stay;
+///    is removed from the store first ([`remove_files`]). If that fails nothing else happens and
+///    the teacher is told, so a file can never be left behind unreachable;
+/// 2. in one transaction ([`delete_rows`]): the row (with the extracted text and paragraphs), its
+///    annotations and links; SOP versions that pointed at it keep `material_deleted`
+///    (「教材已刪除」) and lose the verbatim quotes taken from it; the same quotes are removed from
+///    the logged AI outputs and job results. The teacher's own analysis, objectives and tasks
+///    stay;
 /// 3. a row in `material_deletions` records that a material was deleted: no title, no text.
 ///
 /// `row` is one the caller may delete ([`writable`]); `actor_id` is who deletes it (the owner,
 /// or the admin deleting a platform row) and is logged.
 pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppResult<Deleted> {
-    let db = &state.db;
+    remove_files(state, &row).await?;
+    let mut tx = state.db.begin().await?;
+    let deleted = delete_rows(&mut tx, actor_id, &row)
+        .await?
+        .ok_or_else(|| AppError::not_found(MSG_NOT_FOUND))?;
+    tx.commit().await?;
+    Ok(deleted)
+}
+
+/// Step 1 of [`delete`]: removes the original object and its preview from the store. On an
+/// error (503, said in Chinese) the caller deletes no rows. An object that is already gone is
+/// not an error, so a delete whose rows failed after this step can simply be tried again.
+pub async fn remove_files(state: &AppState, row: &MaterialRow) -> AppResult<()> {
     let id = row.id;
     if let Some(key) = &row.storage_key {
         let Some(storage) = state.storage.as_ref() else {
@@ -1276,7 +1295,7 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
             ));
         };
         // Its preview first (知識庫): a failure there also leaves everything in place.
-        super::thumbnail::forget(state, &row).await?;
+        super::thumbnail::forget(state, row).await?;
         match storage.delete(key).await {
             Ok(()) | Err(StorageError::NotFound) => {}
             Err(e) => {
@@ -1287,16 +1306,26 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
             }
         }
     }
+    Ok(())
+}
 
-    let mut tx = db.begin().await?;
+/// Steps 2 and 3 of [`delete`], in the caller's transaction and after [`remove_files`], so the
+/// caller can delete more in the same transaction (a template together with its sample). `None`
+/// when the row is already gone.
+pub async fn delete_rows(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    row: &MaterialRow,
+) -> AppResult<Option<Deleted>> {
+    let id = row.id;
     // Lock the row: a concurrent SOP save must not link it again halfway through.
     let still_there: Option<i64> =
         sqlx::query_scalar("SELECT id FROM materials WHERE id = $1 FOR UPDATE")
             .bind(id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
     if still_there.is_none() {
-        return Err(AppError::not_found("找不到這份教材。"));
+        return Ok(None);
     }
 
     // ---- SOP versions: tombstone, no quotes, references marked as belonging to the deleted one
@@ -1314,7 +1343,7 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
           ORDER BY id",
     )
     .bind(id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     let mut lessons: Vec<i64> = Vec::new();
     for v in versions {
@@ -1340,7 +1369,7 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
             .bind(v.id)
             .bind(serde_json::to_value(&content).map_err(anyhow::Error::from)?)
             .bind(current)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         }
     }
@@ -1358,14 +1387,14 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
     )
     .bind(&lessons)
     .bind(id.to_string())
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     for mut o in outputs {
         if scrub_evidence(&mut o.body) {
             sqlx::query("UPDATE ai_interactions SET output = $2 WHERE id = $1")
                 .bind(o.id)
                 .bind(&o.body)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
     }
@@ -1376,31 +1405,31 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
     )
     .bind(&lessons)
     .bind(id)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut **tx)
     .await?;
     for mut r in results {
         if scrub_job_result(&mut r.body) {
             sqlx::query("UPDATE lesson_sop_jobs SET result = $2 WHERE id = $1")
                 .bind(r.id)
                 .bind(&r.body)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
     }
     sqlx::query("UPDATE lesson_sop_jobs SET material_id = NULL WHERE material_id = $1")
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // ---- the material itself; annotations and links go with it (ON DELETE CASCADE)
     let annotations: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM material_annotations WHERE material_id = $1")
             .bind(id)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
     sqlx::query("DELETE FROM materials WHERE id = $1")
         .bind(id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     sqlx::query(
         "INSERT INTO material_deletions (material_id, teacher_id, kind, size_bytes, had_file, annotations)
@@ -1412,22 +1441,21 @@ pub async fn delete(state: &AppState, actor_id: i64, row: MaterialRow) -> AppRes
     .bind(row.size_bytes)
     .bind(row.storage_key.is_some())
     .bind(annotations as i32)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     log_usage(
-        &mut *tx,
+        &mut **tx,
         actor_id,
         "material_deleted",
         json!({ "material_id": id, "kind": row.kind, "lessons": lessons.len(),
                 "scope": row.scope }),
     )
     .await?;
-    tx.commit().await?;
-    Ok(Deleted {
+    Ok(Some(Deleted {
         deleted: true,
         annotations,
         lessons,
-    })
+    }))
 }
 
 #[cfg(test)]

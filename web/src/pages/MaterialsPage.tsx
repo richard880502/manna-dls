@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useId, useRef, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { MaterialCard as MaterialCardData, MaterialDetail } from "../api/types";
-import { ErrorText, Loading } from "../components/common";
+import { ErrorText } from "../components/common";
 import { MaterialBrowser } from "../components/library/BrowsePanel";
 import { MoreMenu, UseMaterialMenu } from "../components/library/Cards";
 import { PREVIEW, cardTitle, unusableReason, usableMaterial } from "../components/library/labels";
 import { Dialog } from "../components/Dialog";
+import { DeleteMaterialDialog } from "../components/material/DeleteMaterialDialog";
 import {
   ADD_WAY_LABEL,
   MaterialAddForm,
-  deleteConsequences,
   titleOf,
   useMaterialLibrary,
   type AddWay,
@@ -77,70 +77,6 @@ function RenameDialog({
           </button>
         </div>
       </form>
-    </Dialog>
-  );
-}
-
-/** 刪除: said in full (what goes with it) before anything is sent. */
-function DeleteDialog({
-  card,
-  returnFocus,
-  onDone,
-  onClose,
-}: {
-  card: Pick<MaterialCardData, "id" | "title">;
-  returnFocus: () => HTMLElement | null;
-  onDone: () => void;
-  onClose: () => void;
-}) {
-  const [detail, setDetail] = useState<MaterialDetail | null>(null);
-  const [loadError, setLoadError] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    api
-      .getLibraryMaterial(card.id)
-      .then((m) => alive && setDetail(m))
-      // Without the details the general warning is still said.
-      .catch(() => alive && setLoadError(true));
-    return () => {
-      alive = false;
-    };
-  }, [card.id]);
-
-  async function remove() {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.deleteLibraryMaterial(card.id);
-      onDone();
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Dialog title={`永久刪除「${titleOf(card)}」？`} role="alertdialog" returnFocus={returnFocus} onClose={onClose}>
-      <div className="material-delete">
-        {detail ? (
-          <p>{deleteConsequences(detail)}</p>
-        ) : loadError ? (
-          <p>刪除後無法復原：原檔、擷取的文字與段落和你的註記都會永久刪除。</p>
-        ) : (
-          <Loading />
-        )}
-        <div className="button-row">
-          <button type="button" className="danger-button" disabled={busy} onClick={() => void remove()}>
-            {busy ? "刪除中…" : "永久刪除"}
-          </button>
-          <button type="button" className="text-link is-plain" disabled={busy} onClick={onClose}>
-            取消
-          </button>
-        </div>
-        <ErrorText message={error} />
-      </div>
     </Dialog>
   );
 }
@@ -294,7 +230,7 @@ function MyMaterials() {
         />
       )}
       {deleting && (
-        <DeleteDialog
+        <DeleteMaterialDialog
           card={deleting}
           returnFocus={backToOpener}
           onClose={() => setDeleting(null)}

@@ -1621,6 +1621,8 @@ Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)`
 2. 同一個交易內：刪除教材列（文字、段落）、註記、課例與學習單連結；用到它的 SOP 版本 `material_id` 設為 null、`material_deleted = true`，指向它段落的參照改名為 `m<id>-p3`（不會被誤認為下一份教材的段落），**從它逐字引用的片段**（分析與語言重點的 `evidence`）換成「［教材已刪除］」；這些課例的 AI 紀錄（`ai_interactions.output`、`lesson_sop_jobs.result`）中的逐字引文與教材名稱同樣移除。教師自己寫的分析、目標、任務都保留。
 3. `material_deletions` 記一筆（教材 id、類型、大小、是否有原檔、註記數、時間；沒有標題、檔名、雜湊或內容），`usage_logs` 記 `material_deleted`。
 
+教師自己的教材還是某個範本的範例時，這裡不刪（409，請刪除範本，原檔會跟著一起刪）；刪除範本時範例也走同一條刪除路徑。見「我的範本：刪除範本連同原檔」。
+
 前端在頁面上確認，明說「永久刪除、無法復原」以及會一起刪掉什麼、哪些課例會顯示「教材已刪除」。
 
 ## 課例 SOP（Phase 2.1）的變更
@@ -1675,7 +1677,7 @@ Rust 端：`materials::annotations::shared_with_ai(db, teacher_id, material_id)`
 
 - `worksheet_templates`：`id`、`teacher_id`（只有擁有者能存取）、`title`（≤200）、`status`（`extracting`｜`ready`｜`failed`）、`error`（失敗原因，中文）、`source_material_id`（教材庫教材；刪除教材時變成 null）、`created_at`、`updated_at`。另有內部欄位 `extract_run`、`extract_started_at`，用來處理重試與伺服器重啟。
 - `worksheet_template_versions`：只增不改，`(template_id, version_no)` 唯一，`content`（`WsTemplate`），`origin`（`ai`｜`teacher`）。版型目前的內容就是最新版本。
-- **刪除版型是真的刪除**：版型與所有版本都刪掉。用過它的學習單保留內容，只是 `template` 變成 null。
+- **刪除版型是真的刪除**：版型與所有版本都刪掉。用過它的學習單保留內容，只是 `template` 變成 null。為它上傳的學習單（範例）沒有其他版型在用時一起真的刪除（見「我的範本：刪除範本連同原檔」）。
 - `worksheets` 新增 `template_id`（刪除版型時變成 null）與 `template_version_no`。
 - `prompt_versions` 新增 `worksheet_template_outline`、`worksheet_template_details`、`worksheet_template_section`。`scaffolds` 新增 `SC-WS-TPL-EXTRACT`、`SC-WS-TPL-GEN`。
 - `worksheet_jobs.step` 新增 `template`（見「照版型產生」）。
@@ -1741,7 +1743,7 @@ interface WsJob { step: "tasks" | "warmup" | "scaffolds" | "exit_ticket" | "temp
 | GET | `/api/worksheet-templates/:id` | – | `WsTemplateDetail`（輪詢用） |
 | PUT | `/api/worksheet-templates/:id` | `{ title?: string, content?: WsTemplate }` | `WsTemplateDetail`。有 `content` 且與最新版本不同才新增一個版本（`origin = "teacher"`）。讀取中 → 409；`failed` 時送 `content` → 409（只能改名稱或重試） |
 | POST | `/api/worksheet-templates/:id/retry` | – | 202 `WsTemplateDetail`。只有 `failed` 可以（其他 → 409）；原本的教材已刪除 → 400 |
-| DELETE | `/api/worksheet-templates/:id` | – | `{ ok: true }`（真的刪除） |
+| DELETE | `/api/worksheet-templates/:id` | – | `{ ok: true }`（真的刪除；範例的原檔刪不掉時 503，什麼都不刪。見「我的範本：刪除範本連同原檔」） |
 
 **驗證（400，訊息為中文）**
 
@@ -2682,7 +2684,7 @@ interface PrepTurn {
 
 - 用個人教材做出版型（任何路徑：`POST /api/worksheet-templates`、備課對話的 `template_material_id`、照我的學習單做的上傳），那份教材的 `purpose` 就變成 `worksheet_sample`（`updated_at` 不變）。平台教材不會被改。
 - 教師上傳與貼上可以帶 `purpose`（上傳是 multipart 欄位，貼上與網址是 JSON 欄位；預設 `material`；其他值 → 400）。照我的學習單做的範例上傳送 `worksheet_sample`。
-- `GET /api/materials` 預設只列 `purpose = material` 的個人教材；`?purpose=worksheet_sample` 列自己的範例；`?purpose=material` 同預設。有 `lesson_id` 而沒有 `purpose` 時，列出連到該課例的所有教材（不分用途）。
+- `GET /api/materials` 預設只列 `purpose = material` 的個人教材；`?purpose=worksheet_sample` 列自己的範例；`?purpose=material` 同預設。有 `lesson_id` 而沒有 `purpose` 時，列出連到該課例的所有教材（不分用途）。`?purpose=worksheet_sample&orphaned=true` 只列沒有任何範本在用的範例（見「我的範本：刪除範本連同原檔」）。
 - 備課對話「找教學資源」比對的「自己的教材」只看「我的教材」（個人、`purpose = material`）。
 
 ## 型別
@@ -3690,3 +3692,53 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
 - 研究紀錄：每次建立課例都記 `lesson_created`（`lesson_id`、`unit_id`、`entry`、`ui_version`）；`entry` 是 `"home"` 時 `ui_version` 為 `4`，否則兩者為 `null`。只記研究用 id，不記名稱。
 - `GET /api/stepwise-lessons`：我的作品用。只回登入教師自己（單元屬於他、未刪除）的課例，且是「首頁卡片開始的課例」或「已有存過的 SOP 版本（教材或任一步）的課例」；只有舊教案、沒在工作區開過的課例不列。依 `updated_at`（最近一次 SOP 存檔，沒有則為建立時間）新到舊。每筆 `{ id, title, unit_id, unit_title, updated_at, steps_done, next_step }`：`steps_done` 是七步裡已有內容的步數（0 到 7），`next_step` 是第一個還空著的步驟（1 到 7，對應 `STAGES`），七步都有內容時為 `null`（顯示「已完成」）。「有內容」與工作區進度欄的 `stageSummary` 同一套規則。沒有刪除課例的 API，所以卡片也沒有刪除。
 - 「我的作品」把這些課例和備課對話、獨立學習單混排（依更新時間），卡片標籤「逐步設計」、副標是「單元名稱 · 第 N 步：步驟名稱」或「已完成」；多一個篩選晶片「逐步設計」。
+
+---
+
+# 我的範本：刪除範本連同原檔
+
+依據 `docs/BLUEPRINT.md` §13.3（教師的教材只屬於她；刪除就是真的刪除原檔與衍生資料）。以前刪除教師自己的範本（`DELETE /api/worksheet-templates/:id`）只刪範本，為它上傳的學習單（`purpose = worksheet_sample` 的教材，不在「我的教材」裡）留在原處，教師在任何地方都看不到、也刪不掉；只有平台範本會帶走它的平台範例。沒有資料表變動，也沒有刪除資料的 migration。
+
+## 刪除範本時，原檔一起刪除
+
+`DELETE /api/worksheet-templates/:id`（以及管理端的 `DELETE /api/admin/library/templates/:id`）回應照舊 `{ ok: true }`。範本的範例（`source_material`）**同時符合**以下條件時一起真的刪除（`worksheet::template::store::SAMPLE_GOES_SQL`，兩條路徑同一個規則）：
+
+- 是範例（`purpose = worksheet_sample`），不是課文教材；
+- 和範本同一區：教師自己的範本 → 她自己的個人範例；平台範本 → 平台範例。教師「另存成我的範本」的版本用的是平台的範例，**刪除她的版本不會動到平台的檔案**；
+- 沒有其他範本在用（例如另存的版本、平台範本）。同一份範例有好幾個範本在用時，跟著**最後一個**範本一起刪除。
+
+順序（`routes::templates::remove`，一個交易）：
+
+1. 先鎖住範例與範本（範例先鎖，和刪除範例本身時 `ON DELETE SET NULL` 寫範本的順序相同），鎖住之後才判斷上面的條件；同一時間用這份範例新建的範本（外鍵會鎖範例那一列）要等這次刪除結束。
+2. **先刪儲存空間裡的原檔與預覽圖**（`materials::store::remove_files`）。刪不掉（儲存空間沒有設定或暫時無法使用）→ 交易還原，**什麼都不刪**，回原本的 503「原檔沒有刪除成功（儲存空間暫時無法使用），所以這份教材還沒有刪除。請稍後再試一次。」（或「這個環境目前沒有連上檔案儲存空間…」）。
+3. 同一個交易內：範例的真的刪除（`materials::store::delete_rows`：教材列與文字、段落、註記、連結；SOP 與 AI 紀錄裡的逐字引文移除；`material_deletions` 一筆；`usage_logs` `material_deleted`），再刪範本與所有版本，`usage_logs` `worksheet_template_deleted` 多一個 `deleted_sample_id`（一起刪除的範例 id，沒有時是 `null`），然後提交。所以範本不會指向一份刪到一半的範例。萬一提交失敗而原檔已經刪掉，資料列都還在，再送一次同樣的刪除就會完成（找不到的原檔不算錯）。
+
+用這個範本做過的學習單照舊保留內容，只是 `template` 變成 null。
+
+`WsTemplateDetail` 多一個欄位，讓確認畫面說得準確：
+
+```ts
+interface WsTemplateDetail { /* …既有欄位… */
+  deletes_source_material: boolean;   // 刪除這個範本時 source_material 也會一起永久刪除（條件同上）
+}
+```
+
+## 還有範本在用的範例不能單獨刪除
+
+`DELETE /api/materials/:id`：教師自己的（個人）教材還有範本用它當範例時 → **409**，不刪任何東西，訊息指出是哪個範本：「這份檔案是範本「L2 學習單版型」的原檔，範本還在用它。要刪除的話，請刪除那個範本，原檔會一起刪除。」（好幾個範本時：「這份檔案是 2 個範本（「A」、「B」）的原檔…原檔會跟著最後一個範本一起刪除。」）。以前這樣刪會讓範本失去原檔。平台教材的規則不變（管理員刪除後，用它做的範本繼續可用，`source_material` 變成 null）。
+
+## 沒有範本在用的原檔
+
+這次修正之前刪除的範本留下的範例，以及上傳了卻沒有做成範本的範例（例如讀取失敗後被刪除、上傳後取消），都還在。不自動刪除，列給教師自己決定：
+
+| Method | Path | 回應 |
+|---|---|---|
+| GET | `/api/materials?purpose=worksheet_sample&orphaned=true` | 和 `GET /api/materials` 相同的 `{ materials, usage, limits, storage, uploads_enabled }`；`materials` 只有**自己的**個人範例中**沒有任何範本在用**的，新到舊。`orphaned=true` 沒有配 `purpose=worksheet_sample` → 400 |
+
+刪除走既有的 `DELETE /api/materials/:id`（真的刪除，同「刪除」一節）；別人的 → 404。
+
+## 前端
+
+- **我的範本的卡片**（`/templates?tab=mine`）：和我的教材一樣，卡片上有「更多動作」（⋯）→「刪除」。只出現在自己的範本；平台範本沒有（平台範本在「教材與範本管理」由 `pi`／`kb_manager` 管理）。按下後開確認視窗（`role="alertdialog"`，標題「永久刪除「…」？」），讀取範本詳細後說明會刪掉什麼，取消時焦點回到 ⋯。
+- **確認文字**（卡片與範本頁「刪除這個版型」共用 `templateDeleteConsequences`）：「刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案「…」也會一起永久刪除。」；別的範本還在用時是「原本的檔案「…」還有別的範本在用，所以會留著。」；沒有原檔時只有前兩句。
+- **「沒有範本在用的原檔」**：我的範本卡片下方的小區塊，列出上面的清單（標題、檔名與上傳日期、「查看」在側邊檢視器打開原檔或文字、「刪除」用和我的教材相同的確認視窗）。沒有任何一份（或讀不到清單）時整個區塊不出現。後端拒絕（409、503）時，訊息顯示在確認視窗裡。
