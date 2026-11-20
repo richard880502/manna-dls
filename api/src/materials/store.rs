@@ -18,9 +18,9 @@ use super::{
     allowed_extensions_label, clean_filename, content_matches, file_type_for_name, Kind,
     MAX_PASTED_CHARS, TEACHER_MAX_MATERIALS, TEACHER_QUOTA_BYTES,
 };
+use crate::audit::log_usage;
 use crate::auth::{sha256_hex, AuthTeacher, Capability};
 use crate::error::{AppError, AppResult};
-use crate::routes::log_usage;
 use crate::sop::{
     assign_paragraph_ids, namespace_paragraph_refs, scrub_material_evidence, split_paragraphs,
     word_count, Paragraph, SopContent, DELETED_MATERIAL_MARK,

@@ -27,8 +27,8 @@ use crate::materials::ocr;
 use crate::materials::store::{self, Deleted, Material, MaterialDetail, Upload, Usage};
 use crate::materials::thumbnail;
 use crate::materials::{self, file_type_for_name, Kind, FILE_TYPES};
-use crate::routes::owned_lesson;
 use crate::storage::{ByteRange, StorageError};
+use crate::teaching_context::owned_lesson;
 use crate::worksheet::template::store as template_store;
 use crate::AppState;
 

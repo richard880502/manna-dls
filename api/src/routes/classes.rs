@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
 
+use crate::audit::log_usage;
 use crate::auth::{valid_track, AuthTeacher};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::preferences;
 use crate::routes::preferences::check_class_profile;
 use crate::routes::units::{self, Unit};
-use crate::routes::{log_usage, owned_class, owned_unit};
+use crate::teaching_context::{owned_class, owned_unit};
 use crate::AppState;
 
 pub const MAX_CLASS_NAME_CHARS: usize = 60;

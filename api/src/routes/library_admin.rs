@@ -14,6 +14,7 @@ use bytes::Bytes;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::audit::log_usage;
 use crate::auth::{AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::browse::{
@@ -27,7 +28,6 @@ use crate::materials::extract::Extracted;
 use crate::materials::store::{self as material_store, Deleted, MaterialRow, Upload};
 use crate::materials::Kind;
 use crate::routes::library::read_file_field;
-use crate::routes::log_usage;
 use crate::routes::templates::{self, TagsInput};
 use crate::worksheet::template::extract::{self as tpl_extract, check_source_text, stale_after};
 use crate::worksheet::template::store::{self as tpl_store, NewTemplate};

@@ -6,9 +6,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::routes::log_usage;
 use crate::routes::worksheets::{state_of, WorksheetState};
 use crate::worksheet::history::{self, History, Target};
 use crate::worksheet::images::actions::PictureOutcome;

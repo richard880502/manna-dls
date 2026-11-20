@@ -32,11 +32,12 @@ use super::{
 };
 use crate::ai::pipeline::InteractionMeta;
 use crate::ai::LlmRequest;
+use crate::application::ai::{attempt, finish_failure, finish_output, Failure};
+use crate::audit::{log_usage, scaffold_id};
 use crate::checks::{self as base_checks, CheckResult};
 use crate::error::{AppError, AppResult};
-use crate::prompts;
-use crate::routes::{clip_chars, log_usage, scaffold_id};
-use crate::sop::ai::{attempt, finish_failure, finish_output, prompt, Failure};
+use crate::prompts::{self, latest_required as prompt};
+use crate::text::clip_chars;
 use crate::vocabulary::{self, Lexicon};
 use crate::worksheet::template::{enum_of, obj, s_max};
 use crate::AppState;

@@ -21,8 +21,8 @@ use serde_json::{json, Value};
 
 use super::template::{enum_of, obj, s_max};
 use super::Level;
-use crate::routes::clip_chars;
 use crate::sop::checks::{clean_markup, english_only};
+use crate::text::clip_chars;
 
 // ---------------------------------------------------------------- the types
 

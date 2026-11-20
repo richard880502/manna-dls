@@ -23,9 +23,9 @@ use super::{
     SCAFFOLD,
 };
 use crate::ai::pipeline::{finish_interaction, insert_interaction, Finish, InteractionMeta};
+use crate::audit::{log_usage, scaffold_id};
 use crate::auth::sha256_hex;
 use crate::error::AppResult;
-use crate::routes::{log_usage, scaffold_id};
 use crate::AppState;
 
 /// Starts the job of the row opened at `run`. The caller has read its response already.

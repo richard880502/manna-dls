@@ -350,18 +350,21 @@ pub struct SettingsPatch {
     pub answer_formats: Option<Vec<String>>,
     pub generation: Option<Vec<String>>,
     pub levels: Option<Vec<Level>>,
-    #[serde(deserialize_with = "crate::routes::double_option")]
+    #[serde(deserialize_with = "crate::serde_support::double_option")]
     pub minutes: Option<Option<i32>>,
     pub output: Option<Output>,
     pub bloom: Option<Vec<Bloom>>,
-    #[serde(deserialize_with = "crate::routes::double_option")]
+    #[serde(deserialize_with = "crate::serde_support::double_option")]
     pub question_count: Option<Option<i32>>,
-    #[serde(deserialize_with = "crate::routes::double_option")]
+    #[serde(deserialize_with = "crate::serde_support::double_option")]
     pub bloom_counts: Option<Option<BTreeMap<Bloom, i32>>>,
     /// `objective` (the single field before 內容目標 and 語言目標) is the 內容目標.
-    #[serde(alias = "objective", deserialize_with = "crate::routes::double_option")]
+    #[serde(
+        alias = "objective",
+        deserialize_with = "crate::serde_support::double_option"
+    )]
     pub content_objective: Option<Option<String>>,
-    #[serde(deserialize_with = "crate::routes::double_option")]
+    #[serde(deserialize_with = "crate::serde_support::double_option")]
     pub language_objective: Option<Option<String>>,
 }
 
@@ -416,7 +419,7 @@ fn normalise_labels(
     if let Some(bad) = chosen.iter().find(|c| !allowed.contains(&c.as_str())) {
         return Err(format!(
             "「{}」不是「{what}」的選項。",
-            crate::routes::clip_chars(bad, 40)
+            crate::text::clip_chars(bad, 40)
         ));
     }
     Ok(allowed
@@ -1124,7 +1127,7 @@ impl Content {
                     if !ANSWER_FORMATS.contains(&f.as_str()) {
                         return Err(format!(
                             "「{}」不是「作答方式」的選項。",
-                            crate::routes::clip_chars(f, 40)
+                            crate::text::clip_chars(f, 40)
                         ));
                     }
                 }
@@ -1150,7 +1153,7 @@ impl Content {
                 if !s.kind_type.kinds().contains(&s.kind.as_str()) {
                     return Err(format!(
                         "「{}」不是這一類鷹架的種類。",
-                        crate::routes::clip_chars(&s.kind, 40)
+                        crate::text::clip_chars(&s.kind, 40)
                     ));
                 }
                 s.levels = normalise_levels(&s.levels);

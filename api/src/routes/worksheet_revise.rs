@@ -8,10 +8,11 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::application::worksheets::WorksheetService;
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::routes::log_usage;
-use crate::routes::worksheets::{run_input, state_of, WorksheetState};
+use crate::routes::worksheets::{state_of, WorksheetState};
 use crate::worksheet::ai::revise::{self as block_revise, ReviseRequest};
 use crate::worksheet::comments::{
     self, AnchorInput, Comment, Patch, MAX_NOTE_CHARS, STATUS_DISMISSED, STATUS_OPEN,
@@ -171,7 +172,9 @@ pub async fn revise_block(
     ApiJson(req): ApiJson<ReviseBlock>,
 ) -> AppResult<(StatusCode, Json<Proposal>)> {
     let ws = store::owned(&state.db, id, teacher.id()).await?;
-    let input = run_input(&state, teacher.id(), teacher.track(), ws).await?;
+    let input = WorksheetService::new(&state.db)
+        .prepare_generation(teacher.id(), teacher.track(), ws)
+        .await?;
     let proposal = block_revise::start(
         &state,
         input,

@@ -33,15 +33,17 @@ use super::{
 };
 use crate::ai::pipeline::{AiContextItem, ContextList, InteractionMeta};
 use crate::ai::LlmRequest;
+use crate::application::ai::{attempt, finish_failure, finish_output, set_final, Failure};
+use crate::audit::scaffold_id;
 use crate::checks::{self as base_checks, CheckResult};
 use crate::curriculum::{self, CurriculumItem};
 use crate::error::AppResult;
 use crate::progress::{self, Step, Tracker};
-use crate::prompts;
+use crate::prompts::{self, latest_required as prompt};
 use crate::retrieval;
-use crate::routes::{clip_chars, or_blank, scaffold_id, track_label};
-use crate::sop::ai::{attempt, finish_failure, finish_output, prompt, set_final, Failure};
 use crate::sop::ObjectiveType;
+use crate::teaching_context::track_label;
+use crate::text::{clip_chars, or_blank};
 use crate::worksheet::{Material, MAX_AI_PARAGRAPHS};
 use crate::AppState;
 
@@ -776,7 +778,8 @@ pub async fn run(
 ) -> AppResult<DraftResult> {
     let db = &state.db;
     let profile =
-        crate::routes::resolved_profile(db, input.teacher_id, input.class_id, "", "").await?;
+        crate::teaching_context::resolved_profile(db, input.teacher_id, input.class_id, "", "")
+            .await?;
     let query = clip_chars(
         &format!("{}\n{}", input.material.title, input.material.text()),
         4000,

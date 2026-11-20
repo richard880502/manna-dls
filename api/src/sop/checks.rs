@@ -157,7 +157,7 @@ pub fn copied_share<'a>(objective: &str, texts: impl Iterator<Item = &'a str>) -
 }
 
 fn clip(s: &str) -> String {
-    crate::routes::clip_chars(s, 120)
+    crate::text::clip_chars(s, 120)
 }
 
 // ---------------------------------------------------------------- (a) passage analysis

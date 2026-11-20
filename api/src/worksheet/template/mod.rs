@@ -25,7 +25,7 @@ use super::{
     GEN_OBJECTIVES, INSTRUCTIONAL_KINDS, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING, KIND_STEPS,
     KIND_WORD_LIST, MAX_ID_CHARS, PROCEDURAL_KINDS, VERBAL_KINDS,
 };
-use crate::routes::clip_chars;
+use crate::text::clip_chars;
 
 // ---------------------------------------------------------------- limits and labels
 

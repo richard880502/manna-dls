@@ -47,9 +47,10 @@ use super::export::{ExportImage, ImageBank};
 use super::store::Worksheet;
 use super::template::{enum_of, obj, s_max};
 use super::{Block, Content};
+use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
-use crate::routes::{clip_chars, log_usage};
 use crate::storage::StorageError;
+use crate::text::clip_chars;
 use crate::AppState;
 
 // ---------------------------------------------------------------- slots

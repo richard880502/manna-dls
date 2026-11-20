@@ -18,10 +18,10 @@ use sqlx::PgPool;
 
 use super::pipeline::{self, Finish, InteractionMeta};
 use super::{AiClient, AiSettings, AiSource, LlmRequest, ProviderError};
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::config::{AiProviderKind, VALID_EFFORTS};
 use crate::error::{ApiJson, AppError, AppResult};
-use crate::routes::log_usage;
 use crate::settings;
 use crate::AppState;
 

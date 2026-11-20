@@ -19,7 +19,7 @@ use crate::error::{AppError, AppResult};
 use crate::materials::annotations::{
     byte_index, context_after, context_before, utf16_len, utf16_slice, AnchorStatus,
 };
-use crate::routes::clip_chars;
+use crate::text::clip_chars;
 
 pub const MAX_NOTE_CHARS: usize = 2_000;
 pub const MAX_QUOTE_CHARS: usize = 500;

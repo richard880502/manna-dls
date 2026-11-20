@@ -28,9 +28,11 @@ use super::{
     replace_block, run_step, skip, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult,
     STEP_BLOOM, STEP_BLOOM_CHECK,
 };
+use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
 use crate::progress::{Step, Tracker};
-use crate::routes::{clip_chars, log_usage, or_blank, track_label};
+use crate::teaching_context::track_label;
+use crate::text::{clip_chars, or_blank};
 use crate::worksheet::assemble::{auto_steps, letter};
 use crate::worksheet::bloom::{
     self as bl, Bloom, Output, RawBloomCheck, RawBloomLevel, CHECK_SCHEMA_NAME, LEVEL_SCHEMA_NAME,

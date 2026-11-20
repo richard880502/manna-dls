@@ -17,7 +17,7 @@ use crate::record::{
     MAX_FOLLOWUP_CHARS, MAX_OPS_PER_SYNC, PAIRING_MINUTES,
 };
 use crate::routes::classes::MSG_CLASS_ARCHIVED;
-use crate::routes::{owned_class, owned_lesson};
+use crate::teaching_context::{owned_class, owned_lesson};
 use crate::AppState;
 
 // ---------------------------------------------------------------- shapes

@@ -201,7 +201,7 @@ pub async fn extract(
         ));
     }
     let active = list(&state.db, teacher_id, false).await?;
-    let prompt = crate::sop::ai::prompt(&state.db, "teacher_memory_extract").await?;
+    let prompt = crate::prompts::latest_required(&state.db, "teacher_memory_extract").await?;
     let safe_context = json!({"active_memories": active, "kinds": KINDS, "values": VALUES});
     let system = prompt.system_text.clone();
     let user = format!(
@@ -429,7 +429,7 @@ pub async fn habit_context(
             applied: None,
         }));
     }
-    let prompt = crate::sop::ai::prompt(db, CONTEXT_PROMPT_KEY).await?;
+    let prompt = crate::prompts::latest_required(db, CONTEXT_PROMPT_KEY).await?;
     let habits = habits_json(&memories);
     let vars = HashMap::from([("teacher_habits", habits.to_string())]);
     let system = format!("\n\n{}", crate::prompts::render(&prompt.system_text, &vars));
@@ -480,7 +480,7 @@ pub fn snapshot_value(ctx: &HabitContext, graph: Option<&graph::GraphObservation
     })
 }
 
-/// Used by every model step through `sop::ai::attempt`, including repairs. Steps outside
+/// Used by every model step through `application::ai::attempt`, including repairs. Steps outside
 /// [`HABIT_STEPS`] are returned untouched; with the switch off the request is untouched and
 /// the snapshot only records `enabled: false`.
 pub async fn augment(

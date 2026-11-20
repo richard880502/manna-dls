@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use crate::error::{AppError, AppResult};
 use serde::Serialize;
 use sqlx::PgPool;
 
@@ -29,6 +30,13 @@ pub async fn latest(db: &PgPool, key: &str) -> sqlx::Result<Option<PromptVersion
     .bind(key)
     .fetch_optional(db)
     .await
+}
+
+/// Loads the active prompt or reports the missing research configuration.
+pub async fn latest_required(db: &PgPool, key: &str) -> AppResult<PromptVersion> {
+    latest(db, key)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no prompt version for {key}")))
 }
 
 /// Replaces every `{{name}}` (surrounding spaces inside the braces allowed) with `vars[name]`.

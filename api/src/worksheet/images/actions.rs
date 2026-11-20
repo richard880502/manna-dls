@@ -23,8 +23,9 @@ use super::{
     MSG_DISABLED, PROMPT_CHARS, PURPOSE_CHARS, STATUS_DONE, STATUS_FAILED, STATUS_QUEUED,
     STATUS_REMOVED, STATUS_RUNNING, STATUS_SKIPPED,
 };
+use crate::audit::log_usage;
 use crate::error::AppError;
-use crate::routes::{clip_chars, log_usage};
+use crate::text::clip_chars;
 use crate::worksheet::store::Worksheet;
 use crate::worksheet::{Block, Content, MAX_ID_CHARS};
 use crate::AppState;

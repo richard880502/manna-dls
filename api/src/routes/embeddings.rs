@@ -8,10 +8,10 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::audit::log_usage;
 use crate::auth::{AuthTeacher, Capability};
 use crate::error::{AppError, AppResult};
 use crate::kb_embeddings;
-use crate::routes::log_usage;
 use crate::AppState;
 
 /// How many active items have a vector of the current model, and the latest indexing run.

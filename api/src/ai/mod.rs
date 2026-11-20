@@ -6,6 +6,7 @@
 
 pub mod admin;
 pub mod anthropic;
+pub(crate) mod execution;
 pub mod fake;
 pub mod openai;
 pub mod pipeline;

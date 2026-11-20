@@ -21,9 +21,10 @@ use super::{
     replace_block, run_step, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult,
     STEP_TEMPLATE,
 };
+use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
 use crate::progress::Step;
-use crate::routes::{log_usage, or_blank};
+use crate::text::or_blank;
 use crate::worksheet::assemble::{self, scaffold_levels};
 use crate::worksheet::checks::{
     evaluate_template_section, CleanSupport, Eval, SectionCtx, SupportsCtx, TemplateSection,

@@ -16,7 +16,7 @@ use super::{
     Settings, ANSWER_FORMATS, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
     FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE,
 };
-use crate::routes::clip_chars;
+use crate::text::clip_chars;
 
 // ---------------------------------------------------------------- the six levels
 

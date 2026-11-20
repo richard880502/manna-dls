@@ -28,8 +28,8 @@ use super::images::actions::{self, PictureAction, PictureOp, PictureOutcome};
 use super::images::{self, undo as picture_undo};
 use super::revise::{self as rv, Proposal};
 use super::{store, Block, Content};
+use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
-use crate::routes::log_usage;
 use crate::AppState;
 
 pub const KIND_ORIGINAL: &str = "original";

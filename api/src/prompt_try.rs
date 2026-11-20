@@ -3,7 +3,7 @@
 //!
 //! What keeps it away from teachers and from the research data:
 //!
-//! * It never goes through `prep::run::call`, `ai::pipeline::attempt` or any other path that
+//! * It never goes through `application::generation::call`, `application::ai::attempt` or any other path that
 //!   writes `ai_interactions`, `worksheets`, jobs or progress rows. The provider is called
 //!   directly with `AiClient::complete`; nothing a teacher can see is read or written, and no
 //!   teacher data (classes, materials, preferences) is read: the only inputs are what the lead
@@ -133,7 +133,7 @@ fn marked(paragraphs: &[String], label: impl Fn(usize) -> String) -> String {
 }
 
 fn profile_text(sample: &Sample) -> String {
-    crate::routes::or_blank(sample.class_profile.trim())
+    crate::text::or_blank(sample.class_profile.trim())
 }
 
 /// A few words from the passage (long, not repeated) with the sentence they are in, standing

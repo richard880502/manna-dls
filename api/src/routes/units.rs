@@ -6,13 +6,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences::{self, PrepRoute};
 use crate::routes::classes::{assign_unit, MSG_CLASS_ARCHIVED};
 use crate::routes::preferences::check_class_profile;
-use crate::routes::{log_usage, owned_class};
 use crate::settings;
+use crate::teaching_context::owned_class;
 use crate::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]

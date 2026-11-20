@@ -184,7 +184,7 @@ pub async fn delete(db: &PgPool, id: i64, teacher_id: i64) -> sqlx::Result<Vec<i
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    crate::routes::log_usage(
+    crate::audit::log_usage(
         &mut *tx,
         teacher_id,
         "prep_session_deleted",

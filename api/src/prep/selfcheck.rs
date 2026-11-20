@@ -26,14 +26,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgConnection, PgPool};
 
-use super::run::{self, Call, Checked, BASE_TEMPERATURE};
+use super::run::{self, BASE_TEMPERATURE};
 use super::store::{SessionRow, TurnRow};
 use super::{
     clean_text, ActivityPlan, GoalKind, Step, KIND_ACTIVITY, KIND_COMPREHENSION, KIND_KIT,
     KIND_TIERED, KIND_WORKSHEET, OPTION_NAMES_ZH, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING,
 };
+use crate::application::generation::{call, nothing, Call, Checked};
 use crate::error::{AppError, AppResult};
-use crate::routes::clip_chars;
+use crate::text::clip_chars;
 use crate::worksheet::assemble::letter;
 use crate::worksheet::store as ws_store;
 use crate::worksheet::template::{enum_of, obj, s_max};
@@ -1098,7 +1099,7 @@ async fn run(state: &AppState, check_id: i64) -> AppResult<Outcome> {
     let output = output_label(&turn.kind, page.has_template);
     let vars: HashMap<&'static str, String> = HashMap::from([
         ("output_kind", output.to_string()),
-        ("class_profile", crate::routes::or_blank(&profile)),
+        ("class_profile", crate::text::or_blank(&profile)),
         ("passage_numbered", page.passage),
         ("output_text", page.text),
         ("item_count", ids.len().to_string()),
@@ -1136,12 +1137,13 @@ async fn run(state: &AppState, check_id: i64) -> AppResult<Outcome> {
         progress: None,
         images: Vec::new(),
     };
-    let result = run::call(
+    let result = call(
         state,
         session.teacher_id,
         c,
+        crate::objectives::required,
         |raw: &RawSelfCheck| evaluate(raw, &ids),
-        run::nothing,
+        nothing,
     )
     .await?;
     Ok(result.map(|(items, id)| (items, Some(id))))

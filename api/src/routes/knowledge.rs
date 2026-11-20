@@ -11,11 +11,11 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::audit::log_usage;
 use crate::auth::{valid_track, AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiQuery, AppError, AppResult};
 use crate::retrieval::{self, CurriculumFilter, ANY};
 use crate::routes::feedback::escape_like;
-use crate::routes::log_usage;
 use crate::vocabulary;
 use crate::AppState;
 

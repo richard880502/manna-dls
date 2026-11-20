@@ -32,8 +32,8 @@ use super::catalog::SCOPE_PLATFORM;
 use super::extract::{Extracted, TextStatus};
 use super::store::{self, MaterialRow, COLS};
 use super::{FileType, Kind};
+use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
-use crate::routes::log_usage;
 use crate::AppState;
 
 pub const STATUS_NONE: &str = "none";
