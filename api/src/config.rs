@@ -34,7 +34,7 @@ impl AiProviderKind {
         }
     }
 
-    fn parse(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "" | "none" => Some(Self::None),
             "fake" => Some(Self::Fake),

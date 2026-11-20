@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use super::{LlmRequest, ProviderError};
+use super::{ActiveAi, LlmRequest, ProviderError};
 use crate::checks::{self, CheckResult};
 use crate::error::AppResult;
 use crate::AppState;
@@ -272,9 +272,12 @@ fn elapsed_ms(start: Instant) -> i32 {
     i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX)
 }
 
-/// Runs attempt 1 (row `first_id`, already inserted) and at most one regeneration.
+/// Runs attempt 1 (row `first_id`, already inserted for `ai`) and at most one regeneration. `ai`
+/// is the snapshot taken before that row was written: the regeneration and every row use it, so
+/// the recorded provider and model are the ones that answered even if the PI switches meanwhile.
 pub async fn run<T, F>(
     state: &AppState,
+    ai: &ActiveAi,
     meta: &InteractionMeta,
     first_id: i64,
     snapshot: &Value,
@@ -285,7 +288,6 @@ where
     T: Serialize,
     F: Fn(&Value) -> Checked<T>,
 {
-    let ai = &state.ai;
     let mut interaction_id = first_id;
     for attempt in 1..=2 {
         if attempt > 1 {

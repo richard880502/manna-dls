@@ -75,7 +75,7 @@ interface PlanSuggestOutput { kb_empty: boolean; suggestions: PlanSuggestion[]; 
 | 方法 | 路徑 | 請求 | 回應 |
 |---|---|---|---|
 | GET | `/api/health` | – | `{ ok: boolean, db: boolean, commit: string }`（`commit`：映像建置時的 commit，沒有時為 `"unknown"`；見 README「`/api/health` 的 commit」） |
-| GET | `/api/config` | – | `{ demo_mode: boolean, ai_enabled: boolean, ai_provider: string, ai_model: string }` |
+| GET | `/api/config` | – | `{ demo_mode: boolean, ai_enabled: boolean, ai_provider: string, ai_model: string }`（`ai_provider`、`ai_model` 是目前生效的文字模型，見「文字模型設定」） |
 | POST | `/api/auth/login` | `{ code: string }` | `{ token: string, teacher: Teacher }`；錯誤碼 401 |
 | POST | `/api/auth/logout` | – | `{ ok: true }` |
 
@@ -3662,3 +3662,22 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
   只由 `INTERNAL_PORT`（預設 8081，設定索引時才開啟）提供，需 `X-Manna-Service-Token`（`GRAPHITI_TOKEN`）、
   job token、`X-Manna-Memory-Api-Version` 與領取時的 `X-Manna-Graphiti-Version`；欄位白名單、
   `n=1`、`max_tokens ≤ 8192`、embedding batch ≤ 64、每工作 300 次。
+
+## 文字模型設定（後台管理 → 平台設定 → 文字模型）
+
+`AI_PROVIDER`、`AI_MODEL`、`AI_EFFORT`、`AI_TIMEOUT_SECS` 現在是**預設值**：主持人可以在後台管理切換正式環境的文字模型，不必改 Coolify 環境變數、也不必重新部署。後台設定存在 `app_settings.ai_text_model`（`{provider, model, effort, timeout_secs}`），有就蓋過環境變數；刪除（「恢復環境變數預設」）就回到環境變數。金鑰與位址（`OPENAI_API_KEY`、`OPENAI_COMPAT_BASE_URL`、`OPENAI_COMPAT_API_KEY`）仍只能由環境變數設定。
+
+可以切換：模型來源（`openai`＝OpenAI，需要 `OPENAI_API_KEY`；`openai_compatible`＝國網中心，需要 `OPENAI_COMPAT_BASE_URL`）、模型名稱、推理強度（只有 `openai` 用得到）、等待上限秒數。**不能**切換：embedding、OCR、圖片；也不能選 `anthropic`、`fake`、`none`（`anthropic` 受 `DEMO_MODE` 與境外資料規定限制，伺服器一律拒絕）。環境沒有設定金鑰或位址的來源不能選。
+
+| 方法／路徑 | 說明 |
+|---|---|
+| `GET /api/admin/ai-model` | PI。`{active, source, changed_by, changed_at, env_default, providers, efforts, timeout_range}`。`active`／`env_default` 為 `{provider, model, effort, timeout_secs}`；`source` 是 `env`（環境變數預設）或 `admin`（後台設定，此時 `changed_by` 為設定者的研究編號、`changed_at` 為時間）；`providers` 是 `[{id, label, available, models, uses_effort}]`（`models` 是建議名稱：`openai` 為 `gpt-5.6-sol`、`gpt-5.6-terra`，`openai_compatible` 為 `gemma-4-31B-it`，再加上環境變數預設的模型；也可以自行輸入）；`timeout_range` 為 `{min: 30, max: 900}` |
+| `PUT /api/admin/ai-model` | PI。`{provider, model, effort?, timeout_secs}`。先驗證（來源、模型名稱 1–100 字元且只含英數與 `. - _ : /`、`effort` 屬於 `low／medium／high／xhigh／max`、秒數 30–900；沒給 `effort` 沿用環境變數的值），再用**新設定**做一次很小的測試呼叫（最多等 120 秒）。測試成功才儲存並立刻生效，回傳與 GET 相同的內容加上 `test_latency_ms`；測試失敗或驗證不過回 400（中文原因，例如模型名稱可能打錯），**什麼都不儲存**，目前的模型不變 |
+| `DELETE /api/admin/ai-model` | PI。刪除後台設定，回到環境變數預設，回傳與 GET 相同的內容；沒有後台設定時什麼也不做 |
+
+- **生效時機**：新的 AI 呼叫立刻使用新設定。每次呼叫在開始時取一份設定快照，請求、逾時與記錄都用這一份，所以已經送出的呼叫會用原本的模型完成，單次呼叫不會半途混用。一個多步驟的工作（例如一份學習單的好幾次呼叫）若在中途切換，後面的呼叫會改用新模型，每筆 `ai_interactions` 各自記錄實際使用的模型。伺服器重新啟動時會讀回後台設定（沒有就用環境變數），並在啟動記錄寫明使用哪一種來源；若後台設定的來源已不在環境中（例如金鑰被移除）會被忽略並改用環境變數。目前只有一個 API 實例，切換存在該實例的記憶體；若日後有多個實例，需要各自重新讀取 `app_settings`。
+- **研究記錄**：每筆 `ai_interactions` 的 `provider`／`model` 是該次呼叫快照裡實際使用的值。測試呼叫也記成一筆，`module = admin_model_test`（`teacher_id` 是主持人、`input_snapshot` 是固定的測試題目與新設定、失敗時 `status = error／timeout` 並有 `error_detail`），不會混進教師的流程。
+- **稽核**：每次儲存或恢復預設都寫 `usage_logs`（`event = setting_changed`、`payload = {key: "ai_text_model", from, to}`；儲存另有 `test_latency_ms`，恢復另有 `reset_to_env`）。
+- `GET /api/config` 的 `ai_provider`、`ai_model`、`ai_enabled` 反映目前生效的設定。
+- 逾時改成每次呼叫由快照決定，所以「執行中工作被視為中斷」的門檻（`n × AI_TIMEOUT_SECS + 60`）改用**自啟動以來用過的最長逾時**計算，避免主持人縮短逾時後把還在跑的工作誤判為中斷。
+- 記憶索引（Graphiti）的模型轉發每次呼叫也使用當下生效的來源、模型與推理強度；索引工作進行中切換，後續呼叫會改用新模型（每筆 `ai_interactions` 仍記錄該次實際使用的值）。

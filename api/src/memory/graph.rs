@@ -305,7 +305,7 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
         .bearer_auth(cfg.secret())
         .json(&json!({
             "group_id":group,"memories":active,"proxy_url":cfg.proxy_url,
-            "proxy_key":token,"model":state.config.ai_model,
+            "proxy_key":token,"model":state.ai.active().model,
             "embedding_model":state.config.embedding.model,
             "embedding_dims":state.config.embedding.dims,
             "policy_version":POLICY_VERSION,"api_version":SIDECAR_API_VERSION,
@@ -806,6 +806,7 @@ async fn forward(
     let body: Value = serde_json::from_slice(&bytes).map_err(|_| bad("JSON"))?;
     let embedding = kind == ProxyKind::Embeddings;
     let c = &state.config;
+    let ai = state.ai.active();
     let (base, key, model, provider) = if embedding {
         if c.embedding.provider != crate::embedding::EmbeddingProviderKind::OpenAiCompatible {
             return Err(AppError::Unavailable(
@@ -819,17 +820,17 @@ async fn forward(
             "openai_compatible",
         )
     } else {
-        match c.ai_provider {
+        match ai.kind {
             AiProviderKind::OpenAi => (
                 Some("https://api.openai.com/v1"),
                 c.openai_api_key.as_deref(),
-                c.ai_model.as_str(),
+                ai.model.as_str(),
                 "openai",
             ),
             AiProviderKind::OpenAiCompatible => (
                 c.openai_compat_base_url.as_deref(),
                 c.openai_compat_api_key.as_deref(),
-                c.ai_model.as_str(),
+                ai.model.as_str(),
                 "openai_compatible",
             ),
             _ => {
@@ -844,7 +845,7 @@ async fn forward(
         Value::Object(sanitize_embeddings(&body, model)?)
     } else {
         let (mut out, limit) = sanitize_chat(&body, model)?;
-        if c.ai_provider == AiProviderKind::OpenAi {
+        if ai.kind == AiProviderKind::OpenAi {
             out.remove("temperature");
             out.insert(
                 "max_completion_tokens".into(),
@@ -852,7 +853,7 @@ async fn forward(
             );
             out.insert(
                 "reasoning_effort".into(),
-                json!(crate::ai::openai::reasoning_effort(&c.ai_effort)),
+                json!(crate::ai::openai::reasoning_effort(&ai.effort)),
             );
         } else {
             out.insert("max_tokens".into(), json!(limit));
@@ -906,7 +907,7 @@ async fn forward(
     let id =
         pipeline::insert_interaction(&state.db, &meta, provider, model, &snapshot, 1, None).await?;
     let start = Instant::now();
-    let mut request = client(c.ai_timeout_secs)
+    let mut request = client(ai.timeout.as_secs())
         .post(format!("{}/{endpoint}", base.trim_end_matches('/')))
         .json(&forwarded);
     if let Some(key) = key {

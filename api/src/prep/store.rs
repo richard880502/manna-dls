@@ -454,7 +454,7 @@ pub async fn turns(db: &PgPool, session_id: i64) -> sqlx::Result<Vec<TurnRow>> {
 
 /// Seconds after which a running turn is reported as failed (its calls must have timed out).
 pub fn stale_after(state: &AppState) -> f64 {
-    (state.config.ai_timeout_secs * 8 + 60) as f64
+    (state.ai.longest_timeout_secs() * 8 + 60) as f64
 }
 
 /// Brings the turns of a session up to date: a turn that outlived a restart fails, a turn that

@@ -851,7 +851,7 @@ pub async fn open(conn: &mut PgConnection, turn_id: i64) -> sqlx::Result<Option<
 /// Seconds after which a running check is reported as failed (its call and retry must have
 /// timed out, or the server restarted).
 pub fn stale_after(state: &AppState) -> f64 {
-    (state.config.ai_timeout_secs * 3 + 60) as f64
+    (state.ai.longest_timeout_secs() * 3 + 60) as f64
 }
 
 /// Fails the running checks of a session's turns that outlived [`stale_after`].

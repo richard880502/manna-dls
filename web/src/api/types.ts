@@ -366,6 +366,46 @@ export interface AdminSettings {
   route_choice_enabled: boolean;
 }
 
+/** 後台管理 → 文字模型：一組正在使用（或預設）的設定 */
+export interface AiModelValue {
+  provider: string;
+  model: string;
+  effort: string;
+  timeout_secs: number;
+}
+
+export interface AiModelProvider {
+  id: "openai" | "openai_compatible";
+  label: string;
+  /** 環境有設定這個來源的金鑰或位址才能選 */
+  available: boolean;
+  /** 建議的模型名稱（含環境變數預設的那個） */
+  models: string[];
+  /** 只有 OpenAI 會用到推理強度 */
+  uses_effort: boolean;
+}
+
+export interface AiModelSettings {
+  active: AiModelValue;
+  /** env = 環境變數預設；admin = 主持人在後台設定 */
+  source: "env" | "admin";
+  changed_by: string | null;
+  changed_at: string | null;
+  env_default: AiModelValue;
+  providers: AiModelProvider[];
+  efforts: string[];
+  timeout_range: { min: number; max: number };
+  /** 只有儲存成功的回應才有：測試呼叫花的毫秒數 */
+  test_latency_ms?: number;
+}
+
+export interface AiModelRequest {
+  provider: string;
+  model: string;
+  effort?: string;
+  timeout_secs: number;
+}
+
 export interface CoreDraftResponse {
   answer: string;
   status: ResponseStatus;

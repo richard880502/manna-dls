@@ -112,7 +112,8 @@ pub async fn suggest(
         &lesson.unit_class_profile,
     )
     .await?;
-    if !state.ai.enabled() {
+    let ai = state.ai.active();
+    if !ai.enabled() {
         return Ok(Json(AiResult::disabled()));
     }
     let prompt = prompts::latest(&state.db, prompts::KEY_PLAN_SUGGEST)
@@ -311,8 +312,8 @@ pub async fn suggest(
     let first_id = pipeline::insert_interaction(
         &state.db,
         &meta,
-        state.ai.provider_name(),
-        &state.ai.model,
+        ai.provider_name(),
+        &ai.model,
         &snapshot,
         1,
         None,
@@ -430,6 +431,7 @@ pub async fn suggest(
     };
     let outcome = pipeline::run(
         &state,
+        &ai,
         &meta,
         first_id,
         &snapshot,

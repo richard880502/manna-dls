@@ -101,7 +101,7 @@ pub fn default_title(material_title: &str) -> String {
 
 /// Seconds after which an open extraction is reported as failed.
 pub fn stale_after(state: &AppState) -> f64 {
-    (state.config.ai_timeout_secs * 6 + 60) as f64
+    (state.ai.longest_timeout_secs() * 6 + 60) as f64
 }
 
 /// Starts the background job for `row` (already `extracting`) on `text`.

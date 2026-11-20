@@ -55,12 +55,25 @@ const list = {
   ],
 };
 
+const aiValue = { provider: "fake", model: "fake-model", effort: "medium", timeout_secs: 60 };
+const aiModel = {
+  active: aiValue,
+  source: "env",
+  changed_by: null,
+  changed_at: null,
+  env_default: aiValue,
+  providers: [],
+  efforts: ["low", "medium", "high"],
+  timeout_range: { min: 30, max: 900 },
+};
+
 function routes(extra: Record<string, unknown> = {}) {
   return {
     ...baseRoutes(),
     "GET /api/me": pi,
     "GET /api/admin/settings": { route_choice_enabled: true },
     "GET /api/admin/accounts": [],
+    "GET /api/admin/ai-model": aiModel,
     "GET /api/admin/prompts": list,
     ...extra,
   };

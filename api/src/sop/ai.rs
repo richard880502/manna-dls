@@ -173,7 +173,7 @@ fn error_result(message: &str) -> Value {
 
 /// A job still `running` long after its calls must have timed out died with the server.
 fn stale_after(state: &AppState) -> f64 {
-    (state.config.ai_timeout_secs * 2 + 60) as f64
+    (state.ai.longest_timeout_secs() * 2 + 60) as f64
 }
 
 async fn expire_stale(state: &AppState, lesson_id: i64) -> sqlx::Result<()> {
@@ -371,25 +371,26 @@ pub(crate) async fn attempt(
     retry_of: Option<i64>,
 ) -> AppResult<Attempt> {
     let (snapshot, req) = crate::memory::augment(state, meta, snapshot, req).await?;
+    let ai = state.ai.active();
     let id = pipeline::insert_interaction(
         &state.db,
         meta,
-        state.ai.provider_name(),
-        &state.ai.model,
+        ai.provider_name(),
+        &ai.model,
         &snapshot,
         req.attempt,
         retry_of,
     )
     .await?;
-    if state.ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_SLOW") {
+    if ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_SLOW") {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     // A run whose progress a test watches step by step (docs/API.md「產生進度」).
-    if state.ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_PACED") {
+    if ai.kind == AiProviderKind::Fake && req.user.contains("FAKE_PACED") {
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     let start = Instant::now();
-    let response = state.ai.complete(&req).await;
+    let response = ai.complete(&req).await;
     let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
     Ok(Attempt {
         id,

@@ -174,7 +174,7 @@ pub struct Job {
 
 /// Jobs still open long after their calls must have timed out died with the server.
 async fn expire_stale(state: &AppState, worksheet_id: i64) -> sqlx::Result<()> {
-    let stale_after = (state.config.ai_timeout_secs * 8 + 60) as f64;
+    let stale_after = (state.ai.longest_timeout_secs() * 8 + 60) as f64;
     sqlx::query(
         "UPDATE worksheet_jobs
             SET status = 'done', outcome = 'error', message = $2, finished_at = now()

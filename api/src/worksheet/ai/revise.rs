@@ -53,7 +53,7 @@ pub struct ReviseRequest {
 
 /// After this many seconds a running revision died with the server: two attempts and a margin.
 pub fn stale_after(state: &AppState) -> u64 {
-    state.config.ai_timeout_secs * 2 + 60
+    state.ai.longest_timeout_secs() * 2 + 60
 }
 
 /// Checks the request while it can still be answered with a 4xx, opens a `running` proposal and

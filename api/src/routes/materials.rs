@@ -231,7 +231,8 @@ pub async fn material_focuses(
     if text.trim().is_empty() {
         return Err(AppError::bad_request("這份教材沒有文字內容。"));
     }
-    if !state.ai.enabled() {
+    let ai = state.ai.active();
+    if !ai.enabled() {
         return Ok(Json(AiResult::disabled()));
     }
     let prompt = prompts::latest(&state.db, prompts::KEY_MATERIAL_FOCUSES)
@@ -287,8 +288,8 @@ pub async fn material_focuses(
     let first_id = pipeline::insert_interaction(
         &state.db,
         &meta,
-        state.ai.provider_name(),
-        &state.ai.model,
+        ai.provider_name(),
+        &ai.model,
         &snapshot,
         1,
         None,
@@ -307,6 +308,7 @@ pub async fn material_focuses(
     };
     let outcome = pipeline::run(
         &state,
+        &ai,
         &meta,
         first_id,
         &snapshot,

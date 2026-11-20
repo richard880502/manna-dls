@@ -396,6 +396,12 @@ pub fn api_router() -> Router<AppState> {
             get(admin::get_settings).put(admin::put_settings),
         )
         .route(
+            "/admin/ai-model",
+            get(crate::ai::admin::get)
+                .put(crate::ai::admin::put)
+                .delete(crate::ai::admin::reset),
+        )
+        .route(
             "/admin/prompts",
             get(admin::list_prompts).post(admin::create_prompt),
         )
@@ -451,11 +457,12 @@ fn commit_from(candidates: &[Option<String>]) -> String {
 
 async fn public_config(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
     let c = &state.config;
+    let ai = state.ai.active();
     Ok(Json(json!({
         "demo_mode": c.demo_mode,
-        "ai_enabled": c.ai_enabled(),
-        "ai_provider": c.ai_provider.as_str(),
-        "ai_model": c.ai_model,
+        "ai_enabled": ai.enabled(),
+        "ai_provider": ai.provider_name(),
+        "ai_model": ai.model,
         "route_choice_enabled": crate::settings::route_choice_enabled(&state.db).await?,
         // Whether files can be uploaded to the material library (pasting always works).
         "uploads_enabled": state.storage.is_some(),

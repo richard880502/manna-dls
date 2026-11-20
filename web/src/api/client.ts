@@ -3,6 +3,8 @@ import type {
   Account,
   MemoryState, MemoryCandidate, MemorySettings, MemoryIndexStatus,
   AdminSettings,
+  AiModelSettings,
+  AiModelRequest,
   AiResult,
   ApiErrorBody,
   AppConfig,
@@ -684,6 +686,12 @@ export const api = {
   admin: {
     getSettings: () => get<AdminSettings>("/admin/settings"),
     updateSettings: (body: AdminSettings) => put<AdminSettings>("/admin/settings", body),
+    /** 文字模型：目前設定、來源、可選項目 */
+    getAiModel: () => get<AiModelSettings>("/admin/ai-model"),
+    /** 先用新設定試呼叫一次，成功才儲存並立刻生效；失敗回 400，什麼都不存 */
+    saveAiModel: (body: AiModelRequest) => put<AiModelSettings>("/admin/ai-model", body),
+    /** 刪除後台設定，回到環境變數預設 */
+    resetAiModel: () => del<AiModelSettings>("/admin/ai-model"),
     createInvite: (body: InviteRequest) => post<InviteResponse>("/admin/invites", body),
     /** 帳號與角色：未刪除的帳號，最早加入的在前 */
     listAccounts: () => get<Account[]>("/admin/accounts"),
