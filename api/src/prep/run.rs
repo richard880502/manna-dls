@@ -191,18 +191,8 @@ type Outcome = Result<(Option<Value>, Option<i64>), String>;
 
 /// The outcome of a spawned piece of work: an error or a panic is a failure the teacher can
 /// read.
-fn settle(turn_id: i64, joined: Result<AppResult<Outcome>, tokio::task::JoinError>) -> Outcome {
-    match joined {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(e)) => {
-            tracing::error!(turn_id, error = %e, "prep turn failed");
-            Err(teacher_message(&e))
-        }
-        Err(e) => {
-            tracing::error!(turn_id, error = %e, "prep turn panicked");
-            Err(MSG_INTERNAL.to_string())
-        }
-    }
+fn settle(outcome: AppResult<Outcome>) -> Outcome {
+    outcome.unwrap_or_else(|error| Err(teacher_message(&error)))
 }
 
 fn spawn(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
@@ -213,14 +203,12 @@ fn spawn(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
         let work = {
             let state = state.clone();
             let tracker = tracker.clone();
-            tokio::spawn(
-                state
-                    .ai
-                    .clone()
-                    .pinned_turn(turn_id, async move { run(&state, &input, &tracker).await }),
-            )
+            state
+                .ai
+                .clone()
+                .pinned_turn(turn_id, async move { run(&state, &input, &tracker).await })
         };
-        let outcome = settle(turn_id, work.await);
+        let outcome = settle(crate::jobs::run("prep_turn", turn_id, work).await);
         tracker
             .finish(outcome.as_ref().err().map(String::as_str))
             .await;
@@ -252,11 +240,11 @@ fn spawn_kit(
         let work = {
             let state = state.clone();
             let tracker = tracker.clone();
-            tokio::spawn(state.ai.clone().pinned_turn(turn_id, async move {
+            state.ai.clone().pinned_turn(turn_id, async move {
                 activity(&state, &input, &tracker).await
-            }))
+            })
         };
-        let outcome = settle(turn_id, work.await);
+        let outcome = settle(crate::jobs::run("prep_turn", turn_id, work).await);
         tracker
             .finish(outcome.as_ref().err().map(String::as_str))
             .await;
@@ -329,7 +317,7 @@ fn spawn_after_template(state: &AppState, input: TurnInput, template_id: i64) {
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(state.ai.clone().pinned_turn(turn_id, async move {
+            state.ai.clone().pinned_turn(turn_id, async move {
                 let teacher_id = input.session.teacher_id;
                 Ok::<_, AppError>(
                     match wait_for_template(&state, turn_id, template_id, teacher_id).await? {
@@ -341,19 +329,11 @@ fn spawn_after_template(state: &AppState, input: TurnInput, template_id: i64) {
                             .map(|e| worksheet_failure(&input, &e)),
                     },
                 )
-            }))
+            })
         };
-        let failure = match work.await {
-            Ok(Ok(failure)) => failure,
-            Ok(Err(e)) => {
-                tracing::error!(turn_id, error = %e, "waiting for the template failed");
-                Some(teacher_message(&e))
-            }
-            Err(e) => {
-                tracing::error!(turn_id, error = %e, "waiting for the template panicked");
-                Some(MSG_INTERNAL.to_string())
-            }
-        };
+        let failure = crate::jobs::run("prep_after_template", turn_id, work)
+            .await
+            .unwrap_or_else(|error| Some(teacher_message(&error)));
         // Otherwise the turn runs on with its worksheet (closed by `store::refresh`).
         if let Some(message) = failure {
             if let Err(e) = store::finish(&state.db, turn_id, Err(message)).await {
@@ -1629,9 +1609,8 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
         .create(teacher_id, req, overrides)
         .await?;
     store::set_worksheet(db, input.turn.id, worksheet_id).await?;
-    let ws = ws_store::owned(db, worksheet_id, teacher_id).await?;
     let run = WorksheetService::new(&state.db)
-        .prepare_generation(teacher_id, &input.track, ws)
+        .prepare_generation(teacher_id, &input.track, worksheet_id)
         .await?;
     ws_ai::start_generation(state, run).await
 }

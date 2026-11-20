@@ -14,6 +14,7 @@ const ROLES: Role[] = ["teacher", "pi", "kb_manager", "ra", "rater", "engineer"]
 
 export function AdminPage() {
   const { teacher } = useApp();
+  const [modelRevision, setModelRevision] = useState(0);
   if (!can(teacher, "administer")) {
     return <ErrorText message="這個頁面只開放給計畫主持人。" />;
   }
@@ -27,8 +28,8 @@ export function AdminPage() {
         </p>
       </div>
       <PlatformSettings />
-      <AiModelSettings />
-      <MemorySettings />
+      <AiModelSettings onChanged={() => setModelRevision((value) => value + 1)} />
+      <MemorySettings refreshVersion={modelRevision} />
       <div className="admin-grid">
         <InviteForm />
         <CsvImport

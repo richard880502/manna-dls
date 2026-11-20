@@ -213,22 +213,14 @@ fn spawn(state: &AppState, job: Job) {
     let id = job.proposal_id;
     let pin = state.ai.active();
     tokio::spawn(async move {
-        // The work runs in its own task so that a panic there still ends the proposal.
         let work = {
             let state = state.clone();
-            tokio::spawn(pin.scope(async move { run(&state, job).await }))
+            pin.scope(async move { run(&state, job).await })
         };
-        let failed = match work.await {
-            Ok(Ok(())) => None,
-            Ok(Err(e)) => {
-                tracing::error!(proposal_id = id, error = %e, "block revise failed");
-                Some(MSG_INTERNAL)
-            }
-            Err(e) => {
-                tracing::error!(proposal_id = id, error = %e, "block revise panicked");
-                Some(MSG_INTERNAL)
-            }
-        };
+        let failed = crate::jobs::run("worksheet_revise", id, work)
+            .await
+            .err()
+            .map(|_| MSG_INTERNAL);
         if let Some(message) = failed {
             if let Err(e) = rv::finish(&state.db, id, Err(message.to_string()), None).await {
                 tracing::error!(proposal_id = id, error = %e, "could not close the block revise");

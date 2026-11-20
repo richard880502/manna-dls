@@ -978,19 +978,11 @@ pub fn spawn(state: &AppState, check_id: i64) {
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(pin.scope(async move { run(&state, check_id).await }))
+            pin.scope(async move { run(&state, check_id).await })
         };
-        let outcome = match work.await {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(e)) => {
-                tracing::error!(check_id, error = %e, "siop self-check failed");
-                Err(MSG_INTERNAL.to_string())
-            }
-            Err(e) => {
-                tracing::error!(check_id, error = %e, "siop self-check panicked");
-                Err(MSG_INTERNAL.to_string())
-            }
-        };
+        let outcome = crate::jobs::run("siop_selfcheck", check_id, work)
+            .await
+            .unwrap_or_else(|_| Err(MSG_INTERNAL.to_string()));
         if let Err(e) = finish(&state.db, check_id, outcome).await {
             tracing::error!(check_id, error = %e, "could not close the siop self-check");
         }

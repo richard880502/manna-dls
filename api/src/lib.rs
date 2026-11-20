@@ -14,6 +14,7 @@ pub mod curriculum;
 pub mod db;
 pub mod embedding;
 pub mod error;
+pub(crate) mod jobs;
 pub mod kb_embeddings;
 pub mod materials;
 pub mod memory;

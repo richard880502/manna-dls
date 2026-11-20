@@ -28,7 +28,7 @@ function describe(s: Settings, value: Settings["active"]): string {
 }
 
 /** 後台管理 → 平台設定 → 文字模型（docs/API.md「文字模型設定」）。 */
-export function AiModelSettings() {
+export function AiModelSettings({ onChanged }: { onChanged?: () => void } = {}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [form, setForm] = useState<ReturnType<typeof initialForm> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -90,6 +90,7 @@ export function AiModelSettings() {
       });
       setSettings(saved);
       setForm(initialForm(saved));
+      onChanged?.();
       const seconds = ((saved.test_latency_ms ?? 0) / 1000).toFixed(1);
       setMessage(`測試成功（約 ${seconds} 秒），已套用。新的 AI 要求會用這個模型。`);
     } catch (e) {
@@ -108,6 +109,7 @@ export function AiModelSettings() {
       const saved = await api.admin.resetAiModel();
       setSettings(saved);
       setForm(initialForm(saved));
+      onChanged?.();
       setMessage("已恢復成環境變數的預設模型。");
     } catch (e) {
       setError(errorMessage(e));

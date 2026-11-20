@@ -1,7 +1,10 @@
 //! Worksheet application operations shared by HTTP endpoints and prep jobs.
 //!
-//! This layer accepts plain commands and a database handle. It does not depend on
-//! HTTP extractors, response types, or the process-wide application state.
+//! Creation and generation input accept plain commands and a database handle. Editing
+//! and synchronization commands live in submodules. None depend on HTTP extractors or views.
+
+pub mod editing;
+pub mod synchronization;
 
 use serde::Deserialize;
 use serde_json::json;
@@ -14,7 +17,7 @@ use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::teaching_context::{owned_class, owned_lesson, resolved_profile};
 use crate::worksheet::ai::RunInput;
 use crate::worksheet::material::{MSG_BAD_SELECTION, SOURCE_LIBRARY, SOURCE_PASTED};
-use crate::worksheet::store::{self, Worksheet};
+use crate::worksheet::store;
 use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
 use crate::worksheet::template::prefill_settings;
 use crate::worksheet::template::store as tpl_store;
@@ -398,9 +401,10 @@ impl<'a> WorksheetService<'a> {
         &self,
         teacher_id: i64,
         track: &str,
-        ws: Worksheet,
+        worksheet_id: i64,
     ) -> AppResult<RunInput> {
         let db = self.db;
+        let ws = store::owned(db, worksheet_id, teacher_id).await?;
         let content = store::latest(db, ws.id).await?.content;
         let lesson = match ws.lesson_id {
             Some(lesson_id) => owned_lesson(db, lesson_id, teacher_id).await.ok(),

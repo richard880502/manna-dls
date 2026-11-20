@@ -339,3 +339,12 @@ pub async fn settings_put(
         json!({"enabled":req.enabled,"graph_enabled":state.config.memory.enabled()}),
     ))
 }
+
+/// PI-only transport adapter for the queue/status application query.
+pub async fn index_status(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+) -> AppResult<Json<super::graph::IndexStatus>> {
+    teacher.require_pi()?;
+    Ok(Json(super::graph::index_status(&state).await?))
+}

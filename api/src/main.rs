@@ -66,6 +66,9 @@ async fn run() -> anyhow::Result<()> {
     manna_api::ai::admin::load_override(&state.ai, &state.db)
         .await
         .context("loading the text model setting failed")?;
+    if state.config.memory.enabled() && !manna_api::memory::graph::providers_ready(&state) {
+        tracing::warn!("memory index is configured but needs an OpenAI-compatible text model and embeddings; pending jobs will resume when providers are available");
+    }
     manna_api::memory::graph::spawn_worker(state.clone());
     // Index whatever is not embedded yet (first deploy, model change, interrupted run). In the
     // background: a slow or failing embedding provider must not delay startup.

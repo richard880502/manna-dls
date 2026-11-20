@@ -21,12 +21,17 @@ const SERVICE: &str = "service-secret";
 const PROXY: &str = "http://manna-api:8081/api/internal/memory/v1";
 
 async fn preview(app: &common::TestApp, token: &str, text: &str) -> Value {
-    let (s, v) = app
-        .post(
+    // Candidate extraction is a deterministic fixture; graph tests independently configure
+    // a forwardable provider, whose real calls belong to the sidecar/forwarder tests.
+    let mut fixture = app.state.ai.active();
+    fixture.kind = manna_api::config::AiProviderKind::Fake;
+    fixture.model = "fake".into();
+    let (s, v) = fixture
+        .scope(app.post(
             "/api/me/memories/preview",
             Some(token),
             json!({"text":text}),
-        )
+        ))
         .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     v
@@ -201,6 +206,16 @@ fn memory_config(url: &str) -> graph::MemoryConfig {
         health_ttl: Duration::ZERO,
         warning: None,
     }
+}
+
+/// The sidecar stub never forwards model requests. A loopback closed endpoint ensures
+/// accidental upstream calls fail locally rather than reaching an external provider.
+fn configure_index(c: &mut manna_api::config::Config, url: &str) {
+    c.memory = memory_config(url);
+    c.ai_provider = manna_api::config::AiProviderKind::OpenAiCompatible;
+    c.openai_compat_base_url = Some("http://127.0.0.1:9/v1".into());
+    c.embedding.provider = manna_api::embedding::EmbeddingProviderKind::OpenAiCompatible;
+    c.embedding.base_url = Some("http://127.0.0.1:9/v1".into());
 }
 
 // ------------------------------------------------------------------ Phase 1
@@ -436,7 +451,7 @@ async fn habit_sorting_keeps_wellformed_rejections_and_classifies_failures() {
 async fn reconfirming_an_identical_active_habit_changes_nothing() {
     let stub = Stub::new();
     let (url, server) = serve(stub.clone()).await;
-    let app = test_app!(|c: &mut manna_api::config::Config| c.memory = memory_config(&url));
+    let app = test_app!(|c: &mut manna_api::config::Config| configure_index(c, &url));
     let a = app.teacher("T-SAME", "general").await;
     let id = confirm(&app, &a, &preview(&app, &a, "之後三個選項").await).await;
     assert_eq!(
@@ -874,7 +889,7 @@ async fn a_worksheet_run_uses_confirmed_habits_only_with_the_switch_on() {
 async fn graph_outbox_retries_publishes_and_ranking_is_metadata_only() {
     let stub = Stub::new();
     let (url, server) = serve(stub.clone()).await;
-    let app = test_app!(|c: &mut manna_api::config::Config| c.memory = memory_config(&url));
+    let app = test_app!(|c: &mut manna_api::config::Config| configure_index(c, &url));
     let a = app.teacher("T-GRAPH", "general").await;
     let teacher = teacher_id(&app, "T-GRAPH").await;
     let first = confirm(&app, &a, &preview(&app, &a, "之後三個選項").await).await;
@@ -971,7 +986,7 @@ async fn graph_outbox_retries_publishes_and_ranking_is_metadata_only() {
 async fn an_index_finished_after_a_newer_change_is_not_published() {
     let stub = Stub::new();
     let (url, server) = serve(stub.clone()).await;
-    let app = test_app!(|c: &mut manna_api::config::Config| c.memory = memory_config(&url));
+    let app = test_app!(|c: &mut manna_api::config::Config| configure_index(c, &url));
     let a = app.teacher("T-RACE", "general").await;
     confirm(&app, &a, &preview(&app, &a, "之後三個選項").await).await;
     stub.index_gate.store(true, Ordering::SeqCst);
@@ -1020,7 +1035,7 @@ async fn an_index_finished_after_a_newer_change_is_not_published() {
 async fn a_core_upgrade_or_a_missing_group_is_rebuilt_not_searched() {
     let stub = Stub::new();
     let (url, server) = serve(stub.clone()).await;
-    let app = test_app!(|c: &mut manna_api::config::Config| c.memory = memory_config(&url));
+    let app = test_app!(|c: &mut manna_api::config::Config| configure_index(c, &url));
     let a = app.teacher("T-CORE", "general").await;
     let teacher = teacher_id(&app, "T-CORE").await;
     confirm(&app, &a, &preview(&app, &a, "之後三個選項").await).await;
@@ -1069,7 +1084,7 @@ async fn a_core_upgrade_or_a_missing_group_is_rebuilt_not_searched() {
 async fn cleanup_never_deletes_the_published_group_and_collects_orphans() {
     let stub = Stub::new();
     let (url, server) = serve(stub.clone()).await;
-    let app = test_app!(|c: &mut manna_api::config::Config| c.memory = memory_config(&url));
+    let app = test_app!(|c: &mut manna_api::config::Config| configure_index(c, &url));
     let a = app.teacher("T-GC", "general").await;
     confirm(&app, &a, &preview(&app, &a, "之後三個選項").await).await;
     assert!(graph::sync_one(&app.state).await.unwrap());
@@ -1132,7 +1147,7 @@ async fn an_incompatible_sidecar_falls_back_to_postgres_without_claiming_or_sear
     let stub = Stub::new();
     stub.api_version.store(99, Ordering::SeqCst);
     let (url, server) = serve(stub.clone()).await;
-    let app = test_app!(|c: &mut manna_api::config::Config| c.memory = memory_config(&url));
+    let app = test_app!(|c: &mut manna_api::config::Config| configure_index(c, &url));
     let token = app.teacher("T-INCOMPAT", "general").await;
     let id = confirm(&app, &token, &preview(&app, &token, "之後三個選項").await).await;
     let teacher = teacher_id(&app, "T-INCOMPAT").await;
@@ -1483,4 +1498,98 @@ async fn concurrent_confirms_and_removals_stay_consistent() {
         }
         other => panic!("inconsistent outcome {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn index_readiness_follows_live_settings_without_losing_pending_work() {
+    use manna_api::ai::{AiSettings, AiSource};
+    use manna_api::config::AiProviderKind;
+    let stub = Stub::new();
+    let (url, server) = serve(stub.clone()).await;
+    let app = test_app!(|c: &mut manna_api::config::Config| {
+        configure_index(c, &url);
+        c.ai_provider = AiProviderKind::None;
+    });
+    let a = app.teacher("T-READINESS", "general").await;
+    let teacher = teacher_id(&app, "T-READINESS").await;
+    let pi = app.pi_token().await;
+    confirm(&app, &a, &preview(&app, &a, "之後三個選項").await).await;
+    let (_, status) = app.get("/api/admin/memory-index", Some(&pi)).await;
+    assert_eq!(status["graph_enabled"], true, "deployment is still wired");
+    assert_eq!(status["providers_ready"], false);
+    assert_eq!(status["pending"], 1);
+    assert!(!graph::sync_one(&app.state).await.unwrap());
+    assert_eq!(
+        count(&app, "SELECT attempts::bigint FROM memory_indexes").await,
+        0
+    );
+    assert!(stub.index_bodies.lock().unwrap().is_empty());
+
+    // The stored PI override is loaded after AppState is built at startup. Its provider
+    // must enable an index whose environment default was `none`.
+    sqlx::query("INSERT INTO app_settings(key,value) VALUES('ai_text_model',$1)")
+        .bind(json!({"provider":"openai_compatible","model":"first-model",
+            "effort":"medium","timeout_secs":120}))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    manna_api::ai::admin::load_override(&app.state.ai, &app.db)
+        .await
+        .unwrap();
+    assert!(graph::providers_ready(&app.state));
+    stub.index_gate.store(true, Ordering::SeqCst);
+    let state = app.state.clone();
+    let job = tokio::spawn(async move { graph::sync_one(&state).await });
+    tokio::time::timeout(Duration::from_secs(5), stub.entered.notified())
+        .await
+        .unwrap();
+    // A provider switch cannot change a leased indexing job's model.
+    let mut off = app.state.ai.env_default().clone();
+    off.kind = AiProviderKind::None;
+    app.state.ai.set_active(off, AiSource::Env);
+    stub.release.notify_one();
+    assert!(job.await.unwrap().unwrap());
+    assert_eq!(stub.index_bodies.lock().unwrap()[0]["model"], "first-model");
+    assert_eq!(
+        count(&app, "SELECT indexed_revision FROM memory_indexes").await,
+        1
+    );
+    assert!(!graph::providers_ready(&app.state));
+
+    let active = memory::list(&app.db, teacher, false).await.unwrap();
+    assert_eq!(
+        graph::observe(&app.state, teacher, &active).await.status,
+        "unavailable"
+    );
+    assert!(stub.search_bodies.lock().unwrap().is_empty());
+    confirm(&app, &a, &preview(&app, &a, "之後四個選項").await).await;
+    assert!(!graph::sync_one(&app.state).await.unwrap());
+    let (_, status) = app.get("/api/admin/memory-index", Some(&pi)).await;
+    assert_eq!(status["pending"], 1);
+    app.state.ai.set_active(
+        AiSettings {
+            kind: AiProviderKind::OpenAiCompatible,
+            model: "next-model".into(),
+            effort: "medium".into(),
+            timeout_secs: 120,
+        },
+        AiSource::Admin,
+    );
+    stub.index_gate.store(false, Ordering::SeqCst);
+    assert!(graph::sync_one(&app.state).await.unwrap());
+    assert_eq!(stub.index_bodies.lock().unwrap()[1]["model"], "next-model");
+    let (_, status) = app.get("/api/admin/memory-index", Some(&pi)).await;
+    assert_eq!(status["providers_ready"], true);
+    assert_eq!(status["pending"], 0);
+    assert_eq!(
+        graph::observe(
+            &app.state,
+            teacher,
+            &memory::list(&app.db, teacher, false).await.unwrap()
+        )
+        .await
+        .status,
+        "ranked"
+    );
+    server.abort();
 }

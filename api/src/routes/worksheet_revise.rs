@@ -171,9 +171,8 @@ pub async fn revise_block(
     ApiPath((id, block_id)): ApiPath<(i64, String)>,
     ApiJson(req): ApiJson<ReviseBlock>,
 ) -> AppResult<(StatusCode, Json<Proposal>)> {
-    let ws = store::owned(&state.db, id, teacher.id()).await?;
     let input = WorksheetService::new(&state.db)
-        .prepare_generation(teacher.id(), teacher.track(), ws)
+        .prepare_generation(teacher.id(), teacher.track(), id)
         .await?;
     let proposal = block_revise::start(
         &state,

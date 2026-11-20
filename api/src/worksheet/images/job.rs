@@ -35,22 +35,13 @@ pub fn spawn(state: &AppState, image_id: i64, run: DateTime<Utc>) {
     let live = state.images.track(image_id);
     tokio::spawn(async move {
         let _live = live;
-        // The work runs in its own task so that a panic there still closes the row.
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { run_job(&state, image_id, run).await })
+            async move { run_job(&state, image_id, run).await }
         };
-        let failed = match work.await {
-            Ok(Ok(())) => false,
-            Ok(Err(e)) => {
-                tracing::error!(image_id, error = %e, "worksheet picture job failed");
-                true
-            }
-            Err(e) => {
-                tracing::error!(image_id, error = %e, "worksheet picture job panicked");
-                true
-            }
-        };
+        let failed = crate::jobs::run("worksheet_image", image_id, work)
+            .await
+            .is_err();
         if failed {
             if let Err(e) = close(
                 &state,

@@ -112,21 +112,11 @@ pub fn spawn(state: &AppState, row: &TemplateRow, text: String) {
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(
-                pin.scope(async move { extract(&state, id, teacher_id, run, &text).await }),
-            )
+            pin.scope(async move { extract(&state, id, teacher_id, run, &text).await })
         };
-        let outcome = match work.await {
-            Ok(Ok(result)) => result,
-            Ok(Err(e)) => {
-                tracing::error!(template_id = id, error = %e, "template extraction failed");
-                Err(MSG_INTERNAL.to_string())
-            }
-            Err(e) => {
-                tracing::error!(template_id = id, error = %e, "template extraction panicked");
-                Err(MSG_INTERNAL.to_string())
-            }
-        };
+        let outcome = crate::jobs::run("template_extract", id, work)
+            .await
+            .unwrap_or_else(|_| Err(MSG_INTERNAL.to_string()));
         if let Err(e) = finish(&state, id, teacher_id, run, outcome).await {
             tracing::error!(template_id = id, error = %e, "could not close the template extraction");
         }
@@ -150,24 +140,17 @@ pub fn spawn_after_ocr(state: &AppState, row: &TemplateRow) {
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(pin.scope(async move {
+            pin.scope(async move {
                 let Some(material_id) = material_id else {
                     return Ok(Some(Err(MSG_MATERIAL_NOT_FOUND.to_string())));
                 };
                 after_ocr(&state, id, teacher_id, run, material_id).await
-            }))
+            })
         };
-        let outcome = match work.await {
-            Ok(Ok(None)) => return,
-            Ok(Ok(Some(result))) => result,
-            Ok(Err(e)) => {
-                tracing::error!(template_id = id, error = %e, "template extraction failed");
-                Err(MSG_INTERNAL.to_string())
-            }
-            Err(e) => {
-                tracing::error!(template_id = id, error = %e, "template extraction panicked");
-                Err(MSG_INTERNAL.to_string())
-            }
+        let outcome = match crate::jobs::run("template_after_ocr", id, work).await {
+            Ok(None) => return,
+            Ok(Some(result)) => result,
+            Err(_) => Err(MSG_INTERNAL.to_string()),
         };
         if let Err(e) = finish(&state, id, teacher_id, run, outcome).await {
             tracing::error!(template_id = id, error = %e, "could not close the template extraction");

@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { AiModelSettings } from "../components/admin/AiModelSettings";
-import { mockApi, respond } from "../test/mockApi";
+import { baseRoutes, mockApi, renderApp, respond, signIn, teacher } from "../test/mockApi";
 import type { AiModelSettings as Settings } from "../api/types";
 
 const envValue = { provider: "openai_compatible", model: "gemma-4-31B-it", effort: "medium", timeout_secs: 120 };
@@ -130,4 +130,30 @@ describe("文字模型 settings", () => {
     expect(screen.getByRole("button", { name: "測試並套用" })).toBeDisabled();
     expect(api.callsTo("PUT", "/api/admin/ai-model")).toHaveLength(0);
   });
+
+  it("refreshes memory readiness after applying and resetting the model on the admin page", async () => {
+    signIn();
+    let ready = false;
+    const saved: Settings = { ...base, source: "admin" };
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/me": { ...teacher, role: "pi" },
+      "GET /api/admin/ai-model": base,
+      "PUT /api/admin/ai-model": () => { ready = true; return saved; },
+      "DELETE /api/admin/ai-model": () => { ready = false; return base; },
+      "GET /api/admin/memory-settings": { enabled: true, graph_enabled: true },
+      "GET /api/admin/memory-index": () => ({ pending: 1, failed: 0, providers_ready: ready, compatible: true }),
+    });
+    const user = userEvent.setup();
+    renderApp("/admin");
+    await screen.findByText(/模型設定可用後會自動接續同步/);
+    await user.click(screen.getByRole("button", { name: "測試並套用" }));
+    await waitFor(() => expect(api.callsTo("GET", "/api/admin/memory-index")).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByText(/模型設定可用後會自動接續同步/)).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "恢復環境變數預設" }));
+    await user.click(screen.getByRole("button", { name: "確定恢復" }));
+    expect(await screen.findByText(/模型設定可用後會自動接續同步/)).toBeInTheDocument();
+    expect(api.callsTo("GET", "/api/admin/memory-index")).toHaveLength(3);
+  });
+
 });

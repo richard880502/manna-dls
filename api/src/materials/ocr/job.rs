@@ -52,22 +52,11 @@ pub fn spawn(state: &AppState, material_id: i64, run: DateTime<Utc>) {
     let live = state.ocr.track(material_id);
     tokio::spawn(async move {
         let _live = live;
-        // The work runs in its own task so that a panic there still closes the run.
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { run_job(&state, material_id, run).await })
+            async move { run_job(&state, material_id, run).await }
         };
-        let failed = match work.await {
-            Ok(Ok(())) => false,
-            Ok(Err(e)) => {
-                tracing::error!(material_id, error = %e, "OCR job failed");
-                true
-            }
-            Err(e) => {
-                tracing::error!(material_id, error = %e, "OCR job panicked");
-                true
-            }
-        };
+        let failed = crate::jobs::run("ocr", material_id, work).await.is_err();
         if failed {
             if let Err(e) = close_failed(&state, material_id, run, MSG_INTERNAL).await {
                 tracing::error!(material_id, error = %e, "could not close the OCR run");

@@ -315,22 +315,15 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     tokio::spawn(async move {
         let db = state.db.clone();
         // The work runs in its own task so that a panic there still ends the job.
-        let work = tokio::spawn(pin.scope(async move {
+        let work = pin.scope(async move {
             match kind {
                 JobKind::Analysis => run_analysis(&state, job_id, &input, temperature).await,
                 JobKind::Objectives => run_objectives(&state, job_id, &input, temperature).await,
             }
-        }));
-        let (result, interaction_id) = match work.await {
-            Ok(Ok(done)) => done,
-            Ok(Err(e)) => {
-                tracing::error!(job_id, error = %e, "SOP job failed");
-                (error_result(pipeline::MSG_ERROR), None)
-            }
-            Err(e) => {
-                tracing::error!(job_id, error = %e, "SOP job panicked");
-                (error_result(pipeline::MSG_ERROR), None)
-            }
+        });
+        let (result, interaction_id) = match crate::jobs::run("sop", job_id, work).await {
+            Ok(done) => done,
+            Err(_) => (error_result(pipeline::MSG_ERROR), None),
         };
         let saved = sqlx::query(
             "UPDATE lesson_sop_jobs

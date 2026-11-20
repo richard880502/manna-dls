@@ -27,7 +27,7 @@ flowchart TD
 `application::worksheets::WorksheetService` 接收 `PgPool`，提供：
 
 - `create`：教師權限、教材／版型選取、SOP 帶入、設定正規化、第一版內容及研究事件。
-- `prepare_generation`：已選學習單的最新內容、課例連結與可見班級情境。
+- `prepare_generation`：依 id 驗證教師所有權，再讀取最新內容、課例連結與可見班級情境。
 
 HTTP 建立／產生／重做／逐區修改，以及備課對話產生學習單，都使用這一個服務。
 命令型別 `CreateWorksheet`、`CreateOverrides` 與 `PastedMaterial` 位於相同模組；
@@ -36,9 +36,13 @@ HTTP 建立／產生／重做／逐區修改，以及備課對話產生學習單
 「只選要用的段落」也在這裡：`POST /api/worksheets` 的 `paragraph_ids` 與備課對話的
 `options.paragraph_ids` 都經 `CreateWorksheet.paragraph_ids` 走同一個 `chosen_material`。
 
-目前的 `WorksheetState` 是 HTTP 查詢視圖，留在 `routes::worksheets`。其他編輯、匯出、
-SOP 同步 handler 尚未全部搬入應用服務；新增可重用的業務操作應放在應用服務，
-避免擴大這些 handler 的跨功能相依。
+`application::worksheets::editing` 提供儲存、換教材、段落選取、區塊復原與刪除；
+`application::worksheets::synchronization` 提供同步預覽／確認、連結課例與另存新課例。
+命令接收教師 id 與一般 Rust 型別，內部驗證所有權；同步操作只需要 `PgPool`，編輯操作
+需要工作狀態與縮圖處理，因此接收 `AppState`。HTTP handler 只解開請求並組裝回應。
+
+`WorksheetState` 仍是 HTTP 查詢視圖。檔案串流、匯出格式、multipart 上傳、圖片回應快取
+與 HTTP status／header 保留在 transport 層，內容規則由既有 worksheet 模組負責。
 
 ## AI 呼叫的三個責任
 
@@ -70,14 +74,50 @@ SOP 同步 handler 尚未全部搬入應用服務；新增可重用的業務操�
 
 這些工具不從 HTTP router 匯出，內容模組也不需要為了共用它們而依賴 routes。
 
-## 驗證與後續範圍
+## 背景工作與設定切換
+
+`jobs::run` 為備課、SOP、學習單生成／修改、版型、SIOP 檢核、OCR、產圖及 Graphiti
+同步隔離工作 task，把 panic 與執行錯誤交回擁有結果的呼叫端。呼叫端仍負責關閉資料列、
+更新進度與保留原本的教師訊息；執行器不重送模型請求，也不替所有功能發明同一套資料表。
+模型 pin 必須在排入工作時取得，再隨 future 進入隔離的 task；`AiClient::enabled` 和
+`active` 都讀取該 pin，因此全域設定變更不會提前終止已啟動的工作。
+
+| 工作 | 既有持久化及中斷處理政策 |
+|---|---|
+| 備課／SOP／學習單／修改／版型／檢核 | 結果及進度存於各自資料表；錯誤／panic 由呼叫端結束，程序中斷後由既有 stale 判斷回報教師重試 |
+| OCR／產圖 | 啟動時接手未完成工作；每次寫入檢查 run 標記，舊工作不能覆蓋接手後的結果 |
+| Graphiti | Postgres outbox、到期 lease、重試退避、獨立 attempt group 與 revision 比對後發布；worker 的單次同步失敗／panic 後仍繼續輪詢 |
+
+這些恢復政策適用不同副作用：本次整合共同執行與錯誤處理，保留各功能既有的持久化與
+重啟政策。多 API instance 協調、統一 durable queue 或自動重播文字生成，不是目前的能力。
+
+## Graphiti 邊界與可用性
+
+`memory::graph` 是入口，內部分工如下：
+
+| 模組 | 責任 |
+|---|---|
+| `config` | 驗證 URL、服務 token、代理 URL 的部署接線，不依啟動時文字模型刪掉設定 |
+| `client` | sidecar 路徑、驗證、timeout、健康與版本相容檢查；沒有 SQL 或工作發布邏輯 |
+| `runtime` | 健康快取、工作模型 pin 及目前 provider 能力判斷 |
+| `worker` | 領取 lease、正本快照、條件發布、重試及垃圾群組回收 |
+| `observation` | 查詢已發布索引，與教師有效習慣交集，異常時要求重建 |
+| `forwarder` | 私有 HTTP 驗證、欄位白名單、呼叫配額、供應商轉發與研究追蹤 |
+| `status` | 一般 Rust 型別的佇列／能力查詢；PI 驗證與 JSON 回應由 `memory::routes` 負責 |
+
+部署接線完整時，內部 listener 與 worker 會啟動，正本修改持續排入 outbox。
+每次同步會固定目前模型並重新判斷 provider 能力；沒有可用模型／embedding 時不領取
+工作、不增加重試次數，生成回到 Postgres 習慣。切換至可用模型後下一次輪詢自動恢復。
+管理頁分別顯示「有接線」、「provider 可用」與「sidecar 相容」，保留實際待同步數；
+文字模型套用／恢復成功後，由管理頁通知記憶面板重讀狀態，不需要重新整理整頁。
+
+## 驗證
 
 `api/tests/architecture.rs` 檢查應用／內容模組沒有直接引用 `crate::routes`，以及 provider
 execution 沒有反向引用應用與功能模組。這是輕量的原始碼依賴檢查，不取代 Rust 的型別
 檢查與功能整合測試。
-`worksheet_application.rs` 比較直接呼叫與 HTTP 建立的結果、產生情境，並檢查直接建立
-仍然維持教師所有權驗證。既有 API、備課、SOP、版型、修復、研究記憶與模型切換測試
-保護行為相容性。
-
-背景工作的 lease／重啟恢復統一、動態設定的可用性重算，以及 Graphiti client／worker／
-forwarder 拆分是獨立後續工作。本輪沒有變更其生命週期或部署設定。
+`worksheet_application.rs` 比較直接服務與 HTTP 建立及產生情境，並直接驗證編輯、清除
+request、連結與另存課例的所有權；既有 API 測試保護輸入輸出、版本衝突、SOP 同步與復原。
+`teacher_memory.rs` 驗證環境預設關閉時載入管理員覆蓋、工作中途切換模型、停用時保留
+待同步工作，以及重新啟用後發布／搜尋的完整路徑。`jobs` 測試確保錯誤／panic 回到呼叫端，
+並驗證隔離 task 內的模型啟用判斷遵守 pin。
