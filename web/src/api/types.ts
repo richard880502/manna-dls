@@ -3051,6 +3051,8 @@ export interface MemoryIndexStatus {
   failed: number;
   /** false：沒有設定 Graphiti 索引，兩個計數都是 0。 */
   graph_enabled?: boolean;
+  /** 目前生效的文字模型與 embeddings 能否供索引使用。 */
+  providers_ready?: boolean;
   compatible?: boolean;
   sidecar?: { ok: boolean; api_version: number; graphiti_version: string; policy_version: string } | null;
 }

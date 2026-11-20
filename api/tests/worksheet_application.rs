@@ -52,11 +52,11 @@ async fn http_and_background_callers_share_worksheet_creation_and_generation_con
             .collect::<Vec<_>>()
     );
     let direct = service
-        .prepare_generation(teacher_id, "general", direct)
+        .prepare_generation(teacher_id, "general", direct.id)
         .await
         .unwrap();
     let http = service
-        .prepare_generation(teacher_id, "general", http)
+        .prepare_generation(teacher_id, "general", http.id)
         .await
         .unwrap();
     assert_eq!(direct.content, http.content);
@@ -181,4 +181,104 @@ async fn http_and_background_callers_share_the_paragraph_selection_of_a_library_
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn editing_and_lesson_commands_keep_ownership_checks_without_http() {
+    use manna_api::application::worksheets::{editing, synchronization};
+    let app = test_app!();
+    let a = app.teacher("T-EDIT-A", "general").await;
+    let b = app.teacher("T-EDIT-B", "general").await;
+    let (_, a_me) = app.get("/api/me", Some(&a)).await;
+    let (_, b_me) = app.get("/api/me", Some(&b)).await;
+    let a_id = a_me["id"].as_i64().unwrap();
+    let b_id = b_me["id"].as_i64().unwrap();
+    let unit = app.create_unit(&a, "Owner unit").await;
+    let foreign_unit = app.create_unit(&b, "Other unit").await;
+    let foreign_lesson = app.create_lesson(&b, foreign_unit, "Other lesson").await;
+    let id = WorksheetService::new(&app.db)
+        .create(a_id, CreateWorksheet::default(), CreateOverrides::default())
+        .await
+        .unwrap();
+    let err = WorksheetService::new(&app.db)
+        .prepare_generation(b_id, "general", id)
+        .await;
+    assert!(matches!(err, Err(AppError::NotFound(_))));
+    let save = || {
+        serde_json::from_value::<editing::SaveWorksheet>(
+            json!({"title":"Edited in application", "request":"  Keep it brief.  "}),
+        )
+        .unwrap()
+    };
+    let err = editing::save(&app.state, b_id, id, save())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+    editing::save(&app.state, a_id, id, save()).await.unwrap();
+    let ws = store::owned(&app.db, id, a_id).await.unwrap();
+    assert_eq!(ws.title, "Edited in application");
+    assert_eq!(ws.request, "Keep it brief.");
+    let err = synchronization::link(
+        &app.db,
+        a_id,
+        id,
+        synchronization::LinkLesson {
+            lesson_id: Some(foreign_lesson),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(store::owned(&app.db, id, a_id)
+        .await
+        .unwrap()
+        .lesson_id
+        .is_none());
+    let err = synchronization::save_as_lesson(
+        &app.db,
+        a_id,
+        id,
+        synchronization::SaveAsLesson {
+            unit_id: foreign_unit,
+            title: "Forbidden".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+    synchronization::save_as_lesson(
+        &app.db,
+        a_id,
+        id,
+        synchronization::SaveAsLesson {
+            unit_id: unit,
+            title: "New lesson".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let preview = synchronization::sync_preview(&app.db, a_id, id)
+        .await
+        .unwrap();
+    assert_eq!(
+        Some(preview.lesson_id),
+        store::owned(&app.db, id, a_id).await.unwrap().lesson_id
+    );
+    // Explicit null still clears the request, while an omitted request keeps it.
+    editing::save(
+        &app.state,
+        a_id,
+        id,
+        serde_json::from_value(json!({"request":null})).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(store::owned(&app.db, id, a_id)
+        .await
+        .unwrap()
+        .request
+        .is_empty());
+    let err = editing::delete(&app.state, b_id, id).await.unwrap_err();
+    assert!(matches!(err, AppError::NotFound(_)));
+    assert!(store::owned(&app.db, id, a_id).await.is_ok());
 }

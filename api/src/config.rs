@@ -265,19 +265,6 @@ impl Config {
         }
 
         let embedding = EmbeddingConfig::from_lookup(get);
-        // The memory index forwards Graphiti's chat and embedding calls to these providers.
-        let forwardable = if !matches!(
-            ai_provider,
-            AiProviderKind::OpenAi | AiProviderKind::OpenAiCompatible
-        ) {
-            Err("AI_PROVIDER=openai or openai_compatible")
-        } else if embedding.provider != crate::embedding::EmbeddingProviderKind::OpenAiCompatible
-            || embedding.base_url.is_none()
-        {
-            Err("EMBEDDING_PROVIDER=openai_compatible")
-        } else {
-            Ok(())
-        };
 
         Ok(Self {
             database_url,
@@ -300,7 +287,7 @@ impl Config {
             platform_library_bytes,
             ocr: OcrConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
             images: ImageConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
-            memory: crate::memory::graph::MemoryConfig::from_lookup(get, forwardable),
+            memory: crate::memory::graph::MemoryConfig::from_lookup(get),
             internal_port,
         })
     }
@@ -480,8 +467,8 @@ mod tests {
     }
 
     #[test]
-    fn memory_index_needs_forwardable_chat_and_embedding_providers() {
-        let graph = [
+    fn memory_wiring_survives_an_initially_disabled_text_provider() {
+        let c = cfg(&[
             DB,
             ("GRAPHITI_URL", "http://manna-memory:8000"),
             ("GRAPHITI_TOKEN", "service-secret"),
@@ -489,28 +476,12 @@ mod tests {
                 "MEMORY_PROXY_URL",
                 "http://manna-api:8081/api/internal/memory/v1",
             ),
-        ];
-        // AI off (or fake): Phase 1 only, said once at startup.
-        let c = cfg(&graph).unwrap();
-        assert!(!c.memory.enabled());
-        assert!(c.memory.warning.as_deref().unwrap().contains("AI_PROVIDER"));
-        let mut with_ai = graph.to_vec();
-        with_ai.extend([
-            ("AI_PROVIDER", "openai_compatible"),
-            ("AI_MODEL", "m"),
-            ("OPENAI_COMPAT_BASE_URL", "http://llm/v1"),
-        ]);
-        let c = cfg(&with_ai).unwrap();
-        assert!(!c.memory.enabled());
-        assert!(c.memory.warning.as_deref().unwrap().contains("EMBEDDING"));
-        with_ai.extend([
-            ("EMBEDDING_PROVIDER", "openai_compatible"),
-            ("EMBEDDING_BASE_URL", "http://embed/v1"),
-            ("EMBEDDING_MODEL", "e"),
-            ("EMBEDDING_DIMS", "768"),
-        ]);
-        let c = cfg(&with_ai).unwrap();
-        assert!(c.memory.enabled(), "{:?}", c.memory);
+        ])
+        .unwrap();
+        assert!(
+            c.memory.enabled(),
+            "provider capability is checked at runtime"
+        );
         assert!(!format!("{c:?}").contains("service-secret"));
     }
 

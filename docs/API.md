@@ -3659,9 +3659,10 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
 | `POST /api/me/memories` | `{candidate_id, confirmed: true}` → `{id}`，與有效習慣相同時 `{id, unchanged: true}`（不新增版本）；`{candidate_id, confirmed: false}` 取消預覽 → `{ok, cancelled: true}`（記 `teacher_decisions` reject）；過期／已確認／已取消／過時 409 |
 | `DELETE /api/me/memories/{id}` | 停止使用（只標失效） |
 | `GET`／`PUT /api/admin/memory-settings` | PI；`{enabled}`，預設 false，切換寫 `usage_logs` |
-| `GET /api/admin/memory-index` | PI；`{pending, failed, graph_enabled, compatible, sidecar}`，未設定索引時計數為 0 |
+| `GET /api/admin/memory-index` | PI；`{pending, failed, graph_enabled, providers_ready, compatible, sidecar}`，未設定索引時計數為 0 |
 | `POST /api/admin/memory-index/rebuild` | PI；從正本重建 |
 
+- `graph_enabled` 代表部署接線完整；`providers_ready` 依目前生效（含管理員覆蓋）的文字模型與 embedding 設定計算；`compatible` 獨立表示 sidecar 健康與介面相容。provider 不可用時仍保留 outbox 與待同步數，恢復可用後自動接續。
 - 研究開關關閉時，任何產生步驟的提示詞與學習單檢查都不變。開啟時只有出題／內容產生步驟
   （`memory::HABIT_STEPS`）附加版本化提示詞 `teacher_memory_context`，`ai_interactions.input_snapshot.teacher_memory`
   記錄習慣、附加的原文（`system_appended`／`user_appended`）、提示詞版本與 Graphiti 排序 metadata。

@@ -469,7 +469,7 @@ impl AiClient {
     }
 
     pub fn enabled(&self) -> bool {
-        self.active.read().unwrap_or_else(|e| e.into_inner()).0.kind != AiProviderKind::None
+        self.active().enabled()
     }
 
     /// Whether the environment holds what `kind` needs (a key or an address), i.e. whether the

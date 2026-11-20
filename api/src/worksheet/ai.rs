@@ -505,17 +505,10 @@ where
     // Pinned now: the whole run keeps the model it starts with.
     let work = state.ai.pinned(work);
     tokio::spawn(async move {
-        let failure = match tokio::spawn(work).await {
-            Ok(Ok(())) => None,
-            Ok(Err(e)) => {
-                tracing::error!(worksheet_id, run_no, error = %e, "worksheet run failed");
-                Some(pipeline::MSG_ERROR)
-            }
-            Err(e) => {
-                tracing::error!(worksheet_id, run_no, error = %e, "worksheet run panicked");
-                Some(pipeline::MSG_ERROR)
-            }
-        };
+        let failure = crate::jobs::run("worksheet", worksheet_id, work)
+            .await
+            .err()
+            .map(|_| pipeline::MSG_ERROR);
         tracker.finish(failure).await;
         // A step that has its outcome is finished now; one that never got one failed.
         let held = sqlx::query(

@@ -75,6 +75,18 @@ describe("confirmed teaching habits", () => {
     expect(screen.getByRole("checkbox", { name: /讓已確認的出題習慣/ })).toBeChecked();
   });
 
+  it("keeps pending work visible while the current model cannot index", async () => {
+    mockApi({
+      "GET /api/admin/memory-settings": { enabled: true, graph_enabled: true },
+      "GET /api/admin/memory-index": { pending: 2, failed: 0, providers_ready: false, compatible: true },
+    });
+    render(<MemorySettings />);
+    expect(await screen.findByText(/模型設定可用後會自動接續同步/)).toBeInTheDocument();
+    expect(screen.getByText(/索引待同步：2/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "從正本重建記憶索引" })).toBeEnabled();
+    expect(screen.queryByText(/尚未設定 Graphiti/)).not.toBeInTheDocument();
+  });
+
   it("lets the PI enable memory and request a rebuild", async () => {
     const api = mockApi({
       "GET /api/admin/memory-settings": { enabled: false, graph_enabled: true },

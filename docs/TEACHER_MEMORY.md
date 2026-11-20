@@ -137,11 +137,20 @@ Rust API → 內部驗證 HTTP → 自寫薄 FastAPI sidecar → graphiti-core *
 
 ### 啟用條件
 
-主服務同時設定 `GRAPHITI_URL`、`GRAPHITI_TOKEN`、`MEMORY_PROXY_URL`，**而且**
-`AI_PROVIDER` 是 `openai` 或 `openai_compatible`、`EMBEDDING_PROVIDER=openai_compatible`
-（有 `EMBEDDING_BASE_URL`）。任一不符時啟動 log 警告一次，索引保持關閉（只用 Postgres）：
-不啟動 worker、不開內部連接埠、不排入索引工作，後台「索引待同步／失敗」都是 0。
-之後才設定索引時，worker 啟動會比對每位老師最後變更時間與已發布快照時間，自動排入需要重建的老師
+主服務同時設定 `GRAPHITI_URL`、`GRAPHITI_TOKEN`、`MEMORY_PROXY_URL` 才代表部署接線完整
+（`graph_enabled`）。缺少接線時不啟動 worker／內部連接埠、不排入索引工作，管理頁計數為 0。
+
+接線完整時，worker 與內部連接埠會啟動，即使環境的文字模型預設關閉。文字模型以**目前生效設定**
+為準（包含啟動後載入的管理員覆蓋），必須為 `openai` 或 `openai_compatible` 且有對應 key／位址；
+embedding 必須為 `openai_compatible` 且有 `EMBEDDING_BASE_URL`，才能領取索引工作或搜尋。
+管理頁 `providers_ready` 回報這項能力，`compatible` 則獨立表示 sidecar 健康與介面相容。
+
+provider 不可用時只使用 Postgres，正本修改仍排入 outbox，待同步數仍可見；不領取 lease、
+不增加失敗次數。主持人切到可用文字模型後，下一次 worker 輪詢（最多約 10 秒，仍依健康快取／
+既有退避時間）自動接續。已啟動的索引工作使用原本固定的模型完成。embedding 與接線設定仍來自
+環境，修改後需要重新部署。
+
+worker 啟動時會比對每位老師最後變更時間與已發布快照時間，自動排入需要重建的老師
 （`indexed_snapshot_at`），也可以按「從正本重建」。
 
 ### 同步、搜尋、失敗與重建
@@ -357,7 +366,7 @@ Coolify Postgres 備份涵蓋所有正本、歷程、研究與 outbox 表。`mem
 | `POST /api/me/memories` | `{candidate_id,confirmed:true}` 確認 → `{id}`；與有效習慣相同 → `{id,unchanged:true}`；`{candidate_id,confirmed:false}` 取消 → `{ok,cancelled:true}`；過期／已確認／已取消／過時 409 |
 | `DELETE /api/me/memories/{id}` | 停止使用本人有效的習慣 |
 | `GET/PUT /api/admin/memory-settings` | PI；`{enabled}` 與 `graph_enabled` |
-| `GET /api/admin/memory-index` | PI；`{pending,failed,graph_enabled,compatible,sidecar}`（未設定索引時皆為 0／false） |
+| `GET /api/admin/memory-index` | PI；`{pending,failed,graph_enabled,providers_ready,compatible,sidecar}`（未設定索引時皆為 0／false） |
 | `POST /api/admin/memory-index/rebuild` | PI；從全部正本重建 |
 
 內部連接埠（`INTERNAL_PORT`，不經 proxy）：
