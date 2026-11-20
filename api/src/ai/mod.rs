@@ -233,6 +233,10 @@ pub fn strip_nul(value: &mut serde_json::Value) {
     }
 }
 
+/// How long a prep turn's pinned settings are kept when nothing forgets them (a turn and its
+/// background steps finish long before this).
+const TURN_PIN_TTL: Duration = Duration::from_secs(12 * 60 * 60);
+
 tokio::task_local! {
     /// The settings a background job runs with (see [`AiClient::pinned`]).
     static PINNED: ActiveAi;
@@ -313,7 +317,7 @@ pub struct AiClient {
     /// (a job started under a long timeout must not look stale after the PI shortens it).
     longest_timeout_secs: AtomicU64,
     /// Settings remembered per prep turn (see [`AiClient::remember_turn`]).
-    turn_pins: std::sync::Mutex<std::collections::HashMap<i64, ActiveAi>>,
+    turn_pins: std::sync::Mutex<std::collections::HashMap<i64, (std::time::Instant, ActiveAi)>>,
     /// Serialises the PI's changes (test call, save, activate).
     pub(crate) change_lock: tokio::sync::Mutex<()>,
     http: reqwest::Client,
@@ -399,10 +403,11 @@ impl AiClient {
     pub fn remember_turn(&self, turn_id: i64) {
         let pin = self.active();
         let mut pins = self.turn_pins.lock().unwrap_or_else(|e| e.into_inner());
-        if pins.len() >= 1000 {
-            pins.clear();
-        }
-        pins.insert(turn_id, pin);
+        // A turn that ends without a self-check is never forgotten explicitly: drop pins far
+        // older than any turn can run, never the ones of turns that may still be running.
+        let now = std::time::Instant::now();
+        pins.retain(|_, (at, _)| now.duration_since(*at) < TURN_PIN_TTL);
+        pins.insert(turn_id, (now, pin));
     }
 
     pub fn forget_turn(&self, turn_id: i64) {
@@ -418,7 +423,7 @@ impl AiClient {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&turn_id)
-            .cloned();
+            .map(|(_, pin)| pin.clone());
         found.unwrap_or_else(|| self.active())
     }
 
