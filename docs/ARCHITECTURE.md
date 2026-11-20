@@ -41,6 +41,12 @@ HTTP 建立／產生／重做／逐區修改，以及備課對話產生學習單
 命令接收教師 id 與一般 Rust 型別，內部驗證所有權；同步操作只需要 `PgPool`，編輯操作
 需要工作狀態與縮圖處理，因此接收 `AppState`。HTTP handler 只解開請求並組裝回應。
 
+同步、連結與另存課例各由應用操作持有一筆 transaction。跨文件寫入以 worksheet → lesson
+順序鎖定，於鎖內重讀所有權及預覽版本；課例、學習單、教材連結與研究事件一起提交。
+預覽使用唯讀 repeatable-read 快照，新版確認同時帶入 worksheet 版本、更新時間與 lesson id，避免確認
+期間課例連結變動。store 保留原本獨立操作，並提供 `*_in_tx` 讓應用操作共用同一連線；
+課綱查詢也使用該連線，不在持有鎖時另外向 pool 要連線。
+
 `WorksheetState` 仍是 HTTP 查詢視圖。檔案串流、匯出格式、multipart 上傳、圖片回應快取
 與 HTTP status／header 保留在 transport 層，內容規則由既有 worksheet 模組負責。
 
@@ -67,6 +73,23 @@ HTTP 建立／產生／重做／逐區修改，以及備課對話產生學習單
 ## 逐步設計的 AI 步驟
 
 `sop::ai` 保留第 2、3 步與背景工作的共同部分（`lesson_sop_jobs`、slot、重啟與加入規則）；第 3 步的英文修改，以及第 4–7 步在 `sop::stages`。它們全部走 `application::generation::call_in`（檢查後修復一次、保留可用結果；`call_in` 比 `call` 多帶 unit／lesson 供研究紀錄），第 5–7 步直接使用 `worksheet::checks` 的檢查與 `worksheet::schemas`，不複製規則。`sop::stages` 不引用 `routes`。
+
+### 共用生成入口的模型範圍
+
+`application::generation::call_in` 為整輪生成建立模型 pin，涵蓋第一次呼叫與修復重試；
+若已有背景工作的 pin，沿用外層設定。同步的「幫我修英文」與背景生成具有相同保證，
+呼叫端不用自行補上 pin。
+
+### 依步驟與規則拆分
+
+`sop::stages` 的 goals、tasks、warmup、exit、english 各自維護對應 schema、檢查與生成流程，
+共用 runner／上下文放在入口；原有公開路徑透過 re-export 保留。`worksheet::revise::rules`
+負責 schema 與純合併，`persistence` 負責 proposal、交易、採用／放棄及歷程。
+前端 `StagesManual` 保留相容入口，實作分為 StageIntegrate、StageTasks、StageWarmup、StageExit。
+
+SOP 工作輪詢以 job id 限制同時一筆請求；回應必須仍對應目前的 running 工作才可更新。
+研究 show 事件只在有效 running → done/shown 轉換後送出，與 React state updater 的執行次數
+無關。新增工作導致 effect 重建時，既有進行中的請求仍受相同限制。
 
 ## 跨功能的支援模組
 
@@ -125,3 +148,8 @@ request、連結與另存課例的所有權；既有 API 測試保護輸入輸�
 `teacher_memory.rs` 驗證環境預設關閉時載入管理員覆蓋、工作中途切換模型、停用時保留
 待同步工作，以及重新啟用後發布／搜尋的完整路徑。`jobs` 測試確保錯誤／panic 回到呼叫端，
 並驗證隔離 task 內的模型啟用判斷遵守 pin。
+
+跨文件儲存的回滾與並行版本檢查由 `worksheet_transactions.rs` 驗證，包括注入學習單寫入／
+研究事件失敗、相同預覽同時確認、鎖等待期間的 SOP 修改，以及只有一條 pool 連線的成功路徑。
+`generation_model_pin.rs` 使用本機供應商 fixture，驗證修復重試期間切換模型仍沿用原模型，
+下一次請求才使用新設定。前端 `sopPolling.test.tsx` 驗證慢回應與 effect 重建的請求／事件去重。

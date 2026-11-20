@@ -87,7 +87,11 @@ const WORKSHEET_COLS: &str = "id, teacher_id, lesson_id, class_id, title, filena
     template_version_no, request, created_at, updated_at";
 
 /// The worksheet if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
-pub async fn owned(db: &PgPool, id: i64, teacher_id: i64) -> AppResult<Worksheet> {
+pub async fn owned(
+    db: impl sqlx::PgExecutor<'_>,
+    id: i64,
+    teacher_id: i64,
+) -> AppResult<Worksheet> {
     let row: Option<WorksheetRow> = sqlx::query_as(&format!(
         "SELECT {WORKSHEET_COLS} FROM worksheets
           WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL"
@@ -303,7 +307,7 @@ impl From<VersionRow> for Version {
 
 const VERSION_COLS: &str = "id, version_no, content, cause, created_at";
 
-pub async fn latest(db: &PgPool, worksheet_id: i64) -> AppResult<Version> {
+pub async fn latest(db: impl sqlx::PgExecutor<'_>, worksheet_id: i64) -> AppResult<Version> {
     let row: Option<VersionRow> = sqlx::query_as(&format!(
         "SELECT {VERSION_COLS} FROM worksheet_versions
           WHERE worksheet_id = $1 ORDER BY version_no DESC LIMIT 1"
@@ -489,16 +493,37 @@ async fn save_content_source(
     source: Option<serde_json::Value>,
 ) -> AppResult<Version> {
     let mut tx = db.begin().await?;
+    let saved = save_content_in_tx(
+        &mut tx,
+        worksheet_id,
+        content,
+        cause,
+        base_version_no,
+        source,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(saved)
+}
+
+pub(crate) async fn save_content_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    worksheet_id: i64,
+    content: &Content,
+    cause: &str,
+    base_version_no: Option<i32>,
+    source: Option<serde_json::Value>,
+) -> AppResult<Version> {
     sqlx::query("SELECT id FROM worksheets WHERE id = $1 FOR UPDATE")
         .bind(worksheet_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     let current: Option<VersionRow> = sqlx::query_as(&format!(
         "SELECT {VERSION_COLS} FROM worksheet_versions
           WHERE worksheet_id = $1 ORDER BY version_no DESC LIMIT 1"
     ))
     .bind(worksheet_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     if let Some(v) = current.map(Version::from) {
         if v.content == *content {
@@ -512,7 +537,7 @@ async fn save_content_source(
             )
             .bind(worksheet_id)
             .bind(base)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
             let unchanged = seen
                 .and_then(|c| serde_json::from_value::<Content>(c).ok())
@@ -522,8 +547,7 @@ async fn save_content_source(
             }
         }
     }
-    let saved = insert_version_from(&mut tx, worksheet_id, content, cause, source).await?;
-    tx.commit().await?;
+    let saved = insert_version_from(tx, worksheet_id, content, cause, source).await?;
     Ok(saved)
 }
 
@@ -582,7 +606,7 @@ pub async fn set_material(
 }
 
 pub async fn set_lesson(
-    db: &PgPool,
+    db: impl sqlx::PgExecutor<'_>,
     id: i64,
     lesson_id: Option<i64>,
     source_sop_version_id: Option<i64>,

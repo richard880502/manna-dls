@@ -621,9 +621,9 @@ describe("lesson workspace: Manna's suggestions", () => {
     expect(byId.has("p3")).toBe(false);
   });
 
-  it("a finished job shows its result even when an earlier, slower poll answers after it", async () => {
+  it("waits for a slow poll before asking again and shows the finished result", async () => {
     signIn();
-    // Two polls are in flight when the job ends; the server answers the later one first.
+    // A slow poll must finish before the next request can start.
     const answers: Array<(job: SopJob<SopAnalysisSuggestion>) => void> = [];
     mockApi(
       routes(sopState(), {
@@ -639,11 +639,13 @@ describe("lesson workspace: Manna's suggestions", () => {
     await goToStep(user, /分析寫作特色/);
     await user.click(screen.getByRole("button", { name: "請 Manna 逐段分析" }));
     expect(await screen.findByText("正在讀教材，逐段分析寫作特色…")).toBeInTheDocument();
-    await waitFor(() => expect(answers.length).toBeGreaterThanOrEqual(2));
-
+    await waitFor(() => expect(answers.length).toBe(1));
+    await act(async () => {
+      answers[0]?.(job<SopAnalysisSuggestion>("analysis", null, { phase: "有幾段沒有分析好，正在補上" }));
+    });
+    await waitFor(() => expect(answers.length).toBe(2));
     await act(async () => {
       answers[1]?.(job("analysis", shown(analysisOutput)));
-      answers[0]?.(job<SopAnalysisSuggestion>("analysis", null, { phase: "有幾段沒有分析好，正在補上" }));
     });
     expect(await screen.findByRole("group", { name: "Manna 建議 · 第 1 段" })).toBeInTheDocument();
     expect(screen.queryByText("Manna 正在處理")).not.toBeInTheDocument();

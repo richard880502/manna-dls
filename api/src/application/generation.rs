@@ -98,139 +98,146 @@ pub(crate) async fn call_in<R, T>(
 where
     R: DeserializeOwned,
 {
-    let db = &state.db;
-    if !state.ai.enabled() {
-        return Ok(Err(MSG_DISABLED.to_string()));
-    }
-    let prompt = prompt(db, c.key).await?;
-    let mut required = c.required.clone();
-    required.extend(context_requirements(&prompt));
-    let system = prompts::render(&prompt.system_text, &c.vars);
-    let user = prompts::render_user_with(&prompt, &c.vars, &required);
-    let mut logged = c.vars.clone();
-    for (name, label) in &c.redact {
-        if let Some(v) = logged.get(name).cloned() {
-            logged.insert(name, prompts::redacted(label, &v));
-        }
-    }
-    let logged_system = prompts::render(&prompt.system_text, &logged);
-    let logged_user = prompts::render_user_with(&prompt, &logged, &required);
-    let meta = InteractionMeta {
-        teacher_id,
-        module: c.key,
-        unit_id: scope.0,
-        lesson_id: scope.1,
-        scaffold_id: scaffold_id(db, c.scaffold).await?,
-        prompt_version_id: Some(prompt.id),
-    };
-    let mut retry_of: Option<i64> = None;
-    let mut note = String::new();
-    let mut first: Option<(T, i64, Value)> = None;
-    let mut on_first = Some(on_first);
-    for attempt_no in 1..=2 {
-        if attempt_no == 2 {
-            if let Some((tracker, key)) = &c.progress {
-                tracker.note(key, Some(progress::NOTE_RETRY)).await;
+    // Keep all attempts of this generation on the same model. `pinned` preserves an
+    // enclosing job's pin, and otherwise snapshots the settings at this entry point.
+    state
+        .ai
+        .pinned(async move {
+            let db = &state.db;
+            if !state.ai.enabled() {
+                return Ok(Err(MSG_DISABLED.to_string()));
             }
-        }
-        let temperature = c.temperature + RETRY_TEMPERATURE_STEP * (attempt_no - 1) as f32;
-        let snapshot = json!({
-            "inputs": logged,
-            "prep": c.trace,
-            "prompt": { "key": c.key, "version_no": prompt.version_no,
-                        "system": logged_system, "user": format!("{logged_user}{note}") },
-            "schema": c.schema_name,
-            "request": { "temperature": temperature, "max_tokens": c.max_tokens },
-            "retry_of": retry_of,
-        });
-        let req = LlmRequest {
-            system: system.clone(),
-            user: format!("{user}{note}"),
-            schema_name: c.schema_name,
-            schema: c.schema.clone(),
-            fake_context: c.fake_context.clone(),
-            attempt: attempt_no,
-            max_tokens: Some(c.max_tokens),
-            temperature: Some(temperature),
-            images: c.images.clone(),
-        };
-        let a = attempt(state, &meta, &snapshot, &req, retry_of).await?;
-        if let Some(f) = on_first.take() {
-            f(a.id).await?;
-        }
-        retry_of = Some(a.id);
-        let problems: Vec<String> = match &a.response {
-            Ok(resp) => match serde_json::from_value::<R>(resp.json.clone()) {
-                Ok(raw) => {
-                    let checked = check(&raw);
-                    let passed = checked.problems.is_empty();
-                    let results = if passed {
-                        vec![CheckResult::pass("schema"), CheckResult::pass("checks")]
-                    } else {
-                        vec![
-                            CheckResult::pass("schema"),
-                            CheckResult::fail("checks", checked.problems.join("；")),
-                        ]
-                    };
-                    let report = base_checks::report(&results);
-                    match checked.output {
-                        // A usable output from the retry is what the teacher gets, problems and
-                        // all (the parts that failed were taken out by the check).
-                        Some(output) if passed || attempt_no == 2 => {
-                            finish_output(db, &a, resp, "shown", report, Vec::new()).await?;
-                            return Ok(Ok((output, a.id)));
+            let prompt = prompt(db, c.key).await?;
+            let mut required = c.required.clone();
+            required.extend(context_requirements(&prompt));
+            let system = prompts::render(&prompt.system_text, &c.vars);
+            let user = prompts::render_user_with(&prompt, &c.vars, &required);
+            let mut logged = c.vars.clone();
+            for (name, label) in &c.redact {
+                if let Some(v) = logged.get(name).cloned() {
+                    logged.insert(name, prompts::redacted(label, &v));
+                }
+            }
+            let logged_system = prompts::render(&prompt.system_text, &logged);
+            let logged_user = prompts::render_user_with(&prompt, &logged, &required);
+            let meta = InteractionMeta {
+                teacher_id,
+                module: c.key,
+                unit_id: scope.0,
+                lesson_id: scope.1,
+                scaffold_id: scaffold_id(db, c.scaffold).await?,
+                prompt_version_id: Some(prompt.id),
+            };
+            let mut retry_of: Option<i64> = None;
+            let mut note = String::new();
+            let mut first: Option<(T, i64, Value)> = None;
+            let mut on_first = Some(on_first);
+            for attempt_no in 1..=2 {
+                if attempt_no == 2 {
+                    if let Some((tracker, key)) = &c.progress {
+                        tracker.note(key, Some(progress::NOTE_RETRY)).await;
+                    }
+                }
+                let temperature = c.temperature + RETRY_TEMPERATURE_STEP * (attempt_no - 1) as f32;
+                let snapshot = json!({
+                    "inputs": logged,
+                    "prep": c.trace,
+                    "prompt": { "key": c.key, "version_no": prompt.version_no,
+                                "system": logged_system, "user": format!("{logged_user}{note}") },
+                    "schema": c.schema_name,
+                    "request": { "temperature": temperature, "max_tokens": c.max_tokens },
+                    "retry_of": retry_of,
+                });
+                let req = LlmRequest {
+                    system: system.clone(),
+                    user: format!("{user}{note}"),
+                    schema_name: c.schema_name,
+                    schema: c.schema.clone(),
+                    fake_context: c.fake_context.clone(),
+                    attempt: attempt_no,
+                    max_tokens: Some(c.max_tokens),
+                    temperature: Some(temperature),
+                    images: c.images.clone(),
+                };
+                let a = attempt(state, &meta, &snapshot, &req, retry_of).await?;
+                if let Some(f) = on_first.take() {
+                    f(a.id).await?;
+                }
+                retry_of = Some(a.id);
+                let problems: Vec<String> = match &a.response {
+                    Ok(resp) => match serde_json::from_value::<R>(resp.json.clone()) {
+                        Ok(raw) => {
+                            let checked = check(&raw);
+                            let passed = checked.problems.is_empty();
+                            let results = if passed {
+                                vec![CheckResult::pass("schema"), CheckResult::pass("checks")]
+                            } else {
+                                vec![
+                                    CheckResult::pass("schema"),
+                                    CheckResult::fail("checks", checked.problems.join("；")),
+                                ]
+                            };
+                            let report = base_checks::report(&results);
+                            match checked.output {
+                                // A usable output from the retry is what the teacher gets, problems and
+                                // all (the parts that failed were taken out by the check).
+                                Some(output) if passed || attempt_no == 2 => {
+                                    finish_output(db, &a, resp, "shown", report, Vec::new()).await?;
+                                    return Ok(Ok((output, a.id)));
+                                }
+                                Some(output) => {
+                                    finish_output(db, &a, resp, "blocked", report.clone(), Vec::new())
+                                        .await?;
+                                    first = Some((output, a.id, report));
+                                }
+                                None => {
+                                    finish_output(db, &a, resp, "blocked", report, Vec::new()).await?;
+                                }
+                            }
+                            if checked.problems.is_empty() {
+                                vec!["上一次沒有交出可用的內容。".to_string()]
+                            } else {
+                                checked.problems
+                            }
                         }
-                        Some(output) => {
-                            finish_output(db, &a, resp, "blocked", report.clone(), Vec::new())
-                                .await?;
-                            first = Some((output, a.id, report));
-                        }
-                        None => {
+                        Err(e) => {
+                            let report = base_checks::report(&[CheckResult::fail("schema", e.to_string())]);
                             finish_output(db, &a, resp, "blocked", report, Vec::new()).await?;
+                            vec!["上一次的輸出不符合指定的 JSON 格式。".to_string()]
                         }
-                    }
-                    if checked.problems.is_empty() {
-                        vec!["上一次沒有交出可用的內容。".to_string()]
-                    } else {
-                        checked.problems
-                    }
-                }
-                Err(e) => {
-                    let report = base_checks::report(&[CheckResult::fail("schema", e.to_string())]);
-                    finish_output(db, &a, resp, "blocked", report, Vec::new()).await?;
-                    vec!["上一次的輸出不符合指定的 JSON 格式。".to_string()]
-                }
-            },
-            Err(e) => match finish_failure(db, &a, e).await? {
-                // The retry did not answer: what was usable in the first attempt is kept.
-                Failure::Timeout | Failure::Error if first.is_some() => break,
-                Failure::Timeout => return Ok(Err(MSG_TIMEOUT.to_string())),
-                Failure::Error => {
-                    let message = if matches!(e, crate::ai::ProviderError::Disabled) {
-                        MSG_DISABLED
-                    } else {
-                        MSG_ERROR
-                    };
-                    return Ok(Err(message.to_string()));
-                }
-                Failure::Retryable => vec!["上一次沒有交出完整的輸出。".to_string()],
-            },
-        };
-        note = format!(
-            "\n\n【重要：這是第二次請求】上一次的輸出沒有通過平台的檢查。請修正下列問題後，重新輸出完整的 JSON：\n{}",
-            problems
-                .iter()
-                .take(12)
-                .map(|p| format!("- {}", clip_chars(p, 300)))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-    }
-    if let Some((output, id, report)) = first {
-        set_final(db, id, "shown", report).await?;
-        return Ok(Ok((output, id)));
-    }
-    Ok(Err(MSG_UNREADABLE.to_string()))
+                    },
+                    Err(e) => match finish_failure(db, &a, e).await? {
+                        // The retry did not answer: what was usable in the first attempt is kept.
+                        Failure::Timeout | Failure::Error if first.is_some() => break,
+                        Failure::Timeout => return Ok(Err(MSG_TIMEOUT.to_string())),
+                        Failure::Error => {
+                            let message = if matches!(e, crate::ai::ProviderError::Disabled) {
+                                MSG_DISABLED
+                            } else {
+                                MSG_ERROR
+                            };
+                            return Ok(Err(message.to_string()));
+                        }
+                        Failure::Retryable => vec!["上一次沒有交出完整的輸出。".to_string()],
+                    },
+                };
+                note = format!(
+                    "\n\n【重要：這是第二次請求】上一次的輸出沒有通過平台的檢查。請修正下列問題後，重新輸出完整的 JSON：\n{}",
+                    problems
+                        .iter()
+                        .take(12)
+                        .map(|p| format!("- {}", clip_chars(p, 300)))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
+            }
+            if let Some((output, id, report)) = first {
+                set_final(db, id, "shown", report).await?;
+                return Ok(Ok((output, id)));
+            }
+            Ok(Err(MSG_UNREADABLE.to_string()))
+        })
+        .await
 }
 
 pub(crate) async fn nothing(_: i64) -> AppResult<()> {

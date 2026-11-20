@@ -16,7 +16,11 @@ pub struct UnitRef {
 }
 
 /// The unit if it exists and belongs to `teacher_id`; otherwise 404 (no existence leak).
-pub async fn owned_unit(db: &PgPool, unit_id: i64, teacher_id: i64) -> AppResult<UnitRef> {
+pub async fn owned_unit(
+    db: impl sqlx::PgExecutor<'_>,
+    unit_id: i64,
+    teacher_id: i64,
+) -> AppResult<UnitRef> {
     sqlx::query_as(
         "SELECT id, title, class_profile FROM units
           WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL",
@@ -54,7 +58,11 @@ pub fn effective_class_profile(class_description: &str, unit_class_profile: &str
     }
 }
 
-pub async fn owned_lesson(db: &PgPool, lesson_id: i64, teacher_id: i64) -> AppResult<LessonRef> {
+pub async fn owned_lesson(
+    db: impl sqlx::PgExecutor<'_>,
+    lesson_id: i64,
+    teacher_id: i64,
+) -> AppResult<LessonRef> {
     sqlx::query_as(
         "SELECT l.id, l.unit_id, l.title, u.title AS unit_title, l.class_description,
                 u.class_profile AS unit_class_profile, l.my_example

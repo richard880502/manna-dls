@@ -103,7 +103,7 @@ function SyncDialog({
     setSending(true);
     setError(null);
     try {
-      await api.applyWorksheetSopSync(worksheetId, [...picked], preview.sop_version_no);
+      await api.applyWorksheetSopSync(worksheetId, [...picked], preview);
       onDone();
     } catch (err) {
       setError(errorMessage(err));
