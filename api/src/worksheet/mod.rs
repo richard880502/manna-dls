@@ -339,6 +339,8 @@ pub struct Settings {
     pub content_objective: Option<String>,
     /// 語言目標 (≤300; one objective per line).
     pub language_objective: Option<String>,
+    /// The sheet has no exit ticket (a lesson's SOP turned it off). False: it ends with one.
+    pub skip_exit_ticket: bool,
 }
 
 /// A partial `Settings` (`POST /api/worksheets { settings }`, `PUT …/:id { settings }`): the
@@ -367,6 +369,7 @@ pub struct SettingsPatch {
     pub content_objective: Option<Option<String>>,
     #[serde(deserialize_with = "crate::serde_support::double_option")]
     pub language_objective: Option<Option<String>>,
+    pub skip_exit_ticket: Option<bool>,
 }
 
 impl SettingsPatch {
@@ -405,6 +408,9 @@ impl SettingsPatch {
         }
         if let Some(v) = &self.language_objective {
             s.language_objective = v.clone();
+        }
+        if let Some(v) = self.skip_exit_ticket {
+            s.skip_exit_ticket = v;
         }
         s
     }
@@ -478,6 +484,7 @@ impl Settings {
             bloom_counts: self.bloom_counts.clone(),
             content_objective,
             language_objective,
+            skip_exit_ticket: self.skip_exit_ticket,
         })
     }
 
@@ -1226,6 +1233,16 @@ pub fn suggest_direct(material: &Material) -> Settings {
 /// The starting selections for a worksheet made from a lesson: derived from what the SOP
 /// already contains (spec §4.1, §7, §8).
 pub fn suggest_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Settings {
+    derive_from_sop(material, sop, true)
+}
+
+/// What the SOP's content alone suggests, ignoring what the teacher chose in the steps
+/// (`SopContent.options` and the labels on the task blocks): the starred (✦) defaults.
+pub fn defaults_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Settings {
+    derive_from_sop(material, sop, false)
+}
+
+fn derive_from_sop(material: &Material, sop: &crate::sop::SopContent, chosen: bool) -> Settings {
     let mut tasks: Vec<String> = Vec::new();
     let mut verbal = false;
     for t in sop.task_blocks.iter().flat_map(|b| &b.tasks) {
@@ -1271,7 +1288,7 @@ pub fn suggest_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Se
     {
         generation.push(GEN_WORD_LIST.to_string());
     }
-    let settings = Settings {
+    let mut settings = Settings {
         material_types: material_types_for(material),
         student_tasks: tasks,
         answer_formats: Vec::new(),
@@ -1280,6 +1297,38 @@ pub fn suggest_from_sop(material: &Material, sop: &crate::sop::SopContent) -> Se
         minutes: None,
         ..Settings::default()
     };
+    if chosen {
+        // The teacher's choices in the steps (spec §7) win where there are any.
+        let o = &sop.options;
+        let blocks = sop.task_blocks.iter();
+        let picked_tasks: Vec<String> = blocks
+            .clone()
+            .flat_map(|b| b.student_tasks.iter().cloned())
+            .collect();
+        if !picked_tasks.is_empty() {
+            settings.student_tasks = picked_tasks;
+        }
+        settings.answer_formats = blocks
+            .flat_map(|b| {
+                b.answer_formats
+                    .iter()
+                    .cloned()
+                    .chain(b.tasks.iter().map(|t| t.answer_format.clone()))
+            })
+            .filter(|f| !f.is_empty())
+            .collect();
+        if let Some(v) = &o.material_types {
+            settings.material_types = v.clone();
+        }
+        if let Some(v) = &o.generation {
+            settings.generation = v.clone();
+        }
+        if let Some(v) = &o.levels {
+            settings.levels = v.clone();
+        }
+        settings.minutes = o.minutes;
+        settings.skip_exit_ticket = o.exit_ticket == Some(false);
+    }
     settings.normalised().unwrap_or_default()
 }
 

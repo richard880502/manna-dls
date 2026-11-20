@@ -100,6 +100,10 @@ fn block_tasks(block: &Block) -> Vec<Task> {
                 sop::Scaffolds::default()
             },
             origin: origin_to_sop(i.origin),
+            answer_format: i.answer_format.clone().unwrap_or_default(),
+            options: i.options.iter().map(|o| clip(o)).collect(),
+            answer: clip(i.answer.trim()),
+            evidence: clip(i.evidence.trim()),
         })
         .collect()
 }
@@ -354,10 +358,20 @@ pub fn apply(
                     let taken: HashSet<String> =
                         sop.task_blocks.iter().map(|s| s.id.clone()).collect();
                     let new_id = unique_id(&format!("ws-{}", b.id), &taken);
+                    let mut answer_formats: Vec<String> = Vec::new();
+                    for t in &tasks {
+                        if !t.answer_format.is_empty() && !answer_formats.contains(&t.answer_format)
+                        {
+                            answer_formats.push(t.answer_format.clone());
+                        }
+                    }
                     sop.task_blocks.push(TaskBlock {
                         id: new_id.clone(),
                         paragraph_ids,
                         tasks,
+                        student_tasks: b.student_tasks.clone(),
+                        answer_formats,
+                        ..TaskBlock::default()
                     });
                     b.sop_block_id = Some(new_id);
                 }

@@ -14,7 +14,8 @@
 //! | `FAKE_KB_EMPTY`   | plan suggestions: the model answers `kb_empty` (items irrelevant) |
 //! | `FAKE_NO_DIFF`    | plan suggestions: differentiation fields left null (fails the check when the teacher's P3 includes differentiation) |
 //!
-//! The lesson SOP stages (`sop_passage_analysis`, `sop_objectives`) add their own markers:
+//! The lesson SOP stages (`sop_passage_analysis`, `sop_objectives`, `sop_paragraph_goals`,
+//! `sop_objective_english`; steps 5–7 use the worksheet's fakes) add their own markers:
 //! see `crate::sop::fake`; the worksheet steps (`worksheet_*`) see `crate::worksheet::fake`;
 //! the 備課對話 calls (`prep_*`) see `crate::prep::fake`; drafting objectives
 //! (`objective_draft`, `objective_check`) see `crate::objectives::fake`.
@@ -98,6 +99,10 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
             crate::sop::fake::analysis(ctx, req.attempt, &|m| has(req, m))
         }
         Some("sop_objectives") => crate::sop::fake::objectives(ctx, req.attempt, &|m| has(req, m)),
+        Some("sop_paragraph_goals") => crate::sop::fake::goals(ctx, req.attempt, &|m| has(req, m)),
+        Some("sop_objective_english") => {
+            crate::sop::fake::english(ctx, req.attempt, &|m| has(req, m))
+        }
         // The worksheet steps (see `worksheet::fake`).
         Some("worksheet_tasks") => {
             crate::worksheet::fake::tasks(ctx, req.attempt, &|m| has(req, m))

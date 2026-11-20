@@ -119,6 +119,21 @@ pub fn api_router() -> Router<AppState> {
         .route("/lessons/{id}/sop/versions/{version_no}", get(sop::version))
         .route("/lessons/{id}/sop/analysis", post(sop::start_analysis))
         .route("/lessons/{id}/sop/objectives", post(sop::start_objectives))
+        .route("/lessons/{id}/sop/goals", post(sop::start_goals))
+        .route("/lessons/{id}/sop/tasks", post(sop::start_tasks))
+        .route("/lessons/{id}/sop/warmup", post(sop::start_warmup))
+        .route(
+            "/lessons/{id}/sop/exit-ticket",
+            post(sop::start_exit_ticket),
+        )
+        .route(
+            "/lessons/{id}/sop/objective-english",
+            post(sop::objective_english),
+        )
+        .route(
+            "/lessons/{id}/sop/procedural-steps",
+            post(sop::procedural_steps),
+        )
         .route("/sop-jobs/{id}", get(sop::job))
         // 學習單產生器 (Phase 2.3)
         .route(

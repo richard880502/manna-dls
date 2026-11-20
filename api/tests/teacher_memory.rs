@@ -564,7 +564,7 @@ async fn the_history_trigger_guards_inserts_truncate_and_successors() {
 
 // ------------------------------------------------------------------ the PI switch
 
-const RECEIVING: [&str; 11] = [
+const RECEIVING: [&str; 14] = [
     "worksheet_tasks",
     "worksheet_warmup",
     "worksheet_scaffolds",
@@ -576,8 +576,11 @@ const RECEIVING: [&str; 11] = [
     "prep_activity",
     "prep_ask",
     "prep_revise",
+    "sop_paragraph_tasks",
+    "sop_warmup",
+    "sop_exit_ticket",
 ];
-const NOT_RECEIVING: [&str; 10] = [
+const NOT_RECEIVING: [&str; 13] = [
     "worksheet_bloom_check",
     "worksheet_template_outline",
     "worksheet_template_details",
@@ -588,6 +591,9 @@ const NOT_RECEIVING: [&str; 10] = [
     "siop_selfcheck",
     "sop_analysis",
     "sop_objectives",
+    "sop_objective_english",
+    "sop_paragraph_goals",
+    "sop_scaffolds",
 ];
 
 #[tokio::test]

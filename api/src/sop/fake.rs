@@ -12,8 +12,17 @@
 //! | `FAKE_SOP_INVENT_ALWAYS` | objectives: both calls cite it                                    |
 //! | `FAKE_SOP_UNLINKED`      | objectives: nothing is linked                                     |
 //! | `FAKE_SOP_ONE_TYPE`      | objectives: only content objectives                               |
-//! | `FAKE_BLOCK`             | both stages: output that fails every check                        |
-//! | `FAKE_SLOW`              | each call waits three seconds first (handled in `sop::ai`)        |
+//! | `FAKE_BLOCK`             | all stages: output that fails every check                         |
+//! | `FAKE_SLOW`              | each call waits three seconds first (handled in `application::ai`) |
+//! | `FAKE_SOP_GOALS_INVENT`  | step 4: call 1 cites an objective code that does not exist; call 2 does not |
+//! | `FAKE_SOP_GOALS_INVENT_ALWAYS` | step 4: both calls cite it                                  |
+//! | `FAKE_SOP_GOALS_SKIP`    | step 4: call 1 leaves out paragraph 2; call 2 delivers it          |
+//! | `FAKE_SOP_GOALS_SKIP_ALWAYS` | step 4: neither call delivers paragraph 2 (→ missing)          |
+//! | `FAKE_SOP_GOALS_LONG`    | step 4: call 1 writes a note over the length limit; call 2 does not |
+//!
+//! Steps 5–7 are the worksheet's own steps (`worksheet_tasks`, `_scaffolds`, `_warmup`,
+//! `_exit_ticket`): their fake outputs and markers (`worksheet::fake`) apply to them as well.
+//! 換一個 (step 3) asks `sop_objectives` for one objective of one type (`only_type`).
 
 use serde_json::{json, Value};
 
@@ -120,6 +129,95 @@ pub fn analysis(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value 
     })
 }
 
+/// Step 4: one entry per paragraph asked for (all of them, or `only`), in order. A paragraph
+/// whose number is a multiple of four serves no objective and says so.
+pub fn goals(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    let codes: Vec<&str> = ctx["codes"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let only: Option<Vec<i64>> = ctx["only"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_i64).collect());
+    let all = ctx["paragraphs"].as_array().cloned().unwrap_or_default();
+    let invalid = has("FAKE_BLOCK");
+    let invent =
+        has("FAKE_SOP_GOALS_INVENT_ALWAYS") || (has("FAKE_SOP_GOALS_INVENT") && attempt == 1);
+    let skip = has("FAKE_SOP_GOALS_SKIP_ALWAYS") || (has("FAKE_SOP_GOALS_SKIP") && attempt == 1);
+    let long = has("FAKE_SOP_GOALS_LONG") && attempt == 1;
+    let paragraphs: Vec<Value> = all
+        .iter()
+        .filter_map(|p| p["no"].as_i64())
+        .filter(|no| only.as_ref().is_none_or(|o| o.contains(no)))
+        .filter(|no| !(skip && *no == 2))
+        .map(|no| {
+            if invalid {
+                return json!({ "paragraph_no": no, "objective_codes": ["O99"], "note_zh": "Teach it." });
+            }
+            let mut chosen: Vec<String> = if no % 4 == 0 || codes.is_empty() {
+                Vec::new()
+            } else {
+                let first = codes[((no - 1) as usize) % codes.len()].to_string();
+                if no % 3 == 0 && codes.len() > 1 {
+                    let second = codes[(no as usize) % codes.len()].to_string();
+                    if second != first {
+                        vec![first, second]
+                    } else {
+                        vec![first]
+                    }
+                } else {
+                    vec![first]
+                }
+            };
+            if invent && no == 1 {
+                chosen.push("O99".to_string());
+            }
+            let note = if chosen.is_empty() {
+                format!("（測試）第 {no} 段只是過場，不特別對應目標，快速讀過即可。")
+            } else if long && no == 1 {
+                "字".repeat(160)
+            } else {
+                format!("（測試）第 {no} 段先請學生找出關鍵句，再說明它怎麼支持目標。")
+            };
+            json!({ "paragraph_no": no, "objective_codes": chosen, "note_zh": note })
+        })
+        .collect();
+    json!({ "paragraphs": paragraphs })
+}
+
+/// 幫我修英文: capitalises «I can», closes the sentence; writes one from the Chinese when the
+/// teacher's English is empty. A sentence that is already right comes back unchanged.
+pub fn english(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    if has("FAKE_BLOCK") {
+        return json!({ "english": "我可以說明原因", "changed": true, "note_zh": "" });
+    }
+    let original = ctx["english"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if original.is_empty() {
+        return json!({
+            "english": "I can explain why it happened and point to a sentence in the text.",
+            "changed": true,
+            "note_zh": "（測試）依中文目標寫的英文版本。"
+        });
+    }
+    let rest = original
+        .strip_prefix("I can ")
+        .or_else(|| original.strip_prefix("i can "))
+        .unwrap_or(&original);
+    let mut fixed = format!("I can {}", rest.trim());
+    if !fixed.ends_with('.') {
+        fixed.push('.');
+    }
+    json!({
+        "english": fixed,
+        "changed": fixed != original,
+        "note_zh": if fixed == original { "（測試）已經很好，不需要改。" } else { "（測試）修了大小寫與句點。" }
+    })
+}
+
 pub fn objectives(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     if has("FAKE_BLOCK") {
         return json!({ "objectives": [{
@@ -128,6 +226,29 @@ pub fn objectives(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Valu
             "student_facing_en": "Understand the text.", "reason_zh": "none",
             "paragraph_refs": [1], "link_status": "linked",
             "curriculum_links": [{ "item_code": INVENTED_CODE, "why_zh": "invented" }]
+        }]});
+    }
+    // 換一個: one objective of the asked-for type, different with every swap.
+    if let Some(kind) = ctx["only_type"].as_str() {
+        let n = ctx["swap_index"].as_i64().unwrap_or(0);
+        let codes: Vec<&str> = ctx["items"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|i| i["item_code"].as_str()).collect())
+            .unwrap_or_default();
+        let links: Vec<Value> = match codes.first() {
+            Some(code) if !has("FAKE_SOP_UNLINKED") => {
+                vec![json!({ "item_code": code, "why_zh": "（測試）這個目標對應這一條學習表現。" })]
+            }
+            _ => Vec::new(),
+        };
+        return json!({ "objectives": [{
+            "objective_id": "O1", "siop_type": kind,
+            "objective_zh": format!("學生能換個角度完成這項{kind}（換一個 {n}，測試建議）"),
+            "student_facing_en": format!("I can try a different way to reach goal {n}."),
+            "reason_zh": "（測試）換一個不同角度的目標，這是測試用的示範理由。",
+            "paragraph_refs": [1],
+            "link_status": if links.is_empty() { "unlinked" } else { "linked" },
+            "curriculum_links": links
         }]});
     }
     let unlinked = has("FAKE_SOP_UNLINKED");

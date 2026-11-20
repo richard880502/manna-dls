@@ -8,6 +8,7 @@ pub mod ai;
 pub mod checks;
 pub mod fake;
 pub mod schemas;
+pub mod stages;
 pub mod store;
 pub mod wrap;
 
@@ -336,6 +337,8 @@ pub struct ParagraphGoal {
     pub paragraph_id: String,
     pub objective_ids: Vec<String>,
     pub note: String,
+    /// Who wrote it (`teacher` for everything saved before suggestions were possible).
+    pub origin: Origin,
 }
 
 /// The three scaffold types of spec §3. Procedural scaffolds are a plain editable field for now.
@@ -355,6 +358,14 @@ pub struct Task {
     pub text: String,
     pub scaffolds: Scaffolds,
     pub origin: Origin,
+    /// 作答方式 (one of the generator's labels; empty: not chosen).
+    pub answer_format: String,
+    /// The choices of a 選擇題 or the items of a 配對題.
+    pub options: Vec<String>,
+    /// Reference answer (teacher version only).
+    pub answer: String,
+    /// A verbatim piece of the paragraph(s) the answer rests on.
+    pub evidence: String,
 }
 
 /// Questions or tasks for one paragraph, or for several merged paragraphs.
@@ -364,6 +375,14 @@ pub struct TaskBlock {
     pub id: String,
     pub paragraph_ids: Vec<String>,
     pub tasks: Vec<Task>,
+    /// 學生任務 labels chosen for this block (the generator's own labels, spec §5.2).
+    pub student_tasks: Vec<String>,
+    /// 作答方式 labels chosen for this block (spec §5.3).
+    pub answer_formats: Vec<String>,
+    /// The labels Manna chose when the block was adopted from a suggestion (shown with a star
+    /// even if the teacher has changed the selection since).
+    pub ai_student_tasks: Vec<String>,
+    pub ai_answer_formats: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -382,6 +401,9 @@ pub struct VocabularyItem {
     pub word: String,
     pub note: String,
     pub origin: Origin,
+    /// The word's level in the CEEC list. Always set by the server from the word list when the
+    /// document is saved; what a client sends is ignored.
+    pub level: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -398,12 +420,30 @@ pub struct ExitItem {
     pub kind: ExitKind,
     pub text: String,
     pub origin: Origin,
+    /// The objective a formative item checks (id of a step 3 objective; empty: none).
+    pub objective_id: String,
+    /// Reference answer of a formative item (teacher version only).
+    pub answer: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct ExitTicket {
     pub items: Vec<ExitItem>,
+}
+
+/// What the teacher chose for the worksheet while going through the steps (spec §7). `None`:
+/// not chosen, the worksheet's default derived from the rest of the SOP is used. The per-paragraph
+/// 學生任務 and 作答方式 live on the task blocks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct SopOptions {
+    pub material_types: Option<Vec<String>>,
+    pub generation: Option<Vec<String>>,
+    pub levels: Option<Vec<crate::worksheet::Level>>,
+    pub minutes: Option<i32>,
+    /// Whether the worksheet ends with an exit ticket (`None`: yes).
+    pub exit_ticket: Option<bool>,
 }
 
 /// The whole SOP document of one version (`lesson_sop_versions.content`).
@@ -416,6 +456,7 @@ pub struct SopContent {
     pub task_blocks: Vec<TaskBlock>,
     pub warmup: Warmup,
     pub exit_ticket: ExitTicket,
+    pub options: SopOptions,
 }
 
 // ---------------------------------------------------------------- paragraph references
@@ -506,6 +547,16 @@ pub fn scrub_material_evidence(content: &mut SopContent, material_id: i64, curre
             p.features.iter_mut().for_each(|f| scrub(&mut f.evidence));
         }
     }
+    for b in &mut content.task_blocks {
+        let from_it = if b.paragraph_ids.is_empty() {
+            current
+        } else {
+            b.paragraph_ids.iter().any(|id| belongs(Some(id)))
+        };
+        if from_it {
+            b.tasks.iter_mut().for_each(|t| scrub(&mut t.evidence));
+        }
+    }
     changed
 }
 
@@ -543,6 +594,14 @@ impl Validator {
             } else if !seen.insert(id) {
                 self.fail(format!("{what}的 id「{id}」重複。"));
             }
+        }
+    }
+
+    /// Labels must be the generator's own (spec §5: never renamed, never extended).
+    fn labels(&mut self, what: &str, labels: &[String], allowed: &[&str]) {
+        self.list(what, labels.len());
+        if let Some(bad) = labels.iter().find(|l| !allowed.contains(&l.as_str())) {
+            self.fail(format!("{what}「{bad}」不在可選的清單裡。"));
         }
     }
 
@@ -617,8 +676,39 @@ pub fn validate(content: &SopContent) -> Result<(), String> {
         v.list("區塊的段落", b.paragraph_ids.len());
         v.list("問題或任務", b.tasks.len());
         v.ids("問題或任務", b.tasks.iter().map(|t| t.id.as_str()));
+        v.labels(
+            "學生任務",
+            &b.student_tasks,
+            &crate::worksheet::student_tasks(),
+        );
+        v.labels(
+            "作答方式",
+            &b.answer_formats,
+            &crate::worksheet::ANSWER_FORMATS,
+        );
+        v.labels(
+            "Manna 選的學生任務",
+            &b.ai_student_tasks,
+            &crate::worksheet::student_tasks(),
+        );
+        v.labels(
+            "Manna 選的作答方式",
+            &b.ai_answer_formats,
+            &crate::worksheet::ANSWER_FORMATS,
+        );
         for t in &b.tasks {
             v.text("問題或任務", &t.text);
+            v.text("參考答案", &t.answer);
+            v.text("原文依據", &t.evidence);
+            v.list("選項", t.options.len());
+            for o in &t.options {
+                v.text("選項", o);
+            }
+            if !t.answer_format.is_empty()
+                && !crate::worksheet::ANSWER_FORMATS.contains(&t.answer_format.as_str())
+            {
+                v.fail(format!("作答方式「{}」不在可選的清單裡。", t.answer_format));
+            }
             v.scaffolds(&t.scaffolds);
         }
     }
@@ -642,6 +732,23 @@ pub fn validate(content: &SopContent) -> Result<(), String> {
     );
     for i in &content.exit_ticket.items {
         v.text("Exit ticket", &i.text);
+        v.text("Exit ticket 的參考答案", &i.answer);
+    }
+    let o = &content.options;
+    if let Some(l) = &o.material_types {
+        v.labels("素材類型", l, &crate::worksheet::MATERIAL_TYPES);
+    }
+    if let Some(l) = &o.generation {
+        v.labels("產生設定", l, &crate::worksheet::GENERATION_OPTIONS);
+    }
+    if let Some(m) = o.minutes {
+        if !crate::worksheet::MINUTES_RANGE.contains(&m) {
+            v.fail(format!(
+                "預計完成時間需為 {} 到 {} 分鐘；也可以不填。",
+                crate::worksheet::MINUTES_RANGE.start(),
+                crate::worksheet::MINUTES_RANGE.end()
+            ));
+        }
     }
     match v.error {
         Some(e) => Err(e),
