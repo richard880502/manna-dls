@@ -124,6 +124,27 @@ impl MemoryConfig {
 pub struct Runtime {
     health: tokio::sync::Mutex<Option<(Instant, Option<SidecarInfo>)>>,
     last_sweep: std::sync::Mutex<Option<Instant>>,
+    /// The model settings of each leased index job (by token hash), pinned when the job was
+    /// claimed: the forwarder answers the sidecar's calls in separate requests, so a task-local
+    /// cannot reach it. One API instance only; a missing entry (restart) falls back to the active
+    /// settings.
+    pins: std::sync::Mutex<std::collections::HashMap<String, crate::ai::ActiveAi>>,
+}
+
+/// Removes a job's pinned settings when the job ends, however it ends.
+struct PinGuard<'a> {
+    runtime: &'a Runtime,
+    key: String,
+}
+
+impl Drop for PinGuard<'_> {
+    fn drop(&mut self) {
+        self.runtime
+            .pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
 }
 
 fn client(timeout: u64) -> reqwest::Client {
@@ -203,7 +224,7 @@ pub fn spawn_worker(state: AppState) {
             Err(e) => tracing::warn!(error = %e, "could not reconcile the memory index"),
         }
         loop {
-            match sync_one(&state).await {
+            match state.ai.pinned(sync_one(&state)).await {
                 Ok(true) => continue,
                 Ok(false) => {}
                 Err(e) => tracing::warn!(error = %e, "memory index worker failed; retrying"),
@@ -267,6 +288,17 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
     };
     collect_garbage(state).await?;
     let token = new_token();
+    // Inside a pinned job the settings are the job's; the forwarder reads them from here.
+    state
+        .memory
+        .pins
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(sha256_hex(&token), state.ai.active());
+    let _pin = PinGuard {
+        runtime: &state.memory,
+        key: sha256_hex(&token),
+    };
     let work: Option<Work> = sqlx::query_as(
         "UPDATE memory_indexes SET lease_until=clock_timestamp()+interval '10 minutes',
         leased_at=clock_timestamp(),token_hash=$1,leased_revision=revision,
@@ -305,7 +337,7 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
         .bearer_auth(cfg.secret())
         .json(&json!({
             "group_id":group,"memories":active,"proxy_url":cfg.proxy_url,
-            "proxy_key":token,"model":state.config.ai_model,
+            "proxy_key":token,"model":state.ai.active().model,
             "embedding_model":state.config.embedding.model,
             "embedding_dims":state.config.embedding.dims,
             "policy_version":POLICY_VERSION,"api_version":SIDECAR_API_VERSION,
@@ -806,6 +838,14 @@ async fn forward(
     let body: Value = serde_json::from_slice(&bytes).map_err(|_| bad("JSON"))?;
     let embedding = kind == ProxyKind::Embeddings;
     let c = &state.config;
+    let ai = state
+        .memory
+        .pins
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&sha256_hex(&token))
+        .cloned()
+        .unwrap_or_else(|| state.ai.active());
     let (base, key, model, provider) = if embedding {
         if c.embedding.provider != crate::embedding::EmbeddingProviderKind::OpenAiCompatible {
             return Err(AppError::Unavailable(
@@ -819,17 +859,17 @@ async fn forward(
             "openai_compatible",
         )
     } else {
-        match c.ai_provider {
+        match ai.kind {
             AiProviderKind::OpenAi => (
                 Some("https://api.openai.com/v1"),
                 c.openai_api_key.as_deref(),
-                c.ai_model.as_str(),
+                ai.model.as_str(),
                 "openai",
             ),
             AiProviderKind::OpenAiCompatible => (
                 c.openai_compat_base_url.as_deref(),
                 c.openai_compat_api_key.as_deref(),
-                c.ai_model.as_str(),
+                ai.model.as_str(),
                 "openai_compatible",
             ),
             _ => {
@@ -844,7 +884,7 @@ async fn forward(
         Value::Object(sanitize_embeddings(&body, model)?)
     } else {
         let (mut out, limit) = sanitize_chat(&body, model)?;
-        if c.ai_provider == AiProviderKind::OpenAi {
+        if ai.kind == AiProviderKind::OpenAi {
             out.remove("temperature");
             out.insert(
                 "max_completion_tokens".into(),
@@ -852,7 +892,7 @@ async fn forward(
             );
             out.insert(
                 "reasoning_effort".into(),
-                json!(crate::ai::openai::reasoning_effort(&c.ai_effort)),
+                json!(crate::ai::openai::reasoning_effort(&ai.effort)),
             );
         } else {
             out.insert("max_tokens".into(), json!(limit));
@@ -906,7 +946,7 @@ async fn forward(
     let id =
         pipeline::insert_interaction(&state.db, &meta, provider, model, &snapshot, 1, None).await?;
     let start = Instant::now();
-    let mut request = client(c.ai_timeout_secs)
+    let mut request = client(ai.timeout.as_secs())
         .post(format!("{}/{endpoint}", base.trim_end_matches('/')))
         .json(&forwarded);
     if let Some(key) = key {

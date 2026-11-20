@@ -379,7 +379,7 @@ pub async fn run(
         result.message = Some("這個環境沒有開啟 AI，所以不能試產生。".to_string());
         return Ok(result);
     }
-    match state.ai.complete(&req).await {
+    match state.ai.active().complete(&req).await {
         Ok(resp) => {
             result.checks = evaluate(key, &resp.json, &p, &mut result.notes);
             result.output = Some(resp.json);

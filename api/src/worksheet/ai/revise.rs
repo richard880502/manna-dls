@@ -53,7 +53,7 @@ pub struct ReviseRequest {
 
 /// After this many seconds a running revision died with the server: two attempts and a margin.
 pub fn stale_after(state: &AppState) -> u64 {
-    state.config.ai_timeout_secs * 2 + 60
+    state.ai.longest_timeout_secs() * 2 + 60
 }
 
 /// Checks the request while it can still be answered with a 4xx, opens a `running` proposal and
@@ -210,11 +210,12 @@ struct Job {
 fn spawn(state: &AppState, job: Job) {
     let state = state.clone();
     let id = job.proposal_id;
+    let pin = state.ai.active();
     tokio::spawn(async move {
         // The work runs in its own task so that a panic there still ends the proposal.
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { run(&state, job).await })
+            tokio::spawn(pin.scope(async move { run(&state, job).await }))
         };
         let failed = match work.await {
             Ok(Ok(())) => None,

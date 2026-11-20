@@ -512,7 +512,8 @@ pub async fn assist(
         .execute(&state.db)
     };
 
-    if !state.ai.enabled() {
+    let ai = state.ai.active();
+    if !ai.enabled() {
         log(None).await?;
         return Ok(Json(AiResult::disabled()));
     }
@@ -600,8 +601,8 @@ pub async fn assist(
     let first_id = pipeline::insert_interaction(
         &state.db,
         &meta,
-        state.ai.provider_name(),
-        &state.ai.model,
+        ai.provider_name(),
+        &ai.model,
         &snapshot,
         1,
         None,
@@ -628,6 +629,7 @@ pub async fn assist(
     let level = req.level;
     let outcome = pipeline::run(
         &state,
+        &ai,
         &meta,
         first_id,
         &snapshot,

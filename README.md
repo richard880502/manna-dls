@@ -44,6 +44,8 @@ cd web && pnpm install && pnpm dev
 | `openai_compatible` | 國網中心模型（拿到 API 後設定 `OPENAI_COMPAT_BASE_URL`、`OPENAI_COMPAT_API_KEY`） |
 | `openai` | OpenAI 的 GPT-5 以後模型（2026-11-19 起正式環境用 `AI_MODEL=gpt-5.6-terra`）。用配圖已經設好的 `OPENAI_API_KEY`，不需要另設網址；思考程度用 `AI_EFFORT`（`low`／`medium`／`high`，預設 `medium`）。資料會送到境外，經主持人同意才使用。要換回國網：`AI_PROVIDER=openai_compatible`、`AI_MODEL=gemma-4-31B-it` |
 
+`AI_PROVIDER`、`AI_MODEL`、`AI_EFFORT`、`AI_TIMEOUT_SECS` 是**預設值**：主持人可以在「後台管理 → 平台設定 → 文字模型」改用 `openai` 或 `openai_compatible`（該來源的金鑰或位址要先設在環境變數）、換模型、推理強度與等待上限，系統會先試呼叫一次，成功才套用，不必重新部署；也可以一鍵恢復成環境變數的預設。契約見 `docs/API.md`「文字模型設定」。
+
 ### 語意索引（混合檢索）
 
 知識庫檢索預設只用關鍵字。設定下列變數後，條目會建立語意索引，檢索改為關鍵字＋語意相似度（評估見 `docs/RETRIEVAL_EVAL.md`，細節見 `docs/API.md`「Phase 2.4」）。模型無法使用時自動退回關鍵字，不影響啟動與 AI 功能。

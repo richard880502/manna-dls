@@ -851,7 +851,7 @@ pub async fn open(conn: &mut PgConnection, turn_id: i64) -> sqlx::Result<Option<
 /// Seconds after which a running check is reported as failed (its call and retry must have
 /// timed out, or the server restarted).
 pub fn stale_after(state: &AppState) -> f64 {
-    (state.config.ai_timeout_secs * 3 + 60) as f64
+    (state.ai.longest_timeout_secs() * 3 + 60) as f64
 }
 
 /// Fails the running checks of a session's turns that outlived [`stale_after`].
@@ -973,10 +973,11 @@ pub async fn restart(state: &AppState, turn: &TurnRow) -> AppResult<SiopCheck> {
 /// `failed` with a message the teacher can read.
 pub fn spawn(state: &AppState, check_id: i64) {
     let state = state.clone();
+    let pin = state.ai.active();
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { run(&state, check_id).await })
+            tokio::spawn(pin.scope(async move { run(&state, check_id).await }))
         };
         let outcome = match work.await {
             Ok(Ok(outcome)) => outcome,

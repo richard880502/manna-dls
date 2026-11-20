@@ -4,12 +4,15 @@
 //! returns parsed JSON plus the model version the provider reported. There is no automatic
 //! fallback to another model: when the configured provider fails, AI is paused (spec §2, §5.2).
 
+pub mod admin;
 pub mod anthropic;
 pub mod fake;
 pub mod openai;
 pub mod pipeline;
 pub mod schemas;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -230,38 +233,258 @@ pub fn strip_nul(value: &mut serde_json::Value) {
     }
 }
 
+tokio::task_local! {
+    /// The settings a background job runs with (see [`AiClient::pinned`]).
+    static PINNED: ActiveAi;
+}
+
+/// The text model's settings: what the PI may switch (`app_settings.ai_text_model`), what the
+/// environment (`AI_PROVIDER`, `AI_MODEL`, `AI_EFFORT`, `AI_TIMEOUT_SECS`) provides by default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiSettings {
+    pub kind: AiProviderKind,
+    pub model: String,
+    pub effort: String,
+    pub timeout_secs: u64,
+}
+
+impl AiSettings {
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
+            kind: cfg.ai_provider,
+            model: cfg.ai_model.clone(),
+            effort: cfg.ai_effort.clone(),
+            timeout_secs: cfg.ai_timeout_secs,
+        }
+    }
+
+    /// `{provider, model, effort, timeout_secs}`, the shape stored in `app_settings`, shown on
+    /// the admin page and written to `usage_logs`.
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({
+            "provider": self.kind.as_str(),
+            "model": self.model,
+            "effort": self.effort,
+            "timeout_secs": self.timeout_secs,
+        })
+    }
+}
+
+/// Where the active settings come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiSource {
+    /// The environment variables.
+    Env,
+    /// The PI's choice in 後台管理.
+    Admin,
+}
+
+impl AiSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Env => "env",
+            Self::Admin => "admin",
+        }
+    }
+}
+
+/// Credentials and addresses of the providers, fixed at startup (they come from the environment
+/// only; the PI switches provider and model, never keys).
+struct Endpoints {
+    anthropic_api_key: Option<String>,
+    openai_base_url: Option<String>,
+    openai_api_key: Option<String>,
+    /// `OPENAI_API_KEY`, for the `openai` provider.
+    openai_platform_key: Option<String>,
+}
+
+/// The text model client. The provider, model, effort and timeout can be switched while the
+/// server runs ([`AiClient::set_active`], used by the PI's admin page); every AI call takes ONE
+/// [`ActiveAi`] snapshot with [`AiClient::active`] and uses it for the request, the timeout and
+/// what it records in `ai_interactions`, so a call never mixes settings and a call in flight
+/// finishes with what it started with.
+///
+/// The switch lives in the memory of this process. Only one API instance runs; with several,
+/// each would have to reload `app_settings` after a change.
 pub struct AiClient {
+    active: std::sync::RwLock<(Arc<AiSettings>, AiSource)>,
+    env_default: AiSettings,
+    /// The longest call timeout in effect since the process started, for the stale-job checks
+    /// (a job started under a long timeout must not look stale after the PI shortens it).
+    longest_timeout_secs: AtomicU64,
+    /// Settings remembered per prep turn (see [`AiClient::remember_turn`]).
+    turn_pins: std::sync::Mutex<std::collections::HashMap<i64, ActiveAi>>,
+    /// Serialises the PI's changes (test call, save, activate).
+    pub(crate) change_lock: tokio::sync::Mutex<()>,
+    http: reqwest::Client,
+    endpoints: Arc<Endpoints>,
+}
+
+/// One consistent view of the active settings, taken at the start of a call.
+#[derive(Clone)]
+pub struct ActiveAi {
     pub kind: AiProviderKind,
     pub model: String,
     pub effort: String,
     pub timeout: Duration,
     http: reqwest::Client,
-    anthropic_api_key: Option<String>,
-    openai_base_url: Option<String>,
-    openai_api_key: Option<String>,
-    /// `OPENAI_API_KEY`, for `AI_PROVIDER=openai`.
-    openai_platform_key: Option<String>,
+    endpoints: Arc<Endpoints>,
 }
 
 impl AiClient {
     pub fn from_config(cfg: &Config) -> Self {
-        let timeout = Duration::from_secs(cfg.ai_timeout_secs);
+        // No overall `timeout` here: it differs per call (the snapshot's) and is enforced in
+        // `ActiveAi::complete`.
         let http = reqwest::Client::builder()
-            .timeout(timeout)
             .connect_timeout(Duration::from_secs(10))
             .build()
             .expect("reqwest client");
+        let env_default = AiSettings::from_config(cfg);
         Self {
-            kind: cfg.ai_provider,
-            model: cfg.ai_model.clone(),
-            effort: cfg.ai_effort.clone(),
-            timeout,
+            active: std::sync::RwLock::new((Arc::new(env_default.clone()), AiSource::Env)),
+            longest_timeout_secs: AtomicU64::new(env_default.timeout_secs),
+            turn_pins: std::sync::Mutex::default(),
+            env_default,
+            change_lock: tokio::sync::Mutex::new(()),
             http,
-            anthropic_api_key: cfg.anthropic_api_key.clone(),
-            openai_base_url: cfg.openai_compat_base_url.clone(),
-            openai_api_key: cfg.openai_compat_api_key.clone(),
-            openai_platform_key: cfg.openai_api_key.clone(),
+            endpoints: Arc::new(Endpoints {
+                anthropic_api_key: cfg.anthropic_api_key.clone(),
+                openai_base_url: cfg.openai_compat_base_url.clone(),
+                openai_api_key: cfg.openai_compat_api_key.clone(),
+                openai_platform_key: cfg.openai_api_key.clone(),
+            }),
         }
+    }
+
+    fn snapshot_of(&self, s: &AiSettings) -> ActiveAi {
+        ActiveAi {
+            kind: s.kind,
+            model: s.model.clone(),
+            effort: s.effort.clone(),
+            timeout: Duration::from_secs(s.timeout_secs),
+            http: self.http.clone(),
+            endpoints: self.endpoints.clone(),
+        }
+    }
+
+    /// The settings in force right now, or the job's when called inside [`AiClient::pinned`].
+    /// Take it ONCE per AI call and use it for everything about that call, including what is
+    /// recorded.
+    pub fn active(&self) -> ActiveAi {
+        if let Ok(pinned) = PINNED.try_with(|a| a.clone()) {
+            return pinned;
+        }
+        let guard = self.active.read().unwrap_or_else(|e| e.into_inner());
+        self.snapshot_of(&guard.0)
+    }
+
+    /// Pins the settings for a whole background job: every [`AiClient::active`] inside `fut`
+    /// returns the settings in force NOW (when this is called, i.e. when the job is started),
+    /// whatever the PI switches meanwhile. Inside an already pinned scope the outer pin is
+    /// kept, so a job that starts another job passes its model on.
+    ///
+    /// Task-locals do not cross `tokio::spawn`: wrap the future handed to every `spawn` that
+    /// leads to text-model calls.
+    pub fn pinned<F: std::future::Future>(
+        &self,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PINNED.scope(self.active(), fut)
+    }
+
+    /// Remembers the settings a prep turn starts with. A turn's work is several jobs, some
+    /// started later by a poll of the page (the SIOP self-check after its worksheet): they all
+    /// run with this pin, so the turn never mixes models. In memory of this process, like the
+    /// switch itself.
+    pub fn remember_turn(&self, turn_id: i64) {
+        let pin = self.active();
+        let mut pins = self.turn_pins.lock().unwrap_or_else(|e| e.into_inner());
+        if pins.len() >= 1000 {
+            pins.clear();
+        }
+        pins.insert(turn_id, pin);
+    }
+
+    pub fn forget_turn(&self, turn_id: i64) {
+        self.turn_pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&turn_id);
+    }
+
+    fn turn_pin(&self, turn_id: i64) -> ActiveAi {
+        let found = self
+            .turn_pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&turn_id)
+            .cloned();
+        found.unwrap_or_else(|| self.active())
+    }
+
+    /// Like [`AiClient::pinned`], with the settings the turn started with.
+    pub fn pinned_turn<F: std::future::Future>(
+        &self,
+        turn_id: i64,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PINNED.scope(self.turn_pin(turn_id), fut)
+    }
+
+    /// Runs `f` (which starts a job with [`AiClient::pinned`]) with the turn's settings.
+    pub fn in_turn<R>(&self, turn_id: i64, f: impl FnOnce() -> R) -> R {
+        PINNED.sync_scope(self.turn_pin(turn_id), f)
+    }
+
+    /// A client for settings that are not active (the admin test call).
+    pub fn with_settings(&self, settings: &AiSettings) -> ActiveAi {
+        self.snapshot_of(settings)
+    }
+
+    pub fn active_settings(&self) -> (AiSettings, AiSource) {
+        let guard = self.active.read().unwrap_or_else(|e| e.into_inner());
+        ((*guard.0).clone(), guard.1)
+    }
+
+    pub fn env_default(&self) -> &AiSettings {
+        &self.env_default
+    }
+
+    /// Makes `settings` the ones every new call uses (calls in flight keep theirs).
+    pub fn set_active(&self, settings: AiSettings, source: AiSource) {
+        self.longest_timeout_secs
+            .fetch_max(settings.timeout_secs, Ordering::Relaxed);
+        *self.active.write().unwrap_or_else(|e| e.into_inner()) = (Arc::new(settings), source);
+    }
+
+    /// The longest timeout used since startup: the basis of the stale-job thresholds.
+    pub fn longest_timeout_secs(&self) -> u64 {
+        self.longest_timeout_secs.load(Ordering::Relaxed)
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.active.read().unwrap_or_else(|e| e.into_inner()).0.kind != AiProviderKind::None
+    }
+
+    /// Whether the environment holds what `kind` needs (a key or an address), i.e. whether the
+    /// PI may pick it.
+    pub fn provider_configured(&self, kind: AiProviderKind) -> bool {
+        match kind {
+            AiProviderKind::OpenAi => self.endpoints.openai_platform_key.is_some(),
+            AiProviderKind::OpenAiCompatible => self.endpoints.openai_base_url.is_some(),
+            _ => false,
+        }
+    }
+}
+
+impl ActiveAi {
+    /// Runs `fut` with these settings pinned (see [`AiClient::pinned`]); for a snapshot taken
+    /// earlier and carried into a spawned task.
+    pub fn scope<F: std::future::Future>(
+        self,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PINNED.scope(self, fut)
     }
 
     pub fn enabled(&self) -> bool {
@@ -272,23 +495,24 @@ impl AiClient {
         self.kind.as_str()
     }
 
-    /// One call to the configured provider, bounded by `AI_TIMEOUT_SECS`. Never retries on
+    /// One call to the provider of this snapshot, bounded by its timeout. Never retries on
     /// another model.
     pub async fn complete(&self, req: &LlmRequest) -> Result<LlmResponse, ProviderError> {
+        let e = &self.endpoints;
         let call = async {
             match self.kind {
                 AiProviderKind::None => Err(ProviderError::Disabled),
                 AiProviderKind::Fake => fake::complete(req, &self.model),
                 AiProviderKind::Anthropic => {
-                    let key = self.anthropic_api_key.as_deref().unwrap_or_default();
+                    let key = e.anthropic_api_key.as_deref().unwrap_or_default();
                     anthropic::call(&self.http, key, &self.model, &self.effort, req).await
                 }
                 AiProviderKind::OpenAiCompatible => {
-                    let base = self.openai_base_url.as_deref().unwrap_or_default();
+                    let base = e.openai_base_url.as_deref().unwrap_or_default();
                     openai::call(
                         &self.http,
                         base,
-                        self.openai_api_key.as_deref(),
+                        e.openai_api_key.as_deref(),
                         &self.model,
                         None,
                         req,
@@ -299,7 +523,7 @@ impl AiClient {
                     openai::call(
                         &self.http,
                         openai::OPENAI_BASE_URL,
-                        self.openai_platform_key.as_deref(),
+                        e.openai_platform_key.as_deref(),
                         &self.model,
                         Some(&self.effort),
                         req,
@@ -318,6 +542,123 @@ impl AiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings(model: &str, timeout_secs: u64) -> AiSettings {
+        AiSettings {
+            kind: AiProviderKind::Fake,
+            model: model.into(),
+            effort: "low".into(),
+            timeout_secs,
+        }
+    }
+
+    #[test]
+    fn a_snapshot_keeps_its_settings_when_the_active_ones_change() {
+        let client = AiClient::from_config(&Config::for_tests("unused"));
+        let before = client.active();
+        assert_eq!(before.model, "fake-model");
+        client.set_active(settings("next-model", 600), AiSource::Admin);
+        // The call that started earlier is unchanged; the next one is the new settings.
+        assert_eq!(before.model, "fake-model");
+        assert_eq!(before.timeout, Duration::from_secs(5));
+        let after = client.active();
+        assert_eq!(after.model, "next-model");
+        assert_eq!(after.timeout, Duration::from_secs(600));
+        assert_eq!(client.active_settings().1, AiSource::Admin);
+        // The stale-job checks keep the longest timeout they may have to cover.
+        client.set_active(settings("short", 30), AiSource::Admin);
+        assert_eq!(client.longest_timeout_secs(), 600);
+        client.set_active(client.env_default().clone(), AiSource::Env);
+        assert_eq!(client.active().model, "fake-model");
+    }
+
+    #[tokio::test]
+    async fn a_pinned_scope_ignores_a_later_switch_and_nested_scopes_keep_the_outer_pin() {
+        let client = AiClient::from_config(&Config::for_tests("unused"));
+        let seen = client
+            .pinned(async {
+                client.set_active(settings("switched", 600), AiSource::Admin);
+                let inside = client.active();
+                // A nested job inherits the outer pin, not the switched settings.
+                let nested = client.pinned(async { client.active().model }).await;
+                (inside.model, nested)
+            })
+            .await;
+        assert_eq!(seen, ("fake-model".to_string(), "fake-model".to_string()));
+        // Outside the scope the switched settings apply.
+        assert_eq!(client.active().model, "switched");
+        // Pinned when called (the job is started), not when first polled.
+        let later = client.pinned(async { client.active().model });
+        client.set_active(settings("again", 60), AiSource::Admin);
+        assert_eq!(later.await, "switched");
+    }
+
+    #[test]
+    fn only_configured_real_providers_are_selectable() {
+        let mut cfg = Config::for_tests("unused");
+        let client = AiClient::from_config(&cfg);
+        for kind in [
+            AiProviderKind::OpenAi,
+            AiProviderKind::OpenAiCompatible,
+            AiProviderKind::Anthropic,
+            AiProviderKind::Fake,
+            AiProviderKind::None,
+        ] {
+            assert!(!client.provider_configured(kind), "{kind:?}");
+        }
+        cfg.openai_api_key = Some("k".into());
+        cfg.anthropic_api_key = Some("k".into());
+        let client = AiClient::from_config(&cfg);
+        assert!(client.provider_configured(AiProviderKind::OpenAi));
+        assert!(!client.provider_configured(AiProviderKind::OpenAiCompatible));
+        // A configured Anthropic key never makes it selectable.
+        assert!(!client.provider_configured(AiProviderKind::Anthropic));
+        assert!(admin::validate(&client, "anthropic", "m", None, 60).is_err());
+        let ok = admin::validate(&client, "openai", " gpt-5.6-sol ", Some("high"), 60).unwrap();
+        assert_eq!(
+            (ok.model.as_str(), ok.effort.as_str()),
+            ("gpt-5.6-sol", "high")
+        );
+        assert!(admin::validate(&client, "openai", "gpt-5.6-sol", Some("max"), 900).is_ok());
+        assert!(admin::validate(&client, "openai", "gpt-5.6-sol", None, 30).is_ok());
+        assert!(admin::validate(&client, "openai", "gpt-5.6-sol", None, 29).is_err());
+    }
+
+    /// The HTTP client has no overall timeout of its own: the snapshot's bounds the call.
+    #[tokio::test]
+    async fn the_call_timeout_comes_from_the_snapshot() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut cfg = Config::for_tests("unused");
+        cfg.openai_compat_base_url = Some(format!("http://{}/v1", listener.local_addr().unwrap()));
+        // A server that accepts and never answers.
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock);
+            }
+        });
+        let client = AiClient::from_config(&cfg);
+        let snap = client.with_settings(&AiSettings {
+            kind: AiProviderKind::OpenAiCompatible,
+            model: "m".into(),
+            effort: "low".into(),
+            timeout_secs: 1,
+        });
+        let req = LlmRequest {
+            system: String::new(),
+            user: String::new(),
+            schema_name: "t",
+            schema: Value::Null,
+            fake_context: Value::Null,
+            attempt: 1,
+            max_tokens: None,
+            temperature: None,
+            images: Vec::new(),
+        };
+        let start = std::time::Instant::now();
+        assert_eq!(snap.complete(&req).await, Err(ProviderError::Timeout));
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
 
     /// Every structured output the server asks for.
     fn all_schemas() -> Vec<(&'static str, Value)> {

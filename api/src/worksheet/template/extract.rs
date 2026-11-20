@@ -101,17 +101,20 @@ pub fn default_title(material_title: &str) -> String {
 
 /// Seconds after which an open extraction is reported as failed.
 pub fn stale_after(state: &AppState) -> f64 {
-    (state.config.ai_timeout_secs * 6 + 60) as f64
+    (state.ai.longest_timeout_secs() * 6 + 60) as f64
 }
 
 /// Starts the background job for `row` (already `extracting`) on `text`.
 pub fn spawn(state: &AppState, row: &TemplateRow, text: String) {
     let state = state.clone();
     let (id, teacher_id, run) = (row.id, row.teacher_id, row.extract_run);
+    let pin = state.ai.active();
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { extract(&state, id, teacher_id, run, &text).await })
+            tokio::spawn(
+                pin.scope(async move { extract(&state, id, teacher_id, run, &text).await }),
+            )
         };
         let outcome = match work.await {
             Ok(Ok(result)) => result,
@@ -143,15 +146,16 @@ pub fn spawn_after_ocr(state: &AppState, row: &TemplateRow) {
     let state = state.clone();
     let (id, teacher_id, run) = (row.id, row.teacher_id, row.extract_run);
     let material_id = row.source_material_id;
+    let pin = state.ai.active();
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(async move {
+            tokio::spawn(pin.scope(async move {
                 let Some(material_id) = material_id else {
                     return Ok(Some(Err(MSG_MATERIAL_NOT_FOUND.to_string())));
                 };
                 after_ocr(&state, id, teacher_id, run, material_id).await
-            })
+            }))
         };
         let outcome = match work.await {
             Ok(Ok(None)) => return,

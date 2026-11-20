@@ -194,7 +194,8 @@ pub async fn extract(
     if text.trim().is_empty() || text.chars().count() > 1000 {
         return Err(AppError::bad_request("請輸入 1–1000 字的出題習慣。"));
     }
-    if !state.ai.enabled() {
+    let ai = state.ai.active();
+    if !ai.enabled() {
         return Err(AppError::Unavailable(
             "請先開啟 AI，才能整理出題習慣。".into(),
         ));
@@ -221,8 +222,8 @@ pub async fn extract(
     let id = pipeline::insert_interaction(
         &state.db,
         &meta,
-        state.ai.provider_name(),
-        &state.ai.model,
+        ai.provider_name(),
+        &ai.model,
         &snapshot,
         1,
         None,
@@ -244,7 +245,7 @@ pub async fn extract(
         images: vec![],
     };
     let start = std::time::Instant::now();
-    let response = state.ai.complete(&req).await;
+    let response = ai.complete(&req).await;
     let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
     let mut shown = None;
     let finish = match response {
