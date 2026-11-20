@@ -71,8 +71,10 @@ pub mod template;
 // (docs/llm-eval/worksheet-real/README.md: tasks ≈ 500 tokens per paragraph + 500, warm-up
 // ≤ 810, scaffolds ≈ 220 per target, exit ticket ≤ 434). A budget only matters when the model
 // runs away, and then a smaller one ends the wasted call sooner (≈ 170 tokens per second).
-/// The tasks budget for the whole material; see [`tasks_max_tokens`].
-pub const TASKS_MAX_TOKENS: u32 = 6000;
+/// The tasks budget for a long material; see [`tasks_max_tokens`]. It grows with the number of
+/// paragraphs (no paragraph is left out because the material is long) up to what one call of
+/// the providers in use can write.
+pub const TASKS_MAX_TOKENS: u32 = 12000;
 pub const WARMUP_MAX_TOKENS: u32 = 2000;
 /// The scaffolds budget for many blocks; see [`scaffolds_max_tokens`].
 pub const SCAFFOLDS_MAX_TOKENS: u32 = 5000;
@@ -80,7 +82,7 @@ pub const EXIT_MAX_TOKENS: u32 = 1200;
 
 /// Output budget of the tasks step for `paragraphs` paragraphs.
 pub fn tasks_max_tokens(paragraphs: usize) -> u32 {
-    (1500 + 600 * paragraphs.min(50) as u32).clamp(3000, TASKS_MAX_TOKENS)
+    (1500 + 600 * paragraphs.min(200) as u32).clamp(3000, TASKS_MAX_TOKENS)
 }
 
 /// Output budget of the scaffolds step for `targets` blocks.
@@ -1808,20 +1810,14 @@ async fn material_looks_like_worksheet(db: &PgPool, worksheet: &Worksheet) -> sq
     Ok(detect::looks_like_worksheet(&text.join("\n")))
 }
 
-/// The material must have paragraphs, and at most [`super::MAX_AI_PARAGRAPHS`]. A refused
-/// material that looks like a worksheet gets [`MSG_LOOKS_LIKE_WORKSHEET`] appended.
+/// The material must have paragraphs; how many is not limited (a long one is only announced in
+/// the web app before generating). A refused material that looks like a worksheet gets
+/// [`MSG_LOOKS_LIKE_WORKSHEET`] appended.
 async fn check_material(db: &PgPool, worksheet: &Worksheet) -> AppResult<()> {
-    let n = worksheet.material.paragraphs.len();
-    let mut message = if n == 0 {
-        MSG_NEED_MATERIAL.to_string()
-    } else if n > super::MAX_AI_PARAGRAPHS {
-        format!(
-            "這份教材有 {n} 段，超過 Manna 一次能設計的 {} 段。請先貼上這節課要用的部分。",
-            super::MAX_AI_PARAGRAPHS
-        )
-    } else {
+    if !worksheet.material.paragraphs.is_empty() {
         return Ok(());
-    };
+    }
+    let mut message = MSG_NEED_MATERIAL.to_string();
     if material_looks_like_worksheet(db, worksheet).await? {
         message.push_str(MSG_LOOKS_LIKE_WORKSHEET);
     }
@@ -2441,7 +2437,11 @@ mod tests {
         assert_eq!(tasks_max_tokens(1), 3000);
         assert_eq!(tasks_max_tokens(4), 3900);
         assert_eq!(tasks_max_tokens(6), 5100);
+        // A long material gets a larger budget, up to the cap.
+        assert_eq!(tasks_max_tokens(12), 8700);
+        assert!(tasks_max_tokens(40) > 6000);
         assert_eq!(tasks_max_tokens(40), TASKS_MAX_TOKENS);
+        assert_eq!(tasks_max_tokens(132), TASKS_MAX_TOKENS);
         // Measured: 7 targets ≈ 1,550 tokens.
         assert_eq!(scaffolds_max_tokens(1), 2000);
         assert_eq!(scaffolds_max_tokens(7), 3250);

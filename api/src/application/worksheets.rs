@@ -13,7 +13,7 @@ use crate::materials::store::{self as material_store, LinkTarget};
 use crate::sop::{self, store as sop_store, MAX_MATERIAL_CHARS};
 use crate::teaching_context::{owned_class, owned_lesson, resolved_profile};
 use crate::worksheet::ai::RunInput;
-use crate::worksheet::material::{SOURCE_LIBRARY, SOURCE_PASTED};
+use crate::worksheet::material::{MSG_BAD_SELECTION, SOURCE_LIBRARY, SOURCE_PASTED};
 use crate::worksheet::store::{self, Worksheet};
 use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
 use crate::worksheet::template::prefill_settings;
@@ -68,6 +68,10 @@ pub struct CreateWorksheet {
     /// One of the teacher's library materials with extracted text; wins over `material`.
     #[serde(default)]
     pub material_id: Option<i64>,
+    /// 只選要用的段落: with `material_id`, the snapshot keeps only these paragraphs (ids of the
+    /// library material). Empty or absent = all.
+    #[serde(default)]
+    pub paragraph_ids: Option<Vec<String>>,
     /// One of the teacher's `ready` templates.
     #[serde(default)]
     pub template_id: Option<i64>,
@@ -86,6 +90,7 @@ async fn chosen_material(
     db: &sqlx::PgPool,
     teacher_id: i64,
     material_id: i64,
+    paragraph_ids: Option<&[String]>,
 ) -> AppResult<(Material, i32)> {
     let row = material_store::readable(db, material_id, teacher_id)
         .await
@@ -95,7 +100,11 @@ async fn chosen_material(
         return Err(AppError::bad_request(MSG_NO_TEXT));
     }
     let stored = sop_store::Material::from(row);
-    Ok(Material::from_library(SOURCE_LIBRARY, None, &stored))
+    match paragraph_ids.filter(|ids| !ids.is_empty()) {
+        Some(ids) => Material::from_library_selection(SOURCE_LIBRARY, None, &stored, ids)
+            .ok_or_else(|| AppError::bad_request(MSG_BAD_SELECTION)),
+        None => Ok(Material::from_library(SOURCE_LIBRARY, None, &stored)),
+    }
 }
 
 pub(crate) fn check_pasted(m: &PastedMaterial) -> AppResult<()> {
@@ -242,7 +251,9 @@ impl<'a> WorksheetService<'a> {
         check_pasted(&pasted)?;
         // A library material wins over pasted text (which is then not stored).
         let pasted_material = match req.material_id {
-            Some(material_id) => chosen_material(db, teacher_id, material_id).await?,
+            Some(material_id) => {
+                chosen_material(db, teacher_id, material_id, req.paragraph_ids.as_deref()).await?
+            }
             None => library_material(db, teacher_id, None, 0, &pasted).await?,
         };
 

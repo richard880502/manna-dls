@@ -9,6 +9,7 @@ pub mod checks;
 pub mod fake;
 pub mod schemas;
 pub mod store;
+pub mod wrap;
 
 use std::collections::{HashMap, HashSet};
 
@@ -69,9 +70,16 @@ pub fn is_heading_like(text: &str) -> bool {
     (1..=12).contains(&words) && t.chars().count() <= 80 && !ends_like_prose
 }
 
-/// Splits pasted text into paragraphs, in code (never by the model). With blank lines in the
-/// text, a paragraph is a run of non-blank lines (line breaks inside it become spaces, as in
-/// hard-wrapped pastes); without any, every line is a paragraph. Blank paragraphs are skipped.
+/// Splits pasted text into paragraphs, in code (never by the model).
+///
+/// - With blank lines in the text, a paragraph is a run of non-blank lines (line breaks inside
+///   it become spaces, as in hard-wrapped pastes).
+/// - Without any, every line is a paragraph, **unless** the lines look hard-wrapped (copied out
+///   of a PDF or an e-mail: long lines of similar length, most of them not ending a sentence,
+///   see [`wrap::looks_hard_wrapped`]); then they are joined by the same rule the PDF reader
+///   uses ([`wrap::join_wrapped`]). When in doubt every line stays a paragraph.
+///
+/// Blank paragraphs are skipped.
 pub fn split_paragraphs(text: &str) -> Vec<String> {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = text.trim().split('\n').collect();
@@ -93,7 +101,12 @@ pub fn split_paragraphs(text: &str) -> Vec<String> {
             out.push(collapse_ws(&current.join(" ")));
         }
     } else {
-        out.extend(lines.iter().map(|l| collapse_ws(l)));
+        let trimmed: Vec<&str> = lines.iter().map(|l| l.trim()).collect();
+        if wrap::looks_hard_wrapped(&trimmed) {
+            out = wrap::join_wrapped(&trimmed, true);
+        } else {
+            out.extend(lines.iter().map(|l| collapse_ws(l)));
+        }
     }
     out.retain(|p| !p.is_empty());
     out
@@ -834,6 +847,35 @@ mod tests {
         );
         assert!(split_paragraphs("  \n \n").is_empty());
         assert_eq!(split_paragraphs("Only one."), vec!["Only one."]);
+    }
+
+    const WRAPPED: &str = "Mrs. Lin put an umbrella stand outside her shop on a rainy\n\
+        Monday morning. Nobody took one, and the stand stayed full\n\
+        until the evening, when it stopped.\n\
+        In the first month, twelve of the thirty umbrellas did go\n\
+        missing. However, something unexpected followed, because\n\
+        people brought their own umbrellas back.\n\
+        By spring the stand was always full again, and Mrs. Lin\n\
+        never bought a single new umbrella for it.\n";
+
+    #[test]
+    fn a_hard_wrapped_paste_without_blank_lines_is_joined() {
+        let p = split_paragraphs(WRAPPED);
+        assert_eq!(p.len(), 3, "{p:?}");
+        assert!(p[1].starts_with("In the first month") && p[1].contains("did go missing."));
+        // Lines that are already one paragraph each stay that way.
+        let list = "Apples\nPears\nPlums\nCherries\nGrapes\nMelons";
+        assert_eq!(split_paragraphs(list).len(), 6);
+    }
+
+    #[test]
+    fn editing_a_wrapped_paste_keeps_the_ids_of_unchanged_paragraphs() {
+        let (v1, seq) = assign_paragraph_ids(&[], 0, split_paragraphs(WRAPPED));
+        let edited = WRAPPED.replace("never bought", "never once bought");
+        let (v2, _) = assign_paragraph_ids(&v1, seq, split_paragraphs(&edited));
+        assert_eq!(v2.len(), 3);
+        assert_eq!((v2[0].id.as_str(), v2[1].id.as_str()), ("p1", "p2"));
+        assert_eq!(v2[2].id, "p4");
     }
 
     #[test]

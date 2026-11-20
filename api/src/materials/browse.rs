@@ -26,9 +26,6 @@ pub const MAX_QUERY_CHARS: usize = 200;
 pub const MAX_TAG_FACETS: i64 = 40;
 /// How many section titles a template card shows.
 pub const CARD_SECTION_TITLES: usize = 6;
-/// A material that fits one lesson's worksheet: it has text and at most this many paragraphs
-/// (the generator's limit).
-pub const LESSON_MAX_PARAGRAPHS: i32 = 40;
 /// `lang` values (a template's `instruction_language`), in facet order.
 pub const LANGS: [&str; 3] = ["英文", "中文", "中英並用"];
 
@@ -597,10 +594,10 @@ impl MaterialQuery {
             qb.push_bind(file_type.clone());
         }
         if self.fits_lesson {
-            qb.push(format!(
+            qb.push(
                 " AND m.text_status = 'ready'
-                  AND jsonb_array_length(m.paragraphs) BETWEEN 1 AND {LESSON_MAX_PARAGRAPHS}"
-            ));
+                  AND jsonb_array_length(m.paragraphs) >= 1",
+            );
         }
     }
 }

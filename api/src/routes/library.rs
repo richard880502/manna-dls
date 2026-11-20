@@ -361,6 +361,20 @@ pub struct UpdateMaterial {
     pub text: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
+    /// Where the edit was made (`home`, `prep_session`, `worksheet`, `library`): research log only.
+    #[serde(default)]
+    pub edit_from: Option<String>,
+}
+
+/// Where the text edit was made (the research log only; anything else is ignored).
+fn known_edit_from(from: Option<&str>) -> Option<&'static str> {
+    match from.map(str::trim) {
+        Some("home") => Some("home"),
+        Some("prep_session") => Some("prep_session"),
+        Some("worksheet") => Some("worksheet"),
+        Some("library") => Some("library"),
+        _ => None,
+    }
 }
 
 pub async fn update(
@@ -371,6 +385,8 @@ pub async fn update(
 ) -> AppResult<Json<MaterialDetail>> {
     teacher.require(Capability::UseMaterials)?;
     let row = store::writable(&state.db, id, &teacher).await?;
+    let (before_text, before_paragraphs) = (row.text.clone(), row.paragraphs.0.len());
+    let edit_from = known_edit_from(req.edit_from.as_deref());
     let row = store::update(
         &state.db,
         row,
@@ -382,7 +398,44 @@ pub async fn update(
         },
     )
     .await?;
+    // A changed text is logged by its size only, never its words.
+    if row.text != before_text {
+        crate::audit::log_usage(
+            &state.db,
+            teacher.id(),
+            "material_text_edited",
+            json!({
+                "material_id": row.id, "from": edit_from,
+                "paragraphs_before": before_paragraphs, "paragraphs_after": row.paragraphs.0.len(),
+                "chars": row.text.chars().count(),
+            }),
+        )
+        .await?;
+    }
     Ok(Json(store::detail(&state.db, row, teacher.id()).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitPreview {
+    #[serde(default)]
+    pub text: String,
+}
+
+/// `POST /api/materials/split-preview`: how many paragraphs a pasted text would become, with
+/// the rule a stored text gets. Nothing is stored or logged.
+pub async fn split_preview(
+    teacher: AuthTeacher,
+    ApiJson(req): ApiJson<SplitPreview>,
+) -> AppResult<Json<Value>> {
+    teacher.require(Capability::UseMaterials)?;
+    if req.text.chars().count() > crate::materials::MAX_PASTED_CHARS {
+        return Err(AppError::bad_request(format!(
+            "教材最多 {} 字。",
+            crate::materials::MAX_PASTED_CHARS
+        )));
+    }
+    let paragraphs = crate::sop::split_paragraphs(&req.text);
+    Ok(Json(json!({ "paragraph_count": paragraphs.len() })))
 }
 
 pub async fn remove(

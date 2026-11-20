@@ -110,7 +110,7 @@ function PasteForm({
         onChange={(e) => setText(e.target.value)}
       />
       <p className="field-hint" id={`${ids}-hint`}>
-        段落之間空一行。請不要貼上學生姓名或其他個人資料。
+        段落之間空一行；沒有空行時，從 PDF 複製的斷行文字會接回段落。請不要貼上學生姓名或其他個人資料。
       </p>
       <div className="button-row">
         <button type="submit" className="primary-button" disabled={text.trim() === ""}>

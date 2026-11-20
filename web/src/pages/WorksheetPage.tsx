@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { MaterialTextDialog, ParagraphPickerDialog } from "../components/material/LongMaterial";
 import { Link, useParams } from "react-router";
 import { ErrorText, Loading } from "../components/common";
 import { WorksheetMaterialPane, type MaterialPaneSlot } from "../components/worksheet/MaterialPane";
@@ -30,6 +31,8 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
   const state = ws.state;
   /** null: follow the worksheet (options until it was generated, then the result). */
   const [view, setView] = useState<"options" | "result" | null>(null);
+  /** 修改課文 / 只選要用的段落, opened from the material column or from a message about the material. */
+  const [fix, setFix] = useState<"edit" | "pick" | null>(null);
 
   // Whatever is still pending is saved when the page is left.
   const flushRef = useRef(ws.flush);
@@ -54,6 +57,8 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
   }
 
   const shown = view ?? (state.generated ? "result" : "options");
+  /** The library entry the material came from: its text can be edited and paragraphs chosen. */
+  const libraryId = state.material.source.material_id ?? null;
   const savedLine = ws.saveError
     ? `沒有存到：${ws.saveError}`
     : ws.saving
@@ -125,16 +130,47 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
             material: state.material,
             onReplace: ws.saveMaterial,
             locked: state.running || ws.busy,
+            ...(libraryId ? { onEditText: () => setFix("edit"), onPickParagraphs: () => setFix("pick") } : {}),
           })}
         </div>
         <div className="ws-main">
           {shown === "options" ? (
-            <OptionsView ws={ws} onGenerated={() => setView(null)} />
+            <OptionsView
+              ws={ws}
+              onGenerated={() => setView(null)}
+              {...(libraryId ? { onEditText: () => setFix("edit"), onPickParagraphs: () => setFix("pick") } : {})}
+            />
           ) : (
             <ResultView ws={ws} onAdjust={() => setView("options")} />
           )}
         </div>
       </div>
+
+      {fix === "edit" && libraryId && (
+        <MaterialTextDialog
+          materialId={libraryId}
+          from="worksheet"
+          onClose={() => setFix(null)}
+          onSaved={async (detail) => {
+            // The worksheet keeps its own copy: take the edited text again, keeping the chosen
+            // paragraphs that are still there.
+            const chosen = state.material.source.selected_ids ?? [];
+            const still = chosen.filter((pid) => detail.paragraphs.some((p) => p.id === pid));
+            await ws.saveSelection(still.length > 0 ? still : null);
+          }}
+        />
+      )}
+      {fix === "pick" && libraryId && (
+        <ParagraphPickerDialog
+          materialId={libraryId}
+          initial={state.material.source.selected_ids ?? null}
+          onClose={() => setFix(null)}
+          onSave={async (ids) => {
+            const ok = await ws.saveSelection(ids);
+            if (!ok) throw new Error("沒有儲存成功，請再試一次。");
+          }}
+        />
+      )}
     </>
   );
 }

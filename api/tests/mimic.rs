@@ -26,7 +26,6 @@ const BLOOMS: [&str; 6] = [
     "create",
 ];
 const MSG_SAMPLE_KIND: &str = "範本只適用於完整學習單";
-const HINT: &str = "這份看起來是學習單範本：要照它的樣式做新學習單，請用「照我的學習單做」，再另外放這節課的課文。";
 const MSG_UNREADABLE: &str = "Manna 這次沒有讀出這份學習單的設計（輸出不完整）。請按「重試」再試一次；一直失敗的話，可能是檔案太長或版面太亂。";
 
 /// A teacher's past worksheet, as the text extractor would read it. The fake provider takes
@@ -645,11 +644,12 @@ fn long_passage() -> String {
 }
 
 #[tokio::test]
-async fn a_refused_worksheet_points_to_mimic() {
+async fn a_long_worksheet_like_text_is_no_longer_refused() {
     let app = test_app!();
     let t = app.teacher("T-MIMIC-8", "general").await;
 
-    // A prep session: the turn fails with the 40-paragraph message and the hint.
+    // 46 paragraphs: no 40-paragraph refusal, whatever the text looks like. (The web app says
+    // "looks like a worksheet" before generating, from the material's own flag.)
     let s1 = create(
         &app,
         &t,
@@ -658,16 +658,12 @@ async fn a_refused_worksheet_points_to_mimic() {
     .await;
     assert!(s1["material"]["id"].is_i64());
     let done = wait(&app, &t, sid(&s1)).await;
-    let turn = last(&done);
-    assert_eq!(turn["status"], "failed");
-    let error = turn["error"].as_str().unwrap();
-    assert!(
-        error.starts_with("這份教材有 45 段，超過 Manna 一次能設計的 40 段。"),
-        "{error}"
-    );
-    assert!(error.ends_with(HINT), "{error}");
+    let error = last(&done)["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(!error.contains("超過"), "{error}");
 
-    // A long plain text: the same refusal, no hint.
     let s2 = create(
         &app,
         &t,
@@ -675,11 +671,13 @@ async fn a_refused_worksheet_points_to_mimic() {
     )
     .await;
     let done = wait(&app, &t, sid(&s2)).await;
-    let error = last(&done)["error"].as_str().unwrap().to_string();
-    assert!(error.contains("超過 Manna 一次能設計的 40 段"), "{error}");
-    assert!(!error.contains("學習單範本"), "{error}");
+    let error = last(&done)["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(!error.contains("超過"), "{error}");
 
-    // The worksheet generator says the same.
+    // The worksheet generator starts as well.
     let (s, v) = app
         .post(
             "/api/worksheets",
@@ -695,6 +693,5 @@ async fn a_refused_worksheet_points_to_mimic() {
             json!({}),
         )
         .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
-    assert!(err_message(&v).ends_with(HINT), "{v}");
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
 }

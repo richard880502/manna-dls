@@ -36,6 +36,8 @@ export interface WorksheetController {
   regenerate: (blockId: string) => Promise<void>;
   undo: (blockId: string) => Promise<void>;
   saveMaterial: (body: SaveWorksheetMaterialRequest) => Promise<boolean>;
+  /** 只選要用的段落 (ids of the library material); `null`: all of them. The library entry is not changed. */
+  saveSelection: (paragraphIds: string[] | null) => Promise<boolean>;
   /** 照我的版型: sets (the server re-derives the settings from it) or removes the template. */
   setTemplate: (templateId: number | null) => Promise<boolean>;
   /** Takes a state the server returned from another call (link, save as lesson). */
@@ -216,6 +218,11 @@ export function useWorksheet(id: number): WorksheetController {
     [act, id],
   );
 
+  const saveSelection = useCallback(
+    (paragraphIds: string[] | null) => act(() => api.putWorksheetMaterialSelection(id, paragraphIds)),
+    [act, id],
+  );
+
   const setTemplate = useCallback(
     (templateId: number | null) => act(() => api.setWorksheetTemplate(id, templateId)),
     [act, id],
@@ -311,6 +318,7 @@ export function useWorksheet(id: number): WorksheetController {
     regenerate,
     undo,
     saveMaterial,
+    saveSelection,
     setTemplate,
     adopt: put,
     setImages,

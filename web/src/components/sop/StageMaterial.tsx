@@ -125,7 +125,7 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
         placeholder="貼上課文或文章。段落之間空一行。"
       />
       <p className="field-hint" id="sop-material-hint">
-        段落之間空一行，Manna 會照空行分段；沒有空行時每一行算一段。
+        段落之間空一行，Manna 會照空行分段。沒有空行時，從 PDF 複製、一行一行折斷的文字會接回段落；其他情況每一行算一段。
       </p>
       <PrivacyHint />
       <label className="field-label" htmlFor="sop-material-source">

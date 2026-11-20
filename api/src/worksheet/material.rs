@@ -33,6 +33,36 @@ pub struct MaterialSource {
     /// annotations; the ones shared with the AI go into the prompts). `None` for older rows.
     #[serde(default)]
     pub material_id: Option<i64>,
+    /// The paragraphs the teacher chose to use (ids of the library material); `None` = all of
+    /// them. The snapshot's `paragraphs` are exactly these. The library material itself is
+    /// never changed by a selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_ids: Option<Vec<String>>,
+    /// How many paragraphs the library material has (set with `selected_ids`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_paragraphs: Option<i32>,
+}
+
+/// The selected paragraphs are not (any longer) paragraphs of the material.
+pub const MSG_BAD_SELECTION: &str = "選的段落不在這份教材裡。請重新選一次。";
+/// At most this many paragraph ids are accepted in a selection.
+pub const MAX_SELECTED: usize = 1000;
+
+/// A selection as sent: trimmed, without blanks and repeats, in the order given; `None` for an
+/// empty one (= all paragraphs). More than [`MAX_SELECTED`] ids is an error.
+pub fn clean_selection(ids: &[String]) -> Result<Option<Vec<String>>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in ids {
+        let id = id.trim();
+        if id.is_empty() || out.iter().any(|x| x == id) {
+            continue;
+        }
+        if id.chars().count() > crate::sop::MAX_ID_CHARS || out.len() >= MAX_SELECTED {
+            return Err(MSG_BAD_SELECTION.to_string());
+        }
+        out.push(id.to_string());
+    }
+    Ok((!out.is_empty()).then_some(out))
 }
 
 pub const SOURCE_PASTED: &str = "pasted";
@@ -105,6 +135,8 @@ impl Material {
                     material_version_no: None,
                     note: note.trim().to_string(),
                     material_id: None,
+                    selected_ids: None,
+                    total_paragraphs: None,
                 },
             },
             seq,
@@ -149,10 +181,40 @@ impl Material {
                     material_version_no: Some(m.version_no),
                     note: m.source_note.clone(),
                     material_id: Some(m.id),
+                    selected_ids: None,
+                    total_paragraphs: None,
                 },
             },
             seq,
         )
+    }
+
+    /// A snapshot of only the paragraphs `ids` of a library entry (「只選要用的段落」), in the
+    /// material's own order. No leading title is dropped: the teacher chose these paragraphs.
+    /// `None` when none of the ids is a paragraph of the material.
+    pub fn from_library_selection(
+        kind: &str,
+        lesson_id: Option<i64>,
+        m: &crate::sop::store::Material,
+        ids: &[String],
+    ) -> Option<(Self, i32)> {
+        let chosen: Vec<MaterialParagraph> = m
+            .paragraphs
+            .iter()
+            .filter(|p| ids.contains(&p.id))
+            .map(|p| MaterialParagraph {
+                id: p.id.clone(),
+                text: p.text.clone(),
+            })
+            .collect();
+        if chosen.is_empty() {
+            return None;
+        }
+        let (mut material, seq) = Self::from_library(kind, lesson_id, m);
+        material.source.selected_ids = Some(chosen.iter().map(|p| p.id.clone()).collect());
+        material.source.total_paragraphs = Some(m.paragraphs.len() as i32);
+        material.paragraphs = chosen;
+        Some((material, seq))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -221,6 +283,51 @@ impl Material {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_selection_keeps_only_the_chosen_paragraphs_in_order() {
+        let stored = crate::sop::store::Material {
+            id: 7,
+            version_no: 2,
+            kind: "text".into(),
+            origin: "paste".into(),
+            title: "T".into(),
+            source_note: String::new(),
+            url: None,
+            filename: None,
+            has_file: false,
+            text_status: "ready".into(),
+            text_truncated: false,
+            page_count: None,
+            text: String::new(),
+            paragraphs: (1..=5)
+                .map(|n| Paragraph {
+                    id: format!("p{n}"),
+                    no: n,
+                    text: format!("Paragraph {n}."),
+                    page: None,
+                })
+                .collect(),
+            word_count: 0,
+            created_at: chrono::Utc::now(),
+        };
+        let ids = vec!["p4".to_string(), "p2".to_string(), "gone".to_string()];
+        let (m, _) = Material::from_library_selection(SOURCE_LIBRARY, None, &stored, &ids).unwrap();
+        assert_eq!(
+            m.paragraphs
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            ["p2", "p4"]
+        );
+        assert_eq!(m.source.selected_ids.as_deref().map(<[_]>::len), Some(2));
+        assert_eq!(m.source.total_paragraphs, Some(5));
+        assert_eq!(m.source.material_id, Some(7));
+        assert!(
+            Material::from_library_selection(SOURCE_LIBRARY, None, &stored, &["x".into()])
+                .is_none()
+        );
+    }
+
     #[test]
     fn a_leading_title_line_is_not_paragraph_one() {
         let (m, _) = Material::pasted(

@@ -71,6 +71,9 @@ pub struct DraftObjectives {
     /// Pasted text: used for the draft only, not stored.
     #[serde(default)]
     pub material: Option<PastedMaterial>,
+    /// 只選要用的段落: with `material_id`, only these paragraphs (ids) are read.
+    #[serde(default)]
+    pub paragraph_ids: Option<Vec<String>>,
     #[serde(default)]
     pub class_id: Option<i64>,
     /// 「教師的要求」; a bare chip or tool label is none.
@@ -101,6 +104,13 @@ async fn material_of(
             return Err(AppError::bad_request(MSG_NO_TEXT));
         }
         let stored = sop_store::Material::from(row);
+        if let Some(ids) = req.paragraph_ids.as_deref().filter(|ids| !ids.is_empty()) {
+            return Material::from_library_selection(SOURCE_LIBRARY, None, &stored, ids)
+                .map(|(m, _)| m)
+                .ok_or_else(|| {
+                    AppError::bad_request(crate::worksheet::material::MSG_BAD_SELECTION)
+                });
+        }
         return Ok(Material::from_library(SOURCE_LIBRARY, None, &stored).0);
     }
     let pasted = req
@@ -209,6 +219,7 @@ pub async fn draft(
         "objectives_drafted",
         json!({
             "kind": kind, "material_id": req.material_id, "paragraphs": paragraphs,
+            "selected": req.paragraph_ids.as_ref().is_some_and(|ids| !ids.is_empty()),
             "class_id": req.class_id, "status": result.status,
             "interaction_id": result.interaction_id, "shown": result.objectives.len(),
             "hidden": result.hidden, "again": !avoid.is_empty() || !keep.is_empty(),

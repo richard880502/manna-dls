@@ -53,8 +53,7 @@ use crate::worksheet::template::store as tpl_store;
 use crate::worksheet::template::RawSectionOut;
 use crate::worksheet::{
     Audience, Block, Content, Item, Level, Material, Origin, Settings, ANSWER_FORMATS, FMT_BLANK,
-    FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, GEN_OBJECTIVES, MAX_AI_PARAGRAPHS,
-    MAX_ID_CHARS,
+    FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, GEN_OBJECTIVES, MAX_ID_CHARS,
 };
 use crate::AppState;
 
@@ -394,6 +393,17 @@ pub(super) async fn material(
         return Ok(None);
     }
     let stored = sop_store::Material::from(row);
+    // 只選要用的段落: the session's selection, if any of it is still in the material.
+    if !session.options.0.paragraph_ids.is_empty() {
+        if let Some((m, _)) = Material::from_library_selection(
+            SOURCE_LIBRARY,
+            None,
+            &stored,
+            &session.options.0.paragraph_ids,
+        ) {
+            return Ok(Some(m));
+        }
+    }
     Ok(Some(
         Material::from_library(SOURCE_LIBRARY, None, &stored).0,
     ))
@@ -407,18 +417,9 @@ fn material_title(m: &Material) -> String {
     }
 }
 
-/// `[第 n 段]` paragraphs, at most [`MAX_AI_PARAGRAPHS`] of them.
+/// `[第 n 段]` paragraphs: every one of them, however many there are.
 pub(super) fn passage(m: &Material) -> String {
-    let n = m.paragraphs.len();
-    if n <= MAX_AI_PARAGRAPHS {
-        return marked_passage(m);
-    }
-    let mut shown = m.clone();
-    shown.paragraphs.truncate(MAX_AI_PARAGRAPHS);
-    format!(
-        "{}\n\n（教材共 {n} 段，這裡只列出前 {MAX_AI_PARAGRAPHS} 段。）",
-        marked_passage(&shown)
-    )
+    marked_passage(m)
 }
 
 pub(super) async fn class_profile(
@@ -1614,6 +1615,7 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
     let req = CreateWorksheet {
         class_id: session.class_id,
         material_id: Some(material_id),
+        paragraph_ids: Some(session.options.0.paragraph_ids.clone()),
         template_id,
         // An assessment keeps its own answer formats.
         settings: session

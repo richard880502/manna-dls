@@ -820,7 +820,12 @@ interface SopState {
 
 ## 教材與段落
 
-- 教材目前只收貼上的文字（≤ 50,000 字）。**段落由程式切分**：有空行時以空行分段（段內換行視為空白），沒有空行時每一行一段；空白段落略過。
+- 教材目前只收貼上的文字（≤ 50,000 字）。**段落由程式切分**（貼上的文字與上傳的 TXT 同一套規則）：
+  1. 有空行時以空行分段（段內換行視為空白）。
+  2. 沒有空行時，**預設每一行一段**；但文字看起來是「一行一行折斷」的（從 PDF 或 e-mail 複製的）時，改用 PDF 的分段規則接回段落（`sop::wrap`）：行尾連字號斷字接回（`experi-` ＋ `ment` → `experiment`，下一行要以小寫字母開頭）；一行以句末標點（`. ? ! " ” ’ 。？！」』…`）結尾、而且明顯短於最長行（< 80%）就結束一段；單獨一行的短標題（≤ 12 字、不以句末標點結尾、< 最長行的 60%）自成一段；中文行與行之間不補空格（中文字寬算 2）。
+  3. 「看起來是折斷的」要同時符合（寧可不接，有疑問就每行一段）：至少 5 行；最長一行寬 ≥ 40（中文字算 2）；清單項目（`1.`、`-`、`•`、`(a)`）少於 40% 的行；至少 3 行、且至少 40% 的行**沒有**以句末標點結尾；這些行中至少 3/4 的長度 ≥ 最長行的 70%；這些行的下一行至少 40% 不是以大寫字母開頭。詩、清單、對話、一句一行的文字都不符合，維持每行一段。
+  4. 空白段落略過。已經存下的教材**不會**重新分段（沒有搬遷）；新貼上的文字與之後的修改用這個規則。修改教材（`PUT /api/materials/:id` 的 `text`）時重新分段，文字（空白正規化後）沒變的段落沿用 `id`，所以註記與選過的段落都還在。
+  5. `POST /api/materials/split-preview` `{ text }` → `{ paragraph_count }`：貼上的文字會被切成幾段（不存、不記錄；首頁用它決定要不要提醒教材很長）。需要「使用教材」權限；超過 50,000 字 → 400。
 - 段落 `id` 穩定：新教材中文字（空白正規化後）與前一版相同的段落沿用原 `id`，其餘給新的 `p<n>`（同一課例內不重複使用）。`no` 是目前的順序（從 1）。
 - 教材與 SOP 內容分開存（Phase 2.2 起：教材是教材庫的一份教材，就地修改、不保留舊文字；`lesson_sop_materials` 已刪除），SOP 版本以 `material_id` 指向它，所以自動儲存不會重複存整篇教材。
 
@@ -890,7 +895,7 @@ interface SopObjectivesSuggestion {
 
 ### (a) 逐段教材分析 `sop_passage_analysis`
 
-1. 程式把教材編號為 `[P1]…[Pn]` 後送出。沒有教材時兩個 `POST` 都回 400；教材超過 40 段時分析回 400（長陣列容易提早結束，請教師先貼這節課要讀的部分）。
+1. 程式把教材編號為 `[P1]…[Pn]` 後送出。沒有教材時兩個 `POST` 都回 400；教材段數不設上限（以前超過 40 段回 400）：輸出上限 `max_tokens` 依段數放大（`1000 + 200 × 段數`，最少 6000、最多 12000）；輸出仍然被截斷、或有段落沒寫時，照原本的「缺段重做一次、仍缺的列在 `missing_paragraph_ids`」處理，不會默默少掉。
 2. 檢查：段落編號是否每段各一筆；每筆寫作特色與語言重點的 `evidence` 是否為**該段原文的連續片段**（空白與引號正規化後的子字串；含「...」拼接的不算）；中文欄位是否為中文。
 3. 有缺段或有證據不合格 → 第 2 次呼叫只要求這些段落重做（附原因）。合併兩次結果後，仍不合格的證據**整筆拿掉**（`dropped_evidence`），仍缺的段落列在 `missing_paragraph_ids`。
 4. 至少有一段可用就 `shown`；完全沒有可用內容 `blocked`。
@@ -1117,6 +1122,7 @@ interface WsSheet {
 | POST | `/api/worksheets` | `{ lesson_id?, class_id?, material?: { title?, text, source_note? } }` | 201 `WorksheetState`。有 `lesson_id`：從課例 SOP 帶入教材、目標、任務、暖身、Exit ticket 與建議選項（沒有 SOP 內容也可以）。沒有：直接使用，`material.text` 可以先空著 |
 | GET | `/api/worksheets/:id` | – | `WorksheetState` |
 | PUT | `/api/worksheets/:id` | `{ title?, filename?, settings?, brief?, content?, base_version_no? }` | `WorksheetState`。`content` 與最新版本不同才新增一個版本（只增不改）。標籤不在規格集合內 → 400；產生中送 `content` → 409（產生完會整份取代）；`base_version_no`（編輯器上次看到的版本）不是最新版本、而 `content` 又和最新版本不同 → 409，什麼都不存（見「學習單：逐區修改與註記」） |
+| PUT | `/api/worksheets/:id/material-selection` | `{ paragraph_ids: string[] \| null }` | `WorksheetState`。**只選要用的段落**（見「長教材」） |
 | PUT | `/api/worksheets/:id/material` | `{ title?, text, source_note? }` | `WorksheetState`。換教材：重新分段（文字相同的段落沿用 id），`source.kind` 變成 `pasted`，重新計算 `suggested` |
 | DELETE | `/api/worksheets/:id` | – | `{ ok: true }`（軟刪除） |
 | POST | `/api/worksheets/:id/generate` | `{}` | 202 `WorksheetState`：建立四個步驟的背景工作並立刻回來。已在執行時回傳同一批 |
@@ -1874,6 +1880,7 @@ interface PrepSessionOptions {     // 出題選項；沒有設定的鍵不會出
   answer_formats?: string[];       // 固定標籤（作答方式），依標籤順序；沒有＝每個層次適合的
   content_objective?: string;      // 內容目標（≤300，一行一項）；舊資料的 objective 讀成這一欄（見「SIOP 目標」）
   language_objective?: string;     // 語言目標（≤300，一行一項）
+  paragraph_ids?: string[];        // 只選要用的段落（教材庫那份的段落 id）；沒有＝全部（見「長教材」）
 }
 interface PrepSessionSummary {
   id: number; title: string;
@@ -1901,6 +1908,8 @@ interface PrepSession extends PrepSessionSummary {
   next: PrepKind[];                // 建議的下一步：[comprehension, tiered, activity, kit, worksheet] 中這個對話還沒有 done 的，
                                    // 依這個順序；只在有教材時出現（沒有教材時是 []）。assessment、resources 仍是有效的 kind，但不再建議
   options: PrepSessionOptions;     // 只在 PrepSession（列表的 PrepSessionSummary 沒有）
+  material_paragraphs: number | null;  // 教材有幾段（沒有教材是 null）
+  material_selected: number | null;    // 選的段落還在教材裡的有幾段；全部都用是 null
 }
 type ActivityGoal =
   // prep_activity 第 3 版起（0019_prep_activity_goals.sql）：SIOP 的兩組，中英文並陳
@@ -1964,6 +1973,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | PATCH | `/api/prep-sessions/:id` | `{ title?, class_id?: number \| null, template_id?: number \| null, options?: PrepSessionOptions \| null }` | `PrepSession`（之後的輪次才會用到） |
 | DELETE | `/api/prep-sessions/:id` | – | `{ ok: true, worksheets_deleted }`：對話和它的學習單一起刪除（隱藏，資料保留；見上） |
 | POST | `/api/prep-sessions/:id/turns` | `{ kind?, request }` | 202 `PrepSession` |
+| PUT | `/api/prep-sessions/:id/material-selection` | `{ paragraph_ids: string[] \| null }` | 200 `PrepSession`。**只選要用的段落**（見「長教材」） |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/kit?format=docx` | – | 教學套件的 DOCX（見 `kit`） |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | – | 這一輪最新的 `SiopCheck`（檢核中時輪詢）；還沒有 → 404（見「SIOP 自我檢核」） |
 | POST | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | `{}` | 202 `SiopCheck`（新的一次，`running`）：再試一次或重新檢核 |
@@ -1988,7 +1998,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ### `worksheet`（做學習單）
 
-用建立學習單的同一段程式（`material_id` = 對話的教材，`class_id`、`template_id` = 對話的設定）建立學習單，再開始產生（等同 `POST /api/worksheets/:id/generate`）。`worksheet_id` 立刻有值；學習單產生中這一輪是 `running`，工作結束就是 `done`（即使某個區塊失敗：區塊的 `message` 會說明），只有建立或開始失敗時是 `failed`（例如教材超過 40 段）。對話裡已有 `done` 的 `activity`、而且沒有用版型時，那份規劃的引起動機想法（`標題：想法`，有選項時是每個選項）放進學習單的 `brief.warmup`。
+用建立學習單的同一段程式（`material_id` = 對話的教材，`class_id`、`template_id` = 對話的設定）建立學習單，再開始產生（等同 `POST /api/worksheets/:id/generate`）。`worksheet_id` 立刻有值；學習單產生中這一輪是 `running`，工作結束就是 `done`（即使某個區塊失敗：區塊的 `message` 會說明），只有建立或開始失敗時是 `failed`（例如這份教材沒有文字）。對話裡已有 `done` 的 `activity`、而且沒有用版型時，那份規劃的引起動機想法（`標題：想法`，有選項時是每個選項）放進學習單的 `brief.warmup`。
 
 **對話做的每一份學習單**（`worksheet`、`assessment`、`comprehension`、`tiered`、`kit`）都帶入：
 
@@ -2005,7 +2015,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 
 ### `activity`（規劃教學活動）
 
-一次呼叫（`prep_activity` 第 4 版，`max_tokens` 8000）。輸入：加了段落標記（`[第 n 段]`，最多 40 段）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、教師的目標與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`）。沒有時都是「（沒有）」。
+一次呼叫（`prep_activity` 第 4 版，`max_tokens` 8000）。輸入：加了段落標記（`[第 n 段]`，全部段落，不設上限；有「只選要用的段落」時只有選的）的教材、班級特性、以教材做混合檢索得到的前 8 個課綱條目（和 SOP 學習目標相同的檢索）、教師的目標與教師的要求（規則同上面的學習單，變數 `{{teacher_request}}`）。沒有時都是「（沒有）」。
 
 **教師的目標**有三個變數：`{{teacher_content_objective}}`（內容目標）、`{{teacher_language_objective}}`（語言目標）、`{{teacher_objective}}`（合併的一行，目前就是 `options.objective`）。前兩個由 `prep::TeacherObjectives::of` 從對話的選項取得；選項還沒有分開的內容目標、語言目標欄位時是「（沒有）」，模型自己草擬。教師給了哪一組，schema 那一組就只要 1 個目標，伺服器把教師的原文一字不改放進去（有中文的放 `zh`，否則放 `en`；另一種語言的那一行與課綱代碼用模型寫的），標上 `from_teacher`；教師給的目標不會因為下面的檢查被拿掉。只給了內容目標時，語言目標由模型從它推出。
 
@@ -2022,7 +2032,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 一次做兩件事：**課堂活動**（和 `activity` 相同的呼叫，結果在 `result`）與**差異化學習單**（和 `tiered` 相同，學習單在 `worksheet`）。學習單在請求當下建立並開始產生（`worksheet_id` 立刻有值），活動規劃同時在背景進行。
 
 - 兩者都結束前這一輪是 `running`。活動規劃一做好，`result` 就有值（輪詢時可以先顯示）；`error` 只在這一輪結束後才出現。
-- 兩者都成功 → `done`。任何一個失敗 → `failed`，成功的那一部分保留可見（`result` 或 `worksheet`）。`error`：「教學套件的課堂活動沒有完成：…」「教學套件的差異化學習單沒有完成：…」，兩個都失敗時「教學套件沒有完成。課堂活動：…差異化學習單：…」。差異化學習單失敗是指：建立或開始失敗（例如教材超過 40 段），或產生結束時一題都沒有。
+- 兩者都成功 → `done`。任何一個失敗 → `failed`，成功的那一部分保留可見（`result` 或 `worksheet`）。`error`：「教學套件的課堂活動沒有完成：…」「教學套件的差異化學習單沒有完成：…」，兩個都失敗時「教學套件沒有完成。課堂活動：…差異化學習單：…」。差異化學習單失敗是指：建立或開始失敗（例如這份教材沒有文字），或產生結束時一題都沒有。
 - 下一步建議裡 `kit` 做完不代表 `activity` 做完（反之亦然）。
 
 **下載**：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`（`format` 省略也是 DOCX；其他值 → 400「format 需為 docx。」）。一份 DOCX，每部分從新的一頁開始：
@@ -2634,11 +2644,7 @@ interface PrepTurn {
 
 ## 課文位置放了學習單時的訊息
 
-產生學習單因為教材超過 40 段而拒絕時（`POST /api/worksheets/:id/generate`、單一區塊重新產生、備課對話做學習單的輪次），如果這份教材 `looks_like_worksheet`（來自教材庫時用教材的欄位，否則用同一套規則算學習單的教材快照），訊息後面加上：
-
-「這份看起來是學習單範本：要照它的樣式做新學習單，請用「照我的學習單做」，再另外放這節課的課文。」
-
-不像學習單的長文章維持原本的訊息。
+教材不再因為段數超過 40 而被拒絕（見「長教材」），所以這則附加訊息只剩「教材沒有段落」的拒絕可以接在後面（實際上不會發生：沒有段落就沒有可偵測的文字）。教材看起來像學習單時，網頁在產生前就問（`looks_like_worksheet`，「照這份的樣式做」／「不用，當成課文」）。
 
 ## 其他
 
@@ -2732,7 +2738,7 @@ type TemplateBrowse = BrowsePage<TemplateCard, { categories: Facet[]; tags: Face
 | GET | `/api/browse/templates` | `area=platform\|mine`（預設 `platform`）、`q`、`category`、`tag`、`lang=英文\|中文\|中英並用`、`sort`、`cursor`、`limit` | `TemplateBrowse` |
 
 - 列：`reference` = 平台 + `material`；`mine` = 自己的個人 + `material`。`platform` = 平台範本中 `ready` 的；`mine` = 自己的範本（任何狀態）。
-- `fits_lesson=true`：有文字（`text_status = ready`）且 1–40 段（學習單產生器的上限）。
+- `fits_lesson=true`：有文字（`text_status = ready`）且至少 1 段。段數不設上限（以前是 1–40 段）；網頁的篩選名稱是「有文字、可直接出題」。
 - **搜尋** `q`（最多 200 字）：不分大小寫的子字串。教材比對標題、`source_note`、標籤與全文；範本比對標題、分類、標籤、`worksheet_kind` 與範例教材的標題。
 - **facets** 只依 `area` 與 `q` 計算（不看其他篩選），所以每個籤顯示選它會有幾筆。分類依上面的固定清單順序（再來是其他值；空字串不列）；標籤依數量多到少（最多 40 個）；`file_types` 依 pdf、docx、text、image、audio、video、link；`langs` 依 英文、中文、中英並用。只列數量大於 0 的。
 - `total`：符合 `area`、`q` 與所有篩選的總數。
@@ -3342,7 +3348,7 @@ interface ObjectiveDraft {
 
 **流程**（`objectives::draft`；每次呼叫各一列 `ai_interactions`，教材只記字數與雜湊）：
 
-1. **草擬**（`objective_draft`，鷹架 `SC-OBJ-DRAFT`，`max_tokens` 1500）。輸入：用途（工具，例如「閱讀理解題（依 Bloom 認知層次出題…）」；不同工具的請求因此不同）、學校類型、班級特性、教師的要求、這位老師最近 3 次草擬的語言目標類別、以教材做混合檢索的前 8 個課綱條目、加段落標記的教材（最多 40 段）。輸出 schema（欄位照撰寫順序，每個字串都有上限）：`{ content_objectives: [1–2] { zh ≤100, en ≤180, check_zh ≤100 }, language_objectives: [1–2] { category（enum 四類）, supports（"C1"｜"C2"）, zh ≤100, en ≤180, relation_zh ≤160, check_zh ≤100 } }`——先寫內容目標，再從內容目標推出語言目標。
+1. **草擬**（`objective_draft`，鷹架 `SC-OBJ-DRAFT`，`max_tokens` 1500）。輸入：用途（工具，例如「閱讀理解題（依 Bloom 認知層次出題…）」；不同工具的請求因此不同）、學校類型、班級特性、教師的要求、這位老師最近 3 次草擬的語言目標類別、以教材做混合檢索的前 8 個課綱條目、加段落標記的教材（全部段落，不設上限；`paragraph_ids` 選了的話只有選的）。輸出 schema（欄位照撰寫順序，每個字串都有上限）：`{ content_objectives: [1–2] { zh ≤100, en ≤180, check_zh ≤100 }, language_objectives: [1–2] { category（enum 四類）, supports（"C1"｜"C2"）, zh ≤100, en ≤180, relation_zh ≤160, check_zh ≤100 } }`——先寫內容目標，再從內容目標推出語言目標。
 2. **R1 規則檢查**（程式，`objectives::check_rules`），每一項各自判斷，不合格的拿掉：`en` 是英文、以 "I can" 開頭（"Students will be able to …" 改成 "I can …"）、不超過 30 個字、主要動詞（I can 後的第一個字與 and／or 後的字）不是 learn、know、understand 等看不到表現的動詞；`zh` 有中文、開頭（去掉「學生能」）不是了解、理解、知道、學會…；語言目標的類別是四類之一、`supports` 是通過的內容目標、`relation_zh` 寫成「學生要……才能……」；不重複。**R2**：有學習策略時排到語言目標的第一個——除非最近兩次草擬的語言目標都以策略為主（這時 prompt 請模型這次改用其他三類，讓一個單元的語言目標有變化；「單元」以這位老師最近的草擬近似，備課對話沒有單元）。規則檢查後一組都沒有時，同一次呼叫**重試一次**（temperature +0.4，附上問題）。
 3. **R3 審查**（`objective_check`，鷹架 `SC-OBJ-CHECK`，`max_tokens` 900），和 `worksheet_bloom_check` 一樣一次呼叫逐項判斷：`{ items: [正好 n 筆] { id（enum：這一輪的代號）, reason ≤100, problems: ("not_core" | "not_assessable" | "activity" | "not_readable" | "not_needed" | "no_relation")[] } }`。後兩種只用於語言目標（用在內容目標上不算）。有任何問題的草稿**不顯示**；語言目標支持的內容目標沒通過，它也不顯示；審查漏掉的項目重試一次後仍沒判斷的不顯示；審查呼叫失敗 → 這一輪都不顯示（G3）。
 4. **再草擬一次**：一組（內容或語言）沒有通過的草稿時，伺服器再草擬一輪（附上沒通過的原因，並列出已通過、可以照原句保留的目標），一樣經過 2、3。兩組都有的那一輪優先，否則留下通過較多的一輪。沒有被選的那一輪的草擬記錄標成 `blocked`。
@@ -3742,3 +3748,80 @@ interface WsTemplateDetail { /* …既有欄位… */
 - **我的範本的卡片**（`/templates?tab=mine`）：和我的教材一樣，卡片上有「更多動作」（⋯）→「刪除」。只出現在自己的範本；平台範本沒有（平台範本在「教材與範本管理」由 `pi`／`kb_manager` 管理）。按下後開確認視窗（`role="alertdialog"`，標題「永久刪除「…」？」），讀取範本詳細後說明會刪掉什麼，取消時焦點回到 ⋯。
 - **確認文字**（卡片與範本頁「刪除這個版型」共用 `templateDeleteConsequences`）：「刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案「…」也會一起永久刪除。」；別的範本還在用時是「原本的檔案「…」還有別的範本在用，所以會留著。」；沒有原檔時只有前兩句。
 - **「沒有範本在用的原檔」**：我的範本卡片下方的小區塊，列出上面的清單（標題、檔名與上傳日期、「查看」在側邊檢視器打開原檔或文字、「刪除」用和我的教材相同的確認視窗）。沒有任何一份（或讀不到清單）時整個區塊不出現。後端拒絕（409、503）時，訊息顯示在確認視窗裡。
+
+---
+
+# 長教材、斷行的貼上文字與「回上一步」
+
+來源：老師從 PDF 複製一篇文章貼上，每一個折斷的行都成了一段（一篇 10–20 段的文章變成 132 段），產生被「超過 40 段」擋下，而且找不到改課文的地方。
+
+## 貼上文字的分段
+
+見「教材與段落」。貼上與 TXT 沒有空行時，一行一行折斷的文字會接回段落（沿用 PDF 的規則）；有疑問就每行一段。
+
+## 不再有段數上限
+
+以前 `MAX_AI_PARAGRAPHS = 40`：學習單產生（`POST /api/worksheets/:id/generate`、單一區塊重新產生、備課對話的學習單輪次）與 SOP 分析回 400，目標草擬與備課活動只讀前 40 段。現在**都不擋、不截斷**：
+
+- 學習單：`worksheet::ai::check_material` 只要求至少一段。「完整學習單」的出題步驟的 `max_tokens` = `1500 + 600 × 段數`，最少 3000、最多 12000（`tasks_max_tokens`）；分層練習與閱讀理解的預算依題數，不依段數。
+- SOP 分析：`analysis_max_tokens`（`1000 + 200 × 段數`，6000–12000）。
+- 目標草擬（`objective_draft`）、備課活動／問答（`prep_activity`、`prep_ask`）：全部段落都標 `[第 n 段]` 送出。
+- 教材庫瀏覽 `fits_lesson=true`：有文字、至少 1 段。
+- 輸出被截斷或某段沒被涵蓋時，照原本的檢查與看得見的錯誤處理（缺段重做一次、仍缺的列出；`failed` 的輪次顯示訊息），不會默默少掉。
+- 常數 `worksheet::LONG_MATERIAL_PARAGRAPHS = 40`（網頁的 `LONG_MATERIAL_PARAGRAPHS`）只決定「比一般一節課長」的提醒。
+
+## 提醒：這份課文比較長
+
+教材超過 40 段、而且沒有「只選要用的段落」時，網頁在產生**之前**顯示（不擋、可以關）：
+
+> 這份課文有 N 段，比一般一節課長；產生會比較久，後面的段落也比較可能寫得簡略。
+
+三個動作：「修改課文」、「只選要用的段落」、「照樣產生」（照原樣送出；對話頁與學習單頁的「照樣產生」＝知道了，學習單頁的會同時開始產生）。出現的地方：
+
+- 首頁快速框：附上文章後、送出前（貼上的文字用 `POST /api/materials/split-preview` 問段數；教材庫的教材用 `paragraph_count`）。
+- 備課對話頁：教材的 `material_paragraphs` > 40 且沒有選段落時，顯示在「接下來可以」上面。
+- 學習單頁：選項頁的產生鈕上面。
+
+## 修改課文
+
+- 貼上的教材（`origin = "paste"`）：`PUT /api/materials/:id` `{ title?, text, edit_from? }`（`edit_from`：`home`／`prep_session`／`worksheet`／`library`，只寫進研究紀錄，其他值忽略）。就地修改並重新分段，沒變的段落沿用 `id`。上傳的檔案不能改文字（原本的 400 訊息）：網頁改提供「只選要用的段落」或「換一份教材」／「回上一步」。
+- 首頁：貼上的文字還沒存進教材庫，「修改課文」重新開啟貼上視窗（文字還在）；已在教材庫的用文字編輯視窗。
+- 備課對話：編輯視窗存好後，對話讀的是教材庫的最新文字；選過的段落若有被改掉，只留還在的（全沒了就改回全部）。失敗的輪次的按鈕變成「重新產生」。
+- 學習單頁：學習單的教材是一份複本，編輯後網頁再呼叫 `PUT /api/worksheets/:id/material-selection` 重新取一次複本（保留還在的選段）。
+
+## 只選要用的段落
+
+選的是這一次備課對話或這一份學習單要用的段落，**教材本身不變**。
+
+| 位置 | 儲存 | 讀取 |
+|---|---|---|
+| 備課對話 | `PrepSession.options.paragraph_ids`（`PUT /api/prep-sessions/:id/material-selection`；也可在 `POST /api/prep-sessions` 的 `options.paragraph_ids` 一開始就給，教材要是教材庫的教材） | 之後每一輪都讀選的段落（含「重新產生」）；對話做出的學習單的教材複本也只有這些段落（`material.source.selected_ids`） |
+| 學習單 | `WorksheetState.material.source.selected_ids`／`total_paragraphs`（`PUT /api/worksheets/:id/material-selection`；`POST /api/worksheets` 也可帶 `paragraph_ids` 配 `material_id`） | 產生、重新產生、檢查都只用這些段落 |
+| 目標草擬 | `POST /api/objective-drafts` 的 `paragraph_ids`（配 `material_id`） | 只讀這些段落 |
+
+- `paragraph_ids` 是教材庫那份教材的段落 `id`（`MaterialDetail.paragraphs[].id`），照教材的順序使用；`null` 或空陣列＝全部。最多 1000 個；不在教材裡的 `id` → 400「選的段落不在這份教材裡。請重新選一次。」
+- `PrepSession` 多兩欄：`material_paragraphs`（教材有幾段，沒有教材是 `null`）與 `material_selected`（選的段落還在教材裡的有幾段；全部都用是 `null`）。
+- 備課對話的 `PATCH` 送 `options` 時，已存的 `paragraph_ids` 保留（選段落只用上面的 `PUT`）。
+- 學習單是唯一一份「複本」：沒有教材庫來源（`source.material_id` 是 `null`，例如空白教材）→ 400，請用「換教材」貼上要用的部分。學習單產生中 → 409。
+- 選了之後，學習單的建議（`suggested`）與標題照新的教材重算；教師自己改過的設定保留（和「換教材」相同）。
+
+## 失敗或提醒時的路：回上一步
+
+任何一個因為教材而失敗或提醒的地方（長教材提醒、教材沒有文字、失敗的輪次、學習單產生失敗）都有**回上一步**，而且輸入不會不見：
+
+- 首頁：快速框（文字、附的教材、範本、選的卡片、選的段落）每次改動都存進 `sessionStorage`（以瀏覽器歷史這一筆的 `location.key` 為鍵），所以送出後按瀏覽器的「上一頁」，回到的是填好的快速框。建立對話成功時另存一份給那個對話（`manna:prep-origin:<id>`）。
+- 備課對話頁，失敗的輪次的按鈕：**回上一步**（回首頁，快速框照送出時的樣子填好；沒有那份暫存時——換了瀏覽器——用對話的第一個要求與教材重建）、**修改課文**、**只選要用的段落**、**再試一次**（教材改過之後叫**重新產生**）。對話標頭也有「修改課文」「只選要用的段落」。
+- 首頁在建立對話之前失敗（例如教材沒有文字）：快速框原樣保留，錯誤下面有「修改課文」「換一份教材」「再試一次」。
+- 學習單頁：產生失敗的訊息旁有「修改課文」「只選要用的段落」「再試一次」，從備課對話來的另有「回上一步」（回對話）。選項頁的設定沒有任何改變。教材欄也常駐「修改課文」「只選要用的段落」。
+- 不在這個範圍：`/create/:tool` 的完整表單不暫存（它的「回上一步」是瀏覽器的上一頁）。
+
+## 研究紀錄
+
+不記錄任何文字，只記大小。
+
+| 事件 | 時機 | 內容 |
+|---|---|---|
+| `material_text_edited` | `PUT /api/materials/:id` 且文字真的變了 | `material_id`、`from`（`home`／`prep_session`／`worksheet`／`library` 或 `null`）、`paragraphs_before`、`paragraphs_after`、`chars` |
+| `prep_material_selection` | `PUT /api/prep-sessions/:id/material-selection` | `session_id`、`material_id`、`total`、`selected`、`all` |
+| `worksheet_material_selection` | `PUT /api/worksheets/:id/material-selection` | `worksheet_id`、`material_id`、`total`、`selected`、`all` |
+| `objectives_drafted` | （既有）多一欄 `selected`：是否只讀選的段落 | |

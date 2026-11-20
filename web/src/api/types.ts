@@ -1395,6 +1395,8 @@ export interface UpdateLibraryMaterialRequest {
   source_note?: string;
   text?: string;
   url?: string;
+  /** 在哪裡修改課文（只寫進研究紀錄） */
+  edit_from?: "home" | "prep_session" | "worksheet" | "library";
 }
 
 export interface MaterialDeleted {
@@ -1502,6 +1504,10 @@ export interface WorksheetMaterial {
     note: string;
     /** 教材庫裡的那一份（檢視與註記用）；舊資料可能沒有 */
     material_id?: number | null;
+    /** 只選要用的段落：這份學習單只用這些段落（教材庫那份的段落 id）；全部都用時沒有這一欄 */
+    selected_ids?: string[];
+    /** 教材庫那份有幾段（有 selected_ids 時才有） */
+    total_paragraphs?: number;
   };
 }
 
@@ -2252,7 +2258,7 @@ export interface MaterialBrowseQuery {
   /** 可重複；全部都要符合 */
   tag?: string[];
   file_type?: BrowseFileType;
-  /** 有文字且 ≤ 40 段 */
+  /** 有文字（段數不限） */
   fits_lesson?: boolean;
   /** 預設 new */
   sort?: "new" | "title";
@@ -2795,6 +2801,8 @@ export interface PrepSessionOptions {
   content_objective?: string;
   /** 語言目標（一行一項） */
   language_objective?: string;
+  /** 只選要用的段落：教材的段落 id；省略＝全部（用 putPrepMaterialSelection 改） */
+  paragraph_ids?: string[];
 }
 
 export interface PrepSession extends PrepSessionSummary {
@@ -2805,6 +2813,10 @@ export interface PrepSession extends PrepSessionSummary {
   next: PrepKind[];
   /** 建立或 PATCH 時給的選項；舊的伺服器沒有這一欄 */
   options?: PrepSessionOptions | null;
+  /** 教材的段落數；沒有教材是 null；舊的伺服器沒有這一欄 */
+  material_paragraphs?: number | null;
+  /** 有「只選要用的段落」時，選到的段落還在教材裡的有幾段；全部都用是 null */
+  material_selected?: number | null;
 }
 
 export interface PrepSessionList {
@@ -2840,6 +2852,8 @@ export interface CreatePrepSessionRequest {
     content_objective?: string;
     /** 語言目標（≤300，一行一項） */
     language_objective?: string;
+    /** 只選要用的段落（教材庫那份教材的段落 id）；省略＝全部 */
+    paragraph_ids?: string[];
   };
 }
 
@@ -2856,6 +2870,8 @@ export interface ObjectiveDraftRequest {
   material_id?: number;
   /** 貼上的文字：只用來草擬，不存進教材庫 */
   material?: { title?: string; text: string };
+  /** 只選要用的段落（與 material_id 一起）：只讀這些段落 */
+  paragraph_ids?: string[];
   class_id?: number;
   request?: string;
   /** 「換一組」：上一組的句子，不要重複 */

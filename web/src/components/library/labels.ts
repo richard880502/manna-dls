@@ -67,7 +67,7 @@ export const MATERIAL_FILTERS: readonly MaterialFilter[] = [
   { id: "pdf", label: "PDF", icon: "file", fileType: "pdf" },
   { id: "docx", label: "Word", icon: "worksheet", fileType: "docx" },
   { id: "text", label: "文字", icon: "paste", fileType: "text" },
-  { id: "fits", label: "可直接出題（≤40 段）", icon: "ready", fitsLesson: true },
+  { id: "fits", label: "有文字、可直接出題", icon: "ready", fitsLesson: true },
 ];
 
 export const TEMPLATE_FILTERS: ReadonlyArray<{ id: string; label: string; icon: IconName; lang: WsInstructionLanguage }> = [

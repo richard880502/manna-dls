@@ -784,6 +784,11 @@ pub struct Session {
     pub next: Vec<&'static str>,
     /// 出題選項, without the keys that are not set (`{}` when none is).
     pub options: SessionOptions,
+    /// How many paragraphs the session's material has (`null` without one).
+    pub material_paragraphs: Option<i32>,
+    /// With a 只選要用的段落 selection: how many of its paragraphs are still in the material
+    /// (the ones the turns work with); `null` when every paragraph is used.
+    pub material_selected: Option<i32>,
 }
 
 async fn turn_worksheet(state: &AppState, worksheet_id: i64) -> AppResult<Option<TurnWorksheet>> {
@@ -1082,12 +1087,44 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             .bind(id)
             .fetch_optional(&state.db)
             .await?;
+    let options = options.map(|o| o.0).unwrap_or_default();
+    let (material_paragraphs, material_selected) =
+        material_counts(&state.db, id, &options.paragraph_ids).await?;
     Ok(Session {
         summary,
         turns: out,
         running,
         next,
-        options: options.map(|o| o.0).unwrap_or_default(),
+        options,
+        material_paragraphs,
+        material_selected,
+    })
+}
+
+/// `(paragraphs of the session's material, how many of the selected ids are in it)`; the second
+/// is `None` without a selection or when none of its ids is left.
+async fn material_counts(
+    db: &PgPool,
+    session_id: i64,
+    selected: &[String],
+) -> sqlx::Result<(Option<i32>, Option<i32>)> {
+    let row: Option<(i32, i64)> = sqlx::query_as(
+        "SELECT jsonb_array_length(m.paragraphs)::int,
+                (SELECT COUNT(*) FROM jsonb_array_elements(m.paragraphs) e
+                  WHERE e ->> 'id' = ANY($2))
+           FROM prep_sessions s JOIN materials m ON m.id = s.material_id
+          WHERE s.id = $1",
+    )
+    .bind(session_id)
+    .bind(selected)
+    .fetch_optional(db)
+    .await?;
+    Ok(match row {
+        Some((total, chosen)) => (
+            Some(total),
+            (!selected.is_empty() && chosen > 0).then_some(chosen as i32),
+        ),
+        None => (None, None),
     })
 }
 

@@ -55,9 +55,16 @@ pub const MODULE_OBJECTIVES: &str = "sop_objectives";
 pub const SCAFFOLD_ANALYSIS: &str = "SC-SOP-ANALYSIS";
 pub const SCAFFOLD_OBJECTIVES: &str = "SC-SOP-OBJECTIVES";
 
-/// Above this the analysis is not attempted in one call (long arrays end early).
-pub const MAX_AI_PARAGRAPHS: usize = 40;
+/// The analysis budget of a material of up to 30 paragraphs; a longer one gets more
+/// ([`analysis_max_tokens`]).
 pub const ANALYSIS_MAX_TOKENS: u32 = 6000;
+/// The most one analysis call may write.
+pub const ANALYSIS_MAX_TOKENS_CAP: u32 = 12000;
+
+/// Output budget of the analysis of `paragraphs` paragraphs (one entry each).
+pub fn analysis_max_tokens(paragraphs: usize) -> u32 {
+    (1000 + 200 * paragraphs.min(200) as u32).clamp(ANALYSIS_MAX_TOKENS, ANALYSIS_MAX_TOKENS_CAP)
+}
 pub const OBJECTIVES_MAX_TOKENS: u32 = 4000;
 /// Most curriculum items put in front of the model.
 pub const CURRICULUM_LIMIT: usize = 150;
@@ -420,7 +427,7 @@ async fn run_analysis(
         "prompt": { "key": KEY_ANALYSIS, "version_no": prompt.version_no,
                     "system": system, "user": logged_user },
         "schema": schemas::ANALYSIS_SCHEMA_NAME,
-        "request": { "temperature": temperature, "max_tokens": ANALYSIS_MAX_TOKENS },
+        "request": { "temperature": temperature, "max_tokens": analysis_max_tokens(paragraphs.len()) },
     });
     let meta = InteractionMeta {
         teacher_id: input.teacher_id,
@@ -446,7 +453,7 @@ async fn run_analysis(
         schema: schemas::analysis_schema(),
         fake_context: json!({ "task": KEY_ANALYSIS, "paragraphs": fake_paragraphs }),
         attempt: 1,
-        max_tokens: Some(ANALYSIS_MAX_TOKENS),
+        max_tokens: Some(analysis_max_tokens(paragraphs.len())),
         temperature: Some(temperature),
         images: Vec::new(),
     };

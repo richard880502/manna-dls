@@ -289,11 +289,11 @@ describe("平台教材 (/reference)", () => {
 
     // 只看：PDF, Word and 文字 take one file type; 可直接出題 goes with any.
     const only = within(screen.getByRole("group", { name: "只看：" }));
-    expect(only.getAllByRole("button").map((b) => b.textContent)).toEqual(["PDF", "Word", "文字", "可直接出題（≤40 段）"]);
+    expect(only.getAllByRole("button").map((b) => b.textContent)).toEqual(["PDF", "Word", "文字", "有文字、可直接出題"]);
     await user.click(only.getByRole("button", { name: "PDF" }));
     await user.click(only.getByRole("button", { name: "Word" }));
     expect(only.getByRole("button", { name: "PDF" })).toHaveAttribute("aria-pressed", "false");
-    await user.click(only.getByRole("button", { name: "可直接出題（≤40 段）" }));
+    await user.click(only.getByRole("button", { name: "有文字、可直接出題" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "排序" }), "標題");
     await waitFor(() =>
       expect(lastBrowse(api, MATERIALS)).toEqual({

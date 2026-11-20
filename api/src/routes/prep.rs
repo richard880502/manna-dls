@@ -299,6 +299,27 @@ pub async fn create(
         }
         (None, None) => None,
     };
+    // 只選要用的段落 needs a library material whose paragraphs have these ids.
+    if !options.paragraph_ids.is_empty() {
+        let known = match &material {
+            Some((id, _)) => {
+                let row = material_store::readable(db, *id, teacher.id())
+                    .await
+                    .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+                row.paragraphs
+                    .0
+                    .iter()
+                    .filter(|p| options.paragraph_ids.contains(&p.id))
+                    .count()
+            }
+            None => 0,
+        };
+        if known != options.paragraph_ids.len() {
+            return Err(AppError::bad_request(
+                crate::worksheet::material::MSG_BAD_SELECTION,
+            ));
+        }
+    }
     let request = request_or_label(kind, request);
     let title = match (&material, &topic) {
         (Some((_, t)), _) if !t.trim().is_empty() => clip_chars(t.trim(), MAX_TITLE_CHARS - 1),
@@ -454,8 +475,14 @@ pub async fn patch(
     if let Some(Some(template_id)) = req.template_id {
         tpl_store::ready_for_use(db, teacher.id(), template_id).await?;
     }
+    // 只選要用的段落 changes only through `PUT …/material-selection`: a PATCH of the options
+    // keeps what is stored.
     let options = match req.options {
-        Some(o) => Some(checked_options(o)?),
+        Some(o) => {
+            let mut checked = checked_options(o)?;
+            checked.paragraph_ids = store::session_row(db, id).await?.options.0.paragraph_ids;
+            Some(checked)
+        }
         None => None,
     };
     store::update(
@@ -465,6 +492,64 @@ pub async fn patch(
         req.class_id,
         req.template_id,
         options.as_ref(),
+    )
+    .await?;
+    Ok(Json(store::session(&state, id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MaterialSelection {
+    /// The paragraph ids (of the session's material) the turns work with; `null` or empty =
+    /// all of them.
+    #[serde(default)]
+    pub paragraph_ids: Option<Vec<String>>,
+}
+
+/// `PUT /api/prep-sessions/:id/material-selection`: 只選要用的段落. Stored in the session's
+/// options; the material itself is not changed. The turns after this one (and 重新產生) use it.
+pub async fn put_material_selection(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(req): ApiJson<MaterialSelection>,
+) -> AppResult<Json<Session>> {
+    let db = &state.db;
+    let row = store::owned(db, id, teacher.id()).await?;
+    let Some(material_id) = row.material_id else {
+        return Err(AppError::bad_request("這個備課對話沒有教材。"));
+    };
+    let ids = crate::worksheet::material::clean_selection(
+        req.paragraph_ids.as_deref().unwrap_or_default(),
+    )
+    .map_err(AppError::bad_request)?
+    .unwrap_or_default();
+    let material = material_store::readable(db, material_id, teacher.id())
+        .await
+        .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    let total = material.paragraphs.0.len();
+    let known = material
+        .paragraphs
+        .0
+        .iter()
+        .filter(|p| ids.contains(&p.id))
+        .count();
+    if known != ids.len() {
+        return Err(AppError::bad_request(
+            crate::worksheet::material::MSG_BAD_SELECTION,
+        ));
+    }
+    let mut options = row.options.0.clone();
+    options.paragraph_ids = ids;
+    store::update(db, id, None, None, None, Some(&options)).await?;
+    log_usage(
+        db,
+        teacher.id(),
+        "prep_material_selection",
+        json!({
+            "session_id": id, "material_id": material_id, "total": total,
+            "selected": if options.paragraph_ids.is_empty() { total } else { known },
+            "all": options.paragraph_ids.is_empty(),
+        }),
     )
     .await?;
     Ok(Json(store::session(&state, id).await?))
