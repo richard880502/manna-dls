@@ -586,7 +586,7 @@ export const api = {
     put<WsTemplateDetail>(`/worksheet-templates/${id}`, body),
   /** 只有 failed 可以重來 */
   retryWorksheetTemplate: (id: number) => post<WsTemplateDetail>(`/worksheet-templates/${id}/retry`),
-  /** 永久刪除版型與所有版本 */
+  /** 永久刪除版型與所有版本；deletes_source_material 時原本上傳的檔案一起永久刪除（儲存空間失敗 → 503，什麼都沒刪） */
   deleteWorksheetTemplate: (id: number) => del<OkResponse>(`/worksheet-templates/${id}`),
   /** 平台範本另存成我的範本（scope personal、標題加「（我的版本）」），回傳新的那一份 */
   copyWorksheetTemplate: (id: number) => post<WsTemplateDetail>(`/worksheet-templates/${id}/copy`),
@@ -601,6 +601,9 @@ export const api = {
   /** 自己的教材、用量與上傳限制；帶 lessonId 時只列連到那個課例的教材 */
   listLibraryMaterials: (lessonId?: number) =>
     get<MaterialLibrary>("/materials", lessonId ? { lesson_id: String(lessonId) } : undefined),
+  /** 我的範本：沒有範本在用的原檔（範本刪除了，或沒有做成範本），新到舊；刪除用 deleteLibraryMaterial */
+  listOrphanedSamples: () =>
+    get<MaterialLibrary>("/materials", { purpose: "worksheet_sample", orphaned: "true" }).then((l) => l.materials),
   getLibraryMaterial: (id: number) => get<MaterialDetail>(`/materials/${id}`),
   /** 貼上文字或加入網址 */
   createLibraryMaterial: (body: CreateLibraryMaterialRequest) => post<MaterialDetail>("/materials", body),

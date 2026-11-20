@@ -22,13 +22,14 @@ use serde_json::{json, Value};
 use crate::auth::{AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::annotations::{self, AiNote, Annotation, Patch as AnnotationPatch};
-use crate::materials::catalog::{self, Placement, PURPOSE_MATERIAL};
+use crate::materials::catalog::{self, Placement, PURPOSE_MATERIAL, PURPOSE_SAMPLE};
 use crate::materials::ocr;
 use crate::materials::store::{self, Deleted, Material, MaterialDetail, Upload, Usage};
 use crate::materials::thumbnail;
 use crate::materials::{self, file_type_for_name, Kind, FILE_TYPES};
 use crate::routes::owned_lesson;
 use crate::storage::{ByteRange, StorageError};
+use crate::worksheet::template::store as template_store;
 use crate::AppState;
 
 // ---------------------------------------------------------------- list, limits
@@ -81,6 +82,10 @@ pub struct ListQuery {
     /// `lesson_id` and no `purpose`, every material linked to the lesson is listed.
     #[serde(default)]
     pub purpose: Option<String>,
+    /// With `purpose=worksheet_sample` only: just the samples no template uses (我的範本's
+    /// 「沒有範本在用的原檔」).
+    #[serde(default)]
+    pub orphaned: Option<bool>,
 }
 
 pub async fn list(
@@ -98,8 +103,14 @@ pub async fn list(
         (None, Some(_)) => None,
         (None, None) => Some(PURPOSE_MATERIAL),
     };
+    let orphaned = q.orphaned == Some(true);
+    if orphaned && purpose != Some(PURPOSE_SAMPLE) {
+        return Err(AppError::bad_request(
+            "orphaned=true 只能和 purpose=worksheet_sample 一起用。",
+        ));
+    }
     Ok(Json(Library {
-        materials: store::list(&state.db, teacher.id(), q.lesson_id, purpose).await?,
+        materials: store::list(&state.db, teacher.id(), q.lesson_id, purpose, orphaned).await?,
         usage: store::usage(&state.db, teacher.id()).await?,
         limits: limits(),
         storage: state
@@ -381,7 +392,52 @@ pub async fn remove(
 ) -> AppResult<Json<Deleted>> {
     teacher.require(Capability::UseMaterials)?;
     let row = store::writable(&state.db, id, &teacher).await?;
+    // A teacher's sample still behind one of her templates goes with (the last of) them; deleting
+    // it here would leave the template without its original. A platform row keeps the old rule
+    // (its templates keep working without it).
+    if !row.is_platform() {
+        let (count, titles) = template_store::made_from(&state.db, row.id, teacher.id()).await?;
+        if count > 0 {
+            return Err(AppError::Conflict(sample_in_use(count, &titles)));
+        }
+    }
     Ok(Json(store::delete(&state, teacher.id(), row).await?))
+}
+
+/// 「這份檔案是範本「L2 學習單版型」的原檔…」: why a sample still in use is not deleted here.
+/// `count` templates use it; `titles` are those the teacher may read.
+fn sample_in_use(count: i64, titles: &[String]) -> String {
+    let named: Vec<String> = titles
+        .iter()
+        .take(3)
+        .map(|t| {
+            format!(
+                "「{}」",
+                if t.trim().is_empty() {
+                    "未命名的版型"
+                } else {
+                    t.trim()
+                }
+            )
+        })
+        .collect();
+    match (count, named.as_slice()) {
+        (1, [one]) => format!(
+            "這份檔案是範本{one}的原檔，範本還在用它。要刪除的話，請刪除那個範本，原檔會一起刪除。"
+        ),
+        (_, []) => "這份檔案還有範本在用，所以不能在這裡刪除。".to_string(),
+        _ => {
+            let more = if count > named.len() as i64 {
+                "等"
+            } else {
+                ""
+            };
+            format!(
+                "這份檔案是 {count} 個範本（{}{more}）的原檔，範本還在用它。請刪除這些範本，原檔會跟著最後一個範本一起刪除。",
+                named.join("、")
+            )
+        }
+    }
 }
 
 // ---------------------------------------------------------------- lesson links
@@ -849,6 +905,26 @@ pub async fn ai_annotations(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sample_in_use_names_its_templates() {
+        let t = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            sample_in_use(1, &t(&["L2 學習單版型"])),
+            "這份檔案是範本「L2 學習單版型」的原檔，範本還在用它。要刪除的話，請刪除那個範本，原檔會一起刪除。"
+        );
+        let two = sample_in_use(2, &t(&["A", " "]));
+        assert!(
+            two.starts_with("這份檔案是 2 個範本（「A」、「未命名的版型」）的原檔"),
+            "{two}"
+        );
+        let many = sample_in_use(5, &t(&["A", "B", "C", "D"]));
+        assert!(many.contains("（「A」、「B」、「C」等）"), "{many}");
+        assert_eq!(
+            sample_in_use(1, &[]),
+            "這份檔案還有範本在用，所以不能在這裡刪除。"
+        );
+    }
 
     #[test]
     fn ranges() {

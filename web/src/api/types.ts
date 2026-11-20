@@ -2179,6 +2179,11 @@ export interface WsTemplateSummary {
 export interface WsTemplateDetail extends WsTemplateSummary {
   error: string | null;
   content: WsTemplate | null;
+  /**
+   * 刪除這個版型時，原本上傳的檔案（source_material）也一起永久刪除：老師自己為它上傳的範例、
+   * 而且沒有別的範本在用。false：沒有原檔，或別的範本還在用（例如另存的版本、平台範本）。
+   */
+  deletes_source_material: boolean;
 }
 
 export interface WsTemplateList {

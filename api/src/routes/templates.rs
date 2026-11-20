@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::materials::catalog::{self, PURPOSE_SAMPLE, SAMPLE_CATEGORIES, SCOPE_PLATFORM};
+use crate::materials::catalog::{self, SAMPLE_CATEGORIES};
 use crate::materials::store as material_store;
 use crate::routes::log_usage;
 use crate::worksheet::template::extract::{self, stale_after};
@@ -279,37 +279,35 @@ pub async fn delete(
     Ok(Json(json!({ "ok": true })))
 }
 
-/// Hard delete of a template. A platform template takes its platform sample along (the file the
-/// admin uploaded for it), unless another template still uses that sample; the sample's file is
-/// removed first, so a storage failure deletes nothing.
+/// Hard delete of a template, and of its sample (the worksheet uploaded for it) when the sample
+/// goes with it ([`store::SAMPLE_GOES_SQL`]): a teacher's own sample of her own template, or the
+/// platform sample of a platform template, that no other template uses. The sample goes through
+/// the material's real delete (docs/BLUEPRINT.md §13.3), in one transaction that first locks the
+/// sample and the template:
+///
+/// 1. the sample's file (and preview) is removed first: when the store fails, nothing is deleted
+///    and the 503 says so;
+/// 2. the sample's rows ([`material_store::delete_rows`]: text, annotations, links, quotes,
+///    `material_deletions`, `material_deleted`) and the template are deleted in the same commit,
+///    so one never goes without the other. Should that commit fail after the file is gone, both
+///    rows are still there and the same delete can simply be sent again.
 pub async fn remove(state: &AppState, actor_id: i64, row: &TemplateRow) -> AppResult<()> {
-    let db = &state.db;
-    if row.scope == SCOPE_PLATFORM {
-        if let Some(material_id) = row.source_material_id {
-            let others: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM worksheet_templates
-                                 WHERE source_material_id = $1 AND id <> $2)",
-            )
-            .bind(material_id)
-            .bind(row.id)
-            .fetch_one(db)
-            .await?;
-            let sample = material_store::by_id(db, material_id).await?;
-            if let Some(sample) = sample
-                .filter(|m| !others && m.scope == SCOPE_PLATFORM && m.purpose == PURPOSE_SAMPLE)
-            {
-                material_store::delete(state, actor_id, sample).await?;
-            }
-        }
+    let mut tx = state.db.begin().await?;
+    let sample = store::lock_sample_going_with(&mut tx, row.id).await?;
+    if let Some(sample) = &sample {
+        material_store::remove_files(state, sample).await?;
+        material_store::delete_rows(&mut tx, actor_id, sample).await?;
     }
-    store::delete(db, row.id).await?;
+    store::delete(&mut *tx, row.id).await?;
     log_usage(
-        db,
+        &mut *tx,
         actor_id,
         "worksheet_template_deleted",
-        json!({ "template_id": row.id, "scope": row.scope }),
+        json!({ "template_id": row.id, "scope": row.scope,
+                "deleted_sample_id": sample.map(|m| m.id) }),
     )
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
