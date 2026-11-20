@@ -141,6 +141,19 @@ export function useSop(lessonId: number, classId: number | null): SopController 
   const [draft, setDraftState] = useState<MaterialDraft>({ title: "", source_note: "", text: "" });
   const [content, setContent] = useState<SopContent>(emptyContent);
   const [jobs, setJobs] = useState<SopJobs>(emptyJobs);
+  // Keep asynchronous job operations ordered even before React commits a render.
+  const jobsRef = useRef(jobs);
+  const updateJobs = useCallback((change: (current: SopJobs) => SopJobs) => {
+    const next = change(jobsRef.current);
+    jobsRef.current = next;
+    setJobs(next);
+  }, []);
+  const pollsInFlight = useRef(new Set<number>());
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [jobError, setJobError] = useState<Record<SopJobKind, string | null>>(noJobError);
   const [worksheetSettings, setWorksheetSettings] = useState<WorksheetSettings | null>(null);
   const [worksheetSuggested, setWorksheetSuggested] = useState<WorksheetSettings | null>(null);
@@ -167,7 +180,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
         setMaterial(state.material ?? null);
         setMaterialDeleted(state.material_deleted ?? false);
         materialIdRef.current = state.material?.id ?? null;
-        setJobs({
+        updateJobs(() => ({
           analysis: state.jobs?.analysis ?? null,
           objectives: state.jobs?.objectives ?? null,
           goals: state.jobs?.goals ?? null,
@@ -175,7 +188,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
           warmup: state.jobs?.warmup ?? null,
           exit_ticket: state.jobs?.exit_ticket ?? null,
           redo: state.jobs?.redo ?? [],
-        });
+        }));
         setWorksheetSettings(state.worksheet_settings ?? null);
         setWorksheetSuggested(state.worksheet_suggested ?? null);
         setLoadError(null);
@@ -189,7 +202,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     return () => {
       alive = false;
     };
-  }, [lessonId, loadSeq]);
+  }, [lessonId, loadSeq, updateJobs]);
 
   const saveContent = useCallback(async () => {
     const saved = await api.saveSop(lessonId, contentRef.current);
@@ -281,40 +294,33 @@ export function useSop(lessonId: number, classId: number | null): SopController 
   useEffect(() => {
     const ids = runningIds === "" ? [] : runningIds.split(",").map(Number);
     if (ids.length === 0) return;
-    let alive = true;
     const timer = setInterval(() => {
       for (const id of ids) {
-        api
-          .getSopJob(id)
-          .then((job) => {
-            if (!alive) return;
-            if (job.status === "done" && job.result?.status === "shown") {
-              logScaffold(SCAFFOLD[job.kind], "show", { trigger: job.slot ? "redo" : "suggestions" });
-            }
-            // Polls overlap when the server is slow, and their answers can come back out of
-            // order: a late 「running」 must not bring a finished (or replaced) job's progress back.
-            setJobs((prev) => {
-              if (job.slot) {
-                const at = prev.redo.findIndex((j) => j.id === job.id);
-                if (at < 0 || prev.redo[at]?.status === "done") return prev;
-                const redo = [...prev.redo];
-                redo[at] = job;
-                return { ...prev, redo };
-              }
-              const current = prev[job.kind] as SopJob | null;
-              if (current?.id !== job.id || current.status === "done") return prev;
-              return { ...prev, [job.kind]: job };
-            });
-          })
-          // A missed poll is retried by the next tick.
-          .catch(() => undefined);
+        if (pollsInFlight.current.has(id)) continue;
+        const current = [...KINDS.map((kind) => jobsRef.current[kind]), ...jobsRef.current.redo]
+          .find((job) => job?.id === id && job.status === "running");
+        if (!current) continue;
+        pollsInFlight.current.add(id);
+        void api.getSopJob(id).then((job) => {
+          if (!mounted.current || job.id !== id || job.kind !== current.kind || (job.slot || "") !== (current.slot || "")) return;
+          const latest = job.slot
+            ? jobsRef.current.redo.find((candidate) => candidate.id === id)
+            : jobsRef.current[job.kind];
+          // A replacement, reload, or completed job makes this response obsolete.
+          if (latest !== current || latest.status !== "running") return;
+          updateJobs((prev) => job.slot
+            ? { ...prev, redo: prev.redo.map((candidate) => candidate.id === id ? job : candidate) }
+            : { ...prev, [job.kind]: job });
+          if (job.status === "done" && job.result?.status === "shown") {
+            logScaffold(SCAFFOLD[job.kind], "show", { trigger: job.slot ? "redo" : "suggestions" });
+          }
+        }).catch(() => undefined).finally(() => {
+          pollsInFlight.current.delete(id);
+        });
       }
     }, sopConfig.pollMs);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [runningIds]);
+    return () => clearInterval(timer);
+  }, [runningIds, updateJobs]);
 
   const startJob = useCallback(
     async (kind: SopJobKind, redo?: SopRedoRequest) => {
@@ -328,7 +334,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
       }
       try {
         const job = await api.startSopJob(lessonId, kind, classId, redo);
-        setJobs((prev) => {
+        updateJobs((prev) => {
           if (job.slot) {
             // A second click joins the running job: it is already in the list.
             const redoList = prev.redo.filter((j) => j.id !== job.id);
@@ -340,13 +346,8 @@ export function useSop(lessonId: number, classId: number | null): SopController 
         setJobError((prev) => ({ ...prev, [kind]: errorMessage(err) }));
       }
     },
-    [flush, lessonId, classId],
+    [flush, lessonId, classId, updateJobs],
   );
-
-  const jobsRef = useRef(jobs);
-  useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
 
   const decide = useCallback(
     (kind: SopJobKind, itemIndex: number, decision: DecisionKind, revisedContent?: string, jobId?: number) => {
@@ -355,7 +356,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
         jobId === undefined ? (current[kind] as SopJob | null) : current.redo.find((j) => j.id === jobId);
       if (!job) return;
       if (job.decided.includes(itemIndex)) return;
-      setJobs((prev) => {
+      updateJobs((prev) => {
         const mark = (j: SopJob): SopJob => (j.id === job.id ? { ...j, decided: [...j.decided, itemIndex] } : j);
         const top = prev[kind] as SopJob | null;
         return {
@@ -373,7 +374,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
       }
       logScaffold(SCAFFOLD[kind], decision === "reject" ? "skip" : "use", { trigger: `${decision}-${itemIndex}` });
     },
-    [],
+    [updateJobs],
   );
 
   const reload = useCallback(() => {
