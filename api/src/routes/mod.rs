@@ -129,6 +129,10 @@ pub fn api_router() -> Router<AppState> {
                 .delete(worksheets::delete),
         )
         .route("/worksheets/{id}/material", put(worksheets::put_material))
+        .route(
+            "/worksheets/{id}/material-selection",
+            put(worksheets::put_material_selection),
+        )
         .route("/worksheets/{id}/generate", post(worksheets::generate))
         .route("/worksheets/{id}/jobs", get(worksheets::jobs))
         .route(
@@ -249,6 +253,10 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/prep-sessions/{id}/turns", post(prep::create_turn))
         .route(
+            "/prep-sessions/{id}/material-selection",
+            put(prep::put_material_selection),
+        )
+        .route(
             "/prep-sessions/{id}/images",
             post(prep::upload_image).layer(DefaultBodyLimit::max(
                 (crate::prep::images::MAX_BYTES + 1024 * 1024) as usize,
@@ -265,6 +273,7 @@ pub fn api_router() -> Router<AppState> {
         )
         // material library, original files and annotations (Phase 2.2)
         .route("/materials", get(library::list).post(library::create))
+        .route("/materials/split-preview", post(library::split_preview))
         .route(
             "/materials/upload",
             post(library::upload).layer(DefaultBodyLimit::max(

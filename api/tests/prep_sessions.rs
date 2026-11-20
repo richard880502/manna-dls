@@ -245,11 +245,11 @@ async fn an_assessment_has_its_own_title_and_settings() {
 }
 
 #[tokio::test]
-async fn a_worksheet_that_cannot_start_fails_the_turn() {
+async fn a_long_material_is_not_refused_and_nothing_is_dropped() {
     let app = test_app!();
     let t = app.teacher("T-PREP-3", "general").await;
-    // More paragraphs than one generation takes: the worksheet is made, the start fails.
-    let long: Vec<String> = (1..=41)
+    // More paragraphs than one lesson: no 40-paragraph refusal any more.
+    let long: Vec<String> = (1..=45)
         .map(|i| format!("Paragraph number {i} says something about umbrellas."))
         .collect();
     let session = create(
@@ -258,11 +258,153 @@ async fn a_worksheet_that_cannot_start_fails_the_turn() {
         json!({ "kind": "worksheet", "material": { "title": "Long", "text": long.join("\n\n") } }),
     )
     .await;
-    let turn = last(&session);
-    assert_eq!(turn["status"], "failed", "{turn}");
-    assert!(turn["error"].as_str().unwrap().contains("41 段"), "{turn}");
-    assert!(turn["worksheet"]["id"].is_i64());
-    assert_eq!(session["running"], false);
+    assert_eq!(session["material_paragraphs"], 45);
+    assert_eq!(session["material_selected"], Value::Null);
+    let done = wait(&app, &t, sid(&session)).await;
+    let turn = last(&done);
+    assert!(
+        !turn["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("段，超過"),
+        "{turn}"
+    );
+    let ws_id = turn["worksheet"]["id"].as_i64().unwrap();
+    let (s, ws) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::OK, "{ws}");
+    assert_eq!(ws["material"]["paragraphs"].as_array().unwrap().len(), 45);
+    // An ask with the whole material shows every paragraph to the model.
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        sid(&session),
+        json!({ "kind": "ask", "request": "What is this about?" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+}
+
+#[tokio::test]
+async fn only_the_selected_paragraphs_are_used_and_the_material_is_unchanged() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-3B", "general").await;
+    let long: Vec<String> = (1..=45)
+        .map(|i| format!("Paragraph number {i} says something about umbrellas."))
+        .collect();
+    let (s, mat) = app
+        .post(
+            "/api/materials",
+            Some(&t),
+            json!({ "kind": "text", "title": "Long", "text": long.join("\n\n") }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{mat}");
+    let ids: Vec<String> = mat["paragraphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .take(3)
+        .map(|p| p["id"].as_str().unwrap().to_string())
+        .collect();
+    // A selection at creation: the worksheet snapshot holds just those paragraphs.
+    let session = create(
+        &app,
+        &t,
+        json!({ "kind": "worksheet", "material_id": mat["id"],
+                "options": { "paragraph_ids": ids } }),
+    )
+    .await;
+    assert_eq!(session["material_paragraphs"], 45);
+    assert_eq!(session["material_selected"], 3);
+    let done = wait(&app, &t, sid(&session)).await;
+    let ws_id = last(&done)["worksheet"]["id"].as_i64().unwrap();
+    let (_, ws) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&t)).await;
+    let got: Vec<&str> = ws["material"]["paragraphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(got, ids.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(ws["material"]["source"]["total_paragraphs"], 45);
+    // The library material still has everything.
+    let (_, again) = app
+        .get(&format!("/api/materials/{}", mat["id"]), Some(&t))
+        .await;
+    assert_eq!(again["paragraphs"].as_array().unwrap().len(), 45);
+
+    // Change the selection, then back to all; foreign ids and other teachers are refused.
+    let path = format!("/api/prep-sessions/{}/material-selection", sid(&session));
+    let (s, v) = app
+        .put(
+            &path,
+            Some(&t),
+            json!({ "paragraph_ids": [ids[0], ids[1]] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(
+        (
+            v["material_selected"].clone(),
+            v["options"]["paragraph_ids"].as_array().unwrap().len()
+        ),
+        (json!(2), 2)
+    );
+    let (s, v) = app
+        .put(&path, Some(&t), json!({ "paragraph_ids": ["nope"] }))
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let other = app.teacher("T-PREP-3C", "general").await;
+    let (s, _) = app
+        .put(&path, Some(&other), json!({ "paragraph_ids": [ids[0]] }))
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, v) = app
+        .put(&path, Some(&t), json!({ "paragraph_ids": null }))
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["material_selected"], Value::Null);
+    assert!(v["options"].get("paragraph_ids").is_none());
+    let logged = usage(&app, "prep_material_selection").await;
+    assert_eq!(logged.len(), 2);
+    assert_eq!(
+        (logged[0]["selected"].clone(), logged[0]["total"].clone()),
+        (json!(2), json!(45))
+    );
+    assert!(logged.iter().all(|p| p.get("text").is_none()));
+}
+
+#[tokio::test]
+async fn an_unknown_selection_is_refused_and_a_patch_keeps_the_stored_one() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-3D", "general").await;
+    let (s, v) = app
+        .post(
+            "/api/prep-sessions",
+            Some(&t),
+            json!({ "kind": "worksheet", "material": { "title": "x", "text": passage("") },
+                    "options": { "paragraph_ids": ["zzz"] } }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    let session = pasted(&app, &t, "worksheet", "").await;
+    let id = sid(&session);
+    let _ = wait(&app, &t, id).await;
+    let path = format!("/api/prep-sessions/{id}/material-selection");
+    let (s, v) = app
+        .put(&path, Some(&t), json!({ "paragraph_ids": ["p1", "p2"] }))
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = patch(
+        &app,
+        &format!("/api/prep-sessions/{id}"),
+        &t,
+        json!({ "options": { "question_count": 6 } }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["options"]["paragraph_ids"], json!(["p1", "p2"]));
+    assert_eq!(v["options"]["question_count"], 6);
 }
 
 // ---------------------------------------------------------------- activity

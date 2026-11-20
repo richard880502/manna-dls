@@ -193,6 +193,13 @@ pub struct SessionOptions {
     /// 語言目標 (≤300, one objective per line).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language_objective: Option<String>,
+    /// 只選要用的段落: the ids of the session material's paragraphs every turn works with
+    /// (empty = all of them). The material itself is never changed by it.
+    #[serde(
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "null_as_empty"
+    )]
+    pub paragraph_ids: Vec<String>,
 }
 
 impl SessionOptions {
@@ -218,6 +225,8 @@ impl SessionOptions {
             answer_formats: s.answer_formats,
             content_objective: s.content_objective,
             language_objective: s.language_objective,
+            paragraph_ids: crate::worksheet::material::clean_selection(&self.paragraph_ids)?
+                .unwrap_or_default(),
         })
     }
 

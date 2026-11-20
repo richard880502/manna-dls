@@ -18,7 +18,10 @@ export const NO_TEXT_LINE =
   "這份檔案讀不到文字（可能是掃描檔），Manna 沒辦法照它出題。請換一份，或改用貼上文字。";
 
 /** A chosen library material; `looks_like_worksheet` comes along when the server said so. */
-export type PickedMaterial = Pick<Material, "id" | "title" | "looks_like_worksheet">;
+export type PickedMaterial = Pick<Material, "id" | "title" | "looks_like_worksheet"> & {
+  /** How many paragraphs it has (the long-material notice); older picks may not know. */
+  paragraph_count?: number;
+};
 
 /** Where the material is coming from, and what has been chosen so far. */
 export interface MaterialChoice {
@@ -67,7 +70,7 @@ export function LibraryStep({
   /** An upload whose text Manna is still reading (OCR). */
   const [reading, setReading] = useState<MaterialDetail | null>(null);
 
-  function take(m: Pick<Material, "id" | "title" | "text_status" | "looks_like_worksheet" | "ocr">) {
+  function take(m: Pick<Material, "id" | "title" | "text_status" | "looks_like_worksheet" | "ocr"> & { paragraph_count?: number }) {
     // 照我的學習單做 waits for its sample's OCR on the server side.
     const waitsOnServer = purpose === "worksheet_sample" && ocrOpen(m.ocr);
     if (m.ocr && ocrOpen(m.ocr) && !waitsOnServer) {
@@ -79,7 +82,12 @@ export function LibraryStep({
       return;
     }
     setProblem(null);
-    onPicked({ id: m.id, title: m.title, ...(m.looks_like_worksheet ? { looks_like_worksheet: true } : {}) });
+    onPicked({
+      id: m.id,
+      title: m.title,
+      ...(m.looks_like_worksheet ? { looks_like_worksheet: true } : {}),
+      ...(typeof m.paragraph_count === "number" ? { paragraph_count: m.paragraph_count } : {}),
+    });
   }
 
   function added(m: MaterialDetail) {
@@ -138,7 +146,7 @@ export function LibraryStep({
 export function MaterialChooser({
   choice,
   onChange,
-  pasteHint = "段落之間空一行。請不要貼上學生姓名或其他個人資料。",
+  pasteHint = "段落之間空一行；沒有空行時，從 PDF 複製的斷行文字會接回段落。請不要貼上學生姓名或其他個人資料。",
   pasteRows = 8,
 }: {
   choice: MaterialChoice;

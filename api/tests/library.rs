@@ -1135,8 +1135,8 @@ async fn browsing_filters_counts_facets_and_pages_with_a_cursor() {
     let v = browse(&app, &t, "/api/browse/materials?fits_lesson=true").await;
     assert_eq!(
         ids(&v["items"]),
-        [tong, m113, m114],
-        "45 paragraphs do not fit"
+        [kegang, tong, m113, m114],
+        "any material with text counts, however many paragraphs"
     );
     let v = browse(&app, &t, "/api/browse/materials?file_type=pdf").await;
     assert_eq!(

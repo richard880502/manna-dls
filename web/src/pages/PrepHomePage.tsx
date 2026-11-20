@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import type { CreateCarry } from "./CreatePage";
 import { api, errorMessage } from "../api/client";
 import type { ObjectiveDraftKind, PrepSessionSummary } from "../api/types";
@@ -15,6 +15,13 @@ import {
 } from "../components/material/AttachDialog";
 import { materialFields, type MaterialChoice, type PickedMaterial } from "../components/material/MaterialChooser";
 import { WorksheetNotice } from "../components/material/WorksheetNotice";
+import {
+  LongMaterialNotice,
+  MaterialFixButtons,
+  MaterialTextDialog,
+  ParagraphPickerDialog,
+  SelectionLine,
+} from "../components/material/LongMaterial";
 import { ObjectiveDrafts, recordDecisions, useObjectiveDraft, type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
 import { StepwiseDialog } from "../components/home/StepwiseDialog";
 import { OncePerPage } from "../components/OncePerPage";
@@ -51,6 +58,18 @@ import {
   type StartKind,
   type Tool,
 } from "../lib/create";
+import {
+  CHANGE_MATERIAL,
+  KEPT_LINE,
+  RETRY,
+  isLongMaterial,
+  loadHomeDraft,
+  rememberOrigin,
+  saveHomeDraft,
+  selectedLine,
+  type HomeDraft,
+  type HomeRestore,
+} from "../lib/longMaterial";
 import { objectiveOptions, type DraftDecision } from "../lib/objectives";
 import { ocrBusyError } from "../lib/ocr";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
@@ -168,7 +187,15 @@ function AttachMenu<W extends AttachWay | SampleWay>({
   );
 }
 
-type QuickDialog = { slot: "article"; way: AttachWay } | { slot: "sample"; way: SampleWay } | { slot: "stepwise" };
+type QuickDialog =
+  | { slot: "article"; way: AttachWay }
+  | { slot: "sample"; way: SampleWay }
+  | { slot: "stepwise" }
+  | { slot: "edit-text"; id: number }
+  | { slot: "pick-paragraphs"; id: number };
+
+/** The id the long-material notice's 照樣產生 is remembered under for pasted text (it has no id yet). */
+const PASTED_KEY = -1;
 
 /**
  * The quick box: one composer box (text, 附上 controls, send). With a material it makes 閱讀理解題
@@ -182,14 +209,25 @@ type QuickDialog = { slot: "article"; way: AttachWay } | { slot: "sample"; way: 
 function QuickBox() {
   const ids = useId();
   const navigate = useNavigate();
-  const [text, setText] = useState("");
-  const [choice, setChoice] = useState<MaterialChoice | null>(null);
+  const location = useLocation();
+  // Coming back (browser Back, or 回上一步 on the conversation page): the box is as it was left.
+  const [initial] = useState<HomeDraft | null>(
+    () => (location.state as HomeRestore | null)?.restore ?? loadHomeDraft(location.key),
+  );
+  const [text, setText] = useState(initial?.text ?? "");
+  const [choice, setChoice] = useState<MaterialChoice | null>(initial?.choice ?? null);
   /** 照我的學習單做's sample; kept while another tile is chosen, but sent only with it. */
-  const [sample, setSample] = useState<Sample | null>(null);
+  const [sample, setSample] = useState<Sample | null>(initial?.sample ?? null);
   /** null: the teacher has not chosen a tile, so typed words choose. */
-  const [clicked, setClicked] = useState<{ tool: Tool | HomeTool | null } | null>(null);
+  const [clicked, setClicked] = useState<{ tool: Tool | HomeTool | null } | null>(initial?.clicked ?? null);
   /** Materials the teacher said to keep as the article (no worksheet notice for them). */
-  const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
+  const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set(initial?.keptAsText ?? []));
+  /** 只選要用的段落: the ids used of the attached library material (null: all of it). */
+  const [selection, setSelection] = useState<string[] | null>(initial?.selection ?? null);
+  /** The long-material notice was answered with 照樣產生 for this material (its id; pasted: -1). */
+  const [longOk, setLongOk] = useState<number | null>(initial?.longOk ?? null);
+  /** How many paragraphs pasted text would become (asked of the server, which owns the rule). */
+  const [counted, setCounted] = useState<{ text: string; count: number } | null>(null);
   const [dialog, setDialog] = useState<QuickDialog | null>(null);
   const [needMaterial, setNeedMaterial] = useState(false);
   /** 照我的學習單做 was sent without its sample or its lesson text. */
@@ -210,6 +248,30 @@ function QuickBox() {
   const boxRef = useRef<HTMLTextAreaElement>(null);
   const tileRefs = useRef<Array<HTMLButtonElement | null>>([]);
   useAutoGrow(boxRef, text);
+
+  const draftNow = useCallback(
+    (): HomeDraft => ({ text, choice, sample, clicked, keptAsText: [...keptAsText], selection, longOk }),
+    [text, choice, sample, clicked, keptAsText, selection, longOk],
+  );
+  // Kept per history entry: Back finds the box as it was, even after the page was left for a session.
+  useEffect(() => {
+    saveHomeDraft(location.key, draftNow());
+  }, [location.key, draftNow]);
+
+  const pastedText = choice?.way === "paste" ? choice.text : null;
+  useEffect(() => {
+    if (pastedText === null || !pastedText.trim()) return undefined;
+    let alive = true;
+    api
+      .splitPreview(pastedText)
+      .then((res) => alive && setCounted({ text: pastedText, count: res.paragraph_count }))
+      // The notice is a convenience: without a count nothing is said.
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [pastedText]);
+  const pasteCount = pastedText !== null && counted?.text === pastedText ? counted.count : null;
   const backToArticle = useCallback(() => articleTrigger.current, [articleTrigger]);
   const backToSample = useCallback(() => sampleTrigger.current, [sampleTrigger]);
 
@@ -229,6 +291,10 @@ function QuickBox() {
   const ocrBusy = ocrRefusal?.key === attachedKey ? ocrRefusal.message : null;
   const need = (mimic ? (needSlots ? slotsNeeded : null) : missing ? MATERIAL_REQUIRED : null) ?? ocrBusy;
   const picked = choice?.picked ?? null;
+  const paragraphCount = choice?.way === "paste" ? pasteCount : (picked?.paragraph_count ?? null);
+  const longId = choice?.way === "paste" ? PASTED_KEY : (picked?.id ?? null);
+  const longShown =
+    !stepwise && selection === null && isLongMaterial(paragraphCount) && longId !== null && longOk !== longId;
   const worksheetLike =
     !mimic && !stepwise && picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
 
@@ -258,6 +324,7 @@ function QuickBox() {
       const shown = await drafts.start({
         kind: kind as ObjectiveDraftKind,
         ...material,
+        ...(selection && "material_id" in material ? { paragraph_ids: selection } : {}),
         ...(typed ? { request: typed } : {}),
       });
       if (!shown) await create("", "");
@@ -281,7 +348,10 @@ function QuickBox() {
     setOcrRefusal(null);
     try {
       const request = typed || (kind === "ask" ? "" : TOOL_CHIP[kind]);
-      const options = objectiveOptions(content, language);
+      const options = {
+        ...objectiveOptions(content, language),
+        ...(selection && material && "material_id" in material ? { paragraph_ids: selection } : {}),
+      };
       const session = await api.createPrepSession(
         asCreateRequest({
           kind,
@@ -292,6 +362,8 @@ function QuickBox() {
           entry: "home",
         }),
       );
+      // The conversation's 回上一步 comes back to this box, filled in as it is now.
+      rememberOrigin(session.id, draftNow());
       navigate(`/prep/${session.id}`);
     } catch (err) {
       const reading = ocrBusyError(err);
@@ -299,6 +371,63 @@ function QuickBox() {
       else setError(errorMessage(err));
       setBusy(false);
     }
+  }
+
+  /** The attached material changed (another one, or none): what was chosen of the old one goes. */
+  function changeChoice(next: MaterialChoice | null) {
+    setChoice(next);
+    setSelection(null);
+    setLongOk(null);
+  }
+
+  /** 修改課文: pasted text in its own dialog; a library material (pasted before) in the text editor. */
+  function openEdit() {
+    if (choice?.way === "paste") setDialog({ slot: "article", way: "paste" });
+    else if (picked) setDialog({ slot: "edit-text", id: picked.id });
+  }
+
+  /** 只選要用的段落: pasted text is stored in the library first (the paragraphs need ids). */
+  async function openPick() {
+    if (!choice) return;
+    if (choice.way !== "paste") {
+      if (picked) setDialog({ slot: "pick-paragraphs", id: picked.id });
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const made = await api.createLibraryMaterial({
+        kind: "text",
+        ...(choice.title.trim() ? { title: choice.title.trim() } : {}),
+        text: choice.text,
+      });
+      setChoice({
+        way: "library",
+        picked: { id: made.id, title: made.title, paragraph_count: made.paragraphs.length },
+        title: "",
+        text: "",
+      });
+      setDialog({ slot: "pick-paragraphs", id: made.id });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** The text of the attached library material was edited: its paragraphs may be others now. */
+  function textEdited(detail: { id: number; title: string; paragraphs: Array<{ id: string }> }) {
+    setChoice((c) =>
+      c?.picked?.id === detail.id
+        ? { ...c, picked: { ...c.picked, title: detail.title, paragraph_count: detail.paragraphs.length } }
+        : c,
+    );
+    setSelection((now) => {
+      if (!now) return now;
+      const still = now.filter((id) => detail.paragraphs.some((p) => p.id === id));
+      return still.length > 0 ? still : null;
+    });
+    setError(null);
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -343,7 +472,7 @@ function QuickBox() {
   function takeAsSample(m: PickedMaterial) {
     setClicked({ tool: "mimic" });
     setSample({ kind: "material", material: { id: m.id, title: m.title } });
-    setChoice(null);
+    changeChoice(null);
     setNeedMaterial(false);
     setNeedSlots(false);
     articleTrigger.current?.focus();
@@ -387,7 +516,7 @@ function QuickBox() {
                 label={mimic ? LESSON_TEXT_CHIP_LABEL : undefined}
                 title={choiceTitle(choice)}
                 disabled={busy}
-                onRemove={() => setChoice(null)}
+                onRemove={() => changeChoice(null)}
               />
             )}
           </div>
@@ -430,6 +559,24 @@ function QuickBox() {
           </button>
         </div>
       </section>
+
+      {longShown && paragraphCount !== null && (
+        <LongMaterialNotice
+          paragraphs={paragraphCount}
+          disabled={busy}
+          onEdit={openEdit}
+          onPick={() => void openPick()}
+          onGo={() => {
+            setLongOk(longId);
+            void send();
+          }}
+        />
+      )}
+      {selection && picked && typeof picked.paragraph_count === "number" && (
+        <SelectionLine disabled={busy} onChange={() => void openPick()}>
+          {selectedLine(selection.length, picked.paragraph_count)}
+        </SelectionLine>
+      )}
 
       {worksheetLike && (
         <WorksheetNotice
@@ -496,6 +643,18 @@ function QuickBox() {
         </p>
       )}
       <ErrorText message={error} />
+      {error && choice && (
+        <div className="material-fix-note">
+          <p className="quiet-note">{KEPT_LINE}</p>
+          <MaterialFixButtons
+            disabled={busy}
+            onEdit={openEdit}
+            onChange={() => setDialog({ slot: "article", way: "library" })}
+            onRetry={() => void send()}
+            retryLabel={RETRY}
+          />
+        </div>
+      )}
       {dialog === null && <PrivacyReminder />}
 
       {dialog?.slot === "stepwise" && (
@@ -507,7 +666,7 @@ function QuickBox() {
           returnFocus={backToArticle}
           onClose={() => setDialog(null)}
           onPickMaterial={(card) => {
-            setChoice({ way: "library", picked: pickedOf(card), title: "", text: "" });
+            changeChoice({ way: "library", picked: pickedOf(card), title: "", text: "" });
             setNeedMaterial(false);
             setDialog(null);
           }}
@@ -520,10 +679,30 @@ function QuickBox() {
           returnFocus={backToArticle}
           onClose={() => setDialog(null)}
           onChoice={(next) => {
-            setChoice(next);
+            changeChoice(next);
+            setError(null);
             setNeedMaterial(false);
             setDialog(null);
           }}
+        />
+      )}
+      {dialog?.slot === "edit-text" && (
+        <MaterialTextDialog
+          materialId={dialog.id}
+          from="home"
+          returnFocus={backToArticle}
+          onClose={() => setDialog(null)}
+          onSaved={textEdited}
+          otherWay={{ label: CHANGE_MATERIAL, onClick: () => setDialog({ slot: "article", way: "library" }) }}
+        />
+      )}
+      {dialog?.slot === "pick-paragraphs" && (
+        <ParagraphPickerDialog
+          materialId={dialog.id}
+          initial={selection}
+          returnFocus={backToArticle}
+          onClose={() => setDialog(null)}
+          onSave={(chosen) => setSelection(chosen)}
         />
       )}
       {dialog?.slot === "sample" && dialog.way === "upload" && (

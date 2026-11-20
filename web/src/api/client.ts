@@ -449,6 +449,9 @@ export const api = {
   saveWorksheet: (id: number, body: SaveWorksheetRequest) => put<WorksheetState>(`/worksheets/${id}`, body),
   saveWorksheetMaterial: (id: number, body: SaveWorksheetMaterialRequest) =>
     put<WorksheetState>(`/worksheets/${id}/material`, body),
+  /** 只選要用的段落：`null` 或空陣列＝全部。教材庫那份不變 */
+  putWorksheetMaterialSelection: (id: number, paragraphIds: string[] | null) =>
+    put<WorksheetState>(`/worksheets/${id}/material-selection`, { paragraph_ids: paragraphIds }),
   deleteWorksheet: (id: number) => del<OkResponse>(`/worksheets/${id}`),
   /** 建立背景工作並立刻回來；之後用 worksheetJobs 輪詢 */
   generateWorksheet: (id: number) => post<WorksheetState>(`/worksheets/${id}/generate`),
@@ -548,6 +551,9 @@ export const api = {
   objectiveDraftProgress: (key: string) =>
     get<ObjectiveDraftProgress>(`/objective-drafts/progress/${encodeURIComponent(key)}`),
   getPrepSession: (id: number) => get<PrepSession>(`/prep-sessions/${id}`),
+  /** 只選要用的段落：`null` 或空陣列＝全部。教材本身不變 */
+  putPrepMaterialSelection: (id: number, paragraphIds: string[] | null) =>
+    put<PrepSession>(`/prep-sessions/${id}/material-selection`, { paragraph_ids: paragraphIds }),
   updatePrepSession: (id: number, body: UpdatePrepSessionRequest) =>
     request<PrepSession>("PATCH", `/prep-sessions/${id}`, { json: body }),
   /** 硬刪除對話；做出來的學習單保留 */
@@ -605,6 +611,8 @@ export const api = {
   listOrphanedSamples: () =>
     get<MaterialLibrary>("/materials", { purpose: "worksheet_sample", orphaned: "true" }).then((l) => l.materials),
   getLibraryMaterial: (id: number) => get<MaterialDetail>(`/materials/${id}`),
+  /** 貼上的文字會被切成幾段（和存進教材庫時同一套規則；不存、不記錄） */
+  splitPreview: (text: string) => post<{ paragraph_count: number }>("/materials/split-preview", { text }),
   /** 貼上文字或加入網址 */
   createLibraryMaterial: (body: CreateLibraryMaterialRequest) => post<MaterialDetail>("/materials", body),
   /** 上傳檔案（multipart）；後端檢查副檔名、內容、大小與用量 */

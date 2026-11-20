@@ -12,6 +12,25 @@ import { ErrorText, Loading } from "../components/common";
 import { RunProgressPanel, useRunPanel } from "../components/RunProgress";
 import { TOOL_NAME } from "../lib/create";
 import { MaterialViewer } from "../components/material/MaterialViewer";
+import {
+  LongMaterialNotice,
+  MaterialFixButtons,
+  MaterialTextDialog,
+  ParagraphPickerDialog,
+} from "../components/material/LongMaterial";
+import {
+  BACK_STEP,
+  CHANGE_MATERIAL,
+  EDIT_TEXT,
+  PICK_PARAGRAPHS,
+  REGENERATE,
+  RETRY,
+  draftFromSession,
+  isLongMaterial,
+  loadOrigin,
+  selectedLine,
+  type HomeRestore,
+} from "../lib/longMaterial";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
@@ -85,6 +104,10 @@ function PrepSessionView({ id }: { id: number }) {
   const [target, setTarget] = useState<{ worksheetId: number; blockId: string; name: string } | null>(null);
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
+  // 修改課文 / 只選要用的段落 open here; `materialChanged`: the next try uses what was changed.
+  const [fix, setFix] = useState<"edit" | "pick" | null>(null);
+  const [materialChanged, setMaterialChanged] = useState(false);
+  const [longSeen, setLongSeen] = useState(false);
   const attach = useImageAttach(id);
   const previous = useRef<PrepSession | null>(null);
   // A turn that appeared after the page loaded is scrolled into view, so the teacher sees it start.
@@ -191,6 +214,30 @@ function PrepSessionView({ id }: { id: number }) {
     } finally {
       setSending(false);
     }
+  }
+
+  /** 回上一步: the home box, filled in as it was when this conversation began. Nothing is lost. */
+  function goBack() {
+    if (!session) return;
+    const restore = loadOrigin(id) ?? draftFromSession(session);
+    navigate("/", { state: { restore } satisfies HomeRestore });
+  }
+
+  /** The material's text was edited: its paragraphs may be others now, so the selection is checked. */
+  async function afterEdit(detail: { paragraphs: Array<{ id: string }> }) {
+    const now = session?.options?.paragraph_ids ?? [];
+    const still = now.filter((pid) => detail.paragraphs.some((p) => p.id === pid));
+    setMaterialChanged(true);
+    if (now.length > 0 && still.length !== now.length) {
+      apply(await api.putPrepMaterialSelection(id, still.length > 0 ? still : null));
+    } else {
+      apply(await api.getPrepSession(id));
+    }
+  }
+
+  async function afterPick(ids: string[] | null) {
+    apply(await api.putPrepMaterialSelection(id, ids));
+    setMaterialChanged(true);
   }
 
   async function reviseTarget(t: NonNullable<typeof target>, instruction: string) {
@@ -385,17 +432,19 @@ function PrepSessionView({ id }: { id: number }) {
   }
 
   function failed(turn: PrepTurn) {
+    const hasMaterial = !!session!.material;
     return (
       <div className="prep-failed" role="alert">
         <p>{turn.error || "這一步沒有成功。"}</p>
-        <button
-          type="button"
-          className="secondary-button small-button"
+        {materialChanged && <p className="quiet-note">課文已更新，按「{REGENERATE}」就會用新的課文。</p>}
+        <MaterialFixButtons
           disabled={locked}
-          onClick={() => void send({ kind: turn.kind, request: turn.request })}
-        >
-          再試一次
-        </button>
+          onBack={goBack}
+          onEdit={hasMaterial ? () => setFix("edit") : undefined}
+          onPick={hasMaterial && (session!.material_paragraphs ?? 0) > 1 ? () => setFix("pick") : undefined}
+          onRetry={() => void send({ kind: turn.kind, request: turn.request })}
+          retryLabel={materialChanged ? REGENERATE : RETRY}
+        />
       </div>
     );
   }
@@ -452,6 +501,17 @@ function PrepSessionView({ id }: { id: number }) {
               <button type="button" className="text-link" onClick={() => setViewing(session.material!.id)}>
                 {session.material.title.trim() || "未命名教材"}
               </button>
+              {typeof session.material_selected === "number" && typeof session.material_paragraphs === "number" && (
+                <span className="prep-selected"> · {selectedLine(session.material_selected, session.material_paragraphs)}</span>
+              )}
+              <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setFix("edit")}>
+                {EDIT_TEXT}
+              </button>
+              {(session.material_paragraphs ?? 0) > 1 && (
+                <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setFix("pick")}>
+                  {typeof session.material_selected === "number" ? "改選段落" : PICK_PARAGRAPHS}
+                </button>
+              )}
             </span>
           ) : session.topic ? (
             <span className="prep-context-item">主題：{session.topic}</span>
@@ -518,6 +578,20 @@ function PrepSessionView({ id }: { id: number }) {
           </li>
         ))}
       </ol>
+
+      {session.material &&
+        !longSeen &&
+        !running &&
+        session.material_selected == null &&
+        isLongMaterial(session.material_paragraphs) && (
+          <LongMaterialNotice
+            paragraphs={session.material_paragraphs!}
+            disabled={locked}
+            onEdit={() => setFix("edit")}
+            onPick={() => setFix("pick")}
+            onGo={() => setLongSeen(true)}
+          />
+        )}
 
       {next.length > 0 && (
         <div className="prep-next">
@@ -675,6 +749,23 @@ function PrepSessionView({ id }: { id: number }) {
 
       {viewing !== null && (
         <MaterialViewer mode="panel" materialId={viewing} open onClose={() => setViewing(null)} />
+      )}
+      {fix === "edit" && session.material && (
+        <MaterialTextDialog
+          materialId={session.material.id}
+          from="prep_session"
+          onClose={() => setFix(null)}
+          onSaved={afterEdit}
+          otherWay={{ label: `${BACK_STEP}，${CHANGE_MATERIAL}`, onClick: goBack }}
+        />
+      )}
+      {fix === "pick" && session.material && (
+        <ParagraphPickerDialog
+          materialId={session.material.id}
+          initial={session.options?.paragraph_ids ?? null}
+          onClose={() => setFix(null)}
+          onSave={afterPick}
+        />
       )}
     </div>
   );

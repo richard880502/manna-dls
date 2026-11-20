@@ -44,7 +44,7 @@ use crate::retrieval;
 use crate::sop::ObjectiveType;
 use crate::teaching_context::track_label;
 use crate::text::{clip_chars, or_blank};
-use crate::worksheet::{Material, MAX_AI_PARAGRAPHS};
+use crate::worksheet::Material;
 use crate::AppState;
 
 pub const SCAFFOLD_DRAFT: &str = "SC-OBJ-DRAFT";
@@ -338,23 +338,14 @@ fn format_curriculum(items: &[CurriculumItem]) -> String {
         .join("\n")
 }
 
-/// `[第 n 段]` paragraphs, at most [`MAX_AI_PARAGRAPHS`] of them.
+/// Every paragraph as `[第 n 段]`: none is left out, however many there are.
 fn passage(m: &Material) -> String {
-    let shown: Vec<String> = m
-        .paragraphs
+    m.paragraphs
         .iter()
-        .take(MAX_AI_PARAGRAPHS)
         .enumerate()
         .map(|(i, p)| format!("[第 {} 段] {}", i + 1, p.text))
-        .collect();
-    let mut out = shown.join("\n\n");
-    if m.paragraphs.len() > MAX_AI_PARAGRAPHS {
-        out.push_str(&format!(
-            "\n\n（教材共 {} 段，這裡只列出前 {MAX_AI_PARAGRAPHS} 段。）",
-            m.paragraphs.len()
-        ));
-    }
-    out
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn material_title(m: &Material) -> String {

@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { useNavigate } from "react-router";
 import type { ExitKind, WorksheetSettings, WorksheetState, WsJob, WsLevel, WsOutput } from "../../api/types";
 import {
   OUTPUTS,
@@ -35,6 +36,8 @@ import { AiContextPanel } from "../AiContextPanel";
 import { RunProgressPanel, useRunPanel } from "../RunProgress";
 import { PROGRESS_WORDS } from "../../lib/progress";
 import { ErrorText } from "../common";
+import { LongMaterialNotice, MaterialFixButtons } from "../material/LongMaterial";
+import { RETRY, isLongMaterial } from "../../lib/longMaterial";
 import { ObjectiveFields } from "../objectives/ObjectiveFields";
 import { BloomSettings } from "./BloomSettings";
 import { TemplateOption } from "./TemplateOption";
@@ -169,14 +172,19 @@ export function RunOutcome({ jobs }: { jobs: WsJob[] }) {
 interface OptionsViewProps {
   ws: WorksheetController;
   onGenerated: () => void;
+  /** 修改課文 / 只選要用的段落: the page's dialogs for the library material. */
+  onEditText?: () => void;
+  onPickParagraphs?: () => void;
 }
 
 /**
  * The four option blocks of the spec (§5): all multi-select, all optional, labels verbatim. The
  * one filled button generates, whatever is or is not selected.
  */
-export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
+export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: OptionsViewProps) {
   const ids = useId();
+  const navigate = useNavigate();
+  const [longSeen, setLongSeen] = useState(false);
   // The preset is not stored (only the counts are); the teacher's last pick is kept here so that
   // 自訂 stays 自訂 even while its counts happen to equal a preset's.
   const [presetChoice, setPresetChoice] = useState<BloomPresetId | null>(null);
@@ -565,6 +573,22 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
         </section>
       )}
 
+      {!running &&
+        !longSeen &&
+        !state.material.source.selected_ids &&
+        isLongMaterial(state.material.paragraphs.length) && (
+          <LongMaterialNotice
+            paragraphs={state.material.paragraphs.length}
+            disabled={ws.busy}
+            onEdit={() => onEditText?.()}
+            onPick={() => onPickParagraphs?.()}
+            onGo={() => {
+              setLongSeen(true);
+              void generate();
+            }}
+          />
+        )}
+
       {running ? (
         <WorksheetRunProgress state={state} />
       ) : fullWorksheet ? (
@@ -604,6 +628,16 @@ export function OptionsView({ ws, onGenerated }: OptionsViewProps) {
         </div>
       )}
       <ErrorText message={ws.actionError} />
+      {ws.actionError && (
+        <MaterialFixButtons
+          disabled={ws.busy}
+          onBack={state.prep_session_id ? () => navigate(`/prep/${state.prep_session_id}`) : undefined}
+          onEdit={onEditText}
+          onPick={onPickParagraphs}
+          onRetry={() => void generate()}
+          retryLabel={RETRY}
+        />
+      )}
       <p className="quiet-note">
         {fullWorksheet
           ? "會同時產生學生版和教師版。Exit ticket 預設放在最後，之後可以關掉。"

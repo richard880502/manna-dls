@@ -33,6 +33,8 @@ HTTP 建立／產生／重做／逐區修改，以及備課對話產生學習單
 命令型別 `CreateWorksheet`、`CreateOverrides` 與 `PastedMaterial` 位於相同模組；
 它們沒有 HTTP extractor 或 response 的相依。`CreateWorksheet` 保留原本的 serde
 輸入形狀，讓 HTTP 與背景流程共用同一份正規化規則。
+「只選要用的段落」也在這裡：`POST /api/worksheets` 的 `paragraph_ids` 與備課對話的
+`options.paragraph_ids` 都經 `CreateWorksheet.paragraph_ids` 走同一個 `chosen_material`。
 
 目前的 `WorksheetState` 是 HTTP 查詢視圖，留在 `routes::worksheets`。其他編輯、匯出、
 SOP 同步 handler 尚未全部搬入應用服務；新增可重用的業務操作應放在應用服務，

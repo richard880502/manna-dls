@@ -776,7 +776,7 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     let app = test_app!();
     let t = app.teacher("T-PB-8", "general").await;
 
-    // The worksheet cannot start (too many paragraphs): the plan is still made and kept.
+    // A long material (41 paragraphs) is not refused: both parts are made.
     let long: Vec<String> = (1..=41)
         .map(|i| format!("Paragraph number {i} says something about umbrellas."))
         .collect();
@@ -789,20 +789,8 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     let id = sid(&session);
     let done = wait(&app, &t, id).await;
     let turn = last(&done);
-    assert_eq!(turn["status"], "failed", "{turn}");
-    let error = turn["error"].as_str().unwrap();
-    assert!(
-        error.starts_with("教學套件的差異化學習單沒有完成：") && error.contains("41 段"),
-        "{error}"
-    );
+    assert_eq!(turn["status"], "done", "{turn}");
     assert_eq!(turn["result"]["steps"].as_array().unwrap().len(), 3);
-    assert!(turn["interaction_id"].is_i64());
-    // The plan alone can be downloaded.
-    let r = kit_raw(&app, &t, id, turn["id"].as_i64().unwrap(), "?format=docx").await;
-    assert_eq!(r.status, StatusCode::OK);
-    let xml = document_xml(r.body);
-    assert!(xml.contains("教學流程") && xml.contains("差異化學習單沒有完成"));
-    assert!(!xml.contains("學生版"));
 
     // The plan fails: the worksheet is kept.
     let session = create(

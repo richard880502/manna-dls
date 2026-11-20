@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::AuthTeacher;
 use crate::curriculum;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::sop::ai::{self, Job, JobInput, JobKind, MAX_AI_PARAGRAPHS};
+use crate::sop::ai::{self, Job, JobInput, JobKind};
 use crate::sop::store::{self, Material, Version, VersionSummary};
 use crate::sop::{self, SopContent, MAX_FIELD_CHARS, MAX_MATERIAL_CHARS, MAX_TITLE_CHARS};
 use crate::teaching_context::{owned_lesson, resolved_profile};
@@ -239,12 +239,6 @@ async fn start_job(
         return Err(AppError::bad_request(
             "這份教材沒有可以讀的文字（圖片、影音、網址或掃描的 PDF）。請貼上文字，或換一份有文字的教材。",
         ));
-    }
-    if kind == JobKind::Analysis && material.paragraphs.len() > MAX_AI_PARAGRAPHS {
-        return Err(AppError::bad_request(format!(
-            "這份教材有 {} 段，超過 Manna 一次能分析的 {MAX_AI_PARAGRAPHS} 段。請先貼上這節課要讀的部分。",
-            material.paragraphs.len()
-        )));
     }
     let today = today_objective(&state.db, id).await?;
     let job_id = ai::start(

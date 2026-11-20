@@ -283,11 +283,11 @@ fn extract_pdf(data: &[u8]) -> Extracted {
 
 /// Paragraphs of one PDF page. A PDF only has lines: blank lines part paragraphs when the
 /// extractor produced any; otherwise a line that ends a sentence and stops well short of the
-/// right margin closes a paragraph. Words hyphenated across lines are joined.
+/// right margin closes a paragraph. Words hyphenated across lines are joined. (The rule is
+/// shared with pasted text that looks hard-wrapped: `sop::wrap`.)
 pub fn page_blocks(page: &str) -> Vec<String> {
     let text = page.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = text.split('\n').map(str::trim).collect();
-    let widest = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
     let has_blank = {
         let first = lines.iter().position(|l| !l.is_empty());
         let last = lines.iter().rposition(|l| !l.is_empty());
@@ -296,44 +296,7 @@ pub fn page_blocks(page: &str) -> Vec<String> {
             _ => false,
         }
     };
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let flush = |current: &mut String, out: &mut Vec<String>| {
-        let text = collapse_ws(current);
-        if !text.is_empty() {
-            out.push(text);
-        }
-        current.clear();
-    };
-    for line in lines {
-        if line.is_empty() {
-            flush(&mut current, &mut out);
-            continue;
-        }
-        let hyphenated = current.ends_with('-')
-            && current
-                .chars()
-                .rev()
-                .nth(1)
-                .is_some_and(|c| c.is_alphabetic())
-            && line.chars().next().is_some_and(|c| c.is_lowercase());
-        if hyphenated {
-            current.pop();
-        } else if !current.is_empty() {
-            current.push(' ');
-        }
-        current.push_str(line);
-        let ends_sentence = line
-            .chars()
-            .last()
-            .is_some_and(|c| matches!(c, '.' | '?' | '!' | '"' | '”' | '。' | '？' | '！' | '」'));
-        let short = (line.chars().count() as f32) < widest as f32 * 0.8;
-        if !has_blank && ends_sentence && short {
-            flush(&mut current, &mut out);
-        }
-    }
-    flush(&mut current, &mut out);
-    out
+    crate::sop::wrap::join_wrapped(&lines, !has_blank)
 }
 
 #[cfg(test)]
@@ -369,6 +332,26 @@ mod tests {
         assert_eq!(e.text(), "First paragraph wrapped.\n\nSecond one.");
         let empty = extract(file_type_for_name("a.txt").unwrap(), b"  \n ");
         assert_eq!(empty.status, TextStatus::NoText);
+    }
+
+    #[test]
+    fn a_hard_wrapped_txt_is_joined_like_a_pasted_text() {
+        let txt = "Mrs. Lin put an umbrella stand outside her shop on a rainy\n\
+            Monday morning. Nobody took one, and the stand stayed full\n\
+            until the evening, when it stopped.\n\
+            In the first month, twelve of the thirty umbrellas did go\n\
+            missing. However, something unexpected followed, because\n\
+            people brought their own umbrellas back.\n\
+            By spring the stand was always full again, and Mrs. Lin\n\
+            never bought a single new umbrella for it.\n";
+        let e = extract(file_type_for_name("a.txt").unwrap(), txt.as_bytes());
+        assert_eq!(e.blocks.len(), 3, "{:?}", e.blocks);
+        // A list stays a list.
+        let list = extract(
+            file_type_for_name("a.txt").unwrap(),
+            b"Apples\nPears\nPlums\nCherries\nGrapes\nMelons\n",
+        );
+        assert_eq!(list.blocks.len(), 6);
     }
 
     #[test]

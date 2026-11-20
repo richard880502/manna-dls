@@ -24,10 +24,16 @@ import {
 } from "./labels";
 
 /** A chosen card (or a material read by id) as the article slot keeps it. */
-export const pickedOf = (m: { id: number; title: string; looks_like_worksheet?: boolean }): PickedMaterial => ({
+export const pickedOf = (m: {
+  id: number;
+  title: string;
+  looks_like_worksheet?: boolean;
+  paragraph_count?: number;
+}): PickedMaterial => ({
   id: m.id,
   title: m.title,
   ...(m.looks_like_worksheet ? { looks_like_worksheet: true } : {}),
+  ...(typeof m.paragraph_count === "number" ? { paragraph_count: m.paragraph_count } : {}),
 });
 
 type PickerProps =

@@ -201,8 +201,9 @@ pub const MAX_ITEMS: usize = 60;
 pub const MAX_LIST: usize = 60;
 pub const MAX_ID_CHARS: usize = 40;
 pub const MINUTES_RANGE: std::ops::RangeInclusive<i32> = 5..=240;
-/// Above this the tasks are not attempted in one call (long arrays end early).
-pub const MAX_AI_PARAGRAPHS: usize = 40;
+/// More paragraphs than this is longer than one lesson: the web app says so before generating
+/// (a notice with 修改課文, 只選要用的段落 and 照樣產生). Nothing is refused or cut because of it.
+pub const LONG_MATERIAL_PARAGRAPHS: usize = 40;
 
 // ---------------------------------------------------------------- enums
 

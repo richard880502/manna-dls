@@ -832,7 +832,7 @@ async fn analysis_failures_end_the_job_without_blocking_the_teacher() {
     let job = run_job(&app, &t, id, "analysis").await;
     assert_eq!(job["result"]["status"], "error");
 
-    // More paragraphs than one call can be trusted with.
+    // A long material is analysed too: no paragraph limit.
     let long = (0..41)
         .map(|i| format!("Paragraph number {i} is here."))
         .collect::<Vec<_>>()
@@ -845,7 +845,7 @@ async fn analysis_failures_end_the_job_without_blocking_the_teacher() {
             json!({}),
         )
         .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
 
     // The SOP itself still saves after all of that.
     let (s, _) = put_sop(

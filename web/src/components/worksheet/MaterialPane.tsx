@@ -1,5 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
 import type { SaveWorksheetMaterialRequest, WorksheetMaterial } from "../../api/types";
+import { EDIT_TEXT, PICK_PARAGRAPHS, selectedLine } from "../../lib/longMaterial";
+import { SelectionLine } from "../material/LongMaterial";
 import { MaterialViewer } from "../material/MaterialViewer";
 
 /** What the page hands to whatever fills the material slot. */
@@ -9,6 +11,37 @@ export interface MaterialPaneProps {
   onReplace: (body: SaveWorksheetMaterialRequest) => Promise<boolean>;
   /** The worksheet is being generated: the material cannot change now. */
   locked: boolean;
+  /** 修改課文: opens the text of the library material for editing. */
+  onEditText?: () => void;
+  /** 只選要用的段落: opens the paragraph picker. */
+  onPickParagraphs?: () => void;
+}
+
+/** 修改課文, 只選要用的段落 and how much of the material is used, under the material. */
+function MaterialTools({ material, locked, onEditText, onPickParagraphs }: MaterialPaneProps) {
+  const selected = material.source.selected_ids;
+  const total = material.source.total_paragraphs;
+  return (
+    <>
+      {selected && typeof total === "number" && (
+        <SelectionLine disabled={locked} onChange={() => onPickParagraphs?.()}>
+          {selectedLine(selected.length, total)}
+        </SelectionLine>
+      )}
+      <p className="quiet-note material-tools">
+        {onEditText && (
+          <button type="button" className="text-link is-plain" disabled={locked} onClick={onEditText}>
+            {EDIT_TEXT}
+          </button>
+        )}
+        {onPickParagraphs && !selected && (
+          <button type="button" className="text-link is-plain" disabled={locked} onClick={onPickParagraphs}>
+            {PICK_PARAGRAPHS}
+          </button>
+        )}
+      </p>
+    </>
+  );
 }
 
 /**
@@ -101,6 +134,7 @@ export function WorksheetMaterialPane(props: MaterialPaneProps) {
               : "你貼上的教材，已放進你的教材庫。"}
           勾了「提供給 AI」的註記會在產生時參考；註記不會出現在學習單上。
         </p>
+        <MaterialTools {...props} />
         <p className="quiet-note">
           <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setReplacing(true)}>
             換教材

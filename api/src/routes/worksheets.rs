@@ -33,9 +33,10 @@ use crate::worksheet::assemble::{keep_original_text, project, Sheet};
 use crate::worksheet::export::{self, ExportError};
 use crate::worksheet::history;
 use crate::worksheet::images::{self, WorksheetImages};
-use crate::worksheet::material::SOURCE_LESSON_SOP;
+use crate::worksheet::material::{MSG_BAD_SELECTION, SOURCE_LESSON_SOP};
 use crate::worksheet::store::{self, Summary, Worksheet};
 use crate::worksheet::sync::{self, Preview};
+use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
 use crate::worksheet::template::prefill_settings;
 use crate::worksheet::template::store as tpl_store;
 use crate::worksheet::thumbnail;
@@ -395,6 +396,94 @@ pub async fn put_material(
     };
     store::set_material(
         db, id, &material, seq, &settings, &suggested, &title, &filename,
+    )
+    .await?;
+    Ok(Json(state_of(&state, id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MaterialSelection {
+    /// Paragraph ids of the library material to use; `null` or empty = all of them.
+    #[serde(default)]
+    pub paragraph_ids: Option<Vec<String>>,
+}
+
+/// `PUT /api/worksheets/:id/material-selection`: 只選要用的段落. The worksheet's snapshot is
+/// taken again from its library material with only the chosen paragraphs (or all of them);
+/// the library material is not changed. What the teacher chose to make stays.
+pub async fn put_material_selection(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(req): ApiJson<MaterialSelection>,
+) -> AppResult<Json<WorksheetState>> {
+    let db = &state.db;
+    let ws = store::owned(db, id, teacher.id()).await?;
+    let (_, running) = ws_ai::jobs(&state, id).await?;
+    if running {
+        return Err(AppError::Conflict(
+            "Manna 正在產生這份學習單，好了之後再改要用的段落。".to_string(),
+        ));
+    }
+    let Some(material_id) = ws.material.source.material_id else {
+        return Err(AppError::bad_request(
+            "這份學習單的教材不是從教材庫來的。請用「換教材」貼上要用的部分。",
+        ));
+    };
+    let ids = crate::worksheet::material::clean_selection(
+        req.paragraph_ids.as_deref().unwrap_or_default(),
+    )
+    .map_err(AppError::bad_request)?;
+    let row = material_store::readable(db, material_id, teacher.id())
+        .await
+        .map_err(|_| AppError::bad_request(MSG_MATERIAL_NOT_FOUND))?;
+    if row.text_status != "ready" || row.paragraphs.0.is_empty() {
+        return Err(AppError::bad_request(MSG_NO_TEXT));
+    }
+    let stored = sop_store::Material::from(row);
+    let kind = ws.material.source.kind.clone();
+    let lesson_id = ws.material.source.lesson_id;
+    let (material, seq) = match &ids {
+        Some(ids) => Material::from_library_selection(&kind, lesson_id, &stored, ids)
+            .ok_or_else(|| AppError::bad_request(MSG_BAD_SELECTION))?,
+        None => Material::from_library(&kind, lesson_id, &stored),
+    };
+    let suggested = suggest_direct(&material).with_focus_of(&ws.settings);
+    let settings = if ws.settings == ws.suggested {
+        suggested.clone()
+    } else {
+        ws.settings.clone()
+    };
+    let title = if ws.title == auto_title(&ws.material) || ws.title.trim().is_empty() {
+        auto_title(&material)
+    } else {
+        ws.title.clone()
+    };
+    let filename = if ws.filename == auto_filename(&ws.material, None) {
+        auto_filename(&material, None)
+    } else {
+        ws.filename.clone()
+    };
+    store::set_material(
+        db,
+        id,
+        &material,
+        seq.max(ws.paragraph_seq),
+        &settings,
+        &suggested,
+        &title,
+        &filename,
+    )
+    .await?;
+    log_usage(
+        db,
+        teacher.id(),
+        "worksheet_material_selection",
+        json!({
+            "worksheet_id": id, "material_id": material_id,
+            "total": stored.paragraphs.len(), "selected": material.paragraphs.len(),
+            "all": ids.is_none(),
+        }),
     )
     .await?;
     Ok(Json(state_of(&state, id).await?))
