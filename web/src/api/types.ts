@@ -2606,6 +2606,16 @@ export interface WsProposalChange {
   change: "kept" | "modified" | "new" | "removed";
 }
 
+/** 鷹架、字詞表、Glossary 裡被修改、新增或刪除的一項（沒變的不列） */
+export interface WsProposalExtraChange {
+  group: "scaffold" | "word" | "gloss";
+  /** 鷹架的 id；字詞表與 Glossary 是字本身（小寫） */
+  id: string;
+  /** 鷹架的種類（句型框架…）或字 */
+  label: string;
+  change: "modified" | "new" | "removed";
+}
+
 /** Manna 對一個區塊的修改建議：教師按「採用」才寫入學習單 */
 export interface WsProposal {
   id: number;
@@ -2625,7 +2635,13 @@ export interface WsProposal {
   before: WsBlock;
   /** 改好的區塊（proposed 之後才有） */
   block: WsBlock | null;
-  changes: { title: boolean; instructions: boolean; items: WsProposalChange[] } | null;
+  changes: {
+    title: boolean;
+    instructions: boolean;
+    items: WsProposalChange[];
+    /** 鷹架、字詞表、Glossary 的修改；舊的伺服器沒有這一欄 */
+    extras?: WsProposalExtraChange[];
+  } | null;
   /** 按「採用」後才會畫圖或移除圖片；舊的伺服器沒有這一欄 */
   picture_actions?: WsPictureAction[];
   /** 這次修改附上的圖片；舊的伺服器沒有這一欄 */

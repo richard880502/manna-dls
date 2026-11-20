@@ -11,6 +11,7 @@ import type {
   WsProposal,
   WsProposalAccepted,
   WsProposalChange,
+  WsProposalExtraChange,
   WorksheetState,
 } from "../../api/types";
 import {
@@ -553,6 +554,59 @@ function ItemLines({ item, teacher }: { item: WsItem; teacher: boolean }) {
   );
 }
 
+const EXTRA_GROUP_LABEL: Record<WsProposalExtraChange["group"], string> = {
+  scaffold: "鷹架",
+  word: "字詞表",
+  gloss: "Glossary",
+};
+
+/** What a scaffold, a row of the word table or a Glossary entry says, in one line. */
+function extraText(block: WsBlock, c: WsProposalExtraChange): string | null {
+  if (c.group === "scaffold") {
+    const s = block.scaffolds.find((x) => x.id === c.id);
+    if (!s) return null;
+    return s.type === "procedural" ? s.steps.map((step, i) => `${i + 1}. ${step}`).join("　") : s.content;
+  }
+  if (c.group === "word") {
+    const v = block.vocabulary.find((x) => x.word.trim().toLowerCase() === c.id);
+    return v ? v.definition : null;
+  }
+  const g = (block.glosses ?? []).find((x) => x.word.trim().toLowerCase() === c.id);
+  return g ? g.meaning_zh : null;
+}
+
+/** The scaffolds, the word table and the Glossary that Manna would change, add or remove. */
+function ExtraChanges({ changes, before, after }: { changes: WsProposalExtraChange[]; before: WsBlock; after: WsBlock }) {
+  if (changes.length === 0) return null;
+  return (
+    <ul className="ws-proposal-items ws-proposal-extras" aria-label="鷹架與字詞表的修改">
+      {changes.map((c) => {
+        const text = extraText(c.change === "removed" ? before : after, c);
+        const old = c.change === "modified" ? extraText(before, c) : null;
+        return (
+          <li key={`${c.group}-${c.id}-${c.change}`} className={`is-${c.change}`}>
+            <span className="anno-flag is-quiet">{CHANGE_LABEL[c.change]}</span>{" "}
+            <span lang="zh-Hant">
+              {EXTRA_GROUP_LABEL[c.group]}・{c.label}
+            </span>
+            {text !== null && (
+              <>
+                {"："}
+                {c.change === "removed" ? <del lang="en">{text}</del> : <span lang="en">{text}</span>}
+              </>
+            )}
+            {old !== null && old !== text && (
+              <p className="ws-proposal-old">
+                原本：<del lang="en">{old}</del>
+              </p>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** Manna's proposal for one block: what changed, and 採用／放棄／再改一次. */
 export function ProposalPanel({
   proposal,
@@ -604,7 +658,7 @@ export function ProposalPanel({
   // Only pictures to add, redraw or remove: there is no changed block, but 採用 still does it.
   if ((!s.block || !s.changes) && pictureActions.length === 0) return null;
   const after = s.block ?? s.before;
-  const changes = s.changes ?? { title: false, instructions: false, items: [] };
+  const changes = s.changes ?? { title: false, instructions: false, items: [], extras: [] };
   const find = (block: WsBlock, id: string) => block.items.find((i) => i.id === id);
   const go = (to: number) => setView({ latest: p.id, at: to });
   return (
@@ -676,6 +730,7 @@ export function ProposalPanel({
           );
         })}
       </ol>
+      <ExtraChanges changes={changes.extras ?? []} before={s.before} after={after} />
       {pictureActions.length > 0 && (
         <div className="ws-proposal-pictures" role="group" aria-label="圖片">
           <h4>圖片</h4>

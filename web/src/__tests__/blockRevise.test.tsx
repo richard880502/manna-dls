@@ -784,3 +784,124 @@ describe("編輯器: 修改歷程", () => {
     await waitFor(() => expect(api.lastBody("POST", `${WS}/blocks/b2/adopt`)).toEqual({ proposal_id: 90 }));
   });
 });
+
+// ---------------------------------------------------------------- 鷹架與字詞表
+
+const withExtras = (extra: Partial<WsBlock> = {}): WsBlock => ({
+  ...content().blocks[1]!,
+  scaffolds: [
+    {
+      id: "sc-steps",
+      type: "procedural",
+      kind: "清楚的分步指示及完成順序",
+      content: "",
+      steps: ["Read paragraph 1.", "Underline the first event."],
+      levels: ["standard"],
+      auto: true,
+      origin: "ai",
+    },
+    {
+      id: "sc-frame",
+      type: "verbal",
+      kind: "句型框架",
+      content: "The first event is ___.",
+      steps: [],
+      levels: ["standard"],
+      auto: false,
+      origin: "ai",
+    },
+  ],
+  vocabulary: [
+    { word: "umbrella", level: 2, definition: "雨傘", context: "", paragraph_id: "p1" },
+    { word: "identify", level: null, definition: "找出、指出", context: "", paragraph_id: null, task_word: true },
+  ],
+  ...extra,
+});
+
+const contentWith = (b2: WsBlock): WorksheetContent => ({ ...content(), blocks: [content().blocks[0]!, b2] });
+
+describe("編輯器: 鷹架與字詞表", () => {
+  it("the proposal lists what happens to the scaffolds and the word table, and 採用 applies it", async () => {
+    const before = withExtras();
+    const after = {
+      ...before,
+      vocabulary: [],
+      scaffolds: [before.scaffolds[0]!, { ...before.scaffolds[1]!, content: "The opening event is ___.", origin: "ai" as const }],
+    };
+    const p = proposal("proposed", {
+      instruction: "不要單字表格",
+      comment_ids: [],
+      before,
+      block: after,
+      changes: {
+        title: false,
+        instructions: false,
+        items: [
+          { id: "b2-1", change: "kept" },
+          { id: "b2-2", change: "kept" },
+        ],
+        extras: [
+          { group: "scaffold", id: "sc-frame", label: "句型框架", change: "modified" },
+          { group: "word", id: "umbrella", label: "umbrella", change: "removed" },
+          { group: "word", id: "identify", label: "identify", change: "removed" },
+        ],
+      },
+    });
+    let open: WsProposal[] = [p];
+    const api = mockApi(
+      editorRoutes(worksheet({ content: contentWith(before) }), {
+        [`GET ${WS}/proposals`]: () => open,
+        [`POST ${WS}/proposals/90/accept`]: () => {
+          open = [];
+          return {
+            proposal: { ...p, status: "accepted" },
+            worksheet: worksheet({ version_no: 4, undoable: ["b2"], content: contentWith(after) }),
+          };
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    // The table is on the sheet before.
+    expect(await editorBlock().findByRole("table", { name: "字詞表 B" })).toBeInTheDocument();
+    const panel = within(await editorBlock().findByRole("region", { name: "Manna 的修改建議" }));
+    const list = within(panel.getByRole("list", { name: "鷹架與字詞表的修改" }));
+    const rows = list.getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("修改 鷹架・句型框架：The opening event is ___.");
+    expect(rows[0]).toHaveTextContent("原本：The first event is ___.");
+    expect(rows[1]).toHaveTextContent("刪除 字詞表・umbrella：雨傘");
+    expect(rows[2]).toHaveTextContent("刪除 字詞表・identify");
+    expect(within(rows[1]!).getByText("雨傘").tagName).toBe("DEL");
+
+    await user.click(panel.getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(1));
+    await waitFor(() => expect(editorBlock().queryByRole("table", { name: "字詞表 B" })).toBeNull());
+    expect(editorBlock().getByRole("textbox", { name: "句型框架（B）" })).toHaveValue("The opening event is ___.");
+  });
+
+  it("the 刪除 next to the word table removes it without asking Manna", async () => {
+    const before = withExtras();
+    const api = mockApi(
+      editorRoutes(worksheet({ content: contentWith(before) }), {
+        [`PUT ${WS}`]: (call: MockCall) => worksheet({ version_no: 4, content: (call.body as { content: WorksheetContent }).content }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    const table = await editorBlock().findByRole("table", { name: "字詞表 B" });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    // Every other 刪除 on the block is for something else: the table has its own.
+    await user.click(editorBlock().getByRole("button", { name: "刪除字詞表 B" }));
+    await waitFor(() => expect(editorBlock().queryByRole("table", { name: "字詞表 B" })).toBeNull());
+    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
+    const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content.blocks[1]!;
+    expect(saved.vocabulary).toEqual([]);
+    expect(saved.scaffolds).toEqual(before.scaffolds);
+    // The 程序鷹架 and the 句型框架 still have theirs.
+    expect(editorBlock().getByRole("button", { name: "刪除程序鷹架" })).toBeInTheDocument();
+    expect(editorBlock().getByRole("button", { name: "刪除鷹架 句型框架" })).toBeInTheDocument();
+  });
+});

@@ -636,6 +636,21 @@ function BlockSection({
       ))}
 
       {block.vocabulary.length > 0 && (
+        <p className="ws-support-head" lang="zh-Hant">
+          <span>字詞表</span>
+          <button
+            type="button"
+            className="text-link is-plain"
+            disabled={locked}
+            aria-label={`刪除字詞表 ${name}`}
+            onClick={() => patch((b) => ({ ...b, vocabulary: [] }))}
+          >
+            刪除
+          </button>
+        </p>
+      )}
+
+      {block.vocabulary.length > 0 && (
         <table className="ws-vocab" aria-label={`字詞表 ${name}`}>
           <thead>
             <tr>

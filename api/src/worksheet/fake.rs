@@ -84,6 +84,14 @@
 //! | `FAKE_REVISE_PIC_REMOVE` | also proposes removing the block's last picture                     |
 //! | `FAKE_REVISE_PIC_BAD`    | also writes two invalid picture actions (unknown slot, another block) |
 //! | `FAKE_REVISE_PIC_ONLY`   | every question kept, only the picture actions                       |
+//! | `FAKE_REVISE_NO_WORDS`   | every question kept; every row of the word table removed            |
+//! | `FAKE_REVISE_NO_SCAFFOLDS` | every question kept; every scaffold removed                       |
+//! | `FAKE_REVISE_NO_GLOSS`   | every question kept; every Glossary entry removed                   |
+//! | `FAKE_REVISE_FRAME`      | every question kept; the first sentence frame gets " (reworded)"; the first step of a procedural scaffold too |
+//! | `FAKE_REVISE_ADD_WORD`   | every question kept; the word "umbrella" is added to the word table (and "zebra", which is not in the text, with `FAKE_REVISE_ADD_WORD_BAD`) |
+//! | `FAKE_REVISE_ADD_FRAME`  | every question kept; a new sentence frame is added                  |
+//! | `FAKE_REVISE_CLAIM_NONE` | every question kept; the reply says the block has no word table (first call only: the retry removes the table) |
+//! | `FAKE_REVISE_CLAIM_NONE_ALWAYS` | the same in both calls                                      |
 //!
 //! 差異化學習單 (`worksheet_tiered_level`): see [`tiered_level`] (`FAKE_TIER_LOCATION`,
 //! `FAKE_TIER_FLAT`, `FAKE_BLOCK`).
@@ -1187,6 +1195,9 @@ pub fn bloom_check(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
 /// `worksheet_block_revise` (see the module documentation for the markers).
 pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     let items = ctx["items"].as_array().cloned().unwrap_or_default();
+    if let Some(out) = block_revise_extras(ctx, &items, attempt, has) {
+        return out;
+    }
     let round = ctx["round"].as_i64().unwrap_or(1);
     let target = ctx["targets"][0].as_str().map(str::to_string).or_else(|| {
         items
@@ -1199,6 +1210,7 @@ pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
         let kept: Vec<Value> = items.iter().map(kept_item).collect();
         return json!({
             "title": "", "instructions": "", "items": kept,
+            "scaffolds": [], "words": [], "glossary": [],
             "picture_actions": pictures,
             "reply": "已調整這一區的圖片。（測試）",
         });
@@ -1207,6 +1219,7 @@ pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
         let kept: Vec<Value> = items.iter().map(kept_item).collect();
         return json!({
             "title": "", "instructions": "", "items": kept,
+            "scaffolds": [], "words": [], "glossary": [],
             "picture_actions": pictures,
             "reply": "你想把這一區改成哪一種題型？（測試）",
         });
@@ -1256,9 +1269,116 @@ pub fn block_revise(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
         "title": if all { format!("{} (touched)", ctx["title"].as_str().unwrap_or_default()) } else { String::new() },
         "instructions": "",
         "items": out,
+        "scaffolds": [], "words": [], "glossary": [],
         "picture_actions": pictures,
         "reply": format!("已把 {} 改簡單一點。（測試）", target.unwrap_or_default()),
     })
+}
+
+/// The markers that work on the scaffolds, the word table and the Glossary: every question is
+/// kept (`None`: none of them is in the request).
+fn block_revise_extras(
+    ctx: &Value,
+    items: &[Value],
+    attempt: i32,
+    has: &dyn Fn(&str) -> bool,
+) -> Option<Value> {
+    let claim_always = has("FAKE_REVISE_CLAIM_NONE_ALWAYS");
+    let claim = claim_always || has("FAKE_REVISE_CLAIM_NONE");
+    let markers = [
+        "FAKE_REVISE_NO_WORDS",
+        "FAKE_REVISE_NO_SCAFFOLDS",
+        "FAKE_REVISE_NO_GLOSS",
+        "FAKE_REVISE_FRAME",
+        "FAKE_REVISE_ADD_WORD",
+        "FAKE_REVISE_ADD_FRAME",
+    ];
+    if !claim && !markers.iter().any(|m| has(m)) {
+        return None;
+    }
+    let list = |key: &str| ctx[key].as_array().cloned().unwrap_or_default();
+    let mut scaffolds: Vec<Value> = Vec::new();
+    let mut words: Vec<Value> = Vec::new();
+    let mut glossary: Vec<Value> = Vec::new();
+    let claiming = claim && (claim_always || attempt == 1);
+    let remove_words = has("FAKE_REVISE_NO_WORDS") || claim && !claiming;
+    let scaffold = |code: &Value, action: &str, kind: &str, content: &str, steps: Vec<String>| json!({ "source": code, "action": action, "kind": kind, "content": content, "steps": steps });
+    if remove_words {
+        for w in list("words") {
+            words.push(
+                json!({ "source": w["code"], "action": "remove", "word": "", "meaning": "" }),
+            );
+        }
+    }
+    if has("FAKE_REVISE_ADD_WORD") {
+        words.push(
+            json!({ "source": "new", "action": "change", "word": "umbrella", "meaning": "雨傘" }),
+        );
+        if has("FAKE_REVISE_ADD_WORD_BAD") {
+            words.push(
+                json!({ "source": "new", "action": "change", "word": "zebra", "meaning": "斑馬" }),
+            );
+        }
+    }
+    if has("FAKE_REVISE_NO_SCAFFOLDS") {
+        for s in list("scaffolds") {
+            scaffolds.push(scaffold(
+                &s["code"],
+                "remove",
+                s["kind"].as_str().unwrap_or(KIND_FRAMES),
+                "",
+                Vec::new(),
+            ));
+        }
+    }
+    if has("FAKE_REVISE_FRAME") {
+        let mut frame_done = false;
+        let mut steps_done = false;
+        for s in list("scaffolds") {
+            let kind = s["kind"].as_str().unwrap_or_default();
+            if kind == KIND_FRAMES && !frame_done {
+                frame_done = true;
+                let text = format!(
+                    "{} (reworded)",
+                    s["content"].as_str().unwrap_or_default().trim()
+                );
+                scaffolds.push(scaffold(&s["code"], "change", kind, &text, Vec::new()));
+            } else if s["procedural"] == true && !steps_done {
+                steps_done = true;
+                let mut steps = strings(&s["steps"]);
+                if let Some(first) = steps.first_mut() {
+                    first.push_str(" (reworded)");
+                }
+                scaffolds.push(scaffold(&s["code"], "change", kind, "", steps));
+            }
+        }
+    }
+    if has("FAKE_REVISE_ADD_FRAME") {
+        scaffolds.push(scaffold(
+            &json!("new"),
+            "change",
+            KIND_FRAMES,
+            "I think ___ because ___.",
+            Vec::new(),
+        ));
+    }
+    if has("FAKE_REVISE_NO_GLOSS") {
+        for g in list("glossary") {
+            glossary.push(json!({ "source": g["code"], "action": "remove" }));
+        }
+    }
+    let kept: Vec<Value> = items.iter().map(kept_item).collect();
+    let reply = if claiming {
+        "目前這一區沒有單字表格；請問您希望刪除或改成其他題型的是哪一題？（測試）"
+    } else {
+        "已依你的要求修改這一區的鷹架與字詞表。（測試）"
+    };
+    Some(json!({
+        "title": "", "instructions": "", "items": kept,
+        "scaffolds": scaffolds, "words": words, "glossary": glossary,
+        "picture_actions": [],
+        "reply": reply,
+    }))
 }
 
 /// The picture actions of the `FAKE_REVISE_PIC_*` markers, for the block the request is about

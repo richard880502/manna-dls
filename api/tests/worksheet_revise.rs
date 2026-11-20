@@ -1220,3 +1220,413 @@ async fn giving_up_ends_the_round_and_a_changed_block_refuses_an_earlier_attempt
         .contains("這個版本不能直接採用"));
     let _ = p4;
 }
+
+// ---------------------------------------------------------------- scaffolds, word table, Glossary
+
+/// The teacher saves the target block with a 程序鷹架, a 句型框架, a word table (one key word and
+/// one 指示用語) and a Glossary, the way the sheet of the report looked. Returns the block id and
+/// the saved state.
+async fn with_extras(app: &common::TestApp, t: &str, id: i64, st: &Value) -> (String, Value) {
+    let block_id = target_block(st)["id"].as_str().unwrap().to_string();
+    let mut content = st["content"].clone();
+    for b in content["blocks"].as_array_mut().unwrap() {
+        if b["id"] == block_id.as_str() {
+            let levels = b["items"][0]["levels"].clone();
+            b["scaffolds"] = json!([
+                { "id": "sc-steps", "type": "procedural", "kind": "清楚的分步指示及完成順序",
+                  "content": "", "steps": ["Read the story.", "Underline the first event."],
+                  "levels": levels, "auto": true, "origin": "ai" },
+                { "id": "sc-frame", "type": "verbal", "kind": "句型框架",
+                  "content": "The first event is ___.", "steps": [],
+                  "levels": levels, "auto": false, "origin": "ai" },
+            ]);
+            b["vocabulary"] = json!([
+                { "word": "umbrella", "level": null, "definition": "雨傘", "context": "",
+                  "paragraph_id": null },
+                { "word": "identify", "level": null, "definition": "找出、指出", "context": "",
+                  "paragraph_id": null, "task_word": true },
+            ]);
+            b["glosses"] = json!([
+                { "word": "abandon", "pos": "v.", "meaning_zh": "放棄", "definition_en": "",
+                  "levels": levels, "origin": "ai" },
+            ]);
+        }
+    }
+    let (s, st) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(t),
+            json!({ "content": content, "base_version_no": st["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    (block_id, st)
+}
+
+async fn accept(app: &common::TestApp, t: &str, id: i64, p: &Value) -> Value {
+    let (s, d) = app
+        .post(
+            &format!("/api/worksheets/{id}/proposals/{}/accept", p["id"]),
+            Some(t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{d}");
+    d
+}
+
+fn extras_of(p: &Value) -> Vec<(String, String, String)> {
+    p["changes"]["extras"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["group"].as_str().unwrap().to_string(),
+                c["label"].as_str().unwrap().to_string(),
+                c["change"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_model_is_shown_the_scaffolds_and_the_word_table_with_codes() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let (block_id, st) = with_extras(&app, &t, id, &st).await;
+    let before = block_of(&st, &block_id);
+
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "整區改簡單一點" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    let user = users_of(&app, "worksheet_block_revise").await.remove(0);
+    // (The block's own text is logged as a hash only; its rendering is unit-tested.)
+    // The scope says the whole block, scaffolds included.
+    assert!(user.contains("字詞表和 Glossary 都可以改或刪除"), "{user}");
+    // Nothing else changed: kept scaffolds and words come back as stored.
+    assert_eq!(p["block"]["scaffolds"], before["scaffolds"]);
+    assert_eq!(p["block"]["vocabulary"], before["vocabulary"]);
+    assert!(extras_of(&p).is_empty());
+
+    // The prompt version that was used is the new one, and the old ones are still there.
+    let versions: Vec<i32> = sqlx::query_scalar(
+        "SELECT version_no FROM prompt_versions WHERE prompt_key = 'worksheet_block_revise'
+          ORDER BY version_no",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert!(versions.len() >= 5, "{versions:?}");
+    let used: String = sqlx::query_scalar(
+        "SELECT input_snapshot -> 'prompt' ->> 'system' FROM ai_interactions
+          WHERE module = 'worksheet_block_revise' ORDER BY id LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(used.contains("scaffolds、words、glossary"), "{used}");
+}
+
+#[tokio::test]
+async fn no_word_table_request_removes_the_table_and_it_can_be_undone() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let (block_id, st) = with_extras(&app, &t, id, &st).await;
+    let before = block_of(&st, &block_id);
+    let versions = st["versions_count"].as_i64().unwrap();
+
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "不要單字表格 FAKE_REVISE_NO_WORDS" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    assert_eq!(p["block"]["vocabulary"], json!([]));
+    assert_eq!(
+        p["block"]["scaffolds"], before["scaffolds"],
+        "only the table goes"
+    );
+    assert_eq!(
+        p["block"]["items"], before["items"],
+        "no question is touched"
+    );
+    assert_eq!(p["block"]["glosses"], before["glosses"]);
+    assert_eq!(
+        extras_of(&p),
+        [
+            ("word".into(), "umbrella".into(), "removed".into()),
+            ("word".into(), "identify".into(), "removed".into()),
+        ]
+    );
+    // Nothing is written before 採用.
+    assert_eq!(
+        state(&app, &t, id).await["versions_count"]
+            .as_i64()
+            .unwrap(),
+        versions
+    );
+
+    let d = accept(&app, &t, id, &p).await;
+    let after = block_of(&d["worksheet"], &block_id);
+    assert_eq!(after["vocabulary"], json!([]));
+    assert_eq!(after["scaffolds"], before["scaffolds"]);
+    assert_eq!(
+        d["worksheet"]["versions_count"].as_i64().unwrap(),
+        versions + 1
+    );
+
+    // 復原 brings the table back, and the history kept the block as it was.
+    let (s, st) = app
+        .post(
+            &format!("/api/worksheets/{id}/blocks/{block_id}/undo"),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    assert_eq!(block_of(&st, &block_id), before);
+}
+
+#[tokio::test]
+async fn a_sentence_frame_and_the_steps_can_be_edited_and_a_scaffold_removed_or_added() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let (block_id, st) = with_extras(&app, &t, id, &st).await;
+    let before = block_of(&st, &block_id);
+
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "句型框架改一下 FAKE_REVISE_FRAME" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    let sc = p["block"]["scaffolds"].as_array().unwrap();
+    assert_eq!(sc.len(), 2);
+    assert_eq!(sc[1]["content"], "The first event is ___. (reworded)");
+    assert_eq!(sc[1]["id"], "sc-frame", "same id");
+    assert_eq!(sc[1]["kind"], "句型框架", "kind stays");
+    assert_eq!(sc[1]["levels"], before["scaffolds"][1]["levels"]);
+    assert_eq!(sc[1]["origin"], "ai");
+    assert_eq!(
+        sc[0]["steps"],
+        json!(["Read the story. (reworded)", "Underline the first event."])
+    );
+    assert_eq!(p["block"]["vocabulary"], before["vocabulary"]);
+    assert_eq!(
+        extras_of(&p),
+        [
+            (
+                "scaffold".into(),
+                "清楚的分步指示及完成順序".into(),
+                "modified".into()
+            ),
+            ("scaffold".into(), "句型框架".into(), "modified".into()),
+        ]
+    );
+    let d = accept(&app, &t, id, &p).await;
+    assert_eq!(
+        block_of(&d["worksheet"], &block_id)["scaffolds"][1]["content"],
+        "The first event is ___. (reworded)"
+    );
+
+    // Remove every scaffold, then add a frame.
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "不要鷹架 FAKE_REVISE_NO_SCAFFOLDS" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    assert_eq!(p["block"]["scaffolds"], json!([]));
+    accept(&app, &t, id, &p).await;
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "加一個句型框架 FAKE_REVISE_ADD_FRAME" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    let sc = p["block"]["scaffolds"].as_array().unwrap();
+    assert_eq!(sc.len(), 1);
+    assert_eq!(sc[0]["kind"], "句型框架");
+    assert_eq!(sc[0]["type"], "verbal");
+    assert_eq!(sc[0]["content"], "I think ___ because ___.");
+    assert!(sc[0]["id"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("p{}", p["id"])));
+    assert!(!sc[0]["levels"].as_array().unwrap().is_empty());
+
+    // The Glossary can be removed as well.
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "不要 Glossary FAKE_REVISE_NO_GLOSS" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    assert!(p["block"]["glosses"]
+        .as_array()
+        .is_none_or(|g| g.is_empty()));
+}
+
+#[tokio::test]
+async fn a_word_added_to_the_table_must_be_in_the_text() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let (block_id, st) = with_extras(&app, &t, id, &st).await;
+    // The table starts without the word to add.
+    let mut content = st["content"].clone();
+    for b in content["blocks"].as_array_mut().unwrap() {
+        if b["id"] == block_id.as_str() {
+            b["vocabulary"] = json!([b["vocabulary"][1].clone()]);
+        }
+    }
+    let (s, st) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": st["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{st}");
+    let before = block_of(&st, &block_id);
+
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "加單字 FAKE_REVISE_ADD_WORD FAKE_REVISE_ADD_WORD_BAD" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    let words = p["block"]["vocabulary"].as_array().unwrap();
+    assert_eq!(
+        words.len(),
+        2,
+        "umbrella added, zebra (not in the text) left out: {words:?}"
+    );
+    assert_eq!(
+        words[0], before["vocabulary"][0],
+        "the 指示用語 row is untouched"
+    );
+    assert_eq!(words[1]["word"], "umbrella");
+    assert_eq!(words[1]["definition"], "雨傘");
+    assert!(
+        words[1]["paragraph_id"].is_string(),
+        "found in the material"
+    );
+    assert!(words[1]["context"].as_str().unwrap().contains("umbrella"));
+    assert!(p["reply"].as_str().unwrap().contains("zebra"), "{p}");
+    assert_eq!(
+        users_of(&app, "worksheet_block_revise").await.len(),
+        2,
+        "the invented word is sent back once"
+    );
+}
+
+#[tokio::test]
+async fn a_reply_that_says_there_is_no_table_while_there_is_one_is_sent_back() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let (block_id, st) = with_extras(&app, &t, id, &st).await;
+    let before = block_of(&st, &block_id);
+
+    // First call: 「目前這一區沒有單字表格」; the retry is told it is wrong and does it.
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "不要單字表格 FAKE_REVISE_CLAIM_NONE" }),
+    )
+    .await;
+    assert_eq!(p["status"], "proposed", "{p}");
+    assert_eq!(p["block"]["vocabulary"], json!([]));
+    let users = users_of(&app, "worksheet_block_revise").await;
+    assert_eq!(users.len(), 2);
+    assert!(
+        users[1].contains("回覆說這一區沒有字詞表，但這一區有"),
+        "{}",
+        users[1]
+    );
+    assert!(!p["reply"].as_str().unwrap().contains("沒有單字表格"));
+
+    // Both calls say it: nothing is proposed, the teacher is not told the table is not there.
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "instruction": "不要單字表格 FAKE_REVISE_CLAIM_NONE_ALWAYS" }),
+    )
+    .await;
+    assert_eq!(p["status"], "failed", "{p}");
+    let error = p["error"].as_str().unwrap();
+    assert!(
+        error.contains("誤以為") && error.contains("刪除"),
+        "{error}"
+    );
+    assert!(!error.contains("沒有單字表格"), "{error}");
+    let now = state(&app, &t, id).await;
+    assert_eq!(block_of(&now, &block_id), before, "nothing was written");
+}
+
+#[tokio::test]
+async fn notes_on_a_question_never_reach_the_scaffolds_or_the_word_table() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, st) = generated(&app, &t).await;
+    let (block_id, st) = with_extras(&app, &t, id, &st).await;
+    let before = block_of(&st, &block_id);
+    let q1 = before["items"][0]["id"].as_str().unwrap();
+    let note = comment(
+        &app,
+        &t,
+        id,
+        json!({ "block_id": block_id, "field": "item", "item_id": q1,
+                "note": "FAKE_REVISE_NO_WORDS FAKE_REVISE_NO_SCAFFOLDS" }),
+    )
+    .await;
+    let p = revise(
+        &app,
+        &t,
+        id,
+        &block_id,
+        json!({ "comment_ids": [note["id"]] }),
+    )
+    .await;
+    // The model asked to remove them, the scope did not allow it: nothing changed.
+    assert_eq!(p["status"], "failed", "{p}");
+    let user = users_of(&app, "worksheet_block_revise").await.remove(0);
+    assert!(
+        user.contains("不能動（scaffolds、words、glossary 都給空陣列）"),
+        "{user}"
+    );
+    assert_eq!(block_of(&state(&app, &t, id).await, &block_id), before);
+}
