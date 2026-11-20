@@ -27,11 +27,11 @@ use super::{
     STATUS_RUNNING,
 };
 use crate::ai::pipeline::{finish_interaction, insert_interaction, Finish, InteractionMeta};
+use crate::audit::log_usage;
 use crate::auth::sha256_hex;
 use crate::error::AppResult;
 use crate::materials::detect;
 use crate::materials::extract::{Block, Extracted, TextStatus};
-use crate::routes::log_usage;
 use crate::sop::{assign_paragraph_ids, Paragraph};
 use crate::AppState;
 

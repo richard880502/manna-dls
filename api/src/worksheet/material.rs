@@ -201,7 +201,7 @@ impl Material {
     /// For 「Manna 已帶入的資訊」.
     pub fn label(&self) -> String {
         let name = if self.title.trim().is_empty() {
-            crate::routes::clip_chars(
+            crate::text::clip_chars(
                 self.paragraphs
                     .first()
                     .map(|p| p.text.as_str())

@@ -4,6 +4,8 @@
 //! create the bootstrap PI invite, then serve [`build_app`].
 
 pub mod ai;
+pub mod application;
+pub mod audit;
 pub mod auth;
 pub mod checks;
 pub mod config;
@@ -25,10 +27,13 @@ pub mod prompts;
 pub mod record;
 pub mod retrieval;
 pub mod routes;
+pub mod serde_support;
 pub mod settings;
 pub mod sop;
 pub mod storage;
 pub mod syllables;
+pub mod teaching_context;
+pub mod text;
 pub mod vocabulary;
 pub mod worksheet;
 

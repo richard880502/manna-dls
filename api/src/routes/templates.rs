@@ -10,11 +10,11 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::materials::catalog::{self, PURPOSE_SAMPLE, SAMPLE_CATEGORIES, SCOPE_PLATFORM};
 use crate::materials::store as material_store;
-use crate::routes::log_usage;
 use crate::worksheet::template::extract::{self, stale_after};
 use crate::worksheet::template::store::{
     self, Detail, Summary, TemplateRow, STATUS_EXTRACTING, STATUS_FAILED, STATUS_READY,

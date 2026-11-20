@@ -25,9 +25,9 @@ use super::{
 };
 use crate::checks::CheckResult;
 use crate::memory::OptionHabits;
-use crate::routes::clip_chars;
 use crate::sop::checks::{clean_markup, english_only, is_verbatim, locate_verbatim, norm};
 use crate::syllables;
+use crate::text::clip_chars;
 
 pub struct Eval<T> {
     /// The output with everything that failed taken out; `None` when nothing usable is left.

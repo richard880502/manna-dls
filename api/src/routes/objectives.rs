@@ -8,6 +8,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::materials::{ocr, store as material_store};
@@ -15,8 +16,9 @@ use crate::objectives::draft::{self, DraftInput, DraftResult};
 use crate::objectives::{CONTENT_CODES, LANGUAGE_CODES};
 use crate::prep::is_bare_label;
 use crate::progress::{self, Progress, Sink, Tracker};
-use crate::routes::{clip_chars, log_usage, owned_class};
 use crate::sop::{store as sop_store, MAX_MATERIAL_CHARS};
+use crate::teaching_context::owned_class;
+use crate::text::clip_chars;
 use crate::worksheet::material::SOURCE_LIBRARY;
 use crate::worksheet::template::extract::{MSG_MATERIAL_NOT_FOUND, MSG_NO_TEXT};
 use crate::worksheet::{Material, MAX_TITLE_CHARS};

@@ -9,12 +9,13 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 
 use crate::ai::schemas::IcapLevel;
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
-use crate::routes::{
-    log_usage, owned_lesson, owned_unit, resolved_profile, ProfileSource, ResolvedProfile,
-};
 use crate::sop::SopContent;
+use crate::teaching_context::{
+    owned_lesson, owned_unit, resolved_profile, ProfileSource, ResolvedProfile,
+};
 use crate::AppState;
 
 pub const MAX_CORE_LINKS: usize = 3;
@@ -408,7 +409,7 @@ pub async fn update(
     ApiJson(req): ApiJson<UpdateLesson>,
 ) -> AppResult<Json<LessonDetail>> {
     let r = owned_lesson(&state.db, id, teacher.id()).await?;
-    crate::routes::class_context(&state.db, q.class_id, teacher.id()).await?;
+    crate::teaching_context::class_context(&state.db, q.class_id, teacher.id()).await?;
     let title = match req.title.as_deref().map(str::trim) {
         Some("") => return Err(AppError::bad_request("請輸入課例名稱。")),
         t => t.map(str::to_string),

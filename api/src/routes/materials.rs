@@ -15,13 +15,15 @@ use serde_json::{json, Value};
 use crate::ai::pipeline::{self, AiResult, ContextList, InteractionMeta};
 use crate::ai::schemas::{self, MaterialFocusesOutput};
 use crate::ai::LlmRequest;
+use crate::audit::{log_usage, scaffold_id};
 use crate::auth::{self, AuthTeacher};
 use crate::checks;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences;
 use crate::prompts;
 use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
-use crate::routes::{log_usage, or_blank, owned_unit, resolved_profile, scaffold_id, track_label};
+use crate::teaching_context::{owned_unit, resolved_profile, track_label};
+use crate::text::or_blank;
 use crate::AppState;
 
 pub const MAX_MATERIAL_CHARS: usize = 50_000;

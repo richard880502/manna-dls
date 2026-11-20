@@ -5,9 +5,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::audit::scaffold_id;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
-use crate::routes::scaffold_id;
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]

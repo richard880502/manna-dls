@@ -5,7 +5,7 @@
 //! repeat each other); 「再改一次」 is a new proposal with the next `round`, which changes the
 //! request (the gateway caches identical ones).
 //!
-//! The call goes through the same helper as the 備課對話 calls (`prep::run::call`): `max_tokens`
+//! The call goes through the same helper as the 備課對話 calls (`application::generation::call`): `max_tokens`
 //! always set, one retry with the temperature raised and the failed checks listed, every
 //! attempt its own `ai_interactions` row, the material logged only as its length and a hash.
 
@@ -14,9 +14,10 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 
 use super::RunInput;
+use crate::application::generation::{call, nothing, Call, Checked};
+use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
-use crate::prep::run::{call, nothing, Call, Checked};
-use crate::routes::{clip_chars, log_usage, or_blank};
+use crate::text::{clip_chars, or_blank};
 use crate::worksheet::ai::template::marked_passage;
 use crate::worksheet::assemble::project;
 use crate::worksheet::bloom::{Bloom, Output};
@@ -656,6 +657,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         state,
         ws.teacher_id,
         c,
+        crate::objectives::required,
         |raw: &RawBlockRevision| {
             let (merged, problems) = merge(raw, &mctx);
             // The picture actions: only this block's pictures, and nothing while pictures are

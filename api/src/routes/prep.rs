@@ -11,6 +11,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::ocr;
@@ -25,7 +26,9 @@ use crate::prep::{
     KIND_ACTIVITY, KIND_ASK, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
     MAX_REQUEST_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_RUNNING,
 };
-use crate::routes::{clip_chars, double_option, log_usage, owned_class};
+use crate::serde_support::double_option;
+use crate::teaching_context::owned_class;
+use crate::text::clip_chars;
 use crate::worksheet::ai as ws_ai;
 use crate::worksheet::bloom::Output;
 use crate::worksheet::export;

@@ -76,6 +76,8 @@ forbids sending real teacher data to overseas APIs; Anthropic is for the demo en
 
 ## Layout
 
+Application/provider dependency rules and the refactoring boundaries: [ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+
 | Path | What |
 |---|---|
 | `src/main.rs` | config → connect → migrate → bootstrap invite → serve |

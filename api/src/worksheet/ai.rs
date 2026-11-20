@@ -38,15 +38,17 @@ use super::{
 };
 use crate::ai::pipeline::{self, AiContextItem, ContextList, InteractionMeta};
 use crate::ai::LlmRequest;
+use crate::application::ai::{
+    attempt, finish_failure, finish_output, report_with, set_final, Failure,
+};
+use crate::audit::{log_usage, scaffold_id};
 use crate::checks::{self as base_checks, CheckResult};
 use crate::error::{AppError, AppResult};
 use crate::materials::detect;
 use crate::progress::{self, Progress, Sink, Step, Stored, Tracker};
-use crate::prompts;
-use crate::routes::{clip_chars, log_usage, or_blank, scaffold_id, track_label};
-use crate::sop::ai::{
-    attempt, finish_failure, finish_output, prompt, report_with, set_final, Failure,
-};
+use crate::prompts::{self, latest_required as prompt};
+use crate::teaching_context::track_label;
+use crate::text::{clip_chars, or_blank};
 use crate::vocabulary;
 use crate::AppState;
 

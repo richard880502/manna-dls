@@ -13,6 +13,7 @@ use sqlx::PgPool;
 use crate::ai::pipeline::{self, AiResult, ContextList, InteractionMeta};
 use crate::ai::schemas::{self, CoreAssistOutput};
 use crate::ai::LlmRequest;
+use crate::audit::scaffold_id;
 use crate::auth::AuthTeacher;
 use crate::checks;
 use crate::core_questions::{self, CoreQuestion, CORE_QUESTIONS, QUESTION_IDS};
@@ -20,7 +21,8 @@ use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences::{self, Hardest};
 use crate::prompts;
 use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
-use crate::routes::{or_blank, owned_unit, resolved_profile, scaffold_id, track_label};
+use crate::teaching_context::{owned_unit, resolved_profile, track_label};
+use crate::text::or_blank;
 use crate::AppState;
 
 pub const MAX_FOCUSES: usize = 3;

@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::auth::AuthTeacher;
 use crate::curriculum;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::routes::{owned_lesson, resolved_profile};
 use crate::sop::ai::{self, Job, JobInput, JobKind, MAX_AI_PARAGRAPHS};
 use crate::sop::store::{self, Material, Version, VersionSummary};
 use crate::sop::{self, SopContent, MAX_FIELD_CHARS, MAX_MATERIAL_CHARS, MAX_TITLE_CHARS};
+use crate::teaching_context::{owned_lesson, resolved_profile};
 use crate::AppState;
 
 #[derive(Debug, Serialize)]
@@ -96,7 +96,7 @@ pub async fn get(
 #[derive(Debug, Deserialize)]
 pub struct PutMaterial {
     /// Pick a material from the library. `null` (with no text) takes the material off the lesson.
-    #[serde(default, deserialize_with = "crate::routes::double_option")]
+    #[serde(default, deserialize_with = "crate::serde_support::double_option")]
     pub material_id: Option<Option<i64>>,
     #[serde(default)]
     pub title: Option<String>,

@@ -135,7 +135,7 @@ pub async fn confirm(
             "already_active",
         )
         .await?;
-        crate::routes::log_usage(
+        crate::audit::log_usage(
             &mut *tx,
             teacher.id(),
             "memory_confirmed",
@@ -196,7 +196,7 @@ pub async fn confirm(
         "confirmed",
     )
     .await?;
-    crate::routes::log_usage(
+    crate::audit::log_usage(
         &mut *tx,
         teacher.id(),
         "memory_confirmed",
@@ -228,7 +228,7 @@ async fn cancel(
     let interaction_id =
         interaction_id.ok_or_else(|| AppError::Conflict("這個預覽已確認或已取消。".into()))?;
     decide(&mut tx, interaction_id, teacher.id(), "reject", "cancelled").await?;
-    crate::routes::log_usage(
+    crate::audit::log_usage(
         &mut *tx,
         teacher.id(),
         "memory_cancelled",
@@ -260,7 +260,7 @@ pub async fn remove(
     let Some(kind) = kind else {
         return Err(AppError::not_found("找不到目前有效的習慣。"));
     };
-    crate::routes::log_usage(
+    crate::audit::log_usage(
         &mut *tx,
         teacher.id(),
         "memory_removed",
@@ -289,7 +289,7 @@ pub async fn rebuild(
     )
     .execute(&mut *tx)
     .await?;
-    crate::routes::log_usage(&mut *tx, teacher.id(), "memory_index_rebuild", json!({})).await?;
+    crate::audit::log_usage(&mut *tx, teacher.id(), "memory_index_rebuild", json!({})).await?;
     tx.commit().await?;
     Ok(Json(json!({"ok":true})))
 }
@@ -326,7 +326,7 @@ pub async fn settings_put(
         teacher.id(),
     )
     .await?;
-    crate::routes::log_usage(
+    crate::audit::log_usage(
         &mut *tx,
         teacher.id(),
         "setting_changed",

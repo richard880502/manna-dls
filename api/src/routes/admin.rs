@@ -12,10 +12,10 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::audit::log_usage;
 use crate::auth::{self, AuthTeacher, Capability};
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::prompt_registry;
-use crate::routes::log_usage;
 use crate::settings;
 use crate::AppState;
 

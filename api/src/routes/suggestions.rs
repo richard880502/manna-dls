@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use crate::ai::pipeline::{self, AiResult, ContextList, Finish, InteractionMeta, Source};
 use crate::ai::schemas::{self, PlanSuggestOutput};
 use crate::ai::LlmRequest;
+use crate::audit::scaffold_id;
 use crate::auth::AuthTeacher;
 use crate::checks::{self, RetrievedRef};
 use crate::core_questions::CORE_QUESTIONS;
@@ -20,9 +21,8 @@ use crate::prompts;
 use crate::retrieval::{self, Scored};
 use crate::routes::lessons::{latest_version, linked_focus_ids, selected_siop_ids, LessonStep};
 use crate::routes::preferences::{preference_summary, snapshot as pref_snapshot};
-use crate::routes::{
-    clip_chars, or_blank, owned_lesson, resolved_profile, scaffold_id, track_label,
-};
+use crate::teaching_context::{owned_lesson, resolved_profile, track_label};
+use crate::text::{clip_chars, or_blank};
 use crate::AppState;
 
 /// How much of 我的範例 is sent to the model (style reference only).
