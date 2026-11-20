@@ -182,6 +182,7 @@ const templateDetail = (overrides: Partial<WsTemplateDetail> = {}): WsTemplateDe
   tags: ["三民"],
   error: null,
   content: content(),
+  deletes_source_material: true,
   ...overrides,
 });
 

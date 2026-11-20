@@ -19,6 +19,7 @@ import {
   sectionLine,
   supportLine,
   templateConfig,
+  templateDeleteConsequences,
   templateTitle,
 } from "../lib/templates";
 import { ANSWER_FORMATS, BLOCK_KIND_LABEL, toggleIn } from "../lib/worksheet";
@@ -348,7 +349,7 @@ function TemplateWorkspace({ id }: { id: number }) {
             <p>
               <strong>刪除「{templateTitle(detail)}」？</strong>
             </p>
-            <p>刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案會留著。</p>
+            <p>{templateDeleteConsequences(detail)}</p>
             <div className="button-row">
               <button type="button" className="danger-button" disabled={deleting} onClick={() => void remove()}>
                 {deleting ? "刪除中…" : "永久刪除"}

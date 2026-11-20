@@ -24,6 +24,7 @@ import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/workshe
 import {
   baseRoutes,
   mockApi,
+  queryOf,
   renderApp,
   respond,
   signIn,
@@ -86,6 +87,14 @@ const library = (materials: Material[] = [material()]): MaterialLibrary => ({
   uploads_enabled: true,
 });
 
+/** GET /api/materials: the library (上傳我的學習單), or 我的範本's left-over samples (?orphaned=true). */
+const materialsRoute =
+  (orphans: Material[] | (() => Material[]) = []) =>
+  (call: MockCall) => {
+    if (queryOf(call).orphaned !== "true") return library();
+    return library(typeof orphans === "function" ? orphans() : orphans);
+  };
+
 const section = (id: string, title: string, extra: Partial<WsTemplateSection> = {}): WsTemplateSection => ({
   id,
   title_pattern: title,
@@ -141,6 +150,7 @@ const detail = (overrides: Partial<WsTemplateDetail> = {}): WsTemplateDetail => 
   ...summary(),
   error: null,
   content: content(),
+  deletes_source_material: true,
   ...overrides,
 });
 
@@ -226,7 +236,7 @@ describe("學習單範本: 我的範本", () => {
     let started = false;
     const api = mockApi({
       ...baseRoutes(),
-      "GET /api/materials": library(),
+      "GET /api/materials": materialsRoute(),
       [`GET ${BROWSE}`]: () =>
         templateBrowse(
           started
@@ -264,7 +274,7 @@ describe("學習單範本: 我的範本", () => {
   });
 
   it("上傳我的學習單 closes with Esc or 取消 and gives focus back", async () => {
-    mockApi({ ...baseRoutes(), "GET /api/materials": library() });
+    mockApi({ ...baseRoutes(), "GET /api/materials": materialsRoute() });
     const user = userEvent.setup();
     renderApp(MINE);
     const opener = await screen.findByRole("button", { name: "上傳我的學習單" });
@@ -282,7 +292,7 @@ describe("學習單範本: 我的範本", () => {
   it("refuses a scan without text before asking the server", async () => {
     const api = mockApi({
       ...baseRoutes(),
-      "GET /api/materials": library(),
+      "GET /api/materials": materialsRoute(),
       "POST /api/materials/upload": materialDetail({ id: 6, text_status: "no_text", paragraphs: [] }),
     });
     const user = userEvent.setup({ applyAccept: false });
@@ -293,6 +303,189 @@ describe("學習單範本: 我的範本", () => {
     await user.click(form.getByRole("button", { name: "上傳，讓 Manna 讀設計" }));
     expect(await screen.findByText(/這份檔案讀不到文字（可能是掃描檔）/)).toBeInTheDocument();
     expect(api.callsTo("POST", TEMPLATES)).toHaveLength(0);
+  });
+
+  it("deletes one of my templates from its card's 更多動作, after a confirmation that says its file goes too", async () => {
+    let deleted = false;
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": materialsRoute(),
+      [`GET ${BROWSE}`]: () => templateBrowse(deleted ? [] : [templateCard()]),
+      [`GET ${T9}`]: detail({ source_material: { id: 4, title: "L2 學習單" } }),
+      [`DELETE ${T9}`]: () => {
+        deleted = true;
+        return { ok: true };
+      },
+    });
+    const user = userEvent.setup();
+    renderApp(MINE);
+    await screen.findByRole("article", { name: "L2 學習單版型" });
+    const more = tcard("L2 學習單版型").getByRole("button", { name: "更多動作「L2 學習單版型」" });
+    await user.click(more);
+    await user.click(tcard("L2 學習單版型").getByRole("button", { name: "刪除" }));
+    const confirm = within(screen.getByRole("alertdialog", { name: "永久刪除「L2 學習單版型」？" }));
+    expect(
+      await confirm.findByText(
+        "刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案「L2 學習單」也會一起永久刪除。",
+      ),
+    ).toBeInTheDocument();
+    // Cancelling sends nothing and gives focus back.
+    await user.click(confirm.getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(api.callsTo("DELETE", T9)).toHaveLength(0);
+    expect(more).toHaveFocus();
+
+    await user.click(more);
+    await user.click(tcard("L2 學習單版型").getByRole("button", { name: "刪除" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    expect(await screen.findByText("已永久刪除「L2 學習單版型」。")).toBeInTheDocument();
+    expect(api.callsTo("DELETE", T9)).toHaveLength(1);
+    expect(await screen.findByText(/^還沒有我的範本。/)).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("a template delete the server refuses keeps the card and says why", async () => {
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": materialsRoute(),
+      [`GET ${BROWSE}`]: templateBrowse([templateCard()]),
+      [`GET ${T9}`]: detail(),
+      [`DELETE ${T9}`]: respond(503, {
+        error: {
+          code: "unavailable",
+          message: "原檔沒有刪除成功（儲存空間暫時無法使用），所以這份教材還沒有刪除。請稍後再試一次。",
+        },
+      }),
+    });
+    const user = userEvent.setup();
+    renderApp(MINE);
+    await user.click(await screen.findByRole("button", { name: "更多動作「L2 學習單版型」" }));
+    await user.click(screen.getByRole("button", { name: "刪除" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    expect(await screen.findByText(/所以這份教材還沒有刪除/)).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "L2 學習單版型" })).toBeInTheDocument();
+  });
+
+  it("platform templates have no 更多動作 and 平台範本 lists no left-over files", async () => {
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": materialsRoute([material({ id: 31, purpose: "worksheet_sample" })]),
+      [`GET ${BROWSE}`]: templateBrowse([
+        templateCard({ id: 21, title: "平台的範本", scope: "platform", owner_label: "Manna 範本" }),
+      ]),
+    });
+    renderApp("/templates");
+    expect(await screen.findByRole("article", { name: "平台的範本" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^更多動作/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "沒有範本在用的原檔" })).not.toBeInTheDocument();
+    expect(api.callsTo("GET", "/api/materials")).toHaveLength(0);
+  });
+
+  it("lists my uploaded worksheets no template uses, to look at or delete for good, and hides the list when empty", async () => {
+    let left = [
+      material({
+        id: 31,
+        title: "舊學習單",
+        filename: "old-worksheet.docx",
+        purpose: "worksheet_sample",
+        created_at: "2026-11-14T12:00:00Z",
+      }),
+      material({
+        id: 32,
+        kind: "text",
+        origin: "paste",
+        title: "貼上的學習單",
+        filename: null,
+        has_file: false,
+        purpose: "worksheet_sample",
+        created_at: "2026-11-10T12:00:00Z",
+      }),
+    ];
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": materialsRoute(() => left),
+      [`GET ${BROWSE}`]: templateBrowse([templateCard()]),
+      "GET /api/materials/31": materialDetail({ id: 31, title: "舊學習單", filename: "old-worksheet.docx" }),
+      "GET /api/materials/32": materialDetail({ id: 32, title: "貼上的學習單", has_file: false }),
+      "DELETE /api/materials/31": () => {
+        left = left.filter((m) => m.id !== 31);
+        return { deleted: true, annotations: 0, lessons: [] };
+      },
+      "DELETE /api/materials/32": () => {
+        left = [];
+        return { deleted: true, annotations: 0, lessons: [] };
+      },
+    });
+    const user = userEvent.setup();
+    renderApp(MINE);
+    const section = within(await screen.findByRole("region", { name: "沒有範本在用的原檔" }));
+    // Asked for my samples no template uses.
+    const asked = api.callsTo("GET", "/api/materials").map(queryOf);
+    expect(asked).toContainEqual({ purpose: "worksheet_sample", orphaned: "true" });
+    const old = within(section.getByRole("listitem", { name: "舊學習單" }));
+    expect(old.getByText("old-worksheet.docx · 上傳於 2026/11/14")).toBeInTheDocument();
+    expect(within(section.getByRole("listitem", { name: "貼上的學習單" })).getByText("加入於 2026/11/10")).toBeInTheDocument();
+
+    // 查看 opens the original in the viewer.
+    await user.click(old.getByRole("button", { name: "查看「舊學習單」" }));
+    expect(old.getByRole("button", { name: "查看「舊學習單」" })).toHaveAttribute("aria-expanded", "true");
+
+    // 刪除 says what goes, then deletes it for good.
+    const remove = old.getByRole("button", { name: "刪除「舊學習單」" });
+    await user.click(remove);
+    const confirm = within(screen.getByRole("alertdialog", { name: "永久刪除「舊學習單」？" }));
+    expect(await confirm.findByText(/刪除後無法復原：原檔、擷取的文字與段落都會永久刪除/)).toBeInTheDocument();
+    await user.click(confirm.getByRole("button", { name: "取消" }));
+    expect(api.callsTo("DELETE", "/api/materials/31")).toHaveLength(0);
+    expect(remove).toHaveFocus();
+    await user.click(remove);
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    expect(await screen.findByText("已永久刪除「舊學習單」。")).toBeInTheDocument();
+    expect(api.callsTo("DELETE", "/api/materials/31")).toHaveLength(1);
+    await waitFor(() => expect(section.queryByRole("listitem", { name: "舊學習單" })).not.toBeInTheDocument());
+
+    // The last one goes: the section is not shown any more; my templates stay.
+    await user.click(section.getByRole("button", { name: "刪除「貼上的學習單」" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    expect(await screen.findByText("已永久刪除「貼上的學習單」。")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "沒有範本在用的原檔" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("article", { name: "L2 學習單版型" })).toBeInTheDocument();
+  });
+
+  it("a left-over file still used by a template is not deleted and the reason is said", async () => {
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": materialsRoute([material({ id: 31, title: "舊學習單", purpose: "worksheet_sample" })]),
+      [`GET ${BROWSE}`]: templateBrowse([]),
+      "GET /api/materials/31": materialDetail({ id: 31, title: "舊學習單" }),
+      "DELETE /api/materials/31": respond(409, {
+        error: {
+          code: "conflict",
+          message: "這份檔案是範本「新範本」的原檔，範本還在用它。要刪除的話，請刪除那個範本，原檔會一起刪除。",
+        },
+      }),
+    });
+    const user = userEvent.setup();
+    renderApp(MINE);
+    await user.click(await screen.findByRole("button", { name: "刪除「舊學習單」" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久刪除" }));
+    expect(await screen.findByText(/這份檔案是範本「新範本」的原檔/)).toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "舊學習單" })).toBeInTheDocument();
+  });
+
+  it("says nothing about left-over files when there are none", async () => {
+    const api = mockApi({
+      ...baseRoutes(),
+      "GET /api/materials": materialsRoute([]),
+      [`GET ${BROWSE}`]: templateBrowse([templateCard()]),
+    });
+    renderApp(MINE);
+    await screen.findByRole("article", { name: "L2 學習單版型" });
+    await waitFor(() => expect(api.callsTo("GET", "/api/materials")).toHaveLength(1));
+    expect(screen.queryByRole("region", { name: "沒有範本在用的原檔" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/沒有範本在用/)).not.toBeInTheDocument();
   });
 });
 
@@ -477,12 +670,19 @@ describe("/templates/:id", () => {
       ...baseRoutes(),
       [`GET ${T9}`]: detail(),
       [`DELETE ${T9}`]: { ok: true },
-      "GET /api/materials": library(),
+      "GET /api/materials": materialsRoute(),
     });
     const user = userEvent.setup();
     renderApp("/templates/9");
     await user.click(await screen.findByRole("button", { name: "刪除這個版型" }));
     const dialog = within(screen.getByRole("alertdialog", { name: "確認刪除版型" }));
+    // The uploaded file goes too; worksheets made with it stay.
+    expect(
+      dialog.getByText(
+        "刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本上傳的檔案「L2 學習單」也會一起永久刪除。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/原本上傳的檔案會留著/)).not.toBeInTheDocument();
     await user.click(dialog.getByRole("button", { name: "取消" }));
     expect(api.callsTo("DELETE", T9)).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "刪除這個版型" }));
@@ -490,6 +690,31 @@ describe("/templates/:id", () => {
     expect(await screen.findByRole("heading", { name: "學習單範本", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "我的範本" })).toHaveAttribute("aria-selected", "true");
     expect(api.callsTo("DELETE", T9)).toHaveLength(1);
+  });
+
+  it("says the file stays when another template still uses it, and says nothing of a file already gone", async () => {
+    mockApi({
+      ...baseRoutes(),
+      [`GET ${T9}`]: detail({ deletes_source_material: false }),
+      "GET /api/worksheet-templates/10": detail({ id: 10, source_material: null, deletes_source_material: false }),
+    });
+    const user = userEvent.setup();
+    const { unmount } = renderApp("/templates/9");
+    await user.click(await screen.findByRole("button", { name: "刪除這個版型" }));
+    expect(
+      within(screen.getByRole("alertdialog", { name: "確認刪除版型" })).getByText(
+        "刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型；原本的檔案「L2 學習單」還有別的範本在用，所以會留著。",
+      ),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderApp("/templates/10");
+    await user.click(await screen.findByRole("button", { name: "刪除這個版型" }));
+    expect(
+      within(screen.getByRole("alertdialog", { name: "確認刪除版型" })).getByText(
+        "刪除後無法復原：這個版型的所有版本都會刪除。用它做過的學習單會留著，只是不再連到版型。",
+      ),
+    ).toBeInTheDocument();
   });
 });
 
