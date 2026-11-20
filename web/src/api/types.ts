@@ -438,6 +438,21 @@ export interface CreateLessonRequest {
   lesson_date?: string;
   class_description?: string;
   my_example?: string;
+  /** 哪一頁開始這個課例（只記研究紀錄；首頁的「逐步設計」卡片傳 "home"） */
+  entry?: "home";
+}
+
+/** 我的作品裡的一堂逐步設計課例（GET /stepwise-lessons） */
+export interface StepwiseLesson {
+  id: number;
+  title: string;
+  unit_id: number;
+  unit_title: string;
+  updated_at: string;
+  /** 七步裡已有內容的步數（0 到 7） */
+  steps_done: number;
+  /** 第一個還空著的步驟（1 到 7）；null＝七步都有內容 */
+  next_step: number | null;
 }
 
 export interface SaveLessonVersionRequest {

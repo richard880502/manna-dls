@@ -38,6 +38,7 @@ import type {
   KnowledgeSummary,
   Lesson,
   LessonDetail,
+  StepwiseLesson,
   LessonRun,
   LessonSiopResponse,
   LessonVersion,
@@ -407,6 +408,7 @@ export const api = {
   listLessons: (unitId: number) => get<Lesson[]>(`/units/${unitId}/lessons`),
   createLesson: (unitId: number, body: CreateLessonRequest) =>
     post<Lesson>(`/units/${unitId}/lessons`, body),
+  listStepwiseLessons: () => get<StepwiseLesson[]>("/stepwise-lessons"),
   getLesson: (lessonId: number, classId?: number | null) =>
     get<LessonDetail>(`/lessons/${lessonId}`, classQuery(classId)),
   updateLesson: (lessonId: number, body: UpdateLessonRequest, classId?: number | null) =>

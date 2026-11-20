@@ -682,6 +682,36 @@ pub fn is_blank(content: &SopContent) -> bool {
     *content == SopContent::default()
 }
 
+fn filled(s: &str) -> bool {
+    !s.trim().is_empty()
+}
+
+/// Which of the seven steps hold something, in step order. The same rule as the workspace's
+/// progress rail (`stageSummary` in web/src/lib/sop.ts): step 1 is the material, the others
+/// their part of the document.
+pub fn steps_done(has_material: bool, c: &SopContent) -> [bool; 7] {
+    let a = &c.analysis;
+    [
+        has_material,
+        a.paragraphs
+            .iter()
+            .any(|p| filled(&p.function) || filled(&p.summary) || !p.features.is_empty())
+            || filled(&a.main_idea)
+            || filled(&a.structure)
+            || filled(&a.text_type),
+        c.objectives.iter().any(|o| filled(&o.text)),
+        c.paragraph_goals
+            .iter()
+            .any(|g| !g.objective_ids.is_empty() || filled(&g.note)),
+        c.task_blocks
+            .iter()
+            .any(|b| b.tasks.iter().any(|t| filled(&t.text))),
+        c.warmup.background.iter().any(|b| filled(&b.text))
+            || c.warmup.vocabulary.iter().any(|v| filled(&v.word)),
+        c.exit_ticket.items.iter().any(|i| filled(&i.text)),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

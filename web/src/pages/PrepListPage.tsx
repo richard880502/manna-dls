@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, errorMessage } from "../api/client";
-import type { PrepKind, PrepSessionSummary, WorksheetSummary } from "../api/types";
+import type { PrepKind, PrepSessionSummary, StepwiseLesson, WorksheetSummary } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { WorkCard, WorkCardSkeleton, type WorkCardData } from "../components/mywork/WorkCard";
-import { TOOL_NAME } from "../lib/create";
+import { STEPWISE_TAG, TOOL_NAME } from "../lib/create";
+import { stepwiseProgress } from "../lib/sop";
 import { DELETE_CONFIRM, NEXT_LABEL, PREP_SESSIONS_CHANGED, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
 
 /** The filter chips. 學習單 covers every worksheet-making kind and the standalone worksheets. */
-type Filter = "all" | "worksheet" | "activity" | "ask";
+type Filter = "all" | "worksheet" | "activity" | "ask" | "stepwise";
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "all", label: "全部" },
   { key: "worksheet", label: "學習單" },
   { key: "activity", label: "課堂活動" },
   { key: "ask", label: "問 Manna" },
+  { key: "stepwise", label: STEPWISE_TAG },
 ];
 const isFilter = (v: string | null): v is Filter => FILTERS.some((f) => f.key === v);
 
@@ -71,7 +73,8 @@ function saveView(view: View) {
 
 type Item =
   | { type: "session"; key: string; at: string; filter: Filter | null; session: PrepSessionSummary }
-  | { type: "worksheet"; key: string; at: string; filter: Filter | null; worksheet: WorksheetSummary };
+  | { type: "worksheet"; key: string; at: string; filter: Filter | null; worksheet: WorksheetSummary }
+  | { type: "lesson"; key: string; at: string; filter: Filter | null; lesson: StepwiseLesson };
 
 /**
  * What tells a session from another of the same name, besides its type and date: the material
@@ -97,6 +100,8 @@ function worksheetDetail(w: WorksheetSummary): string[] {
   ].filter((p): p is string => Boolean(p));
 }
 
+const lessonDetail = (l: StepwiseLesson): string[] => [l.unit_title, stepwiseProgress(l.next_step)];
+
 const worksheetName = (w: WorksheetSummary) => w.title || "未命名的學習單";
 
 /** What a card shows of an item. */
@@ -111,6 +116,19 @@ function cardOf(item: Item): WorkCardData {
       when: formatDateTime(s.updated_at),
       worksheet: s.preview_worksheet ?? null,
       text: s.preview_text ?? null,
+    };
+  }
+  if (item.type === "lesson") {
+    const l = item.lesson;
+    return {
+      title: l.title,
+      href: `/lessons/${l.id}`,
+      tag: STEPWISE_TAG,
+      detail: lessonDetail(l).join(" · "),
+      when: formatDateTime(l.updated_at),
+      worksheet: null,
+      // No page to show: the preview says where the lesson stands.
+      text: stepwiseProgress(l.next_step),
     };
   }
   const w = item.worksheet;
@@ -139,6 +157,7 @@ export function PrepListPage() {
   const [params, setParams] = useSearchParams();
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
   const [worksheets, setWorksheets] = useState<WorksheetSummary[] | null>(null);
+  const [lessons, setLessons] = useState<StepwiseLesson[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** Bumped by 再試一次: the lists are asked for again. */
   const [attempt, setAttempt] = useState(0);
@@ -154,11 +173,12 @@ export function PrepListPage() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([api.listPrepSessions(), api.listWorksheets()])
-      .then(([s, w]) => {
+    Promise.all([api.listPrepSessions(), api.listWorksheets(), api.listStepwiseLessons()])
+      .then(([s, w, l]) => {
         if (!alive) return;
         setSessions(s.sessions);
         setWorksheets(w);
+        setLessons(l);
       })
       .catch((err: unknown) => alive && setError(errorMessage(err)));
     return () => {
@@ -167,7 +187,7 @@ export function PrepListPage() {
   }, [attempt]);
 
   const items = useMemo<Item[] | null>(() => {
-    if (sessions === null || worksheets === null) return null;
+    if (sessions === null || worksheets === null || lessons === null) return null;
     const all: Item[] = [
       ...sessions.map(
         (s): Item => ({ type: "session", key: `s${s.id}`, at: s.updated_at, filter: filterOfKind(s.last_kind), session: s }),
@@ -176,9 +196,12 @@ export function PrepListPage() {
       ...worksheets
         .filter((w) => w.prep_session_id == null)
         .map((w): Item => ({ type: "worksheet", key: `w${w.id}`, at: w.updated_at, filter: "worksheet", worksheet: w })),
+      ...lessons.map(
+        (l): Item => ({ type: "lesson", key: `l${l.id}`, at: l.updated_at, filter: "stepwise", lesson: l }),
+      ),
     ];
     return all.sort((a, b) => time(b.at) - time(a.at));
-  }, [sessions, worksheets]);
+  }, [sessions, worksheets, lessons]);
 
   const count = (f: Filter) => (items ? items.filter((i) => f === "all" || i.filter === f).length : 0);
   const shown = items?.filter((i) => filter === "all" || i.filter === filter) ?? [];
@@ -198,7 +221,7 @@ export function PrepListPage() {
   }
 
   /** A session goes with every worksheet made in it; a worksheet of its own goes alone. */
-  async function remove(item: Item) {
+  async function remove(item: Exclude<Item, { type: "lesson" }>) {
     setDeleteError(null);
     try {
       if (item.type === "session") {
@@ -219,8 +242,10 @@ export function PrepListPage() {
     }
   }
 
-  /** The delete controls of an item: the same in both views. */
+  /** The delete controls of an item: the same in both views (none for a 逐步設計 lesson). */
   function deleteControl(item: Item) {
+    // Lessons have no delete in the API: their cards carry no 刪除.
+    if (item.type === "lesson") return undefined;
     return (
       <DeleteControl
         name={item.type === "session" ? sessionTitle(item.session) : worksheetName(item.worksheet)}
@@ -245,7 +270,7 @@ export function PrepListPage() {
       <div className="head-row page-head">
         <div>
           <h1>我的作品</h1>
-          <p className="lead">做過的備課、學習單和課堂活動都在這裡，最近用過的在最上面。</p>
+          <p className="lead">做過的備課、學習單、課堂活動和逐步設計的課例都在這裡，最近用過的在最上面。</p>
         </div>
         <Link className="primary-button link-button" to="/">
           新的備課
@@ -322,6 +347,8 @@ export function PrepListPage() {
               {shown.map((item) =>
                 item.type === "session" ? (
                   <SessionRow key={item.key} s={item.session} tools={deleteControl(item)} />
+                ) : item.type === "lesson" ? (
+                  <LessonRow key={item.key} l={item.lesson} />
                 ) : (
                   <WorksheetRow key={item.key} w={item.worksheet} tools={deleteControl(item)} />
                 ),
@@ -347,6 +374,22 @@ function SessionRow({ s, tools }: { s: PrepSessionSummary; tools: ReactNode }) {
         </p>
       </div>
       <div className="row-tools">{tools}</div>
+    </li>
+  );
+}
+
+function LessonRow({ l }: { l: StepwiseLesson }) {
+  return (
+    <li className="row">
+      <div>
+        <h3>
+          <Link to={`/lessons/${l.id}`}>{l.title}</Link>
+        </h3>
+        <p className="meta">
+          <span className="mywork-tag">{STEPWISE_TAG}</span>
+          {[...lessonDetail(l), formatDateTime(l.updated_at)].join(" · ")}
+        </p>
+      </div>
     </li>
   );
 }

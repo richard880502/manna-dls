@@ -172,10 +172,11 @@ describe("照我的學習單做: where it is", () => {
     expect(nav.queryByRole("link", { name: "照我的學習單做" })).not.toBeInTheDocument();
 
     const tiles = within(screen.getByRole("radiogroup", { name: "要做什麼" })).getAllByRole("radio");
-    // The home page offers just these two tools; the other four are reached in the conversation.
+    // The home page offers two generator tools and 逐步設計; the other four tools are reached in the conversation.
     expect(tiles.map((b) => b.querySelector(".tool-card-title")?.textContent)).toEqual([
-      "完整學習單",
-      "照我的學習單做",
+      "AI 幫我設計",
+      "照我的範本設計",
+      "我想逐步設計",
     ]);
     const first = tiles[1]!;
     expect(first).toHaveTextContent("上傳你以前用過的學習單，Manna 照它的版面和樣式，為新課文做一份");
@@ -493,7 +494,7 @@ describe("a worksheet in the article slot", () => {
 
     expect(router.state.location.pathname).toBe("/");
     expect(notice()).not.toBeInTheDocument();
-    expect(quickPressed()).toEqual(["照我的學習單做"]);
+    expect(quickPressed()).toEqual(["照我的範本設計"]);
     expect(quickCard().getByRole("status")).toHaveTextContent("範本：L2 學習單");
     // The article slot is empty, and focused for the lesson text.
     expect(quickCard().queryByRole("button", { name: /^移除課文/ })).not.toBeInTheDocument();
@@ -517,10 +518,10 @@ describe("a worksheet in the article slot", () => {
     const user = userEvent.setup();
     renderApp("/");
     await screen.findByRole("heading", { name: "今天想準備什麼？", level: 1 });
-    await user.click(quickChips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(quickChips().getByRole("radio", { name: "AI 幫我設計" }));
     await attachFromLibrary(user, "L2 學習單");
     await user.click(within(notice()!).getByRole("button", { name: "把它當範本" }));
-    expect(quickPressed()).toEqual(["照我的學習單做"]);
+    expect(quickPressed()).toEqual(["照我的範本設計"]);
     expect(quickCard().getByRole("button", { name: "移除範本「L2 學習單」" })).toBeInTheDocument();
     expect(quickCard().getByRole("button", { name: "附上課文" })).toHaveFocus();
   });
@@ -568,8 +569,8 @@ describe("照我的學習單做 on the home quick box", () => {
     expect(toolbar()).toEqual(["附上文章"]);
     expect(quickBox()).toHaveAttribute("placeholder", "例如：B1 程度、8 題閱讀理解，記憶到評鑑都要有");
 
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
-    expect(quickPressed()).toEqual(["照我的學習單做"]);
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
+    expect(quickPressed()).toEqual(["照我的範本設計"]);
     expect(toolbar()).toEqual(["附上學習單範本", "附上課文"]);
     expect(quickBox()).toHaveAttribute("placeholder", "例如：照這份的樣式，題目少一點、加一題寫作");
 
@@ -590,7 +591,7 @@ describe("照我的學習單做 on the home quick box", () => {
     await user.keyboard("{Escape}");
 
     // Another tile (a radio does not clear when clicked again) gives the card one slot again.
-    await user.click(quickChips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(quickChips().getByRole("radio", { name: "AI 幫我設計" }));
     expect(quickBox()).toHaveAttribute("placeholder", "例如：B1 程度、8 題閱讀理解，記憶到評鑑都要有");
     expect(toolbar()).toEqual(["附上文章"]);
   });
@@ -600,7 +601,7 @@ describe("照我的學習單做 on the home quick box", () => {
     const user = userEvent.setup();
     await openHome();
     await user.type(quickBox(), "照這份的樣式，題目少一點");
-    expect(quickPressed()).toEqual(["照我的學習單做"]);
+    expect(quickPressed()).toEqual(["照我的範本設計"]);
     expect(quickCard().getByRole("button", { name: "附上學習單範本" })).toBeInTheDocument();
     expect(quickCard().getByRole("button", { name: "附上課文" })).toBeInTheDocument();
   });
@@ -609,7 +610,7 @@ describe("照我的學習單做 on the home quick box", () => {
     const api = mockApi(routes({ "POST /api/materials/upload": detail(sampleMaterial({ id: 6, title: "期中學習單" })) }));
     const user = userEvent.setup({ applyAccept: false });
     const { router } = await openHome();
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
 
     const dialog = await openSampleWay(user, "上傳檔案");
     const form = within(await dialog.findByRole("form", { name: "上傳檔案" }));
@@ -656,7 +657,7 @@ describe("照我的學習單做 on the home quick box", () => {
     );
     const user = userEvent.setup();
     const { router } = await openHome();
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
 
     const dialog = await openSampleWay(user, "從範本挑選");
     // It opens on 平台範本, with the search field ready for typing.
@@ -688,7 +689,7 @@ describe("照我的學習單做 on the home quick box", () => {
     const { router } = await openHome();
     // The templates are asked for only when 從範本挑選 opens.
     expect(api.callsTo("GET", "/api/browse/templates")).toHaveLength(0);
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
 
     const dialog = await openSampleWay(user, "從範本挑選");
     await user.click(dialog.getByRole("tab", { name: "我的範本" }));
@@ -714,7 +715,7 @@ describe("照我的學習單做 on the home quick box", () => {
     mockApi(routes({ "GET /api/browse/templates": templateBrowse([]) }));
     const user = userEvent.setup();
     await openHome();
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
     const dialog = await openSampleWay(user, "從範本挑選");
     expect(await dialog.findByText("還沒有平台範本。")).toBeInTheDocument();
     await user.click(dialog.getByRole("tab", { name: "我的範本" }));
@@ -725,7 +726,7 @@ describe("照我的學習單做 on the home quick box", () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     const { router } = await openHome();
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
     const send = screen.getByRole("button", { name: "送出" });
     expect(send).toBeEnabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -770,7 +771,7 @@ describe("照我的學習單做 on the home quick box", () => {
     mockApi(routes({ "POST /api/materials/upload": detail(sampleMaterial()) }));
     const user = userEvent.setup({ applyAccept: false });
     await openHome();
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
     await attachLessonText(user, "L2 學習單");
     // In its own slot, a worksheet as the 課文 asks nothing.
     expect(notice()).not.toBeInTheDocument();
@@ -793,19 +794,19 @@ describe("照我的學習單做 on the home quick box", () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     await openHome();
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
     const dialog = await openSampleWay(user, "從範本挑選");
     await user.click(await dialog.findByRole("button", { name: "選用「L2 學習單版型」" }));
     await attachLessonText(user, "The Umbrella Stand");
 
-    await user.click(quickChips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(quickChips().getByRole("radio", { name: "AI 幫我設計" }));
     expect(quickCard().getAllByRole("status").map((c) => c.textContent)).toEqual(["The Umbrella Stand"]);
-    await user.click(quickChips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
     expect(quickCard().getAllByRole("status").map((c) => c.textContent)).toEqual([
       "範本：L2 學習單版型· 3 區",
       "課文：The Umbrella Stand",
     ]);
-    await user.click(quickChips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(quickChips().getByRole("radio", { name: "AI 幫我設計" }));
     await user.click(screen.getByRole("button", { name: "送出" }));
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
     expect(api.lastBody("POST", SESSIONS)).toEqual({ entry: "home", kind: "worksheet", request: "學習單", material_id: 5 });

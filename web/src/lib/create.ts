@@ -1,6 +1,7 @@
 // 建立 (the generator, /create/:tool) and the home page's quick box: the tools, their words, which
 // settings each one takes, and the typed-keyword shortcut. Fixed labels are the contract's
-// (docs: bloom-contract, "Shell and home" and Addendum 1; mimic-contract, "Frontend"), word for word.
+// (docs: bloom-contract, "Shell and home" and Addendum 1; mimic-contract, "Frontend"), word for word,
+// except the home tiles' three titles (HOME_NAME), which the PI renamed in 2026-11 (docs/DESIGN.md).
 import type { CreatePrepSessionRequest } from "../api/types";
 
 /**
@@ -18,7 +19,15 @@ export type KindTool = (typeof KIND_TOOLS)[number];
  * The tools the home page shows as tiles, in order. The other four stay reachable (the
  * conversation's 接下來可以 chips, typed words in the quick box, and /create/:tool).
  */
-export const HOME_TOOLS = ["worksheet", "mimic"] as const satisfies readonly Tool[];
+export const HOME_TOOLS = ["worksheet", "mimic", "stepwise"] as const satisfies readonly (Tool | "stepwise")[];
+
+/**
+ * 逐步設計 is the third way to prep: the seven-step lesson workspace (/lessons/:id), where the
+ * teacher decides at every step. It is a home tile only, not a generator tool: it is not in TOOLS
+ * and has no /create page. Choosing it opens the unit dialog instead of making a prep session.
+ */
+export type HomeTool = (typeof HOME_TOOLS)[number];
+export const isStepwise = (tile: Tool | HomeTool | null): tile is "stepwise" => tile === "stepwise";
 
 export const isTool = (value: string | undefined): value is Tool => (TOOLS as readonly string[]).includes(value ?? "");
 
@@ -51,6 +60,22 @@ export const TOOL_BLURB: Record<Tool, string> = {
   kit: "活動流程＋差異化學習單＋教師版答案，一次下載",
   worksheet: "由 Manna 設計版面：暖身、逐段任務，到 Exit ticket",
 };
+
+/** The home tiles' visible names and one-line blurbs: the generator's, and 逐步設計's own. */
+export const HOME_NAME: Record<HomeTool, string> = {
+  worksheet: "AI 幫我設計",
+  mimic: "照我的範本設計",
+  stepwise: "我想逐步設計",
+};
+/** The 我的作品 tag of a lesson made in the step-by-step workspace. */
+export const STEPWISE_TAG = "逐步設計";
+export const HOME_BLURB: Record<HomeTool, string> = {
+  worksheet: TOOL_BLURB.worksheet,
+  mimic: TOOL_BLURB.mimic,
+  stepwise: "跟著七個步驟一步步設計，每一步由你決定，Manna 從旁建議",
+};
+/** 逐步設計's box: the text is optional, and only names the lesson. */
+export const STEPWISE_PLACEHOLDER = "可以先寫這節課的名稱，也可以不寫，直接按送出";
 
 /** The generator's subtitle: what the tool makes from what. */
 export const TOOL_SUBTITLE: Record<Tool, string> = {
