@@ -973,10 +973,11 @@ pub async fn restart(state: &AppState, turn: &TurnRow) -> AppResult<SiopCheck> {
 /// `failed` with a message the teacher can read.
 pub fn spawn(state: &AppState, check_id: i64) {
     let state = state.clone();
+    let pin = state.ai.active();
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(async move { run(&state, check_id).await })
+            tokio::spawn(pin.scope(async move { run(&state, check_id).await }))
         };
         let outcome = match work.await {
             Ok(Ok(outcome)) => outcome,

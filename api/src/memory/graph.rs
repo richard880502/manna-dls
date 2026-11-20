@@ -124,6 +124,27 @@ impl MemoryConfig {
 pub struct Runtime {
     health: tokio::sync::Mutex<Option<(Instant, Option<SidecarInfo>)>>,
     last_sweep: std::sync::Mutex<Option<Instant>>,
+    /// The model settings of each leased index job (by token hash), pinned when the job was
+    /// claimed: the forwarder answers the sidecar's calls in separate requests, so a task-local
+    /// cannot reach it. One API instance only; a missing entry (restart) falls back to the active
+    /// settings.
+    pins: std::sync::Mutex<std::collections::HashMap<String, crate::ai::ActiveAi>>,
+}
+
+/// Removes a job's pinned settings when the job ends, however it ends.
+struct PinGuard<'a> {
+    runtime: &'a Runtime,
+    key: String,
+}
+
+impl Drop for PinGuard<'_> {
+    fn drop(&mut self) {
+        self.runtime
+            .pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.key);
+    }
 }
 
 fn client(timeout: u64) -> reqwest::Client {
@@ -203,7 +224,7 @@ pub fn spawn_worker(state: AppState) {
             Err(e) => tracing::warn!(error = %e, "could not reconcile the memory index"),
         }
         loop {
-            match sync_one(&state).await {
+            match state.ai.pinned(sync_one(&state)).await {
                 Ok(true) => continue,
                 Ok(false) => {}
                 Err(e) => tracing::warn!(error = %e, "memory index worker failed; retrying"),
@@ -267,6 +288,17 @@ pub async fn sync_one(state: &AppState) -> AppResult<bool> {
     };
     collect_garbage(state).await?;
     let token = new_token();
+    // Inside a pinned job the settings are the job's; the forwarder reads them from here.
+    state
+        .memory
+        .pins
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(sha256_hex(&token), state.ai.active());
+    let _pin = PinGuard {
+        runtime: &state.memory,
+        key: sha256_hex(&token),
+    };
     let work: Option<Work> = sqlx::query_as(
         "UPDATE memory_indexes SET lease_until=clock_timestamp()+interval '10 minutes',
         leased_at=clock_timestamp(),token_hash=$1,leased_revision=revision,
@@ -806,7 +838,14 @@ async fn forward(
     let body: Value = serde_json::from_slice(&bytes).map_err(|_| bad("JSON"))?;
     let embedding = kind == ProxyKind::Embeddings;
     let c = &state.config;
-    let ai = state.ai.active();
+    let ai = state
+        .memory
+        .pins
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&sha256_hex(&token))
+        .cloned()
+        .unwrap_or_else(|| state.ai.active());
     let (base, key, model, provider) = if embedding {
         if c.embedding.provider != crate::embedding::EmbeddingProviderKind::OpenAiCompatible {
             return Err(AppError::Unavailable(

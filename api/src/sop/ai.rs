@@ -301,15 +301,16 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
 
     let state = state.clone();
     let temperature = BASE_TEMPERATURE + 0.1 * earlier.min(4) as f32;
+    let pin = state.ai.active();
     tokio::spawn(async move {
         let db = state.db.clone();
         // The work runs in its own task so that a panic there still ends the job.
-        let work = tokio::spawn(async move {
+        let work = tokio::spawn(pin.scope(async move {
             match kind {
                 JobKind::Analysis => run_analysis(&state, job_id, &input, temperature).await,
                 JobKind::Objectives => run_objectives(&state, job_id, &input, temperature).await,
             }
-        });
+        }));
         let (result, interaction_id) = match work.await {
             Ok(Ok(done)) => done,
             Ok(Err(e)) => {

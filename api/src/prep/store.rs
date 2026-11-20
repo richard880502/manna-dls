@@ -438,7 +438,8 @@ pub async fn close_kit(state: &AppState, turn_id: i64) -> AppResult<()> {
     )
     .await?
     {
-        selfcheck::spawn(state, check);
+        state.ai.in_turn(turn_id, || selfcheck::spawn(state, check));
+        state.ai.forget_turn(turn_id);
     }
     Ok(())
 }
@@ -501,7 +502,8 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
         // start that fails closes the turn itself).
         if !jobs.is_empty() && !running {
             if let Some(check) = finish(db, turn_id, Ok((None, None))).await? {
-                selfcheck::spawn(state, check);
+                state.ai.in_turn(turn_id, || selfcheck::spawn(state, check));
+                state.ai.forget_turn(turn_id);
             }
         }
     }

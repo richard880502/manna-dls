@@ -498,6 +498,8 @@ where
     F: std::future::Future<Output = AppResult<()>> + Send + 'static,
 {
     let db = state.db.clone();
+    // Pinned now: the whole run keeps the model it starts with.
+    let work = state.ai.pinned(work);
     tokio::spawn(async move {
         let failure = match tokio::spawn(work).await {
             Ok(Ok(())) => None,

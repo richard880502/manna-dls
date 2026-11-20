@@ -29,7 +29,7 @@ describe("文字模型 settings", () => {
     expect(screen.getByText(/國網中心（NCHC）・gemma-4-31B-it・等待上限 120 秒/)).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /OpenAI（海外）/ })).toBeDisabled();
     expect(screen.getByRole("option", { name: "國網中心（NCHC）" })).toBeEnabled();
-    expect(screen.getByText(/已經送出的要求會用原本的模型完成/)).toBeInTheDocument();
+    expect(screen.getByText(/已經在跑的工作（例如正在產生的學習單）會用開始時的模型跑完/)).toBeInTheDocument();
     // No effort for the NCHC model; no reset while the default is in use.
     expect(screen.queryByLabelText("推理強度")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "恢復環境變數預設" })).not.toBeInTheDocument();

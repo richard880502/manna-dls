@@ -233,6 +233,11 @@ pub fn strip_nul(value: &mut serde_json::Value) {
     }
 }
 
+tokio::task_local! {
+    /// The settings a background job runs with (see [`AiClient::pinned`]).
+    static PINNED: ActiveAi;
+}
+
 /// The text model's settings: what the PI may switch (`app_settings.ai_text_model`), what the
 /// environment (`AI_PROVIDER`, `AI_MODEL`, `AI_EFFORT`, `AI_TIMEOUT_SECS`) provides by default.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -307,6 +312,8 @@ pub struct AiClient {
     /// The longest call timeout in effect since the process started, for the stale-job checks
     /// (a job started under a long timeout must not look stale after the PI shortens it).
     longest_timeout_secs: AtomicU64,
+    /// Settings remembered per prep turn (see [`AiClient::remember_turn`]).
+    turn_pins: std::sync::Mutex<std::collections::HashMap<i64, ActiveAi>>,
     /// Serialises the PI's changes (test call, save, activate).
     pub(crate) change_lock: tokio::sync::Mutex<()>,
     http: reqwest::Client,
@@ -336,6 +343,7 @@ impl AiClient {
         Self {
             active: std::sync::RwLock::new((Arc::new(env_default.clone()), AiSource::Env)),
             longest_timeout_secs: AtomicU64::new(env_default.timeout_secs),
+            turn_pins: std::sync::Mutex::default(),
             env_default,
             change_lock: tokio::sync::Mutex::new(()),
             http,
@@ -359,11 +367,73 @@ impl AiClient {
         }
     }
 
-    /// The settings in force right now. Take it ONCE per AI call and use it for everything
-    /// about that call, including what is recorded.
+    /// The settings in force right now, or the job's when called inside [`AiClient::pinned`].
+    /// Take it ONCE per AI call and use it for everything about that call, including what is
+    /// recorded.
     pub fn active(&self) -> ActiveAi {
+        if let Ok(pinned) = PINNED.try_with(|a| a.clone()) {
+            return pinned;
+        }
         let guard = self.active.read().unwrap_or_else(|e| e.into_inner());
         self.snapshot_of(&guard.0)
+    }
+
+    /// Pins the settings for a whole background job: every [`AiClient::active`] inside `fut`
+    /// returns the settings in force NOW (when this is called, i.e. when the job is started),
+    /// whatever the PI switches meanwhile. Inside an already pinned scope the outer pin is
+    /// kept, so a job that starts another job passes its model on.
+    ///
+    /// Task-locals do not cross `tokio::spawn`: wrap the future handed to every `spawn` that
+    /// leads to text-model calls.
+    pub fn pinned<F: std::future::Future>(
+        &self,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PINNED.scope(self.active(), fut)
+    }
+
+    /// Remembers the settings a prep turn starts with. A turn's work is several jobs, some
+    /// started later by a poll of the page (the SIOP self-check after its worksheet): they all
+    /// run with this pin, so the turn never mixes models. In memory of this process, like the
+    /// switch itself.
+    pub fn remember_turn(&self, turn_id: i64) {
+        let pin = self.active();
+        let mut pins = self.turn_pins.lock().unwrap_or_else(|e| e.into_inner());
+        if pins.len() >= 1000 {
+            pins.clear();
+        }
+        pins.insert(turn_id, pin);
+    }
+
+    pub fn forget_turn(&self, turn_id: i64) {
+        self.turn_pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&turn_id);
+    }
+
+    fn turn_pin(&self, turn_id: i64) -> ActiveAi {
+        let found = self
+            .turn_pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&turn_id)
+            .cloned();
+        found.unwrap_or_else(|| self.active())
+    }
+
+    /// Like [`AiClient::pinned`], with the settings the turn started with.
+    pub fn pinned_turn<F: std::future::Future>(
+        &self,
+        turn_id: i64,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PINNED.scope(self.turn_pin(turn_id), fut)
+    }
+
+    /// Runs `f` (which starts a job with [`AiClient::pinned`]) with the turn's settings.
+    pub fn in_turn<R>(&self, turn_id: i64, f: impl FnOnce() -> R) -> R {
+        PINNED.sync_scope(self.turn_pin(turn_id), f)
     }
 
     /// A client for settings that are not active (the admin test call).
@@ -408,6 +478,15 @@ impl AiClient {
 }
 
 impl ActiveAi {
+    /// Runs `fut` with these settings pinned (see [`AiClient::pinned`]); for a snapshot taken
+    /// earlier and carried into a spawned task.
+    pub fn scope<F: std::future::Future>(
+        self,
+        fut: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        PINNED.scope(self, fut)
+    }
+
     pub fn enabled(&self) -> bool {
         self.kind != AiProviderKind::None
     }
@@ -491,6 +570,27 @@ mod tests {
         assert_eq!(client.longest_timeout_secs(), 600);
         client.set_active(client.env_default().clone(), AiSource::Env);
         assert_eq!(client.active().model, "fake-model");
+    }
+
+    #[tokio::test]
+    async fn a_pinned_scope_ignores_a_later_switch_and_nested_scopes_keep_the_outer_pin() {
+        let client = AiClient::from_config(&Config::for_tests("unused"));
+        let seen = client
+            .pinned(async {
+                client.set_active(settings("switched", 600), AiSource::Admin);
+                let inside = client.active();
+                // A nested job inherits the outer pin, not the switched settings.
+                let nested = client.pinned(async { client.active().model }).await;
+                (inside.model, nested)
+            })
+            .await;
+        assert_eq!(seen, ("fake-model".to_string(), "fake-model".to_string()));
+        // Outside the scope the switched settings apply.
+        assert_eq!(client.active().model, "switched");
+        // Pinned when called (the job is started), not when first polled.
+        let later = client.pinned(async { client.active().model });
+        client.set_active(settings("again", 60), AiSource::Admin);
+        assert_eq!(later.await, "switched");
     }
 
     #[test]

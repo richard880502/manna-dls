@@ -131,7 +131,7 @@ export function AiModelSettings() {
           ? `由 ${settings.changed_by ?? "主持人"} 於 ${formatDateTime(settings.changed_at)} 設定；預設是 ${describe(settings, settings.env_default)}。`
           : "目前用的是部署時設定的預設值。"}
       </p>
-      <p className="field-hint">套用後，新的 AI 要求立刻使用新模型；已經送出的要求會用原本的模型完成（多步驟的工作，後面的步驟會改用新模型）。</p>
+      <p className="field-hint">套用後，新開始的 AI 工作立刻使用新模型；已經在跑的工作（例如正在產生的學習單）會用開始時的模型跑完。</p>
 
       <div className="two-fields">
         <div>
@@ -222,7 +222,6 @@ export function AiModelSettings() {
       </div>
       <p className="field-hint">
         等待上限可設 {min}–{max} 秒。按下按鈕會先用新設定問模型一個小問題，成功才會儲存；沒通過就維持原本的模型。
-        {provider?.id === "openai" && " OpenAI 是海外服務，只在研究計畫同意的範圍內使用。"}
       </p>
 
       <div className="button-row admin-actions">

@@ -105,6 +105,7 @@ pub struct TurnInput {
 /// spawns its activity plan (which runs even when the worksheet could not start); the other
 /// kinds are spawned.
 pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
+    state.ai.remember_turn(input.turn.id);
     let kind = input.turn.kind.as_str();
     if let (KIND_WORKSHEET, Some(template_id)) = (kind, input.turn.template_id) {
         let teacher_id = input.session.teacher_id;
@@ -222,14 +223,24 @@ fn spawn(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
         let work = {
             let state = state.clone();
             let tracker = tracker.clone();
-            tokio::spawn(async move { run(&state, &input, &tracker).await })
+            tokio::spawn(
+                state
+                    .ai
+                    .clone()
+                    .pinned_turn(turn_id, async move { run(&state, &input, &tracker).await }),
+            )
         };
         let outcome = settle(turn_id, work.await);
         tracker
             .finish(outcome.as_ref().err().map(String::as_str))
             .await;
         match store::finish(&state.db, turn_id, outcome).await {
-            Ok(Some(check)) => super::selfcheck::spawn(&state, check),
+            Ok(Some(check)) => {
+                state
+                    .ai
+                    .in_turn(turn_id, || super::selfcheck::spawn(&state, check));
+                state.ai.forget_turn(turn_id);
+            }
             Ok(None) => {}
             Err(e) => tracing::error!(turn_id, error = %e, "could not close the prep turn"),
         }
@@ -251,7 +262,9 @@ fn spawn_kit(
         let work = {
             let state = state.clone();
             let tracker = tracker.clone();
-            tokio::spawn(async move { activity(&state, &input, &tracker).await })
+            tokio::spawn(state.ai.clone().pinned_turn(turn_id, async move {
+                activity(&state, &input, &tracker).await
+            }))
         };
         let outcome = settle(turn_id, work.await);
         tracker
@@ -326,7 +339,7 @@ fn spawn_after_template(state: &AppState, input: TurnInput, template_id: i64) {
     tokio::spawn(async move {
         let work = {
             let state = state.clone();
-            tokio::spawn(async move {
+            tokio::spawn(state.ai.clone().pinned_turn(turn_id, async move {
                 let teacher_id = input.session.teacher_id;
                 Ok::<_, AppError>(
                     match wait_for_template(&state, turn_id, template_id, teacher_id).await? {
@@ -338,7 +351,7 @@ fn spawn_after_template(state: &AppState, input: TurnInput, template_id: i64) {
                             .map(|e| worksheet_failure(&input, &e)),
                     },
                 )
-            })
+            }))
         };
         let failure = match work.await {
             Ok(Ok(failure)) => failure,
