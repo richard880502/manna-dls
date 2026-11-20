@@ -324,7 +324,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "worksheet_block_revise",
         name_zh: "逐區修改：改一個區塊",
         group: G_REVISE,
-        description: "老師在學習單上指定一個區塊、寫下註記或指示請 AI 修改時使用。",
+        description: "老師在學習單上指定一個區塊、寫下註記或指示請 AI 修改時使用。可以改題目，也可以改、刪或新增這一區的鷹架（程序鷹架、句型框架…）、字詞表和 Glossary；它們都列在「這一區目前的內容」裡，各有代號。",
         uses_user_template: true,
         vars: vars![
             auto("instruction", "老師的修改指示"),
@@ -332,7 +332,7 @@ pub static REGISTRY: &[PromptInfo] = &[
             auto("scope", "可以修改的範圍"),
             opt("round_note", "第幾次修改的提醒"),
             opt("block_name", "區塊名稱"),
-            auto("block_detail", "這一區目前的內容"),
+            auto("block_detail", "這一區目前的內容（含每一題、鷹架、字詞表、Glossary，各有代號）"),
             opt("style_note", "風格提醒"),
             opt("other_blocks", "其他區塊的概況"),
             opt("objectives_summary", "學習目標"),

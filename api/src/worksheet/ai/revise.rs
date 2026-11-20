@@ -25,12 +25,13 @@ use crate::worksheet::checks::SectionCtx;
 use crate::worksheet::comments::{self, Comment, Field, STATUS_OPEN};
 use crate::worksheet::images::actions;
 use crate::worksheet::revise::{
-    self as rv, code, max_items, max_tokens, merge, MergeCtx, Merged, NewProposal, Proposal,
-    RawBlockRevision, Scope, KEY_BLOCK_REVISE, SCAFFOLD, SCHEMA_NAME,
+    self as rv, code, gloss_code, max_items, max_tokens, merge, scaffold_code, word_code, Extras,
+    MergeCtx, Merged, NewProposal, Proposal, RawBlockRevision, Scope, KEY_BLOCK_REVISE, SCAFFOLD,
+    SCHEMA_NAME,
 };
 use crate::worksheet::template::MSG_EXTERNAL;
 use crate::worksheet::{
-    store, Audience, Block, BlockKind, Content, Level, ANSWER_FORMATS, MAX_ID_CHARS,
+    store, Audience, Block, BlockKind, Content, Level, ScaffoldType, ANSWER_FORMATS, MAX_ID_CHARS,
 };
 use crate::AppState;
 
@@ -261,8 +262,94 @@ fn options_line(options: &[String]) -> String {
         .join(" ｜ ")
 }
 
+/// Where the students read a scaffold, as the teacher names it.
+fn scaffold_label(s: &crate::worksheet::Scaffold) -> String {
+    match s.kind_type {
+        ScaffoldType::Procedural => format!("程序鷹架（{}）", s.kind),
+        ScaffoldType::Verbal => format!("語言鷹架・{}", s.kind),
+        ScaffoldType::Instructional => format!("教學鷹架・{}", s.kind),
+    }
+}
+
+fn levels_line(levels: &[Level]) -> String {
+    levels
+        .iter()
+        .map(|l| l.label())
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
+/// What the block prints besides its questions, every part with its code, or 「（沒有）」: the
+/// scaffolds (S), the word table (W) and the Glossary (G). The model can only talk about, keep,
+/// change or remove what is listed here, so the list has to be the whole of it.
+fn extras_detail(block: &Block) -> Vec<String> {
+    let mut lines = Vec::new();
+    if block.scaffolds.is_empty() {
+        lines.push("鷹架（程序鷹架、句型框架、引導問題、作答示例等）：（沒有）".to_string());
+    } else {
+        lines.push("鷹架（學生版這一區印在題目旁的支持）：".to_string());
+    }
+    for (k, s) in block.scaffolds.iter().enumerate() {
+        let heading = s
+            .own_heading()
+            .map(|h| format!("｜標題：{h}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{}｜{}｜印在：{}{}{heading}",
+            scaffold_code(k),
+            scaffold_label(s),
+            levels_line(&s.levels),
+            if s.auto { "｜系統自動產生" } else { "" },
+        ));
+        if s.kind_type == ScaffoldType::Procedural {
+            for (n, step) in s.steps.iter().enumerate() {
+                lines.push(format!("  步驟 {}：{}", n + 1, step.trim()));
+            }
+        } else {
+            lines.push(format!("  內容：{}", s.content.trim()));
+        }
+    }
+    if block.vocabulary.is_empty() {
+        lines.push("字詞表（學生版的 Word / Meaning / 級別 表格）：（沒有）".to_string());
+    } else {
+        lines.push(
+            "字詞表（學生版這一區的 Word / Meaning / 級別 表格，每一列一個字）：".to_string(),
+        );
+    }
+    for (k, v) in block.vocabulary.iter().enumerate() {
+        let level = if v.task_word {
+            "指示用語（解釋由平台決定，不能改）".to_string()
+        } else {
+            v.level
+                .map_or("級別未知".to_string(), |l| format!("第 {l} 級"))
+        };
+        lines.push(format!(
+            "{}｜{}｜{level}｜解釋：{}",
+            word_code(k),
+            v.word.trim(),
+            or_none(&v.definition)
+        ));
+    }
+    if block.glosses.is_empty() {
+        lines.push("Glossary（印在這一區最後的字義註解）：（沒有）".to_string());
+    } else {
+        lines.push("Glossary（印在這一區最後的字義註解）：".to_string());
+    }
+    for (k, g) in block.glosses.iter().enumerate() {
+        lines.push(format!(
+            "{}｜{}｜{}｜印在：{}",
+            gloss_code(k),
+            g.word.trim(),
+            g.meaning_zh.trim(),
+            levels_line(&g.levels)
+        ));
+    }
+    lines
+}
+
 /// The block as the model reads it: title, instructions, its fixed Bloom level or need for the
-/// teacher's material, and every question with its code and printed number.
+/// teacher's material, every question with its code and printed number, and then everything else
+/// the sheet prints for the block (scaffolds, word table, Glossary), each with its code.
 fn block_detail(
     block: &Block,
     printed: &HashMap<String, usize>,
@@ -306,6 +393,7 @@ fn block_detail(
             lines.push(format!("  參考答案：{}", item.answer.trim()));
         }
     }
+    lines.extend(extras_detail(block));
     lines.join("\n")
 }
 
@@ -494,6 +582,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         ),
     };
     let max = max_items(block.items.len());
+    let extras = Extras::of(&block);
     let pictures_on = state.images.enabled();
     let states = crate::worksheet::images::current(db, ws.id).await?;
     let slot_ids = actions::slot_ids(&content, Some(&block.id));
@@ -569,6 +658,16 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             "bloom": i.bloom.map(|b| b.as_str()),
         })).collect::<Vec<Value>>(),
         "targets": targets,
+        "scaffolds": block.scaffolds.iter().enumerate().map(|(k, s)| json!({
+            "code": scaffold_code(k), "kind": s.kind, "procedural": s.kind_type == ScaffoldType::Procedural,
+            "content": s.content, "steps": s.steps,
+        })).collect::<Vec<Value>>(),
+        "words": block.vocabulary.iter().enumerate().map(|(k, v)| json!({
+            "code": word_code(k), "word": v.word, "task_word": v.task_word, "meaning": v.definition,
+        })).collect::<Vec<Value>>(),
+        "glossary": block.glosses.iter().enumerate().map(|(k, g)| json!({
+            "code": gloss_code(k), "word": g.word,
+        })).collect::<Vec<Value>>(),
         "pictures": actions::describe(&block, &states),
         "block_id": block.id,
         "open": scope.open,
@@ -586,6 +685,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             &block.id,
             &slot_ids,
             if pictures_on { actions::MAX_ACTIONS } else { 0 },
+            &extras,
         ),
         vars,
         required,
@@ -595,7 +695,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             ("other_blocks", "由教材衍生的內容"),
         ],
         fake_context,
-        max_tokens: max_tokens(max),
+        max_tokens: max_tokens(max) + extras.tokens(),
         temperature: BASE_TEMPERATURE + 0.1 * (round - 1).clamp(0, 6) as f32,
         trace: json!({
             "worksheet_id": ws.id, "block_id": block.id, "proposal_id": proposal_id,
@@ -633,6 +733,9 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
             format!("p{proposal_id}")
         }
     };
+    let lexicon = crate::vocabulary::load_lexicon(db, None)
+        .await?
+        .filter(|l| !l.is_empty());
     let mctx = MergeCtx {
         old: &block,
         scope: &scope,
@@ -643,6 +746,8 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         new_prefix: &prefix,
         printed: &printed,
         max_items: max,
+        lexicon: lexicon.as_ref(),
+        paragraphs: &material.paragraphs,
     };
     let name_of = |_: &str| None::<String>;
     let result = call(
@@ -684,6 +789,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
                 reply,
                 changed,
                 failed,
+                false_claim,
             } = merged;
             let mut notes = String::new();
             if dropped > 0 {
@@ -705,6 +811,13 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
                     reply
                 };
                 (Ok((revised, format!("{reply}{notes}"), pictures)), Some(id))
+            } else if false_claim {
+                (
+                    Err(format!(
+                        "Manna 誤以為這一區沒有您要改的部分，所以沒有改動。可以再請 Manna 改一次，或直接按那一部分旁邊的「刪除」。{notes}"
+                    )),
+                    Some(id),
+                )
             } else if !failed.is_empty() {
                 (
                     Err(format!(
@@ -728,4 +841,103 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
     };
     rv::finish(db, proposal_id, outcome, interaction_id).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worksheet::{Gloss, Item, Origin, Scaffold, Vocab};
+
+    fn block() -> Block {
+        Block {
+            id: "b1".into(),
+            title: "Identify the opening event".into(),
+            instructions: "Read and answer.".into(),
+            items: vec![Item {
+                id: "i1".into(),
+                answer_format: Some("簡答題".into()),
+                prompt: "What happened first?".into(),
+                ..Item::default()
+            }],
+            scaffolds: vec![
+                Scaffold {
+                    id: "s1".into(),
+                    kind_type: ScaffoldType::Procedural,
+                    kind: "清楚的分步指示及完成順序".into(),
+                    steps: vec!["Read.".into(), "Underline.".into()],
+                    levels: vec![Level::Basic, Level::Standard],
+                    auto: true,
+                    origin: Origin::Ai,
+                    ..Scaffold::default()
+                },
+                Scaffold {
+                    id: "s2".into(),
+                    kind_type: ScaffoldType::Verbal,
+                    kind: "句型框架".into(),
+                    content: "The first event is ___.".into(),
+                    levels: vec![Level::Standard],
+                    origin: Origin::Ai,
+                    ..Scaffold::default()
+                },
+            ],
+            vocabulary: vec![
+                Vocab {
+                    word: "signal words".into(),
+                    definition: "提示詞".into(),
+                    task_word: true,
+                    ..Vocab::default()
+                },
+                Vocab {
+                    word: "umbrella".into(),
+                    level: Some(2),
+                    definition: "雨傘".into(),
+                    ..Vocab::default()
+                },
+            ],
+            glosses: vec![Gloss {
+                word: "abandon".into(),
+                meaning_zh: "放棄".into(),
+                levels: vec![Level::Standard],
+                ..Gloss::default()
+            }],
+            ..Block::default()
+        }
+    }
+
+    #[test]
+    fn the_model_reads_every_part_of_the_block_with_a_code() {
+        let text = block_detail(&block(), &HashMap::new(), None, false);
+        assert!(text.contains("Q1｜簡答題"), "{text}");
+        assert!(
+            text.contains(
+                "S1｜程序鷹架（清楚的分步指示及完成順序）｜印在：基礎版、一般版｜系統自動產生"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("  步驟 2：Underline."), "{text}");
+        assert!(
+            text.contains("S2｜語言鷹架・句型框架｜印在：一般版"),
+            "{text}"
+        );
+        assert!(text.contains("  內容：The first event is ___."), "{text}");
+        assert!(text.contains("Word / Meaning / 級別 表格"), "{text}");
+        assert!(
+            text.contains("W1｜signal words｜指示用語（解釋由平台決定，不能改）｜解釋：提示詞"),
+            "{text}"
+        );
+        assert!(text.contains("W2｜umbrella｜第 2 級｜解釋：雨傘"), "{text}");
+        assert!(text.contains("G1｜abandon｜放棄｜印在：一般版"), "{text}");
+    }
+
+    #[test]
+    fn a_block_without_them_says_so_instead_of_saying_nothing() {
+        let bare = Block {
+            items: block().items,
+            ..Block::default()
+        };
+        let text = block_detail(&bare, &HashMap::new(), None, false);
+        assert!(text.contains("鷹架（程序鷹架、句型框架、引導問題、作答示例等）：（沒有）"));
+        assert!(text.contains("Word / Meaning / 級別 表格）：（沒有）"));
+        assert!(text.contains("Glossary（印在這一區最後的字義註解）：（沒有）"));
+    }
 }

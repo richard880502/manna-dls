@@ -3156,6 +3156,8 @@ interface Account {
 
 設計見 [WORKSHEET_BLOCK_EDIT_RESEARCH.md](WORKSHEET_BLOCK_EDIT_RESEARCH.md) §4–§5。Migration `0020_worksheet_block_revise.sql`（兩張新表、prompt `worksheet_block_revise` 第 1 版、鷹架 `SC-WS-BLOCK-REVISE`）。既有端點只多了選填欄位；舊的學習單照常讀寫。
 
+`0044_block_revise_scaffolds.sql`：**「改這一區」涵蓋整區，鷹架、字詞表與 Glossary 也在內**（見「一次修改」）；`worksheet_block_revise` 新增一版提示詞（接在當時最新的文字後面，舊版保留；使用者訊息不用改，這些內容在 `{{block_detail}}` 裡），`SC-WS-BLOCK-REVISE` 的 `support_form` 補一句。建議卡（`WsProposal.changes.extras`）列出鷹架、字詞表與 Glossary 的修改，「採用」整個區塊一起寫入，復原與修改歷程用的是整個區塊，所以一併還原。編輯器的字詞表上方也有「刪除」（整張表，不經 AI）。
+
 教師在產生好的學習單上指定**一個區塊**（或選取區塊裡的一段文字），寫下註記或一句話，Manna 只改那一區。結果是一個**修改建議**（proposal）：學習單在教師按「採用」之前完全不變；採用後寫成一個新版本（`cause = "revise"`），被取代的區塊放進 `worksheet_block_history`，所以「復原上一版」照常可用。
 
 ## 資料
@@ -3190,7 +3192,12 @@ interface WsProposal {
   before: WsBlock;            // 送給 Manna 時的區塊
   block: WsBlock | null;      // 改好的區塊（proposed 之後）
   changes: { title: boolean; instructions: boolean;
-             items: Array<{ id: string; change: "kept" | "modified" | "new" | "removed" }> } | null;
+             items: Array<{ id: string; change: "kept" | "modified" | "new" | "removed" }>;
+             // 鷹架、字詞表、Glossary 裡改了、新增或刪除的（沒變的不列；舊的伺服器沒有這一欄）
+             extras?: Array<{ group: "scaffold" | "word" | "gloss";
+                              id: string;       // 鷹架的 id；字詞表與 Glossary 是字（小寫）
+                              label: string;    // 鷹架的種類（句型框架…）或字
+                              change: "modified" | "new" | "removed" }> } | null;
   interaction_id: number | null; accepted_version_no: number | null;
   created_at: string; finished_at: string | null; decided_at: string | null;
 }
@@ -3226,15 +3233,22 @@ interface WsProposal {
 
 背景一次呼叫（重試一次），經過與備課對話相同的呼叫與紀錄（`application::generation::call`：每次嘗試一列 `ai_interactions`、`max_tokens` 一定設、重試時溫度 +0.4 並列出沒通過的檢查、教材只記字數與雜湊）。`max_tokens` = 1000 + 220 × 可寫的題數（2500–6000）。第 n 次修改同一區（`round`）溫度從 0.2 起每次 +0.1，訊息裡也寫明「這是第 n 次、上一次的改法教師沒有採用」，所以請求一定不同（閘道會快取相同的請求）。
 
-**輸入**：這一區的標題、作答指示和每一題（代號 `Q1`、`Q2`…，附學生版題號、作答方式、Bloom 層次、選項、參考答案）；這一區的註記（`[Q2]「引文」→ 註記`、`[作答指示]`、`[整區]`；只有這次用到的）；可以修改的範圍；其他區塊的標題與題幹（唯讀，避免重複）；學習單的學習目標（不得修改）；照版型做的區塊附上版型的指示語言、指示語寫法、題型樣式與設計習慣；依 Bloom 層次產生的區塊註明固定層次；需要教師提供素材的區塊註明不得編造；班級特性、教師寫的學習目標與要求、勾了「提供給 AI」的教材註記；教材（段落標記）。不送學生資料。
+**輸入**：這一區的標題、作答指示和每一題（代號 `Q1`、`Q2`…，附學生版題號、作答方式、Bloom 層次、選項、參考答案），**以及學生版這一區印出來的其他部分，各有代號**：鷹架 `S1`…（程序鷹架列出每一步；句型框架、引導問題、作答示例等列出內容，附印在哪些版本與標題）、字詞表 `W1`…（學生版的 Word／Meaning／級別 表格，每一列一個字，附級別或「指示用語」與解釋）、Glossary `G1`…。每一類沒有時寫明「（沒有）」，所以模型說「這一區沒有」時對得上看到的內容（`block_detail`，`ai/revise.rs::extras_detail`）；這一區的註記（`[Q2]「引文」→ 註記`、`[作答指示]`、`[整區]`；只有這次用到的）；可以修改的範圍；其他區塊的標題與題幹（唯讀，避免重複）；學習單的學習目標（不得修改）；照版型做的區塊附上版型的指示語言、指示語寫法、題型樣式與設計習慣；依 Bloom 層次產生的區塊註明固定層次；需要教師提供素材的區塊註明不得編造；班級特性、教師寫的學習目標與要求、勾了「提供給 AI」的教材註記；教材（段落標記）。不送學生資料。
 
-**輸出 schema（依寫出順序）**：`{ title ≤150, instructions ≤500, items ≤max(n+6, 12): [{ source: enum("Q1"…, "new"), keep: boolean, answer_format: enum, prompt ≤600, options ≤6×150, answer ≤400, bloom: enum }], reply ≤200 }`。`title`／`instructions` 寫空字串表示不改；`keep` 為 true 的題目只寫代號與標籤，內容寫空字串。
+**輸出 schema（依寫出順序）**：`{ title ≤150, instructions ≤500, items ≤max(n+6, 12): [{ source: enum("Q1"…, "new"), keep: boolean, answer_format: enum, prompt ≤600, options ≤6×150, answer ≤400, bloom: enum }], scaffolds: [{ source: enum("S1"…, "new"), action: enum("keep","change","remove"), kind: enum, content ≤1200, steps ≤12×300 }], words: [{ source: enum("W1"…, "new"), action: enum, word ≤60, meaning ≤200 }], glossary: [{ source: enum("G1"…), action: enum("keep","remove") }], picture_actions, reply ≤200 }`。`title`／`instructions` 寫空字串表示不改；`keep` 為 true 的題目只寫代號與標籤，內容寫空字串。`scaffolds`、`words`（最多比現有的多 5 筆）、`glossary` 只需列出要改、要刪或要新增的；沒列出的一律保留（所以輸出被截斷也不會誤刪）。`max_tokens` 另加 400 + 90 × 鷹架、字詞與 Glossary 的筆數（上限 4000）。
 
 **伺服器怎麼組回去**（`worksheet::revise::merge`，從存著的區塊出發，只換模型改的地方）：
 
 - `keep: true` 的題目**原封不動**沿用存著的那一題（id、教師改過的字、`levels`、`hint`、`purpose`、`origin` 都不變），不採用模型抄回的文字。
 - 修改的題目保留 id、`levels`、`hint`、`purpose`，換掉作答方式、題幹、選項與 Bloom 層次；參考答案變了才換答案與依據。內容和原本一樣的不算修改。`origin` 改成 `ai`。差異化學習單的題目只有在題幹沒變時保留各版本的支持與答案（`tiers`），題幹變了就沒有 `tiers`。新題目有新 id（`<block>-p<proposal>n<k>`），出現在學習單的所有版本（差異化學習單每一題都在三個版本）。依 Bloom 層次產生的區塊，每一題都用那個層次。
-- 模型看不到的欄位（字詞表、鷹架、教師備註、`template_section_id`，以及之後加的欄位，例如圖片）全部沿用。
+- 模型看不到的欄位（教師備註、`template_section_id`，以及之後加的欄位，例如圖片）全部沿用。
+- **鷹架、字詞表、Glossary 也是這一區的一部分**（Issue：教師說「不要單字表格」三次，Manna 三次回答「這一區沒有單字表格」，因為以前送給模型的只有標題、指示與題目，輸出也沒有放鷹架的欄位）。範圍開放（整區）時模型可以：
+  - 鷹架（`worksheet::revise::merge_scaffolds`）：`remove` 刪除；`change` 程序鷹架換 `steps`（空白步驟拿掉，1–12 步）、其他鷹架換 `content`（不可為空），id、種類、`levels`、標題保留，`origin` 改成 `ai`，內容沒變不算修改；`new` 新增，`kind` 只能是句型框架、引導問題、作答示例或清楚的分步指示及完成順序，`levels` 是這份學習單的版本，id 是 `<block>-p<proposal>s<k>`，一次最多新增 5 個。
+  - 字詞表（`merge_words`）：`remove` 刪一列（每一列都 remove 就是整張表不見）；`change` 只能換 `meaning`（不可為空），**標了指示用語（`task_word`）的列解釋由程式決定，模型寫什麼都不採用**，字與級別不動；`new` 新增一個字：要是英文字或片語（≤60 字元）、有解釋、**真的出現在教材或這一區的文字裡**（容許詞尾變化）、表裡還沒有，**級別由程式查詞彙表（`vocabulary::word_level`），不用模型寫**，`paragraph_id` 與例句取自第一個出現的段落；一次最多新增 5 個。
+  - Glossary（`merge_glosses`）：只能 `remove`。
+  - 沒通過上面任一項的修改：該項維持原樣（新增的不加入）、列進重試的問題、`reply` 後面註明「（鷹架 S2 的修改沒有通過學習單的檢查，維持原樣。）」。
+  - 範圍只有標在題目／標題／作答指示上的註記時，三者一律沿用，模型寫什麼都不採用。
+- **「這一區沒有 X」的回覆檢查**（`false_absences`，沒有新的檢查名稱，併在 `checks` 的問題裡）：`reply` 在「沒有／找不到／看不到／不存在…」之後 6 個字內出現字詞表（單字表、字詞表、字彙表、word table…）、Glossary、程序鷹架（步驟）、句型框架、引導問題、作答示例或鷹架的名稱，而改完之後這一區**還有**那一部分 → 失敗：重試時會告訴模型「回覆說這一區沒有字詞表，但這一區有…」。「沒有改動鷹架」這類說明做了什麼的句子不算。重試後仍是 → 這個建議 `failed`，訊息說 Manna 誤以為這一區沒有那一部分、可以再改一次或直接按旁邊的「刪除」，**不會把那句話轉告教師**（有其他修改時 `reply` 改用預設的「已依你的註記修改這一區。」）。
 - **範圍由程式決定**：有一句話、整區的註記或 `whole_block: true` → 整區都可以改（可以新增、刪除、調整順序；模型沒列出的題目就是刪除）。只有標在題目／標題／作答指示上的註記 → 只有那幾處可以改，其他題、標題、作答指示不論模型寫了什麼都沿用原樣，模型沒列出的題目放回原位，題目順序維持；新題目可以加，排在它在模型輸出裡跟著的那一題後面。
 - 修改與新題目用照版型產生時的同一套檢查（`evaluate_section` 的每一題檢查：固定標籤、選擇題答案在選項內、題幹不含答案、需要教師素材時不得寫出網址或影片、音節依字典）。沒通過 → 重試一次；重試後還是沒通過的那一題維持原樣（新題目不加入），`reply` 後面註明「（第 5 題的修改沒有通過學習單的檢查，維持原樣。）」。
 - 結果和原本完全一樣 → 沒有建議，`failed`：模型的 `reply` 是澄清問題時照實轉告（「Manna 沒有改動這一區：…」）；所有修改都沒通過檢查時說明。逾時、供應商錯誤同樣是 `failed` 並附原因。
@@ -3632,6 +3646,10 @@ interface RunProgress {
 
 | 標記 | 效果 |
 |---|---|
+| `FAKE_REVISE_NO_WORDS`／`NO_SCAFFOLDS`／`NO_GLOSS` | 逐區修改：題目全部 keep，刪掉每一列字詞表／每一個鷹架／每一筆 Glossary |
+| `FAKE_REVISE_FRAME`／`ADD_FRAME` | 逐區修改：第一個句型框架與第一個程序鷹架的第一步加「 (reworded)」／新增一個句型框架 |
+| `FAKE_REVISE_ADD_WORD`（加 `_BAD`） | 逐區修改：字詞表新增 umbrella（加 `_BAD` 時另有教材裡沒有的 zebra） |
+| `FAKE_REVISE_CLAIM_NONE`（`_ALWAYS`） | 逐區修改：回覆說「這一區沒有單字表格」（只有第一次呼叫；重試時刪掉字詞表／兩次都說） |
 | `FAKE_PREP_PIC_ADD`／`REDRAW`／`REMOVE` | revise：另外提出加圖（第一個有題目的區塊）／重畫第一張圖（「no text in the picture」）／移除最後一張圖 |
 | `FAKE_PREP_PIC_BAD` | revise：四個不合格的動作（不存在的區塊、不存在的 slot ×2、含網址） |
 | `FAKE_PREP_PIC_MANY` | revise：每個有題目的區塊兩個 `add`（超過 3 個，伺服器只留前 3 個） |
