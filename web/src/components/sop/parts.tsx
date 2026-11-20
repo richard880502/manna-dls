@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { SopJobKind, SopParagraph, SopScaffolds } from "../../api/types";
+import type { SopJob, SopJobKind, SopParagraph, SopScaffolds } from "../../api/types";
 import { useApp } from "../../context/AppContext";
 import { SCAFFOLD_FIELDS, paragraphMark } from "../../lib/sop";
 import { AiContextPanel } from "../AiContextPanel";
@@ -25,13 +25,16 @@ interface MannaWellProps {
   onAdopt: () => void;
   onEdit: () => void;
   onDismiss: () => void;
+  /** 換一個 / 這一段再建議一次: asks for just this suggestion again. */
+  onAgain?: () => void;
+  againLabel?: string;
 }
 
 /**
  * One suggestion from Manna, in gold, sitting under the step or paragraph it belongs to. Nothing
  * of it is written into the lesson until the teacher presses 採用 or finishes 修改後採用.
  */
-export function MannaWell({ label, children, onAdopt, onEdit, onDismiss }: MannaWellProps) {
+export function MannaWell({ label, children, onAdopt, onEdit, onDismiss, onAgain, againLabel = "換一個" }: MannaWellProps) {
   const name = `Manna 建議 · ${label}`;
   return (
     <div className="manna-well" role="group" aria-label={name}>
@@ -50,6 +53,11 @@ export function MannaWell({ label, children, onAdopt, onEdit, onDismiss }: Manna
         <button type="button" className="decide-button" onClick={onDismiss}>
           不用
         </button>
+        {onAgain && (
+          <button type="button" className="decide-button" onClick={onAgain}>
+            {againLabel}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -145,9 +153,9 @@ export function ScaffoldFields({
           <label className="field-label" htmlFor={`${idPrefix}-${field.key}`}>
             {field.label}
           </label>
-          <input
+          <textarea
             id={`${idPrefix}-${field.key}`}
-            type="text"
+            rows={field.key === "procedural" ? 3 : 2}
             value={value[field.key]}
             placeholder={field.hint}
             onChange={(e) => onChange({ ...value, [field.key]: e.target.value })}
@@ -167,7 +175,7 @@ export function ScaffoldList({ value }: { value: SopScaffolds }) {
       {filled.map((f) => (
         <div key={f.key}>
           <dt>{f.label}</dt>
-          <dd>{value[f.key]}</dd>
+          <dd className="pre-line">{value[f.key]}</dd>
         </div>
       ))}
     </dl>
@@ -184,5 +192,45 @@ export function NoMaterialNote({ onGoToMaterial }: { onGoToMaterial: () => void 
       </button>
       。
     </p>
+  );
+}
+
+/** A suggestion that is being asked for again: what is going on, or that it did not work. */
+export function RedoPending({
+  label,
+  job,
+  onAgain,
+}: {
+  label: string;
+  job: SopJob | null;
+  onAgain: () => void;
+}) {
+  const elapsed = useElapsedSeconds(job?.started_at, job?.status === "running");
+  if (!job) return null;
+  if (job.status === "running") {
+    return (
+      <div className="manna-well manna-progress" role="status" aria-label={`Manna 正在重新建議 · ${label}`}>
+        <p className="manna-label">
+          <span className="star is-working" aria-hidden="true" />
+          Manna 正在重新建議 · {label}
+        </p>
+        <p>{job.phase || "正在處理"}…（已經 {elapsed} 秒）</p>
+      </div>
+    );
+  }
+  if (job.result?.status === "shown") return null;
+  return (
+    <div className="manna-well" role="status">
+      <p className="manna-label">
+        <span className="star" aria-hidden="true" />
+        Manna 建議 · {label}
+      </p>
+      <AiStatusMessage status={job.result?.status ?? "error"} message={job.result?.message ?? null} />
+      <div className="decide">
+        <button type="button" className="decide-button" onClick={onAgain}>
+          再試一次
+        </button>
+      </div>
+    </div>
   );
 }

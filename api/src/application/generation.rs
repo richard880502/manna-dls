@@ -21,11 +21,11 @@ use crate::text::clip_chars;
 use crate::AppState;
 
 const RETRY_TEMPERATURE_STEP: f32 = 0.4;
-const MSG_UNREADABLE: &str =
+pub(crate) const MSG_UNREADABLE: &str =
     "Manna 這次沒有交出可以用的內容（輸出不完整或沒有通過檢查）。請按「再試一次」。";
-const MSG_TIMEOUT: &str = "AI 目前沒有回應，這次沒有完成。請稍後按「再試一次」。";
-const MSG_ERROR: &str = "AI 暫時無法使用，這次沒有完成。請稍後按「再試一次」。";
-const MSG_DISABLED: &str = "這個環境沒有開啟 AI 協助。";
+pub(crate) const MSG_TIMEOUT: &str = "AI 目前沒有回應，這次沒有完成。請稍後按「再試一次」。";
+pub(crate) const MSG_ERROR: &str = "AI 暫時無法使用，這次沒有完成。請稍後按「再試一次」。";
+pub(crate) const MSG_DISABLED: &str = "這個環境沒有開啟 AI 協助。";
 
 // ---------------------------------------------------------------- one model call, retried once
 
@@ -72,6 +72,32 @@ pub(crate) async fn call<R, T>(
 where
     R: DeserializeOwned,
 {
+    call_in(
+        state,
+        teacher_id,
+        (None, None),
+        c,
+        context_requirements,
+        check,
+        on_first,
+    )
+    .await
+}
+
+/// [`call`] for work that belongs to a unit and lesson (the 課例 SOP steps): `scope` is
+/// `(unit_id, lesson_id)` of the logged interactions.
+pub(crate) async fn call_in<R, T>(
+    state: &AppState,
+    teacher_id: i64,
+    scope: (Option<i64>, Option<i64>),
+    c: Call,
+    context_requirements: impl FnOnce(&prompts::PromptVersion) -> Vec<(&'static str, &'static str)>,
+    check: impl Fn(&R) -> Checked<T>,
+    on_first: impl AsyncFnOnce(i64) -> AppResult<()>,
+) -> AppResult<Result<(T, i64), String>>
+where
+    R: DeserializeOwned,
+{
     let db = &state.db;
     if !state.ai.enabled() {
         return Ok(Err(MSG_DISABLED.to_string()));
@@ -92,8 +118,8 @@ where
     let meta = InteractionMeta {
         teacher_id,
         module: c.key,
-        unit_id: None,
-        lesson_id: None,
+        unit_id: scope.0,
+        lesson_id: scope.1,
         scaffold_id: scaffold_id(db, c.scaffold).await?,
         prompt_version_id: Some(prompt.id),
     };

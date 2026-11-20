@@ -30,8 +30,9 @@ use super::checks::{
     evaluate_analysis, evaluate_objectives, merge_analysis, AnalysisEval, ObjectivesEval,
 };
 use super::schemas::{self, AnalysisSuggestion, ObjectivesSuggestion, RawAnalysis, RawObjectives};
+use super::stages;
 use super::store::{Material, Version};
-use super::{numbered_passage, Paragraph};
+use super::{numbered_passage, ObjectiveType, Paragraph};
 use crate::ai::pipeline::{
     self, AiContextItem, AiResult, ContextList, InteractionMeta, Outcome, Source,
 };
@@ -83,6 +84,10 @@ const PHASE_OBJECTIVES_REPAIR: &str = "正在重新確認目標與課綱連結";
 pub enum JobKind {
     Analysis,
     Objectives,
+    Goals,
+    Tasks,
+    Warmup,
+    ExitTicket,
 }
 
 impl JobKind {
@@ -90,13 +95,85 @@ impl JobKind {
         match self {
             Self::Analysis => "analysis",
             Self::Objectives => "objectives",
+            Self::Goals => "goals",
+            Self::Tasks => "tasks",
+            Self::Warmup => "warmup",
+            Self::ExitTicket => "exit_ticket",
         }
     }
 
-    fn first_phase(self) -> &'static str {
+    fn first_phase(self, scope: &Scope) -> &'static str {
+        match (self, scope) {
+            (Self::Objectives, Scope::Swap(_)) => stages::PHASE_SWAP,
+            (Self::Goals, Scope::Paragraph { .. }) => stages::PHASE_REDO,
+            (Self::Analysis, _) => PHASE_ANALYSIS,
+            (Self::Objectives, _) => PHASE_OBJECTIVES,
+            (Self::Goals, _) => stages::PHASE_GOALS,
+            (Self::Tasks, _) => stages::PHASE_TASKS,
+            (Self::Warmup, _) => stages::PHASE_WARMUP,
+            (Self::ExitTicket, _) => stages::PHASE_EXIT,
+        }
+    }
+}
+
+/// 換一個: the one suggestion of an objectives job to replace.
+#[derive(Debug, Clone)]
+pub struct Swap {
+    pub parent_job_id: i64,
+    /// The suggestion's `item_index` in the parent job's result.
+    pub index: i32,
+    pub kind: ObjectiveType,
+    /// The suggestion being set aside (its text).
+    pub declined: String,
+    /// Objectives the new one must not repeat.
+    pub avoid: Vec<String>,
+}
+
+/// What part of a stage a job covers: all of it, or one suggestion (換一個, 這一段再建議一次).
+#[derive(Debug, Clone)]
+pub enum Scope {
+    Whole,
+    Swap(Swap),
+    Paragraph {
+        parent_job_id: Option<i64>,
+        paragraph_id: String,
+    },
+}
+
+impl Scope {
+    /// Part of the uniqueness of a running job: the whole stage is `""`.
+    pub fn slot(&self) -> String {
         match self {
-            Self::Analysis => PHASE_ANALYSIS,
-            Self::Objectives => PHASE_OBJECTIVES,
+            Self::Whole => String::new(),
+            Self::Swap(s) => format!("{}:{}", s.parent_job_id, s.index),
+            Self::Paragraph { paragraph_id, .. } => format!("p:{paragraph_id}"),
+        }
+    }
+
+    pub fn paragraph_id(&self) -> Option<&str> {
+        match self {
+            Self::Paragraph { paragraph_id, .. } => Some(paragraph_id),
+            _ => None,
+        }
+    }
+
+    fn parent(&self) -> Option<i64> {
+        match self {
+            Self::Whole => None,
+            Self::Swap(s) => Some(s.parent_job_id),
+            Self::Paragraph { parent_job_id, .. } => *parent_job_id,
+        }
+    }
+
+    fn params(&self) -> Option<Value> {
+        match self {
+            Self::Whole => None,
+            Self::Swap(s) => Some(json!({
+                "index": s.index, "type": s.kind.label(),
+                // Counts only: the declined text is in the parent job's result.
+                "avoid_count": s.avoid.len(),
+            })),
+            Self::Paragraph { paragraph_id, .. } => Some(json!({ "paragraph_id": paragraph_id })),
         }
     }
 }
@@ -117,6 +194,10 @@ pub struct Job {
     pub result: Option<Value>,
     /// `item_index` values the teacher already decided on.
     pub decided: Vec<i32>,
+    /// `""` for a whole stage; otherwise the one suggestion this job redoes.
+    pub slot: String,
+    /// The job whose suggestion this one redoes.
+    pub parent_job_id: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -131,10 +212,13 @@ struct JobRow {
     sop_version_no: Option<i32>,
     interaction_id: Option<i64>,
     result: Option<Value>,
+    slot: String,
+    parent_job_id: Option<i64>,
 }
 
 const JOB_SELECT: &str = "SELECT j.id, j.lesson_id, j.kind, j.status, j.phase, j.created_at,
-        j.finished_at, v.version_no AS sop_version_no, j.interaction_id, j.result
+        j.finished_at, v.version_no AS sop_version_no, j.interaction_id, j.result,
+        j.slot, j.parent_job_id
    FROM lesson_sop_jobs j LEFT JOIN lesson_sop_versions v ON v.id = j.sop_version_id";
 
 async fn into_job(db: &PgPool, row: JobRow) -> sqlx::Result<Job> {
@@ -167,10 +251,12 @@ async fn into_job(db: &PgPool, row: JobRow) -> sqlx::Result<Job> {
         sop_version_no: row.sop_version_no,
         result: row.result,
         decided,
+        slot: row.slot,
+        parent_job_id: row.parent_job_id,
     })
 }
 
-fn result_json<T: Serialize>(result: AiResult<T>) -> Value {
+pub(super) fn result_json<T: Serialize>(result: AiResult<T>) -> Value {
     serde_json::to_value(result).unwrap_or_else(|_| json!({ "status": "error" }))
 }
 
@@ -228,7 +314,7 @@ pub async fn latest_job(
 ) -> sqlx::Result<Option<Job>> {
     expire_stale(state, lesson_id).await?;
     let row: Option<JobRow> = sqlx::query_as(&format!(
-        "{JOB_SELECT} WHERE j.lesson_id = $1 AND j.kind = $2 ORDER BY j.id DESC LIMIT 1"
+        "{JOB_SELECT} WHERE j.lesson_id = $1 AND j.kind = $2 AND j.slot = '' ORDER BY j.id DESC LIMIT 1"
     ))
     .bind(lesson_id)
     .bind(kind.as_str())
@@ -240,9 +326,31 @@ pub async fn latest_job(
     }
 }
 
+/// The jobs that redo one suggestion (換一個, 這一段再建議一次) since the last whole run of
+/// their stage, oldest first: the page puts each where it belongs.
+pub async fn redo_jobs(state: &AppState, lesson_id: i64) -> sqlx::Result<Vec<Job>> {
+    expire_stale(state, lesson_id).await?;
+    let rows: Vec<JobRow> = sqlx::query_as(&format!(
+        "{JOB_SELECT} WHERE j.lesson_id = $1 AND j.slot <> ''
+            AND j.id > COALESCE((SELECT MAX(w.id) FROM lesson_sop_jobs w
+                                  WHERE w.lesson_id = j.lesson_id AND w.kind = j.kind
+                                    AND w.slot = ''), 0)
+          ORDER BY j.id DESC LIMIT 100"
+    ))
+    .bind(lesson_id)
+    .fetch_all(&state.db)
+    .await?;
+    let mut jobs = Vec::with_capacity(rows.len());
+    for row in rows.into_iter().rev() {
+        jobs.push(into_job(&state.db, row).await?);
+    }
+    Ok(jobs)
+}
+
 /// What a job needs, loaded while the request is still there to answer with a 4xx.
 pub struct JobInput {
     pub kind: JobKind,
+    pub scope: Scope,
     pub teacher_id: i64,
     pub track: String,
     pub lesson: LessonRef,
@@ -262,8 +370,9 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     if !state.ai.enabled() {
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO lesson_sop_jobs
-               (lesson_id, teacher_id, kind, status, sop_version_id, material_id, result, finished_at)
-             VALUES ($1, $2, $3, 'done', $4, $5, $6, now()) RETURNING id",
+               (lesson_id, teacher_id, kind, status, sop_version_id, material_id, result, finished_at,
+                slot, parent_job_id, params)
+             VALUES ($1, $2, $3, 'done', $4, $5, $6, now(), $7, $8, $9) RETURNING id",
         )
         .bind(lesson_id)
         .bind(input.teacher_id)
@@ -271,6 +380,9 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
         .bind(input.version.id)
         .bind(input.material.id)
         .bind(result_json(AiResult::<Value>::disabled()))
+        .bind(input.scope.slot())
+        .bind(input.scope.parent())
+        .bind(input.scope.params())
         .fetch_one(&state.db)
         .await?;
         return Ok(id);
@@ -285,25 +397,31 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     .await?;
     let created: Option<i64> = sqlx::query_scalar(
         "INSERT INTO lesson_sop_jobs
-           (lesson_id, teacher_id, kind, status, phase, sop_version_id, material_id)
-         VALUES ($1, $2, $3, 'running', $4, $5, $6)
-         ON CONFLICT (lesson_id, kind) WHERE status = 'running' DO NOTHING
+           (lesson_id, teacher_id, kind, status, phase, sop_version_id, material_id,
+            slot, parent_job_id, params)
+         VALUES ($1, $2, $3, 'running', $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (lesson_id, kind, slot) WHERE status = 'running' DO NOTHING
          RETURNING id",
     )
     .bind(lesson_id)
     .bind(input.teacher_id)
     .bind(kind.as_str())
-    .bind(kind.first_phase())
+    .bind(kind.first_phase(&input.scope))
     .bind(input.version.id)
     .bind(input.material.id)
+    .bind(input.scope.slot())
+    .bind(input.scope.parent())
+    .bind(input.scope.params())
     .fetch_optional(&state.db)
     .await?;
     let Some(job_id) = created else {
         let running: i64 = sqlx::query_scalar(
-            "SELECT id FROM lesson_sop_jobs WHERE lesson_id = $1 AND kind = $2 AND status = 'running'",
+            "SELECT id FROM lesson_sop_jobs
+              WHERE lesson_id = $1 AND kind = $2 AND slot = $3 AND status = 'running'",
         )
         .bind(lesson_id)
         .bind(kind.as_str())
+        .bind(input.scope.slot())
         .fetch_one(&state.db)
         .await?;
         return Ok(running);
@@ -318,7 +436,17 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
         let work = pin.scope(async move {
             match kind {
                 JobKind::Analysis => run_analysis(&state, job_id, &input, temperature).await,
-                JobKind::Objectives => run_objectives(&state, job_id, &input, temperature).await,
+                JobKind::Objectives => {
+                    let swap = match &input.scope {
+                        Scope::Swap(s) => Some(s),
+                        _ => None,
+                    };
+                    run_objectives(&state, job_id, &input, temperature, swap).await
+                }
+                JobKind::Goals => stages::run_goals(&state, job_id, &input, temperature).await,
+                JobKind::Tasks => stages::run_tasks(&state, job_id, &input, temperature).await,
+                JobKind::Warmup => stages::run_warmup(&state, job_id, &input, temperature).await,
+                JobKind::ExitTicket => stages::run_exit(&state, job_id, &input, temperature).await,
             }
         });
         let (result, interaction_id) = match crate::jobs::run("sop", job_id, work).await {
@@ -343,7 +471,7 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     Ok(job_id)
 }
 
-async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
+pub(super) async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
     sqlx::query("UPDATE lesson_sop_jobs SET phase = $2 WHERE id = $1 AND status = 'running'")
         .bind(job_id)
         .bind(phase)
@@ -352,7 +480,7 @@ async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
     Ok(())
 }
 
-type Done = (Value, Option<i64>);
+pub(super) type Done = (Value, Option<i64>);
 
 fn not_shown<T: Serialize>(outcome: Outcome<T>, context: Vec<AiContextItem>) -> Done {
     let id = outcome.interaction_id();
@@ -641,7 +769,7 @@ async fn run_analysis(
 
 // ---------------------------------------------------------------- (b) objectives
 
-fn analysis_summary(version: &Version, paragraphs: &[Paragraph]) -> String {
+pub(super) fn analysis_summary(version: &Version, paragraphs: &[Paragraph]) -> String {
     let a = &version.content.analysis;
     let mut lines = Vec::new();
     if !a.text_type.trim().is_empty() {
@@ -736,8 +864,11 @@ async fn run_objectives(
     job_id: i64,
     input: &JobInput,
     temperature: f32,
+    swap: Option<&Swap>,
 ) -> AppResult<Done> {
     let db = &state.db;
+    let only: Option<ObjectiveType> = swap.map(|s| s.kind);
+    let swap_note = swap.map(stages::swap_note).unwrap_or_default();
     let paragraphs = &input.material.paragraphs;
     let prompt = prompt(db, KEY_OBJECTIVES).await?;
     let passage = numbered_passage(paragraphs);
@@ -821,14 +952,20 @@ async fn run_objectives(
         ("curriculum_items", "可連結的 108 課綱條目（只能從這裡選）"),
     ];
     let system = prompts::render(&prompt.system_text, &vars);
-    let user = prompts::render_user_with(&prompt, &vars, &required);
+    let user = format!(
+        "{}{swap_note}",
+        prompts::render_user_with(&prompt, &vars, &required)
+    );
     vars.insert("passage_numbered", prompts::redacted("課例教材", &passage));
     // The list is identified by its codes in `retrieval`; no need to log every text again.
     vars.insert(
         "curriculum_items",
         format!("（{} 條，代碼見 retrieval.items）", items.len()),
     );
-    let logged_user = prompts::render_user_with(&prompt, &vars, &required);
+    let logged_user = format!(
+        "{}{swap_note}",
+        prompts::render_user_with(&prompt, &vars, &required)
+    );
     let snapshot = json!({
         "inputs": vars,
         "class_context": input.profile.snapshot(),
@@ -881,6 +1018,8 @@ async fn run_objectives(
         schema: schemas::objectives_schema(),
         fake_context: json!({
             "task": KEY_OBJECTIVES,
+            "only_type": swap.map(|s| s.kind.label()),
+            "swap_index": swap.map(|s| s.index),
             "paragraphs": paragraphs.len(),
             "items": items.iter().map(|i| json!({
                 "item_code": i.item_code, "title": i.title
@@ -910,7 +1049,7 @@ async fn run_objectives(
         Ok(resp) => match serde_json::from_value::<RawObjectives>(resp.json.clone()) {
             Ok(raw) => {
                 let eval = evaluate_objectives(&raw, &allowed, paragraphs);
-                let status = if eval.needs_repair() {
+                let status = if eval.needs_repair_for(only) {
                     "blocked"
                 } else {
                     "shown"
@@ -962,7 +1101,7 @@ async fn run_objectives(
         },
     }
 
-    let repair = first.as_ref().is_none_or(|(e, _)| e.needs_repair());
+    let repair = first.as_ref().is_none_or(|(e, _)| e.needs_repair_for(only));
     let mut second: Option<(Attempt, ObjectivesEval, Vec<CheckResult>)> = None;
     let mut last_failure: Option<(i64, Failure)> = None;
     if repair {
@@ -980,7 +1119,11 @@ async fn run_objectives(
             for d in &e.dropped {
                 note.push_str(&format!("\n- 這個目標不符合規則：{d}。"));
             }
-            if !e.has_both_types() {
+            if let Some(t) = only {
+                if !e.usable_for(only) {
+                    note.push_str(&format!("\n- objectives 必須有 1 項可用的{}。", t.label()));
+                }
+            } else if !e.has_both_types() {
                 note.push_str("\n- 內容目標與語言目標都必須至少各有 1 項。");
             }
         }
@@ -1029,7 +1172,7 @@ async fn run_objectives(
             "dropped_objectives": e.dropped,
         })
     };
-    let second_usable = second.as_ref().is_some_and(|(_, e, _)| e.has_both_types());
+    let second_usable = second.as_ref().is_some_and(|(_, e, _)| e.usable_for(only));
     if let Some((a2, eval, results)) = second {
         if let Ok(resp) = &a2.response {
             let status = if second_usable { "shown" } else { "blocked" };
@@ -1044,7 +1187,7 @@ async fn run_objectives(
             .await?;
         }
         if second_usable {
-            let out = eval.into_suggestion(items.len());
+            let out = eval.restrict(only).into_suggestion(items.len());
             let sources = objective_sources(&out);
             return Ok((
                 result_json(AiResult::shown(a2.id, out, sources).with_context(context)),
@@ -1056,11 +1199,11 @@ async fn run_objectives(
         }
     }
     if let Some((eval, results)) = first {
-        if eval.has_both_types() {
+        if eval.usable_for(only) {
             if repair {
                 set_final(db, a1.id, "shown", report_with(&results, repairs(&eval))).await?;
             }
-            let out = eval.into_suggestion(items.len());
+            let out = eval.restrict(only).into_suggestion(items.len());
             let sources = objective_sources(&out);
             return Ok((
                 result_json(AiResult::shown(a1.id, out, sources).with_context(context)),

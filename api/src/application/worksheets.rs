@@ -390,6 +390,18 @@ impl<'a> WorksheetService<'a> {
                 "material_source": material.source.kind, "paragraphs": material.paragraphs.len(),
                 "template_id": req.template_id, "prep_session_id": overrides.prep_session_id,
                 "output": settings.output.as_str(),
+                // What the worksheet starts with (labels only), and whether it came from the
+                // lesson's SOP choices (spec §7) rather than the generator's own defaults.
+                "from_sop": req.lesson_id.is_some(),
+                "settings": {
+                    "material_types": settings.material_types,
+                    "student_tasks": settings.student_tasks,
+                    "answer_formats": settings.answer_formats,
+                    "generation": settings.generation,
+                    "levels": settings.levels,
+                    "minutes": settings.minutes,
+                    "skip_exit_ticket": settings.skip_exit_ticket,
+                },
             }),
         )
         .await?;

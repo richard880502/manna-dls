@@ -40,6 +40,7 @@ import { LongMaterialNotice, MaterialFixButtons } from "../material/LongMaterial
 import { RETRY, isLongMaterial } from "../../lib/longMaterial";
 import { ObjectiveFields } from "../objectives/ObjectiveFields";
 import { BloomSettings } from "./BloomSettings";
+import { Chip } from "./Chips";
 import { TemplateOption } from "./TemplateOption";
 import type { WorksheetController } from "./useWorksheet";
 
@@ -61,31 +62,6 @@ const GENERATE_LABEL: Record<WsOutput, string> = {
 export const REQUEST_MAX = 2000;
 const SHOW_OBJECTIVES = "顯示學習目標";
 const OPTIONS_OBJECTIVES_HINT = "選填，一行一項，各寫一項就好。Manna 出題時會照這兩個目標，並印在學習單最上面。";
-
-function Chip({
-  label,
-  checked,
-  starred,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  starred: boolean;
-  disabled: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className={`ws-chip${starred ? " is-suggested" : ""}`}>
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={onChange} />
-      <span>
-        {starred && <span className="star" aria-hidden="true" />}
-        {label}
-        {starred && <span className="sr-only">（Manna 先選的）</span>}
-      </span>
-    </label>
-  );
-}
 
 /** What each step of a run is doing; the teacher can leave and come back. */
 export function ProgressPanel({ jobs }: { jobs: WsJob[] }) {

@@ -77,8 +77,12 @@ import type {
   SchoolClass,
   SiopFeature,
   SopContent,
+  ObjectiveType,
+  SopEnglishSuggestion,
   SopJob,
   SopJobKind,
+  SopProceduralSteps,
+  SopRedoRequest,
   SopState,
   SuggestionsRequest,
   SyncResponse,
@@ -435,8 +439,19 @@ export const api = {
   saveSopMaterial: (lessonId: number, body: SaveSopMaterialRequest) =>
     put<SopState>(`/lessons/${lessonId}/sop/material`, body),
   /** 建立背景工作並立刻回來；之後用 getSopJob 輪詢 */
-  startSopJob: (lessonId: number, kind: SopJobKind, classId?: number | null) =>
-    post<SopJob>(`/lessons/${lessonId}/sop/${kind}`, classId ? { class_id: classId } : {}),
+  startSopJob: (lessonId: number, kind: SopJobKind, classId?: number | null, redo?: SopRedoRequest) =>
+    post<SopJob>(`/lessons/${lessonId}/sop/${kind === "exit_ticket" ? "exit-ticket" : kind}`, {
+      ...(classId ? { class_id: classId } : {}),
+      ...(redo ?? {}),
+    }),
+  /** 幫我修英文：一次短呼叫，直接回答 */
+  sopObjectiveEnglish: (lessonId: number, body: { type: ObjectiveType; text: string; student_facing_en: string }) =>
+    post<AiResult<SopEnglishSuggestion>>(`/lessons/${lessonId}/sop/objective-english`, body),
+  /** 產生程序鷹架：程式依任務產生，不用模型 */
+  sopProceduralSteps: (
+    lessonId: number,
+    body: { paragraph_ids: string[]; student_tasks: string[]; answer_formats: string[] },
+  ) => post<SopProceduralSteps>(`/lessons/${lessonId}/sop/procedural-steps`, body),
   getSopJob: (jobId: number) => get<SopJob>(`/sop-jobs/${jobId}`),
 
   // 學習單產生器（Phase 2.3）

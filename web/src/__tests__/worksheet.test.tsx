@@ -387,6 +387,8 @@ describe("entries", () => {
     await user.click(
       await within(await screen.findByRole("navigation", { name: "備課步驟" })).findByRole("button", { name: /產生學習單/ }),
     );
+    // The summary of the lesson's choices; 調整設定 opens the generator's form.
+    await user.click(await screen.findByRole("button", { name: "調整設定" }));
 
     expect(await screen.findByRole("heading", { name: "做一份學習單", level: 1 })).toBeInTheDocument();
     expect(api.lastBody("POST", "/api/worksheets")).toEqual({ lesson_id: 7 });

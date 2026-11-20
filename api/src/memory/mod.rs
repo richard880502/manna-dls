@@ -37,6 +37,11 @@ pub const HABIT_STEPS: &[&str] = &[
     "prep_activity",
     "prep_ask",
     "prep_revise",
+    // 逐步設計: the steps that write tasks, a warm-up and an exit ticket. The English fix (3),
+    // 逐段整合目標 (4) and the scaffolds of 5 do not write questions: they never receive habits.
+    "sop_paragraph_tasks",
+    "sop_warmup",
+    "sop_exit_ticket",
 ];
 pub const KINDS: &[&str] = &[
     "choice_options",
@@ -622,6 +627,9 @@ mod tests {
                 "prep_revise",
                 "prep_activity",
                 "prep_ask",
+                "sop_paragraph_tasks",
+                "sop_warmup",
+                "sop_exit_ticket",
             ]
         );
         // Every allowed step is a real prompt key (a typo would silently never apply).
@@ -639,6 +647,9 @@ mod tests {
             "siop_selfcheck",
             "sop_analysis",
             "sop_objectives",
+            "sop_objective_english",
+            "sop_paragraph_goals",
+            "sop_scaffolds",
             "teacher_memory_extract",
             "teacher_memory_context",
             "core_assist",

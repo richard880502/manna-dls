@@ -931,6 +931,86 @@ interface SopObjectivesSuggestion {
 - 第 2–7 步右上的「對照教材」從左側滑出教材（印刷樣式、段落編號），可與步驟並排。
 - 「開始上課」在每一步的頁首都在，從不檢查 SOP 是否完成。
 
+## 逐步設計：每一步的 AI 協助（Migration `0045_sop_every_step.sql`）
+
+「全流程都要有 AI 介入輔助」：第 3–7 步都照第 2、3 步的模式：Manna 建議、教師採用／修改後採用／不用，AI 不覆寫教師寫的內容，採用的項目保留 `origin`。第 1 步（閱讀教材）不用 AI。所有建議都是背景工作（`lesson_sop_jobs`，共用 `jobs::run`、工作開始時固定模型 pin），同一課例、同一種工作、同一個 slot 還在跑時再按一次回傳同一個工作。
+
+### 新增的文件欄位（都向下相容，舊文件讀成預設值）
+
+```ts
+interface SopParagraphGoal { …; origin: SopOrigin }                       // 預設 "teacher"
+interface SopTask { …; answer_format: string; options: string[]; answer: string; evidence: string }
+interface SopTaskBlock { …;
+  student_tasks: string[]; answer_formats: string[];                      // 學習單產生器的標籤，逐段選（規格 §7）
+  ai_student_tasks: string[]; ai_answer_formats: string[];                // Manna 先選的（✦）
+}
+interface SopVocabularyItem { …; level: number | null }                  // 儲存時一律由伺服器依詞彙表帶入
+interface SopExitItem { …; objective_id: string; answer: string }        // 形成性評量檢核的目標與參考答案
+interface SopOptions {                                                    // null＝沒選，用 SOP 內容推出的預設
+  material_types: string[] | null; generation: string[] | null; levels: ("basic"|"standard"|"advanced")[] | null;
+  minutes: number | null; exit_ticket: boolean | null;                   // false＝學習單不要 Exit ticket
+}
+interface SopContent { …; options: SopOptions }
+```
+
+標籤只能是產生器的標籤（規格 §5）；表外的值 → 400。`SopState` 與 `PUT …/sop` 的回應多了 `worksheet_settings`（從這個課例做學習單時一開始的設定）與 `worksheet_suggested`（只看 SOP 內容推出的預設，即 ✦）。`SopState.jobs` 多了 `goals`、`tasks`、`warmup`、`exit_ticket` 與 `redo`（上次整批之後的單項重做，舊到新）。`SopJob` 多了 `slot`（整批為 `""`）與 `parent_job_id`；`kind` 多了 `goals | tasks | warmup | exit_ticket`。
+
+### 端點
+
+| Method | Path | 請求 | 回應 |
+|---|---|---|---|
+| POST | `/api/lessons/:id/sop/goals` | `{ class_id?, paragraph_id?, parent_job_id? }` | 202 `SopJob`：第 4 步逐段整合目標；帶 `paragraph_id` ＝「這一段再建議一次」（slot `p:<段落 id>`）。沒有目標 → 400 |
+| POST | `/api/lessons/:id/sop/tasks` | `{ class_id? }` | 202 `SopJob`：第 5 步逐段問題或任務＋語言與教學鷹架 |
+| POST | `/api/lessons/:id/sop/warmup` | `{ class_id? }` | 202 `SopJob`：第 6 步暖身與關鍵字彙 |
+| POST | `/api/lessons/:id/sop/exit-ticket` | `{ class_id? }` | 202 `SopJob`（`kind = "exit_ticket"`）：第 7 步。沒有目標 → 400 |
+| POST | `/api/lessons/:id/sop/objectives` | `{ parent_job_id, item_index }` | 202 `SopJob`：**換一個**。被換掉的建議與其他建議由伺服器從 `parent_job_id`（可以是上一次換一個的工作，`item_index` 0）的結果讀，不信任請求；同類型、不重複；slot `<parent>:<index>`。結果只有 1 項 |
+| POST | `/api/lessons/:id/sop/objective-english` | `{ type, text, student_facing_en }` | 200 `AiResult<{ english, changed, note }>`：**幫我修英文**，一次短呼叫（`max_tokens` 400），不是背景工作；`student_facing_en` 空白時依中文目標寫英文版；`text` 空白 → 400 |
+| POST | `/api/lessons/:id/sop/procedural-steps` | `{ paragraph_ids, student_tasks, answer_formats }` | 200 `{ steps, text }`：**產生程序鷹架**，由程式依任務產生（與學習單同一套規則，`worksheet::assemble::auto_steps`），不呼叫模型；記一筆 `sop_procedural_steps` 使用事件 |
+
+教師的決定沿用 `POST /api/ai/:interaction_id/decision`。`item_index`：第 4 步＝段落編號；第 5 步＝建議區塊的位置（從 0）；第 6 步＝暖身活動的位置，關鍵字彙這一組固定是 100；第 7 步＝題目的位置；換一個＝新建議在它自己的工作裡是 0（被換掉的那項在原工作記為 `reject`）；幫我修英文＝0（用這個 `adopt`、保留我的 `reject`）。
+
+### 各步的建議與檢查
+
+| 步驟 | prompt key（後台「逐步設計」群組） | 檢查（不通過 → 第 2 次呼叫附原因；仍不合格的拿掉） |
+|---|---|---|
+| 3 換一個 | `sop_objectives`（只要 1 項） | 與第 3 步相同（代碼在清單內、不照抄課綱、中文目標、I can 英文），且必須有 1 項要求的類型 |
+| 3 幫我修英文 | `sop_objective_english`（新） | 以「I can 」開頭、只有英文、4–25 個字；失敗時回 `blocked`，教師原本的英文不動 |
+| 4 逐段整合目標 | `sop_paragraph_goals`（新；**沒有用真實模型驗證過**） | 每一段各一筆且依段落順序；`objective_codes` 只能是教師目標的代號（`O1…`，回傳時換成真的 id）；每段最多 3 項；`note_zh` 為中文、≤ 120 字；不對應任何目標的段落要在 note 說明 |
+| 5 問題或任務 | `sop_paragraph_tasks`、`sop_scaffolds`（複製學習單 `worksheet_tasks`／`worksheet_scaffolds` 的最新版再補 SOP 規則） | 就是學習單的檢查：標籤只能用產生器的、每段都涵蓋且依序、`evidence` 為原文連續片段、學生看到的只有英文、選擇題選項數與配對題下限（含老師已確認的選項數習慣）、鷹架不洩漏答案。鷹架那一次失敗時任務仍保留，只有程式的程序鷹架 |
+| 6 暖身 | `sop_warmup`（複製 `worksheet_warmup`） | 學習單的檢查；候選字與級別由程式（`worksheet::ai::key_word_candidates`、大考中心詞彙表）決定，模型只挑、不輸出級別；`context_sentence` 為原文逐字 |
+| 7 Exit ticket | `sop_exit_ticket`（複製 `worksheet_exit_ticket`） | 學習單的檢查（2–4 題、至少 1 題形成性評量與 1 題反思／蒐集問題、不重複主要任務）；另外形成性評量要有 `objective_refs`（轉成目標 id）與參考答案 |
+
+- 每次模型呼叫各寫一列 `ai_interactions`（`module` 與 prompt key 相同，除了第 3 步沿用 `sop_objectives`；`lesson_id`、`unit_id` 有值；第 2 次的 `retry_of` 指向第 1 次）。鷹架：`SC-SOP-GOALS`、`SC-SOP-TASKS`（問題與鷹架兩次呼叫）、`SC-SOP-WARMUP`、`SC-SOP-EXIT`、`SC-SOP-ENGLISH`。教材文字只以字數與雜湊記進輸入快照；教材刪除時，這些輸出裡的 `evidence`／`context_sentence` 與 SOP 任務的 `evidence` 一併清掉。
+- **教師記憶**：`sop_paragraph_tasks`、`sop_warmup`、`sop_exit_ticket` 在 `memory::HABIT_STEPS`（主持人開啟開關時帶入已確認的習慣，第 5 步的選項數檢查同樣放寬）；英文修改、整合目標、鷹架不帶。見 `docs/TEACHER_MEMORY.md`。
+- 後台提示詞「逐步設計」群組列出 8 個提示詞（含原本的 `sop_passage_analysis`、`sop_objectives`）。
+
+### 學習單的選擇放在哪一步（規格 §7）
+
+| 選項 | 在哪裡選（SOP 文件欄位） |
+|---|---|
+| 素材類型 | 第 1 步（`options.material_types`） |
+| 提供引導問題 | 第 2 步；第 5 步的「鷹架在學習單上的呈現」（`options.generation`） |
+| 顯示學習目標 | 第 3 步（`options.generation`） |
+| 逐段整合目標 | 不是學習單選項，只是產生的依據 |
+| **學生任務、作答方式** | **第 5 步每一段（或合併的區塊）逐段選**，用產生器的同一批標籤與 ✦ 元件（`task_blocks[].student_tasks / answer_formats`）；Manna 的建議先選好 |
+| 顯示作答示例、提供字詞表、提供句型框架、基礎／一般／進階版 | 第 5 步的語言與教學鷹架（`options.generation`、`options.levels`） |
+| 程序鷹架 | 自動，不用選 |
+| 加入暖身活動 | 第 6 步（`options.generation`） |
+| Exit ticket 要不要、預計完成時間 | 第 7 步「產生設定」（`options.exit_ticket`、`options.minutes`），同一處也看得到全部選項 |
+
+沒選過的項目用 SOP 內容推出的預設（`worksheet::suggest_from_sop`）。**從 SOP 產生學習單**（`POST /api/worksheets { lesson_id }`）的起始設定就是這些選擇：學生任務與作答方式為各區塊標籤的聯集（沒有標籤時依資訊處理功能推）、其他選項取 `options`；`Settings.skip_exit_ticket`（新，預設 false）為 true 時產生流程略過 Exit ticket 那一步，學習單最後不放。`worksheet_created` 使用事件多了 `from_sop` 與 `settings`（標籤陣列）。課例頁的「產生學習單」先顯示一個畫面列出這些設定：「產生」建立學習單並立刻開始產生；「調整設定」建立後開啟產生器表單，同樣的設定已經填好。直接從首頁／`/create` 做學習單的流程不變。
+
+### 測試用假模型新增的標記（寫在教材文字裡）
+
+| 標記 | 效果 |
+|---|---|
+| `FAKE_SOP_GOALS_INVENT` / `_ALWAYS` | 第 4 步：第 1 次（或兩次都）引用不存在的目標代號 |
+| `FAKE_SOP_GOALS_SKIP` / `_ALWAYS` | 第 4 步：第 1 次（或兩次都）漏掉第 2 段 |
+| `FAKE_SOP_GOALS_LONG` | 第 4 步：第 1 次有超過字數上限的筆記 |
+| `FAKE_BLOCK` | 第 4 步與幫我修英文：兩次都不合格 → `blocked` |
+
+第 5–7 步使用學習單的假輸出與標記（`worksheet::fake`，例如 `FAKE_WS_CJK`）。
+
 ---
 
 # Phase 2.3：學習單產生器

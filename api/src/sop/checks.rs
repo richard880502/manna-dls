@@ -418,6 +418,30 @@ impl ObjectivesEval {
         !self.invalid_codes.is_empty() || !self.dropped.is_empty() || !self.has_both_types()
     }
 
+    /// Whether there is something to show: both types, or (換一個) one of the asked-for type.
+    pub fn usable_for(&self, only: Option<ObjectiveType>) -> bool {
+        match only {
+            Some(t) => self.kept.iter().any(|o| o.kind == t),
+            None => self.has_both_types(),
+        }
+    }
+
+    pub fn needs_repair_for(&self, only: Option<ObjectiveType>) -> bool {
+        match only {
+            Some(_) => !self.usable_for(only) || !self.invalid_codes.is_empty(),
+            None => self.needs_repair(),
+        }
+    }
+
+    /// 換一個: only the first objective of the asked-for type is kept.
+    pub fn restrict(mut self, only: Option<ObjectiveType>) -> Self {
+        if let Some(t) = only {
+            self.kept.retain(|o| o.kind == t);
+            self.kept.truncate(1);
+        }
+        self
+    }
+
     pub fn into_suggestion(self, curriculum_available: usize) -> ObjectivesSuggestion {
         ObjectivesSuggestion {
             objectives: self.kept,

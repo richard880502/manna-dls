@@ -1216,7 +1216,10 @@ pub fn scrub_evidence(value: &mut Value) -> bool {
         Value::Object(map) => {
             let mut changed = false;
             for (key, v) in map.iter_mut() {
-                if key == "evidence" || key == crate::ai::RUNAWAY_EXCERPT_KEY {
+                if key == "evidence"
+                    || key == "context_sentence"
+                    || key == crate::ai::RUNAWAY_EXCERPT_KEY
+                {
                     if let Value::String(s) = v {
                         if !s.trim().is_empty() && s != DELETED_MATERIAL_MARK {
                             *s = DELETED_MATERIAL_MARK.to_string();
@@ -1382,7 +1385,8 @@ pub async fn delete_rows(
     }
     let outputs: Vec<Logged> = sqlx::query_as(
         "SELECT id, output AS body FROM ai_interactions
-          WHERE lesson_id = ANY($1) AND module = 'sop_analysis' AND output IS NOT NULL
+          WHERE lesson_id = ANY($1) AND module IN ('sop_analysis', 'sop_paragraph_tasks', 'sop_warmup', 'sop_exit_ticket')
+            AND output IS NOT NULL
             AND COALESCE(input_snapshot #>> '{sop,material_id}', $2) = $2",
     )
     .bind(&lessons)

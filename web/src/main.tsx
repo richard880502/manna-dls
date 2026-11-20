@@ -12,6 +12,7 @@ import "./styles/app.css";
 import "./styles/record.css";
 import "./styles/views.css";
 import "./styles/sop.css";
+import "./styles/sop-steps.css";
 import "./styles/worksheet.css";
 import "./styles/materials.css";
 import "./styles/templates.css";

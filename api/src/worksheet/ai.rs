@@ -2002,16 +2002,32 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let set_for = |target: &str| scaffold_sets.iter().find(|s| s.target == target);
 
     // ---- (f) exit ticket
-    let exit = step_exit(
-        run,
-        jobs[STEP_EXIT],
-        chosen.settings.minutes,
-        &raw_blocks,
-        &task_prompts,
-    )
-    .await?;
+    // The lesson's SOP can leave the exit ticket out (「產生設定」 on its last step).
+    let exit = if chosen.settings.skip_exit_ticket {
+        mark_done(
+            db,
+            jobs[STEP_EXIT],
+            "skipped",
+            Some("課例 SOP 的產生設定沒有要 Exit ticket。"),
+            None,
+            &[],
+        )
+        .await?;
+        None
+    } else {
+        Some(
+            step_exit(
+                run,
+                jobs[STEP_EXIT],
+                chosen.settings.minutes,
+                &raw_blocks,
+                &task_prompts,
+            )
+            .await?,
+        )
+    };
 
-    if let Ok((items, _)) = &exit {
+    if let Some(Ok((items, _))) = &exit {
         notices.extend(run.uncovered_notice(items));
     }
 
@@ -2052,13 +2068,14 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         )),
     }
     match &exit {
-        Ok((items, _)) => {
+        None => {}
+        Some(Ok((items, _))) => {
             let mut block = assemble::exit_block(items, &levels, &objective_ids);
             assemble::attach_scaffolds(&mut block, None, &levels, &ticked);
             assemble::lift_frames(&mut block, &run.paragraphs.join("\n"));
             blocks.push(block);
         }
-        Err(reason) => blocks.push(assemble::placeholder(
+        Some(Err(reason)) => blocks.push(assemble::placeholder(
             BlockKind::ExitTicket,
             EXIT_ID,
             &empty_message("Exit ticket", reason),
@@ -2099,7 +2116,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
             "auto": content.chosen.as_ref().map(|c| c.auto.clone()),
             "steps": {
                 "tasks": tasks.is_ok(), "warmup": warmup.as_ref().map(|w| w.is_ok()),
-                "scaffolds": !scaffold_sets.is_empty(), "exit_ticket": exit.is_ok(),
+                "scaffolds": !scaffold_sets.is_empty(), "exit_ticket": exit.as_ref().is_some_and(|e| e.is_ok()),
             },
         }),
     )

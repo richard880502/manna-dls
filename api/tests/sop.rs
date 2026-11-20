@@ -178,7 +178,11 @@ async fn legacy_lessons_read_as_blank_sop_and_start_with_or_without_one() {
     assert_eq!(sop["material"], Value::Null);
     assert_eq!(sop["content"]["objectives"], json!([]));
     assert_eq!(sop["content"]["exit_ticket"]["items"], json!([]));
-    assert_eq!(sop["jobs"], json!({ "analysis": null, "objectives": null }));
+    assert_eq!(
+        sop["jobs"],
+        json!({ "analysis": null, "objectives": null, "goals": null, "tasks": null,
+                "warmup": null, "exit_ticket": null, "redo": [] })
+    );
     // The old single objective is handed to stage 3, not rewritten into the SOP.
     assert_eq!(sop["today_objective"], "學生能說明倒裝的語意功能");
 
