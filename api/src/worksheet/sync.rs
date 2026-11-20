@@ -29,6 +29,8 @@ pub struct Change {
 pub struct Preview {
     pub lesson_id: i64,
     pub sop_version_no: Option<i32>,
+    pub worksheet_version_no: i32,
+    pub worksheet_updated_at: chrono::DateTime<chrono::Utc>,
     pub changes: Vec<Change>,
     pub core_suggestions: Vec<serde_json::Value>,
 }

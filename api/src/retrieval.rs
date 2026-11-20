@@ -671,7 +671,7 @@ where
 }
 
 async fn active_items(
-    db: &PgPool,
+    db: impl sqlx::PgExecutor<'_>,
     track: Option<&str>,
     curriculum_only: bool,
 ) -> sqlx::Result<Vec<KbItem>> {
@@ -793,7 +793,7 @@ pub async fn retrieve_curriculum_hybrid(
 /// that match nothing are simply absent from the result: the caller must treat them as
 /// unsupported and never fill in a text.
 pub async fn curriculum_by_codes(
-    db: &PgPool,
+    db: impl sqlx::PgExecutor<'_>,
     track: Option<&str>,
     codes: &[String],
 ) -> sqlx::Result<Vec<KbItem>> {

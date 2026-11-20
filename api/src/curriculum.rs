@@ -95,8 +95,19 @@ pub async fn by_codes(
     if codes.is_empty() {
         return Ok(HashMap::new());
     }
+    let mut connection = db.acquire().await?;
+    by_codes_in(&mut connection, codes).await
+}
+
+pub(crate) async fn by_codes_in(
+    db: &mut sqlx::PgConnection,
+    codes: &[String],
+) -> sqlx::Result<HashMap<String, CurriculumItem>> {
+    if codes.is_empty() {
+        return Ok(HashMap::new());
+    }
     let mut found: HashMap<String, CurriculumItem> =
-        retrieval::curriculum_by_codes(db, None, codes)
+        retrieval::curriculum_by_codes(&mut *db, None, codes)
             .await?
             .into_iter()
             // The lookup also matches official codes (shared between 領綱); a stored link names

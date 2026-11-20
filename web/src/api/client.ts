@@ -503,8 +503,8 @@ export const api = {
     post<WsProposal>(`/worksheets/${id}/proposals/${proposalId}/reject`),
   worksheetSopSyncPreview: (id: number) => get<SopSyncPreview>(`/worksheets/${id}/sop-sync`),
   /** 只有教師按了確認才呼叫 */
-  applyWorksheetSopSync: (id: number, keys: string[], sopVersionNo: number | null) =>
-    post<SopSyncResult>(`/worksheets/${id}/sop-sync`, { confirm: true, keys, sop_version_no: sopVersionNo }),
+  applyWorksheetSopSync: (id: number, keys: string[], preview: Pick<SopSyncPreview, "sop_version_no" | "worksheet_version_no" | "worksheet_updated_at" | "lesson_id">) =>
+    post<SopSyncResult>(`/worksheets/${id}/sop-sync`, { confirm: true, keys, sop_version_no: preview.sop_version_no, worksheet_version_no: preview.worksheet_version_no, worksheet_updated_at: preview.worksheet_updated_at, lesson_id: preview.lesson_id }),
   linkWorksheet: (id: number, lessonId: number | null) =>
     put<WorksheetState>(`/worksheets/${id}/link`, { lesson_id: lessonId }),
   saveWorksheetAsLesson: (id: number, unitId: number, title: string) =>

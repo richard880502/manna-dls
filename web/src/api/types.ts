@@ -2066,6 +2066,8 @@ export interface SopSyncChange {
 
 export interface SopSyncPreview {
   lesson_id: number;
+  worksheet_version_no?: number;
+  worksheet_updated_at?: string;
   sop_version_no: number | null;
   changes: SopSyncChange[];
   /** 預留：建議補充至單元想法（CoRe）；這一版永遠是空的 */

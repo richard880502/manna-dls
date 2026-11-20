@@ -104,7 +104,10 @@ impl From<VersionRow> for Version {
 const VERSION_COLS: &str =
     "id, version_no, material_id, material_revision, material_deleted, content, created_at";
 
-pub async fn latest(db: &PgPool, lesson_id: i64) -> sqlx::Result<Option<Version>> {
+pub async fn latest(
+    db: impl sqlx::PgExecutor<'_>,
+    lesson_id: i64,
+) -> sqlx::Result<Option<Version>> {
     let row: Option<VersionRow> = sqlx::query_as(&format!(
         "SELECT {VERSION_COLS} FROM lesson_sop_versions
           WHERE lesson_id = $1 ORDER BY version_no DESC LIMIT 1"
@@ -138,7 +141,10 @@ pub async fn versions_count(db: &PgPool, lesson_id: i64) -> sqlx::Result<i64> {
 }
 
 /// The library material a version points at, as it is now (earlier texts are not kept).
-pub async fn material(db: &PgPool, id: Option<i64>) -> sqlx::Result<Option<Material>> {
+pub async fn material(
+    db: impl sqlx::PgExecutor<'_>,
+    id: Option<i64>,
+) -> sqlx::Result<Option<Material>> {
     let Some(id) = id else { return Ok(None) };
     let row: Option<MaterialRow> = sqlx::query_as(&format!(
         "SELECT {} FROM materials WHERE id = $1",
@@ -174,7 +180,10 @@ pub async fn list_versions(db: &PgPool, lesson_id: i64) -> sqlx::Result<Vec<Vers
 }
 
 /// Serialises concurrent saves of one lesson, so version numbers stay gapless and unique.
-async fn lock_lesson(tx: &mut Transaction<'_, Postgres>, lesson_id: i64) -> sqlx::Result<()> {
+pub(crate) async fn lock_lesson(
+    tx: &mut Transaction<'_, Postgres>,
+    lesson_id: i64,
+) -> sqlx::Result<()> {
     sqlx::query("SELECT id FROM lessons WHERE id = $1 FOR UPDATE")
         .bind(lesson_id)
         .execute(&mut **tx)
@@ -186,14 +195,7 @@ async fn latest_in_tx(
     tx: &mut Transaction<'_, Postgres>,
     lesson_id: i64,
 ) -> sqlx::Result<Option<Version>> {
-    let row: Option<VersionRow> = sqlx::query_as(&format!(
-        "SELECT {VERSION_COLS} FROM lesson_sop_versions
-          WHERE lesson_id = $1 ORDER BY version_no DESC LIMIT 1"
-    ))
-    .bind(lesson_id)
-    .fetch_optional(&mut **tx)
-    .await?;
-    Ok(row.map(Version::from))
+    latest(&mut **tx, lesson_id).await
 }
 
 async fn material_in_tx(
@@ -238,8 +240,18 @@ async fn insert_version(
 /// material. Returns the latest version unchanged when the content is the same.
 pub async fn save_content(db: &PgPool, lesson_id: i64, content: &SopContent) -> AppResult<Version> {
     let mut tx = db.begin().await?;
-    lock_lesson(&mut tx, lesson_id).await?;
-    let current = latest_in_tx(&mut tx, lesson_id).await?;
+    let saved = save_content_in_tx(&mut tx, lesson_id, content).await?;
+    tx.commit().await?;
+    Ok(saved)
+}
+
+pub(crate) async fn save_content_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    lesson_id: i64,
+    content: &SopContent,
+) -> AppResult<Version> {
+    lock_lesson(tx, lesson_id).await?;
+    let current = latest_in_tx(tx, lesson_id).await?;
     if let Some(v) = &current {
         if v.content == *content {
             return Ok(v.clone());
@@ -248,8 +260,7 @@ pub async fn save_content(db: &PgPool, lesson_id: i64, content: &SopContent) -> 
     let material = current
         .as_ref()
         .and_then(|v| Some((v.material_id?, v.material_revision.unwrap_or(1))));
-    let saved = insert_version(&mut tx, lesson_id, material, content).await?;
-    tx.commit().await?;
+    let saved = insert_version(tx, lesson_id, material, content).await?;
     Ok(saved)
 }
 
@@ -307,13 +318,26 @@ pub async fn save_material(
     text: &str,
 ) -> AppResult<Option<Version>> {
     let mut tx = db.begin().await?;
-    lock_lesson(&mut tx, lesson_id).await?;
-    let current = latest_in_tx(&mut tx, lesson_id).await?;
+    let saved =
+        save_material_in_tx(&mut tx, teacher_id, lesson_id, title, source_note, text).await?;
+    tx.commit().await?;
+    Ok(saved)
+}
+
+pub(crate) async fn save_material_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    teacher_id: i64,
+    lesson_id: i64,
+    title: &str,
+    source_note: &str,
+    text: &str,
+) -> AppResult<Option<Version>> {
+    lock_lesson(tx, lesson_id).await?;
+    let current = latest_in_tx(tx, lesson_id).await?;
     let target = LinkTarget::Lesson(lesson_id);
 
     if text.trim().is_empty() {
-        let saved = detach(&mut tx, lesson_id, current).await?;
-        tx.commit().await?;
+        let saved = detach(tx, lesson_id, current).await?;
         return Ok(saved);
     }
 
@@ -323,7 +347,7 @@ pub async fn save_material(
         .map(|v| v.content.clone())
         .unwrap_or_default();
     let current_material = match current_id {
-        Some(id) => material_in_tx(&mut tx, id, teacher_id).await?,
+        Some(id) => material_in_tx(tx, id, teacher_id).await?,
         None => None,
     };
 
@@ -332,18 +356,17 @@ pub async fn save_material(
         if m.title == title && m.source_note == source_note && m.text == text {
             return Ok(current);
         }
-        if !library::used_elsewhere(&mut tx, m.id, target).await? {
+        if !library::used_elsewhere(tx, m.id, target).await? {
             let mut row = m.clone();
             if m.title != title || m.source_note != source_note {
-                row = library::set_meta(&mut tx, m.id, title, source_note).await?;
+                row = library::set_meta(tx, m.id, title, source_note).await?;
             }
             if m.text != text {
-                row = library::replace_text(&mut tx, &row, text).await?;
+                row = library::replace_text(tx, &row, text).await?;
             }
-            library::link(&mut *tx, row.id, target).await?;
+            library::link(&mut **tx, row.id, target).await?;
             let saved =
-                insert_version(&mut tx, lesson_id, Some((row.id, row.revision)), &content).await?;
-            tx.commit().await?;
+                insert_version(tx, lesson_id, Some((row.id, row.revision)), &content).await?;
             return Ok(Some(saved));
         }
     }
@@ -358,17 +381,17 @@ pub async fn save_material(
                   ORDER BY version_no DESC LIMIT 1",
             )
             .bind(lesson_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
             match last {
-                Some(id) => material_in_tx(&mut tx, id, teacher_id).await?,
+                Some(id) => material_in_tx(tx, id, teacher_id).await?,
                 None => None,
             }
         }
     }
     .filter(|m| m.origin == "paste");
     let row = library::insert_text(
-        &mut tx,
+        tx,
         teacher_id,
         title,
         source_note,
@@ -385,11 +408,10 @@ pub async fn save_material(
         None => move_refs(&mut content, current_id, Some(row.id)),
     }
     if let Some(old) = current_id {
-        library::unlink(&mut *tx, old, target).await?;
+        library::unlink(&mut **tx, old, target).await?;
     }
-    library::link(&mut *tx, row.id, target).await?;
-    let saved = insert_version(&mut tx, lesson_id, Some((row.id, row.revision)), &content).await?;
-    tx.commit().await?;
+    library::link(&mut **tx, row.id, target).await?;
+    let saved = insert_version(tx, lesson_id, Some((row.id, row.revision)), &content).await?;
     Ok(Some(saved))
 }
 

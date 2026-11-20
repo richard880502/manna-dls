@@ -608,6 +608,8 @@ describe("result editor", () => {
     const preview: SopSyncPreview = {
       lesson_id: 7,
       sop_version_no: 3,
+      worksheet_version_no: 8,
+      worksheet_updated_at: "2026-11-20T12:00:00Z",
       core_suggestions: [],
       changes: [
         { key: "objective:O1", target: "objective", action: "update", label: "內容目標", before: "I can explain.", after: "I can explain why Mrs. Lin started the stand." },
@@ -642,7 +644,29 @@ describe("result editor", () => {
     await user.click(again.getAllByRole("checkbox")[1]!);
     await user.click(again.getByRole("button", { name: "確認同步到課例" }));
     expect(await screen.findByText("已同步，課例多了一個版本。")).toBeInTheDocument();
-    expect(api.lastBody("POST", `${WS}/sop-sync`)).toEqual({ confirm: true, keys: ["objective:O1"], sop_version_no: 3 });
+    expect(api.lastBody("POST", `${WS}/sop-sync`)).toEqual({ confirm: true, keys: ["objective:O1"], sop_version_no: 3, worksheet_version_no: 8, worksheet_updated_at: "2026-11-20T12:00:00Z", lesson_id: 7 });
+  });
+
+  it("shows a conflict when the worksheet changes after the sync preview", async () => {
+    const linked = generated({
+      lesson: { id: 7, title: "第 1 課", unit_id: 1, unit_title: "倒裝句單元" },
+      sop_sync: { linked: true, changes: 1 },
+    });
+    const preview: SopSyncPreview = {
+      lesson_id: 7, sop_version_no: 3, worksheet_version_no: 8, core_suggestions: [],
+      changes: [{ key: "objective:O1", target: "objective", action: "update", label: "內容目標", before: "old", after: "new" }],
+    };
+    mockApi(routes(linked, {
+      [`GET ${WS}/sop-sync`]: preview,
+      [`POST ${WS}/sop-sync`]: respond(409, { error: { code: "conflict", message: "學習單已更新，請重新預覽。" } }),
+    }));
+    const user = userEvent.setup();
+    renderApp("/worksheets/5");
+    await user.click(await screen.findByRole("button", { name: "同步回課例" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "同步回課例" }));
+    await user.click(dialog.getByRole("button", { name: "確認同步到課例" }));
+    expect(await dialog.findByRole("alert")).toHaveTextContent("學習單已更新，請重新預覽。");
+    expect(screen.queryByText("已同步，課例多了一個版本。")).not.toBeInTheDocument();
   });
 
   it("「不用」 dismisses the sync line without calling anything", async () => {
