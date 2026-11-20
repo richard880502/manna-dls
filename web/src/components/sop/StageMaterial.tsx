@@ -5,6 +5,7 @@ import { ErrorText, Loading, Notice, PrivacyHint } from "../common";
 import { Dialog, useDialogGuard } from "../Dialog";
 import { MaterialAddForm, MaterialPicker, useMaterialLibrary } from "../material/MaterialLibrary";
 import { MaterialContent } from "../material/MaterialViewer";
+import { MaterialTypeChoice } from "./Choices";
 import type { SopController } from "./useSop";
 
 type Way = "paste" | "library" | "upload";
@@ -282,6 +283,7 @@ export function StageMaterial({ sop, lessonId }: { sop: SopController; lessonId:
           目前分成 {paragraphCount} 段。
         </p>
       )}
+      {material !== null && <MaterialTypeChoice sop={sop} />}
     </>
   );
 }

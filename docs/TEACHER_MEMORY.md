@@ -32,10 +32,11 @@
 | 照我的學習單做 | `worksheet_template_section` |
 | 逐區修改 | `worksheet_block_revise` |
 | 備課對話 | `prep_activity`、`prep_ask`、`prep_revise` |
+| 逐步設計第 5–7 步 | `sop_paragraph_tasks`、`sop_warmup`、`sop_exit_ticket` |
 
 評審與讀取步驟**不帶**：`worksheet_bloom_check`、讀範本（`worksheet_template_outline`／`details`）、
 詞彙（`worksheet_vocab_gloss`／`replace`）、目標（`objective_draft`／`objective_check`）、
-`siop_selfcheck`、課例 SOP、圖片。出題習慣不能改變其他輸出的判斷方式。
+`siop_selfcheck`、課例 SOP 的分析／目標／英文修改／逐段整合目標／鷹架（`sop_passage_analysis`、`sop_objectives`、`sop_objective_english`、`sop_paragraph_goals`、`sop_scaffolds`）、圖片。出題習慣不能改變其他輸出的判斷方式。
 
 - 附加內容是版本化的提示詞 `teacher_memory_context`（migration 0042，後台可改版）：
   `system_text` 接在該步驟系統提示詞後，`user_template` 帶入 `teacher_habits`

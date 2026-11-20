@@ -289,8 +289,12 @@ describe("lesson workspace: steps", () => {
     await user.click(screen.getByRole("button", { name: "＋ 學生反思" }));
     await user.type(screen.getByRole("textbox", { name: "題目" }), "Why?");
     await user.click(within(document.querySelector(".stage-nav") as HTMLElement).getByRole("button", { name: "產生學習單" }));
+    // One screen says what the worksheet will use; 調整設定 opens the generator's form with the same choices.
+    const summary = await screen.findByRole("dialog", { name: "用這些設定產生學習單" });
+    await user.click(within(summary).getByRole("button", { name: "調整設定" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/worksheets/12"));
     expect(api.lastBody("POST", "/api/worksheets")).toEqual({ lesson_id: 7 });
+    expect(api.callsTo("POST", "/api/worksheets/12/generate")).toHaveLength(0);
     expect(lastSaved(api).exit_ticket.items[0]?.text).toBe("Why?");
     const putAt = api.calls.findIndex((c) => c.method === "PUT" && c.path === SOP);
     const postAt = api.calls.findIndex((c) => c.method === "POST" && c.path === "/api/worksheets");
@@ -373,7 +377,14 @@ describe("lesson workspace: quiet saving", () => {
     expect(await screen.findByText(/^已自動儲存 \d\d:\d\d$/)).toBeInTheDocument();
     await waitFor(() =>
       expect(lastSaved(api).exit_ticket.items).toEqual([
-        { id: expect.any(String), kind: "reflection", text: "What was hard today?", origin: "teacher" },
+        {
+          id: expect.any(String),
+          kind: "reflection",
+          text: "What was hard today?",
+          origin: "teacher",
+          objective_id: "",
+          answer: "",
+        },
       ]),
     );
     // Only the exit ticket was written; every other part of the document is still empty.
@@ -876,6 +887,10 @@ describe("lesson workspace: tasks and the material viewer", () => {
       {
         id: expect.any(String),
         paragraph_ids: ["p1", "p2"],
+        student_tasks: [],
+        answer_formats: [],
+        ai_student_tasks: [],
+        ai_answer_formats: [],
         tasks: [
           {
             id: expect.any(String),
@@ -883,6 +898,10 @@ describe("lesson workspace: tasks and the material viewer", () => {
             text: "Why did Mrs. Lin start the stand?",
             scaffolds: { verbal: "Mrs. Lin started the stand because ____.", instructional: "", procedural: "自己讀 2 分鐘，再和旁邊同學對答案" },
             origin: "teacher",
+            answer_format: "",
+            options: [],
+            answer: "",
+            evidence: "",
           },
         ],
       },

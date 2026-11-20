@@ -64,6 +64,10 @@ HTTP 建立／產生／重做／逐區修改，以及備課對話產生學習單
 欄位（包含歷史上的 `prep` trace 欄位名稱）。共用工具的檔案位置不是研究版本，
 因此沒有新增提示詞版本或修改資料庫 schema。
 
+## 逐步設計的 AI 步驟
+
+`sop::ai` 保留第 2、3 步與背景工作的共同部分（`lesson_sop_jobs`、slot、重啟與加入規則）；第 3 步的英文修改，以及第 4–7 步在 `sop::stages`。它們全部走 `application::generation::call_in`（檢查後修復一次、保留可用結果；`call_in` 比 `call` 多帶 unit／lesson 供研究紀錄），第 5–7 步直接使用 `worksheet::checks` 的檢查與 `worksheet::schemas`，不複製規則。`sop::stages` 不引用 `routes`。
+
 ## 跨功能的支援模組
 
 - `teaching_context`：教師所擁有的單元／課例／班級查詢，以及可見班級特性的優先順序。

@@ -1233,8 +1233,14 @@ async fn admin_prompts_imports_and_permissions() {
             "prep_ask",
             "prep_revise",
             "siop_selfcheck",
+            "sop_exit_ticket",
+            "sop_objective_english",
             "sop_objectives",
+            "sop_paragraph_goals",
+            "sop_paragraph_tasks",
             "sop_passage_analysis",
+            "sop_scaffolds",
+            "sop_warmup",
             "teacher_memory_context",
             "teacher_memory_extract",
             "worksheet_block_revise",
@@ -1283,10 +1289,12 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_template_outline v2 and worksheet_template_section v5 since
         // 0036_template_supports.sql. teacher_memory_extract v1 since 0040_teacher_memory.sql and
         // teacher_memory_context v1 since 0042_teacher_memory_hardening.sql. worksheet_block_revise
-        // v5 since 0044_block_revise_scaffolds.sql.
+        // v5 since 0044_block_revise_scaffolds.sql. sop_exit_ticket, sop_objective_english,
+        // sop_paragraph_goals, sop_paragraph_tasks, sop_scaffolds and sop_warmup v1 since
+        // 0045_sop_every_step.sql.
         vec![
-            1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 1, 1, 5, 1, 5, 5, 2, 2, 7, 3, 2, 5, 3, 1, 1,
-            1
+            1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5, 1, 5, 5, 2, 2, 7,
+            3, 2, 5, 3, 1, 1, 1
         ]
     );
     let v1_kept: i64 = sqlx::query_scalar(

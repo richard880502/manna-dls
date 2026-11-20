@@ -7,6 +7,7 @@ import type {
   SopParagraphAnalysis,
 } from "../../api/types";
 import { newId } from "../../lib/sop";
+import { GenerationChoice } from "./Choices";
 import { AskManna, MannaWell, NoMaterialNote, Quote } from "./parts";
 import type { SopController } from "./useSop";
 
@@ -535,6 +536,12 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
           ))}
         </section>
       )}
+      <GenerationChoice
+        sop={sop}
+        heading="分析要帶到學習單嗎？"
+        labels={["提供引導問題"]}
+        hint="寫作特色可以變成學習單上的引導問題；表格整理與圖像組織在第 5 步選作答方式。"
+      />
     </>
   );
 }

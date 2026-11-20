@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { LessonDetail, LessonRun, Unit, WorksheetSummary } from "../api/types";
 import { StartClassDialog } from "../components/classes/StartClassDialog";
+import { WorksheetPlan } from "../components/sop/WorksheetSummary";
 import { ErrorText, Loading, Notice } from "../components/common";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { MaterialViewer } from "../components/material/MaterialViewer";
@@ -151,8 +152,29 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
     };
   }, [lessonId]);
 
-  /** 產生學習單: saves what is pending, makes a worksheet prefilled from this lesson, and opens it. */
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  /** 產生學習單: saves what is pending, then shows what the worksheet will use (the steps' choices). */
   async function makeWorksheet() {
+    setWorksheetError(null);
+    setMakingWorksheet(true);
+    try {
+      const failed = await saveAll();
+      if (failed) {
+        setWorksheetError(`沒有儲存成功，所以還沒建立學習單：${failed}`);
+        return;
+      }
+      setSummaryOpen(true);
+    } finally {
+      setMakingWorksheet(false);
+    }
+  }
+
+  /**
+   * 產生 (`generate`): makes the worksheet from the lesson with the choices of the steps and starts
+   * it, nothing asked again. 調整設定: makes it and opens the generator's form with the same choices.
+   */
+  async function createFromLesson(generate: boolean) {
     setWorksheetError(null);
     setMakingWorksheet(true);
     try {
@@ -165,6 +187,13 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
         lesson_id: lessonId,
         ...(activeClassId !== null ? { class_id: activeClassId } : {}),
       });
+      if (generate) {
+        try {
+          await api.generateWorksheet(created.id);
+        } catch {
+          // The worksheet exists: its page says why nothing started and offers 產生學習單 again.
+        }
+      }
       navigate(`/worksheets/${created.id}`);
     } catch (err) {
       setWorksheetError(errorMessage(err));
@@ -276,11 +305,11 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
       case 2:
         return <StageAnalysis sop={sop} onGoToMaterial={() => goStage(1)} />;
       case 3:
-        return <StageObjectives sop={sop} todayObjective={todayObjective} />;
+        return <StageObjectives sop={sop} todayObjective={todayObjective} lessonId={lessonId} />;
       case 4:
         return <StageIntegrate sop={sop} onGoToStage={goStage} />;
       case 5:
-        return <StageTasks sop={sop} onGoToStage={goStage} />;
+        return <StageTasks sop={sop} onGoToStage={goStage} lessonId={lessonId} />;
       case 6:
         return <StageWarmup sop={sop} />;
       default:
@@ -423,6 +452,17 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
           </p>
         }
       />
+
+      {summaryOpen && (
+        <WorksheetPlan
+          sop={sop}
+          busy={makingWorksheet}
+          error={worksheetError}
+          onGenerate={() => void createFromLesson(true)}
+          onAdjust={() => void createFromLesson(false)}
+          onClose={() => setSummaryOpen(false)}
+        />
+      )}
 
       {choosingClass && (
         <StartClassDialog

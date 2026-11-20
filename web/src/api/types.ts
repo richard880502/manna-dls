@@ -518,7 +518,12 @@ export type ScaffoldCode =
   | "SC-CONTEXT"
   | "SC-RECORD"
   | "SC-SOP-ANALYSIS"
-  | "SC-SOP-OBJECTIVES";
+  | "SC-SOP-OBJECTIVES"
+  | "SC-SOP-GOALS"
+  | "SC-SOP-TASKS"
+  | "SC-SOP-WARMUP"
+  | "SC-SOP-EXIT"
+  | "SC-SOP-ENGLISH";
 export type ScaffoldAction = "show" | "expand" | "use" | "skip";
 
 export interface ScaffoldEventRequest {
@@ -1152,6 +1157,8 @@ export interface SopParagraphGoal {
   paragraph_id: string;
   objective_ids: string[];
   note: string;
+  /** 舊資料沒有這一欄：當作教師寫的 */
+  origin?: SopOrigin;
 }
 
 /** 語言／教學／程序鷹架 */
@@ -1167,6 +1174,13 @@ export interface SopTask {
   text: string;
   scaffolds: SopScaffolds;
   origin: SopOrigin;
+  /** 作答方式（學習單產生器的標籤；空字串＝還沒選） */
+  answer_format?: string;
+  options?: string[];
+  /** 參考答案（教師版） */
+  answer?: string;
+  /** 原文依據（逐字摘自段落） */
+  evidence?: string;
 }
 
 /** 一段，或合併數段，的問題或任務 */
@@ -1174,6 +1188,12 @@ export interface SopTaskBlock {
   id: string;
   paragraph_ids: string[];
   tasks: SopTask[];
+  /** 學生任務、作答方式：學習單產生器的標籤，在這一步逐段選 */
+  student_tasks?: string[];
+  answer_formats?: string[];
+  /** Manna 先選的（✦） */
+  ai_student_tasks?: string[];
+  ai_answer_formats?: string[];
 }
 
 export interface SopWarmupActivity {
@@ -1188,6 +1208,8 @@ export interface SopVocabularyItem {
   word: string;
   note: string;
   origin: SopOrigin;
+  /** 大考中心詞彙表的級別；由伺服器依詞彙表帶入 */
+  level?: number | null;
 }
 
 export interface SopWarmup {
@@ -1200,6 +1222,20 @@ export interface SopExitItem {
   kind: ExitKind;
   text: string;
   origin: SopOrigin;
+  /** 形成性評量檢核的目標（第 3 步的目標 id；空字串＝沒有） */
+  objective_id?: string;
+  /** 參考答案（教師版） */
+  answer?: string;
+}
+
+/** 老師在各步驟為學習單做的選擇；null＝沒選，用 SOP 內容推出的預設 */
+export interface SopOptions {
+  material_types: string[] | null;
+  generation: string[] | null;
+  levels: WsLevel[] | null;
+  minutes: number | null;
+  /** false＝學習單不要 Exit ticket */
+  exit_ticket: boolean | null;
 }
 
 export interface SopContent {
@@ -1209,6 +1245,7 @@ export interface SopContent {
   task_blocks: SopTaskBlock[];
   warmup: SopWarmup;
   exit_ticket: { items: SopExitItem[] };
+  options?: SopOptions;
 }
 
 export interface SopAnalysisSuggestion {
@@ -1245,7 +1282,85 @@ export interface SopObjectivesSuggestion {
   curriculum_available: number;
 }
 
-export type SopJobKind = "analysis" | "objectives";
+export interface SopGoalSuggestion {
+  paragraph_id: string;
+  paragraph_no: number;
+  objective_ids: string[];
+  note: string;
+}
+
+export interface SopGoalsSuggestion {
+  paragraphs: SopGoalSuggestion[];
+  missing_paragraph_ids: string[];
+}
+
+export interface SopTaskSuggestion {
+  function: InfoFunction | null;
+  text: string;
+  answer_format: string;
+  options: string[];
+  answer: string;
+  evidence: string;
+  scaffolds: SopScaffolds;
+}
+
+export interface SopBlockSuggestion {
+  paragraph_ids: string[];
+  paragraph_nos: number[];
+  title: string;
+  student_tasks: string[];
+  answer_formats: string[];
+  objective_ids: string[];
+  reason: string;
+  tasks: SopTaskSuggestion[];
+}
+
+export interface SopTasksSuggestion {
+  blocks: SopBlockSuggestion[];
+  missing_paragraph_ids: string[];
+  scaffolds_ok: boolean;
+}
+
+export interface SopWarmupSuggestion {
+  background: Array<{ text: string; scaffolds: SopScaffolds; purpose: string }>;
+  vocabulary: Array<{
+    word: string;
+    level: number | null;
+    paragraph_id: string | null;
+    evidence: string;
+    definition_en: string;
+  }>;
+  candidates_available: number;
+  levels_available: boolean;
+}
+
+export interface SopExitSuggestion {
+  items: Array<{ kind: ExitKind; text: string; objective_id: string; answer: string }>;
+  uncovered_objective_ids: string[];
+}
+
+export interface SopEnglishSuggestion {
+  english: string;
+  changed: boolean;
+  note: string;
+}
+
+export interface SopProceduralSteps {
+  steps: string[];
+  text: string;
+}
+
+/** 換一個（objectives）、這一段再建議一次（goals） */
+export interface SopRedoRequest {
+  parent_job_id?: number;
+  item_index?: number;
+  paragraph_id?: string;
+}
+
+export type SopJobKind = "analysis" | "objectives" | "goals" | "tasks" | "warmup" | "exit_ticket";
+
+/** 暖身的字彙這一組在決定紀錄裡的 item_index（活動是 0、1…） */
+export const SOP_VOCABULARY_ITEM_INDEX = 100;
 
 export interface SopJob<T = unknown> {
   id: number;
@@ -1260,6 +1375,9 @@ export interface SopJob<T = unknown> {
   result: AiResult<T> | null;
   /** 教師已經決定過的 item_index */
   decided: number[];
+  /** 空字串＝整批；否則是「換一個」「這一段再建議一次」的那一項 */
+  slot?: string;
+  parent_job_id?: number | null;
 }
 
 export interface SopState {
@@ -1273,9 +1391,19 @@ export interface SopState {
   content: SopContent;
   /** 最新教案的「今天要教什麼？」 */
   today_objective: string;
+  /** 學習單從這個課例開始時的設定：SOP 內容加上各步驟的選擇 */
+  worksheet_settings?: WorksheetSettings;
+  /** 只看 SOP 內容推出的預設（✦） */
+  worksheet_suggested?: WorksheetSettings;
   jobs: {
     analysis: SopJob<SopAnalysisSuggestion> | null;
     objectives: SopJob<SopObjectivesSuggestion> | null;
+    goals?: SopJob<SopGoalsSuggestion> | null;
+    tasks?: SopJob<SopTasksSuggestion> | null;
+    warmup?: SopJob<SopWarmupSuggestion> | null;
+    exit_ticket?: SopJob<SopExitSuggestion> | null;
+    /** 換一個、這一段再建議一次：上次整批之後的單項重做 */
+    redo?: SopJob[];
   };
 }
 
@@ -1284,6 +1412,8 @@ export interface SavedSop {
   versions_count: number;
   saved_at: string;
   content: SopContent;
+  worksheet_settings?: WorksheetSettings;
+  worksheet_suggested?: WorksheetSettings;
 }
 
 /** 貼上文字：`{ title, source_note, text }`；從教材庫選：`{ material_id }`；從課例移除：`{ material_id: null }` */
@@ -1486,6 +1616,8 @@ export interface WorksheetSettings {
   question_count?: number | null;
   /** 每個層次的題數；有值時取代 bloom 與 question_count（大於 0 的層次就是要出的層次） */
   bloom_counts?: BloomCounts | null;
+  /** true＝學習單不要 Exit ticket（課例 SOP 的產生設定） */
+  skip_exit_ticket?: boolean;
   /** 內容目標（≤300，一行一項）：教師寫的或採用 Manna 草擬的，送給每一步的模型。舊資料的 objective 讀成這一欄 */
   content_objective?: string | null;
   /** 語言目標（≤300，一行一項） */

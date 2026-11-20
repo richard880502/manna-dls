@@ -4,10 +4,17 @@ import type {
   DecisionKind,
   SopAnalysisSuggestion,
   SopContent,
+  SopExitSuggestion,
+  SopGoalsSuggestion,
   SopJob,
   SopJobKind,
   SopMaterial,
   SopObjectivesSuggestion,
+  SopRedoRequest,
+  ScaffoldCode,
+  SopTasksSuggestion,
+  SopWarmupSuggestion,
+  WorksheetSettings,
 } from "../../api/types";
 import { logScaffold } from "../../lib/scaffold";
 import { emptyContent, normalizeContent } from "../../lib/sop";
@@ -25,6 +32,43 @@ export interface MaterialDraft {
 export interface SopJobs {
   analysis: SopJob<SopAnalysisSuggestion> | null;
   objectives: SopJob<SopObjectivesSuggestion> | null;
+  goals: SopJob<SopGoalsSuggestion> | null;
+  tasks: SopJob<SopTasksSuggestion> | null;
+  warmup: SopJob<SopWarmupSuggestion> | null;
+  exit_ticket: SopJob<SopExitSuggestion> | null;
+  /** 換一個、這一段再建議一次：上次整批之後的單項重做，舊到新 */
+  redo: SopJob[];
+}
+
+const KINDS: SopJobKind[] = ["analysis", "objectives", "goals", "tasks", "warmup", "exit_ticket"];
+
+const noJobError = (): Record<SopJobKind, string | null> => ({
+  analysis: null,
+  objectives: null,
+  goals: null,
+  tasks: null,
+  warmup: null,
+  exit_ticket: null,
+});
+
+const emptyJobs = (): SopJobs => ({
+  analysis: null,
+  objectives: null,
+  goals: null,
+  tasks: null,
+  warmup: null,
+  exit_ticket: null,
+  redo: [],
+});
+
+/** The newest redo job of a stage for one suggestion (slot), if any. */
+export function redoFor(jobs: SopJobs, kind: SopJobKind, parentJobId: number | null | undefined, slot: string) {
+  return (
+    [...jobs.redo]
+      .reverse()
+      .find((j) => j.kind === kind && j.slot === slot && (parentJobId == null || j.parent_job_id === parentJobId)) ??
+    null
+  );
 }
 
 export interface SopController {
@@ -49,9 +93,23 @@ export interface SopController {
   jobs: SopJobs;
   /** Why a job could not be started (not why it failed: that is in its result). */
   jobError: Record<SopJobKind, string | null>;
-  startJob: (kind: SopJobKind) => Promise<void>;
-  /** Records the teacher's decision on one suggestion and takes it off the screen. */
-  decide: (kind: SopJobKind, itemIndex: number, decision: DecisionKind, revisedContent?: string) => void;
+  /** `redo`: 換一個 / 這一段再建議一次 (one suggestion again; the job lands in `jobs.redo`). */
+  startJob: (kind: SopJobKind, redo?: SopRedoRequest) => Promise<void>;
+  /**
+   * Records the teacher's decision on one suggestion and takes it off the screen. `jobId`: the
+   * job the suggestion came from when it is not the stage's whole run (a redo job).
+   */
+  decide: (
+    kind: SopJobKind,
+    itemIndex: number,
+    decision: DecisionKind,
+    revisedContent?: string,
+    jobId?: number,
+  ) => void;
+  /** What a worksheet made from this lesson starts with (the server's, kept current by each save). */
+  worksheetSettings: WorksheetSettings | null;
+  /** What the SOP's content alone suggests: the generator's ✦. */
+  worksheetSuggested: WorksheetSettings | null;
   dirty: boolean;
   saving: boolean;
   saveError: string | null;
@@ -60,7 +118,14 @@ export interface SopController {
   flush: () => Promise<string | null>;
 }
 
-const SCAFFOLD = { analysis: "SC-SOP-ANALYSIS", objectives: "SC-SOP-OBJECTIVES" } as const;
+const SCAFFOLD: Record<SopJobKind, ScaffoldCode> = {
+  analysis: "SC-SOP-ANALYSIS",
+  objectives: "SC-SOP-OBJECTIVES",
+  goals: "SC-SOP-GOALS",
+  tasks: "SC-SOP-TASKS",
+  warmup: "SC-SOP-WARMUP",
+  exit_ticket: "SC-SOP-EXIT",
+};
 
 /**
  * The lesson SOP of one lesson: loading, quiet saving, and the two AI jobs. Mount it once per
@@ -75,8 +140,10 @@ export function useSop(lessonId: number, classId: number | null): SopController 
   const materialIdRef = useRef<number | null>(null);
   const [draft, setDraftState] = useState<MaterialDraft>({ title: "", source_note: "", text: "" });
   const [content, setContent] = useState<SopContent>(emptyContent);
-  const [jobs, setJobs] = useState<SopJobs>({ analysis: null, objectives: null });
-  const [jobError, setJobError] = useState<Record<SopJobKind, string | null>>({ analysis: null, objectives: null });
+  const [jobs, setJobs] = useState<SopJobs>(emptyJobs);
+  const [jobError, setJobError] = useState<Record<SopJobKind, string | null>>(noJobError);
+  const [worksheetSettings, setWorksheetSettings] = useState<WorksheetSettings | null>(null);
+  const [worksheetSuggested, setWorksheetSuggested] = useState<WorksheetSettings | null>(null);
 
   const contentRef = useRef(content);
   const draftRef = useRef(draft);
@@ -100,7 +167,17 @@ export function useSop(lessonId: number, classId: number | null): SopController 
         setMaterial(state.material ?? null);
         setMaterialDeleted(state.material_deleted ?? false);
         materialIdRef.current = state.material?.id ?? null;
-        setJobs({ analysis: state.jobs?.analysis ?? null, objectives: state.jobs?.objectives ?? null });
+        setJobs({
+          analysis: state.jobs?.analysis ?? null,
+          objectives: state.jobs?.objectives ?? null,
+          goals: state.jobs?.goals ?? null,
+          tasks: state.jobs?.tasks ?? null,
+          warmup: state.jobs?.warmup ?? null,
+          exit_ticket: state.jobs?.exit_ticket ?? null,
+          redo: state.jobs?.redo ?? [],
+        });
+        setWorksheetSettings(state.worksheet_settings ?? null);
+        setWorksheetSuggested(state.worksheet_suggested ?? null);
         setLoadError(null);
         setStatus("ready");
       })
@@ -116,6 +193,8 @@ export function useSop(lessonId: number, classId: number | null): SopController 
 
   const saveContent = useCallback(async () => {
     const saved = await api.saveSop(lessonId, contentRef.current);
+    if (saved.worksheet_settings) setWorksheetSettings(saved.worksheet_settings);
+    if (saved.worksheet_suggested) setWorksheetSuggested(saved.worksheet_suggested);
     return saved.saved_at;
   }, [lessonId]);
   const saveMaterial = useCallback(async () => {
@@ -193,10 +272,14 @@ export function useSop(lessonId: number, classId: number | null): SopController 
   );
 
   // Poll the jobs that are still running; the teacher is free to work on other steps meanwhile.
-  const analysisRunning = jobs.analysis?.status === "running" ? jobs.analysis.id : null;
-  const objectivesRunning = jobs.objectives?.status === "running" ? jobs.objectives.id : null;
+  const runningIds = [
+    ...KINDS.map((k) => (jobs[k]?.status === "running" ? (jobs[k] as SopJob).id : null)),
+    ...jobs.redo.map((j) => (j.status === "running" ? j.id : null)),
+  ]
+    .filter((id): id is number => id !== null)
+    .join(",");
   useEffect(() => {
-    const ids = [analysisRunning, objectivesRunning].filter((id): id is number => id !== null);
+    const ids = runningIds === "" ? [] : runningIds.split(",").map(Number);
     if (ids.length === 0) return;
     let alive = true;
     const timer = setInterval(() => {
@@ -206,12 +289,19 @@ export function useSop(lessonId: number, classId: number | null): SopController 
           .then((job) => {
             if (!alive) return;
             if (job.status === "done" && job.result?.status === "shown") {
-              logScaffold(SCAFFOLD[job.kind], "show", { trigger: "suggestions" });
+              logScaffold(SCAFFOLD[job.kind], "show", { trigger: job.slot ? "redo" : "suggestions" });
             }
             // Polls overlap when the server is slow, and their answers can come back out of
             // order: a late 「running」 must not bring a finished (or replaced) job's progress back.
             setJobs((prev) => {
-              const current = prev[job.kind];
+              if (job.slot) {
+                const at = prev.redo.findIndex((j) => j.id === job.id);
+                if (at < 0 || prev.redo[at]?.status === "done") return prev;
+                const redo = [...prev.redo];
+                redo[at] = job;
+                return { ...prev, redo };
+              }
+              const current = prev[job.kind] as SopJob | null;
               if (current?.id !== job.id || current.status === "done") return prev;
               return { ...prev, [job.kind]: job };
             });
@@ -224,12 +314,12 @@ export function useSop(lessonId: number, classId: number | null): SopController 
       alive = false;
       clearInterval(timer);
     };
-  }, [analysisRunning, objectivesRunning]);
+  }, [runningIds]);
 
   const startJob = useCallback(
-    async (kind: SopJobKind) => {
+    async (kind: SopJobKind, redo?: SopRedoRequest) => {
       setJobError((prev) => ({ ...prev, [kind]: null }));
-      logScaffold(SCAFFOLD[kind], "expand", { trigger: "request" });
+      logScaffold(SCAFFOLD[kind], "expand", { trigger: redo ? "redo" : "request" });
       // The job reads what is saved: save what is pending first.
       const failed = await flush();
       if (failed) {
@@ -237,8 +327,15 @@ export function useSop(lessonId: number, classId: number | null): SopController 
         return;
       }
       try {
-        const job = await api.startSopJob(lessonId, kind, classId);
-        setJobs((prev) => ({ ...prev, [kind]: job }));
+        const job = await api.startSopJob(lessonId, kind, classId, redo);
+        setJobs((prev) => {
+          if (job.slot) {
+            // A second click joins the running job: it is already in the list.
+            const redoList = prev.redo.filter((j) => j.id !== job.id);
+            return { ...prev, redo: [...redoList, job] };
+          }
+          return { ...prev, [kind]: job };
+        });
       } catch (err) {
         setJobError((prev) => ({ ...prev, [kind]: errorMessage(err) }));
       }
@@ -252,13 +349,20 @@ export function useSop(lessonId: number, classId: number | null): SopController 
   }, [jobs]);
 
   const decide = useCallback(
-    (kind: SopJobKind, itemIndex: number, decision: DecisionKind, revisedContent?: string) => {
-      const job = jobsRef.current[kind];
+    (kind: SopJobKind, itemIndex: number, decision: DecisionKind, revisedContent?: string, jobId?: number) => {
+      const current = jobsRef.current;
+      const job: SopJob | null | undefined =
+        jobId === undefined ? (current[kind] as SopJob | null) : current.redo.find((j) => j.id === jobId);
       if (!job) return;
+      if (job.decided.includes(itemIndex)) return;
       setJobs((prev) => {
-        const current = prev[kind];
-        if (!current || current.decided.includes(itemIndex)) return prev;
-        return { ...prev, [kind]: { ...current, decided: [...current.decided, itemIndex] } };
+        const mark = (j: SopJob): SopJob => (j.id === job.id ? { ...j, decided: [...j.decided, itemIndex] } : j);
+        const top = prev[kind] as SopJob | null;
+        return {
+          ...prev,
+          [kind]: top ? mark(top) : top,
+          redo: prev.redo.map(mark),
+        };
       });
       const interactionId = job.result?.interaction_id;
       if (interactionId != null) {
@@ -297,6 +401,8 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     jobError,
     startJob,
     decide,
+    worksheetSettings,
+    worksheetSuggested,
     dirty: contentSave.dirty || materialSave.dirty,
     saving: contentSave.saving || materialSave.saving,
     saveError: materialSave.error ?? contentSave.error,

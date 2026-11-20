@@ -103,6 +103,7 @@ async fn run_job(app: &common::TestApp, t: &str, lesson: i64, path: &str, body: 
 }
 
 #[derive(sqlx::FromRow, Debug)]
+#[allow(dead_code)]
 struct Row {
     id: i64,
     module: String,

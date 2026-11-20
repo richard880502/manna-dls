@@ -4,6 +4,7 @@ import type {
   ObjectiveType,
   SopContent,
   SopMaterial,
+  SopOptions,
   SopObjective,
   SopParagraph,
   SopScaffolds,
@@ -64,6 +65,14 @@ export const SCAFFOLD_FIELDS: ReadonlyArray<{ key: keyof SopScaffolds; label: st
 
 export const emptyScaffolds = (): SopScaffolds => ({ verbal: "", instructional: "", procedural: "" });
 
+export const emptyOptions = (): SopOptions => ({
+  material_types: null,
+  generation: null,
+  levels: null,
+  minutes: null,
+  exit_ticket: null,
+});
+
 export function emptyContent(): SopContent {
   return {
     analysis: { text_type: "", main_idea: "", structure: "", overall_origin: "teacher", language_focus: [], paragraphs: [] },
@@ -72,6 +81,7 @@ export function emptyContent(): SopContent {
     task_blocks: [],
     warmup: { background: [], vocabulary: [] },
     exit_ticket: { items: [] },
+    options: emptyOptions(),
   };
 }
 
@@ -87,17 +97,31 @@ export function normalizeContent(raw: Partial<SopContent> | null | undefined): S
       paragraphs: (raw.analysis?.paragraphs ?? []).map((p) => ({ ...p, features: p.features ?? [] })),
     },
     objectives: (raw.objectives ?? []).map((o) => ({ ...o, links: o.links ?? [], paragraph_ids: o.paragraph_ids ?? [] })),
-    paragraph_goals: raw.paragraph_goals ?? [],
+    paragraph_goals: (raw.paragraph_goals ?? []).map((g) => ({ ...g, origin: g.origin ?? "teacher" })),
     task_blocks: (raw.task_blocks ?? []).map((b) => ({
       ...b,
       paragraph_ids: b.paragraph_ids ?? [],
-      tasks: (b.tasks ?? []).map((t) => ({ ...t, scaffolds: { ...emptyScaffolds(), ...t.scaffolds } })),
+      student_tasks: b.student_tasks ?? [],
+      answer_formats: b.answer_formats ?? [],
+      ai_student_tasks: b.ai_student_tasks ?? [],
+      ai_answer_formats: b.ai_answer_formats ?? [],
+      tasks: (b.tasks ?? []).map((t) => ({
+        ...t,
+        scaffolds: { ...emptyScaffolds(), ...t.scaffolds },
+        answer_format: t.answer_format ?? "",
+        options: t.options ?? [],
+        answer: t.answer ?? "",
+        evidence: t.evidence ?? "",
+      })),
     })),
     warmup: {
       background: (raw.warmup?.background ?? []).map((b) => ({ ...b, scaffolds: { ...emptyScaffolds(), ...b.scaffolds } })),
       vocabulary: raw.warmup?.vocabulary ?? [],
     },
-    exit_ticket: { items: raw.exit_ticket?.items ?? [] },
+    exit_ticket: {
+      items: (raw.exit_ticket?.items ?? []).map((i) => ({ ...i, objective_id: i.objective_id ?? "", answer: i.answer ?? "" })),
+    },
+    options: { ...emptyOptions(), ...raw.options },
   };
 }
 

@@ -63,6 +63,22 @@ async fn today_objective(db: &sqlx::PgPool, lesson_id: i64) -> sqlx::Result<Stri
     .unwrap_or_default())
 }
 
+/// What a worksheet made from the lesson starts with, and the defaults the SOP's content alone
+/// would give (the generator's ✦).
+fn worksheet_settings_of(
+    lesson_id: i64,
+    material: Option<&Material>,
+    content: &SopContent,
+) -> (Settings, Settings) {
+    let ws_material = material
+        .map(|m| crate::worksheet::Material::from_lesson_sop(lesson_id, m).0)
+        .unwrap_or_default();
+    (
+        crate::worksheet::suggest_from_sop(&ws_material, content),
+        crate::worksheet::defaults_from_sop(&ws_material, content),
+    )
+}
+
 async fn state_of(
     state: &AppState,
     lesson_id: i64,
@@ -96,12 +112,8 @@ async fn state_of(
         .as_ref()
         .map(|v| v.content.clone())
         .unwrap_or_default();
-    let ws_material = material
-        .as_ref()
-        .map(|m| crate::worksheet::Material::from_lesson_sop(lesson_id, m).0)
-        .unwrap_or_default();
-    let worksheet_settings = crate::worksheet::suggest_from_sop(&ws_material, &content);
-    let worksheet_suggested = crate::worksheet::defaults_from_sop(&ws_material, &content);
+    let (worksheet_settings, worksheet_suggested) =
+        worksheet_settings_of(lesson_id, material.as_ref(), &content);
     Ok(SopState {
         lesson_id,
         version_no: version.as_ref().map(|v| v.version_no),
@@ -189,6 +201,8 @@ pub struct SavedSop {
     pub versions_count: i64,
     pub saved_at: DateTime<Utc>,
     pub content: SopContent,
+    pub worksheet_settings: Settings,
+    pub worksheet_suggested: Settings,
 }
 
 pub async fn put(
@@ -214,11 +228,16 @@ pub async fn put(
             .map(i32::from);
     }
     let saved = store::save_content(&state.db, id, &content).await?;
+    let material = store::material(&state.db, saved.material_id).await?;
+    let (worksheet_settings, worksheet_suggested) =
+        worksheet_settings_of(id, material.as_ref(), &saved.content);
     Ok(Json(SavedSop {
         version_no: saved.version_no,
         versions_count: store::versions_count(&state.db, id).await?,
         saved_at: saved.created_at,
         content: saved.content,
+        worksheet_settings,
+        worksheet_suggested,
     }))
 }
 

@@ -79,8 +79,6 @@ pub const GOAL_MAX_OBJECTIVES: usize = 3;
 /// Most words of the student-facing English of an objective.
 pub const ENGLISH_MAX_WORDS: usize = 25;
 
-const BASE_TEMPERATURE_NOTE: &str = "";
-
 // ---------------------------------------------------------------- shared
 
 /// `O1`, `O2`…: the codes the model sees for the objectives with text, and their ids.
@@ -225,6 +223,7 @@ async fn notes_for_ai(state: &AppState, input: &JobInput) -> AppResult<String> {
     Ok(crate::materials::annotations::ai_context_block(&notes))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn new_call(
     key: &'static str,
     scaffold: &'static str,
@@ -448,7 +447,7 @@ pub fn evaluate_goals(
                 p.no,
                 note.chars().count()
             ));
-            note = clip_chars(&note, GOAL_NOTE_MAX_CHARS);
+            note = clip_chars(&note, GOAL_NOTE_MAX_CHARS - 1);
         }
         eval.kept.push(GoalSuggestion {
             paragraph_id: p.id.clone(),
@@ -645,7 +644,6 @@ pub async fn run_goals(
         },
     )
     .await?;
-    let _ = PHASE_GOALS;
     Ok(done(outcome, context))
 }
 
@@ -980,7 +978,6 @@ pub async fn run_tasks(
         },
     )
     .await?;
-    let _ = PHASE_TASKS;
     let (raw_blocks, tasks_id) = match tasks {
         Ok(ok) => ok,
         Err(message) => return Ok(done::<TasksSuggestion>(Err(message), context)),
@@ -1312,7 +1309,6 @@ pub async fn run_warmup(
         },
     )
     .await?;
-    let _ = PHASE_WARMUP;
     Ok(done(outcome, context))
 }
 
@@ -1477,7 +1473,6 @@ pub async fn run_exit(
         },
     )
     .await?;
-    let _ = PHASE_EXIT;
     Ok(done(outcome, context))
 }
 
@@ -1529,7 +1524,7 @@ pub(crate) fn evaluate_english(raw: &RawEnglish, original: &str) -> Checked<Engl
             problems.push("english 必須以「I can 」開頭。".to_string());
         }
         let words = english.split_whitespace().count();
-        if words > ENGLISH_MAX_WORDS || words < 4 {
+        if !(4..=ENGLISH_MAX_WORDS).contains(&words) {
             problems.push(format!(
                 "english 需要是 4 到 {ENGLISH_MAX_WORDS} 個英文單字的一句話，現在有 {words} 個。"
             ));
@@ -1610,7 +1605,6 @@ pub async fn suggest_english(
         generation::nothing,
     )
     .await?;
-    let _ = BASE_TEMPERATURE_NOTE;
     Ok(match outcome {
         Ok((out, id)) => result_json(AiResult::shown(id, out, Vec::new())),
         Err(message) => failed_result(&message, Vec::new()),
