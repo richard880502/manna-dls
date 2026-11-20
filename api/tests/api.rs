@@ -1282,9 +1282,10 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_scaffolds v2, worksheet_tasks v7, worksheet_template_details v3,
         // worksheet_template_outline v2 and worksheet_template_section v5 since
         // 0036_template_supports.sql. teacher_memory_extract v1 since 0040_teacher_memory.sql and
-        // teacher_memory_context v1 since 0042_teacher_memory_hardening.sql.
+        // teacher_memory_context v1 since 0042_teacher_memory_hardening.sql. worksheet_block_revise
+        // v5 since 0044_block_revise_scaffolds.sql.
         vec![
-            1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 1, 1, 4, 1, 5, 5, 2, 2, 7, 3, 2, 5, 3, 1, 1,
+            1, 2, 1, 1, 1, 1, 1, 2, 4, 1, 4, 1, 1, 1, 1, 1, 5, 1, 5, 5, 2, 2, 7, 3, 2, 5, 3, 1, 1,
             1
         ]
     );
