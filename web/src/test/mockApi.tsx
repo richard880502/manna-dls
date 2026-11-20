@@ -320,6 +320,7 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     "GET /api/worksheet-templates": { templates: [] },
     // 備課 (the home page) lists recent prep sessions and offers the material library.
     "GET /api/prep-sessions": { sessions: [] },
+    "GET /api/stepwise-lessons": [],
     "GET /api/materials": emptyLibrary(),
     // 平台教材／我的教材／學習單範本 and the pickers.
     "GET /api/browse/materials": materialBrowse([]),

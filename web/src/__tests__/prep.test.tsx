@@ -434,25 +434,26 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
     expect(chips().getAllByRole("radio").map((b) => b.textContent)).toEqual([
-      "完整學習單由 Manna 設計版面：暖身、逐段任務，到 Exit ticket",
-      "照我的學習單做上傳你以前用過的學習單，Manna 照它的版面和樣式，為新課文做一份",
+      "AI 幫我設計由 Manna 設計版面：暖身、逐段任務，到 Exit ticket",
+      "照我的範本設計上傳你以前用過的學習單，Manna 照它的版面和樣式，為新課文做一份",
+      "我想逐步設計跟著七個步驟一步步設計，每一步由你決定，Manna 從旁建議",
     ]);
     // The other four tools are named in one quiet line, not as tiles.
     expect(screen.getByText(/^閱讀理解題、差異化學習單、課堂活動、教學套件：/)).toBeInTheDocument();
     // One selector, no second list of the tools on the page.
     expect(screen.queryByRole("region", { name: "Manna 可以幫你做" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "要做什麼" })).not.toBeInTheDocument();
-    expect(chips().getByRole("radio", { name: "照我的學習單做" })).toHaveClass("tool-tile");
+    expect(chips().getByRole("radio", { name: "照我的範本設計" })).toHaveClass("tool-tile");
     expect(pressed()).toEqual([]);
 
     for (const [words, chip] of [
-      ["一份學習單", "完整學習單"],
+      ["一份學習單", "AI 幫我設計"],
       // 照我的學習單 is not just 學習單.
-      ["照我的學習單出一份", "照我的學習單做"],
-      ["照這份出題", "照我的學習單做"],
-      ["用我的範本", "照我的學習單做"],
-      ["一樣的樣式", "照我的學習單做"],
-      ["模仿這份學習單", "照我的學習單做"],
+      ["照我的學習單出一份", "照我的範本設計"],
+      ["照這份出題", "照我的範本設計"],
+      ["用我的範本", "照我的範本設計"],
+      ["一樣的樣式", "照我的範本設計"],
+      ["模仿這份學習單", "照我的範本設計"],
     ] as const) {
       await user.clear(box());
       await user.type(box(), words);
@@ -465,19 +466,19 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
       await user.type(box(), words);
       expect(pressed()).toEqual([]);
       // With no tile chosen the first one stays the way into the radiogroup.
-      expect(chips().getAllByRole("radio").map((r) => r.getAttribute("tabindex"))).toEqual(["0", "-1"]);
+      expect(chips().getAllByRole("radio").map((r) => r.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
     }
 
     // A click wins over typed words, and only one chip is filled.
-    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
-    expect(pressed()).toEqual(["完整學習單"]);
+    await user.click(chips().getByRole("radio", { name: "AI 幫我設計" }));
+    expect(pressed()).toEqual(["AI 幫我設計"]);
     await user.type(box(), "，要分層");
-    expect(pressed()).toEqual(["完整學習單"]);
-    await user.click(chips().getByRole("radio", { name: "照我的學習單做" }));
-    expect(pressed()).toEqual(["照我的學習單做"]);
+    expect(pressed()).toEqual(["AI 幫我設計"]);
+    await user.click(chips().getByRole("radio", { name: "照我的範本設計" }));
+    expect(pressed()).toEqual(["照我的範本設計"]);
     // A tile stays chosen when clicked again (a radio does not clear); typed words no longer choose.
-    await user.click(chips().getByRole("radio", { name: "照我的學習單做" }));
-    expect(pressed()).toEqual(["照我的學習單做"]);
+    await user.click(chips().getByRole("radio", { name: "照我的範本設計" }));
+    expect(pressed()).toEqual(["照我的範本設計"]);
   });
 
   it("the tiles are one radiogroup: Tab enters on the first, the arrow keys move and choose", async () => {
@@ -488,17 +489,22 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await screen.findByRole("heading", { name: HOME, level: 1 });
     const radios = chips().getAllByRole("radio");
     // Nothing chosen: only the first tile is in the tab order.
-    expect(radios.map((r) => r.getAttribute("tabindex"))).toEqual(["0", "-1"]);
+    expect(radios.map((r) => r.getAttribute("tabindex"))).toEqual(["0", "-1", "-1"]);
     radios[0]!.focus();
     await user.keyboard("{ArrowRight}");
     expect(radios[1]).toHaveFocus();
-    expect(pressed()).toEqual(["照我的學習單做"]);
-    expect(radios.map((r) => r.getAttribute("tabindex"))).toEqual(["-1", "0"]);
+    expect(pressed()).toEqual(["照我的範本設計"]);
+    expect(radios.map((r) => r.getAttribute("tabindex"))).toEqual(["-1", "0", "-1"]);
+    await user.keyboard("{ArrowRight}");
+    // The third card, 我想逐步設計, is part of the cycle.
+    expect(radios[2]).toHaveFocus();
+    expect(radios[2]).toHaveAttribute("aria-checked", "true");
+    expect(pressed()).toEqual(["我想逐步設計"]);
     await user.keyboard("{ArrowRight}");
     // It wraps round to the first tile.
     expect(radios[0]).toHaveFocus();
     expect(radios[0]).toHaveAttribute("aria-checked", "true");
-    expect(radios[1]).toHaveAttribute("aria-checked", "false");
+    expect(radios[2]).toHaveAttribute("aria-checked", "false");
 
   });
 
@@ -510,10 +516,10 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await screen.findByRole("heading", { name: HOME, level: 1 });
     // Without a tool there is nothing to go to.
     expect(screen.queryByRole("link", { name: /更多設定/ })).not.toBeInTheDocument();
-    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(chips().getByRole("radio", { name: "AI 幫我設計" }));
     expect(screen.getByRole("link", { name: "更多設定（班級、題數、Bloom、題型）" })).toHaveAttribute("href", "/create/worksheet");
     await attachFromLibrary(user);
-    await user.click(chips().getByRole("radio", { name: "照我的學習單做" }));
+    await user.click(chips().getByRole("radio", { name: "照我的範本設計" }));
     expect(screen.getByRole("link", { name: /更多設定/ })).toHaveAttribute("href", "/create/mimic");
     // What is attached here goes along: the form opens with the lesson text already in place.
     await user.click(screen.getByRole("link", { name: /更多設定/ }));
@@ -527,7 +533,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const user = userEvent.setup();
     renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
-    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(chips().getByRole("radio", { name: "AI 幫我設計" }));
     await user.click(screen.getByRole("button", { name: "附上文章" }));
     await user.click(within(screen.getByRole("group", { name: "附上文章" })).getByRole("button", { name: "貼上文字" }));
     const dialog = within(await screen.findByRole("dialog"));
@@ -550,7 +556,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     const { router } = renderApp("/");
     await screen.findByRole("heading", { name: HOME, level: 1 });
 
-    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(chips().getByRole("radio", { name: "AI 幫我設計" }));
     await user.click(screen.getByRole("button", { name: "送出" }));
     const toolbar = screen.getByRole("button", { name: "附上文章" }).closest(".prompt-toolbar") as HTMLElement;
     expect(within(toolbar).getByRole("alert")).toHaveTextContent("先附上文章或教材");
@@ -584,7 +590,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
     await user.click(dialog.getByRole("button", { name: "附上" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    await user.click(chips().getByRole("radio", { name: "完整學習單" }));
+    await user.click(chips().getByRole("radio", { name: "AI 幫我設計" }));
     await user.click(screen.getByRole("button", { name: "送出" }));
     await waitFor(() => expect(api.callsTo("POST", SESSIONS)).toHaveLength(1));
     expect(api.lastBody("POST", SESSIONS)).toEqual({

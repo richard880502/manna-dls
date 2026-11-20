@@ -2619,7 +2619,7 @@ interface PrepTurn {
 
 ### `entry`（研究紀錄用）
 
-`POST /api/prep-sessions` 可帶 `entry?: "home" | "create"`：哪一頁開始這個對話（首頁的快速框、或 `/create/:tool`）。只寫進 `prep_session_created` 的 `entry`，並固定帶 `ui_version: 3`（首頁只剩「完整學習單」「照我的學習單做」兩張卡片；`2` 是導覽改版後六張卡片的首頁）。其他值（別的字串、別的型別）一律忽略，記成 `null`，不是錯誤；舊的客戶端不帶 `entry` 也照常。沒有資料表變動。
+`POST /api/prep-sessions` 可帶 `entry?: "home" | "create"`：哪一頁開始這個對話（首頁的快速框、或 `/create/:tool`）。只寫進 `prep_session_created` 的 `entry`，並固定帶 `ui_version: 4`（首頁三張卡片：「AI 幫我設計」「照我的範本設計」「我想逐步設計」；`3` 是只有前兩張卡片的首頁，`2` 是導覽改版後六張卡片的首頁）。其他值（別的字串、別的型別）一律忽略，記成 `null`，不是錯誤；舊的客戶端不帶 `entry` 也照常。沒有資料表變動。
 
 ## 照版型產生：每一題的 Bloom 層次
 
@@ -3681,3 +3681,12 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
 - `GET /api/config` 的 `ai_provider`、`ai_model`、`ai_enabled` 反映目前生效的設定。
 - 逾時改成每次呼叫由快照決定，所以「執行中工作被視為中斷」的門檻（`n × AI_TIMEOUT_SECS + 60`）改用**自啟動以來用過的最長逾時**計算，避免主持人縮短逾時後把還在跑的工作誤判為中斷。
 - 記憶索引（Graphiti）：每個索引工作在被領取時固定設定，模型轉發（sidecar 另開的 HTTP 請求）依工作的權杖查出該工作固定的來源、模型、推理強度與逾時，工作進行中切換不影響它。
+
+# 逐步設計（首頁第三張卡片）
+
+首頁多一張卡片「我想逐步設計」：到 `/lessons/:id` 的七步課例工作區（`LessonPage`）一步步設計。它不是備課對話，也不是產生器的工具。選它再送出會開一個對話框：選現有單元（`GET /api/units`）或建立新單元（`POST /api/units`），再給課例名稱，然後 `POST /api/units/:id/lessons`；首頁附上的文章用 `PUT /api/lessons/:id/sop/material` 放進第 1 步（貼上的文字 `{ title, text }`，教材庫的 `{ material_id }`），最後前往 `/lessons/:id`。沒附文章就直接開在第 1 步。
+
+- `POST /api/units/:id/lessons` 可帶 `entry?: "home"`：由首頁卡片開始。其他值一律忽略（記成 `null`），不是錯誤；舊的客戶端不帶也照常。`entry` 為 `"home"` 時課例標為逐步設計（資料表 `lessons.stepwise`，migration 0043）。
+- 研究紀錄：每次建立課例都記 `lesson_created`（`lesson_id`、`unit_id`、`entry`、`ui_version`）；`entry` 是 `"home"` 時 `ui_version` 為 `4`，否則兩者為 `null`。只記研究用 id，不記名稱。
+- `GET /api/stepwise-lessons`：我的作品用。只回登入教師自己（單元屬於他、未刪除）的課例，且是「首頁卡片開始的課例」或「已有存過的 SOP 版本（教材或任一步）的課例」；只有舊教案、沒在工作區開過的課例不列。依 `updated_at`（最近一次 SOP 存檔，沒有則為建立時間）新到舊。每筆 `{ id, title, unit_id, unit_title, updated_at, steps_done, next_step }`：`steps_done` 是七步裡已有內容的步數（0 到 7），`next_step` 是第一個還空著的步驟（1 到 7，對應 `STAGES`），七步都有內容時為 `null`（顯示「已完成」）。「有內容」與工作區進度欄的 `stageSummary` 同一套規則。沒有刪除課例的 API，所以卡片也沒有刪除。
+- 「我的作品」把這些課例和備課對話、獨立學習單混排（依更新時間），卡片標籤「逐步設計」、副標是「單元名稱 · 第 N 步：步驟名稱」或「已完成」；多一個篩選晶片「逐步設計」。

@@ -196,11 +196,11 @@ async fn the_usage_log_records_which_page_started_a_session() {
     assert_eq!(
         logged,
         vec![
-            (json!("home"), json!(3)),
-            (json!("create"), json!(3)),
-            (Value::Null, json!(3)),
-            (Value::Null, json!(3)),
-            (Value::Null, json!(3)),
+            (json!("home"), json!(4)),
+            (json!("create"), json!(4)),
+            (Value::Null, json!(4)),
+            (Value::Null, json!(4)),
+            (Value::Null, json!(4)),
         ]
     );
 }

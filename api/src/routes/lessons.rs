@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use crate::ai::schemas::IcapLevel;
 use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
-use crate::routes::{owned_lesson, owned_unit, resolved_profile, ProfileSource, ResolvedProfile};
+use crate::routes::{
+    log_usage, owned_lesson, owned_unit, resolved_profile, ProfileSource, ResolvedProfile,
+};
+use crate::sop::SopContent;
 use crate::AppState;
 
 pub const MAX_CORE_LINKS: usize = 3;
@@ -106,6 +109,21 @@ pub struct CreateLesson {
     pub class_description: Option<String>,
     #[serde(default)]
     pub my_example: Option<String>,
+    /// Which page started the lesson (`home`: the home page's 逐步設計 card), for the research
+    /// log and 我的作品. Anything else (another string, another type) is ignored, never an error.
+    #[serde(default)]
+    pub entry: Option<Value>,
+}
+
+/// The `ui_version` of the home page the 逐步設計 card is on (4: the third card was added).
+pub const HOME_UI_VERSION: i64 = 4;
+
+/// The entries the usage log records; any other value is dropped.
+fn known_entry(entry: Option<&Value>) -> Option<&'static str> {
+    match entry.and_then(|e| e.as_str()).map(str::trim) {
+        Some("home") => Some("home"),
+        _ => None,
+    }
 }
 
 fn parse_date(d: Option<&str>) -> AppResult<Option<NaiveDate>> {
@@ -141,18 +159,107 @@ pub async fn create(
     let lesson_date = parse_date(req.lesson_date.as_deref())?;
     let my_example = req.my_example.unwrap_or_default();
     check_my_example(&my_example)?;
-    let lesson = sqlx::query_as(&format!(
-        "INSERT INTO lessons (unit_id, title, lesson_date, class_description, my_example)
-         VALUES ($1, $2, $3, $4, $5) RETURNING {LESSON_COLS}"
+    let entry = known_entry(req.entry.as_ref());
+    let lesson: Lesson = sqlx::query_as(&format!(
+        "INSERT INTO lessons (unit_id, title, lesson_date, class_description, my_example, stepwise)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING {LESSON_COLS}"
     ))
     .bind(unit_id)
     .bind(title)
     .bind(lesson_date)
     .bind(req.class_description.unwrap_or_default())
     .bind(&my_example)
+    .bind(entry == Some("home"))
     .fetch_one(&state.db)
     .await?;
+    // Research ids only, never names. `ui_version` says which home page the teacher came from.
+    log_usage(
+        &state.db,
+        teacher.id(),
+        "lesson_created",
+        json!({
+            "lesson_id": lesson.id, "unit_id": lesson.unit_id, "entry": entry,
+            "ui_version": entry.map(|_| HOME_UI_VERSION),
+        }),
+    )
+    .await?;
     Ok(Json(lesson))
+}
+
+/// One row of 我的作品 for a lesson worked in the 逐步設計 workspace.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct StepwiseLesson {
+    pub id: i64,
+    pub title: String,
+    pub unit_id: i64,
+    pub unit_title: String,
+    /// The latest save of the lesson's SOP (its material or any step), else when it was made.
+    pub updated_at: DateTime<Utc>,
+    /// How many of the seven steps hold something (0 to 7).
+    #[sqlx(skip)]
+    pub steps_done: i32,
+    /// The first step that is still empty (1 to 7); `null`: all seven have content.
+    #[sqlx(skip)]
+    pub next_step: Option<i32>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct StepwiseRow {
+    id: i64,
+    title: String,
+    unit_id: i64,
+    unit_title: String,
+    updated_at: DateTime<Utc>,
+    has_material: bool,
+    content: Option<Value>,
+}
+
+/// `GET /api/stepwise-lessons`: the teacher's lessons that are in the 逐步設計 workspace, newest
+/// first: those started from the home page's 逐步設計 card, and any lesson that has a saved SOP
+/// version (its material or any step). Old plan-only lessons nobody opened there are left out.
+pub async fn list_stepwise(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+) -> AppResult<Json<Vec<StepwiseLesson>>> {
+    let rows: Vec<StepwiseRow> = sqlx::query_as(
+        "SELECT l.id, l.title, l.unit_id, u.title AS unit_title,
+                GREATEST(l.created_at, COALESCE(v.created_at, l.created_at)) AS updated_at,
+                COALESCE(v.material_id IS NOT NULL AND NOT v.material_deleted, false) AS has_material,
+                v.content
+           FROM lessons l
+           JOIN units u ON u.id = l.unit_id
+           LEFT JOIN LATERAL (
+                SELECT created_at, material_id, material_deleted, content
+                  FROM lesson_sop_versions WHERE lesson_id = l.id
+                 ORDER BY version_no DESC LIMIT 1) v ON true
+          WHERE u.teacher_id = $1 AND l.deleted_at IS NULL AND u.deleted_at IS NULL
+            AND (l.stepwise OR v.created_at IS NOT NULL)
+          ORDER BY updated_at DESC, l.id DESC",
+    )
+    .bind(teacher.id())
+    .fetch_all(&state.db)
+    .await?;
+    let lessons = rows
+        .into_iter()
+        .map(|r| {
+            // A stored document is validated on the way in; an older shape reads with defaults.
+            let content: SopContent = r
+                .content
+                .and_then(|c| serde_json::from_value(c).ok())
+                .unwrap_or_default();
+            let done = crate::sop::steps_done(r.has_material, &content);
+            StepwiseLesson {
+                id: r.id,
+                title: r.title,
+                unit_id: r.unit_id,
+                unit_title: r.unit_title,
+                updated_at: r.updated_at,
+                steps_done: done.iter().filter(|d| **d).count() as i32,
+                next_step: done.iter().position(|d| !d).map(|i| i as i32 + 1),
+            }
+        })
+        .collect();
+    Ok(Json(lessons))
 }
 
 #[derive(Debug, sqlx::FromRow)]

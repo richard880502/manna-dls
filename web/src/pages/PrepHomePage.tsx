@@ -16,6 +16,7 @@ import {
 import { materialFields, type MaterialChoice, type PickedMaterial } from "../components/material/MaterialChooser";
 import { WorksheetNotice } from "../components/material/WorksheetNotice";
 import { ObjectiveDrafts, recordDecisions, useObjectiveDraft, type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
+import { StepwiseDialog } from "../components/home/StepwiseDialog";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
 import { LibraryPicker, pickedOf } from "../components/library/LibraryPicker";
@@ -37,13 +38,16 @@ import {
   REQUEST_MAX,
   SAMPLE_CHIP_LABEL,
   TAKE_AS_SAMPLE,
+  HOME_BLURB,
+  HOME_NAME,
   HOME_TOOLS,
-  TOOL_BLURB,
+  STEPWISE_PLACEHOLDER,
   TOOL_CHIP,
-  TOOL_NAME,
   asCreateRequest,
+  isStepwise,
   kindOf,
   toolFromWords,
+  type HomeTool,
   type StartKind,
   type Tool,
 } from "../lib/create";
@@ -164,7 +168,7 @@ function AttachMenu<W extends AttachWay | SampleWay>({
   );
 }
 
-type QuickDialog = { slot: "article"; way: AttachWay } | { slot: "sample"; way: SampleWay };
+type QuickDialog = { slot: "article"; way: AttachWay } | { slot: "sample"; way: SampleWay } | { slot: "stepwise" };
 
 /**
  * The quick box: one composer box (text, 附上 controls, send). With a material it makes 閱讀理解題
@@ -183,7 +187,7 @@ function QuickBox() {
   /** 照我的學習單做's sample; kept while another tile is chosen, but sent only with it. */
   const [sample, setSample] = useState<Sample | null>(null);
   /** null: the teacher has not chosen a tile, so typed words choose. */
-  const [clicked, setClicked] = useState<{ tool: Tool | null } | null>(null);
+  const [clicked, setClicked] = useState<{ tool: Tool | HomeTool | null } | null>(null);
   /** Materials the teacher said to keep as the article (no worksheet notice for them). */
   const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
   const [dialog, setDialog] = useState<QuickDialog | null>(null);
@@ -209,12 +213,15 @@ function QuickBox() {
   const backToArticle = useCallback(() => articleTrigger.current, [articleTrigger]);
   const backToSample = useCallback(() => sampleTrigger.current, [sampleTrigger]);
 
-  const tool = clicked ? clicked.tool : toolFromWords(text);
+  const tile: Tool | HomeTool | null = clicked ? clicked.tool : toolFromWords(text);
+  /** 我想逐步設計 is the lesson workspace's door, not a generator tool: it has no kind of its own. */
+  const stepwise = isStepwise(tile);
+  const tool: Tool | null = isStepwise(tile) ? null : tile;
   const mimic = tool === "mimic";
   const material = choice ? materialFields(choice) : null;
   const typed = text.trim();
   // No tile and no tool word: an attached article makes the first tile's 完整學習單; text alone asks Manna.
-  const kind: StartKind | null = tool ? kindOf(tool) : material ? "worksheet" : typed ? "ask" : null;
+  const kind: StartKind | null = stepwise ? null : tool ? kindOf(tool) : material ? "worksheet" : typed ? "ask" : null;
   const missing = needMaterial && material === null && kind !== null && kind !== "ask";
   /** 照我的學習單做 waits for a sample, then for the lesson text. */
   const slotsNeeded = !mimic ? null : sample === null ? QUICK_NEED_SAMPLE : material === null ? QUICK_NEED_LESSON_TEXT : null;
@@ -223,9 +230,14 @@ function QuickBox() {
   const need = (mimic ? (needSlots ? slotsNeeded : null) : missing ? MATERIAL_REQUIRED : null) ?? ocrBusy;
   const picked = choice?.picked ?? null;
   const worksheetLike =
-    !mimic && picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
+    !mimic && !stepwise && picked?.looks_like_worksheet === true && !keptAsText.has(picked.id) ? picked : null;
 
   async function send() {
+    // 我想逐步設計: the unit dialog next (the article and any typed name go along); nothing is required.
+    if (stepwise) {
+      if (!busy) setDialog({ slot: "stepwise" });
+      return;
+    }
     if (busy || kind === null || drafts.state !== null) return;
     if (mimic && slotsNeeded !== null) {
       setNeedSlots(true);
@@ -295,7 +307,7 @@ function QuickBox() {
     void send();
   }
 
-  function pickTool(t: Tool) {
+  function pickTool(t: HomeTool) {
     setClicked({ tool: t });
     setNeedMaterial(false);
     setNeedSlots(false);
@@ -353,7 +365,7 @@ function QuickBox() {
           rows={2}
           maxLength={REQUEST_MAX}
           value={text}
-          placeholder={mimic ? MIMIC_PLACEHOLDER : QUICK_PLACEHOLDER}
+          placeholder={mimic ? MIMIC_PLACEHOLDER : stepwise ? STEPWISE_PLACEHOLDER : QUICK_PLACEHOLDER}
           disabled={busy}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
@@ -411,7 +423,7 @@ function QuickBox() {
             className="send-button"
             aria-label="送出"
             aria-describedby={need ? `${ids}-need` : undefined}
-            disabled={busy || kind === null || drafts.state !== null}
+            disabled={busy || (kind === null && !stepwise) || drafts.state !== null}
             onClick={() => void send()}
           >
             <Icon name="send" />
@@ -449,10 +461,10 @@ function QuickBox() {
             key={t}
             type="button"
             role="radio"
-            aria-checked={tool === t}
+            aria-checked={tile === t}
             aria-labelledby={`${ids}-${t}-name`}
             aria-describedby={`${ids}-${t}-blurb`}
-            tabIndex={tool === t || (i === 0 && !(HOME_TOOLS as readonly (Tool | null)[]).includes(tool)) ? 0 : -1}
+            tabIndex={tile === t || (i === 0 && !(HOME_TOOLS as readonly (Tool | HomeTool | null)[]).includes(tile)) ? 0 : -1}
             ref={(el) => {
               tileRefs.current[i] = el;
             }}
@@ -465,10 +477,10 @@ function QuickBox() {
               <Icon name={t} />
             </span>
             <span className="tool-card-title" id={`${ids}-${t}-name`}>
-              {TOOL_NAME[t]}
+              {HOME_NAME[t]}
             </span>
             <span className="tool-card-blurb" id={`${ids}-${t}-blurb`}>
-              {TOOL_BLURB[t]}
+              {HOME_BLURB[t]}
             </span>
           </button>
         ))}
@@ -486,6 +498,9 @@ function QuickBox() {
       <ErrorText message={error} />
       {dialog === null && <PrivacyReminder />}
 
+      {dialog?.slot === "stepwise" && (
+        <StepwiseDialog choice={choice} typed={typed} onClose={() => setDialog(null)} />
+      )}
       {dialog?.slot === "article" && dialog.way === "library" && (
         <LibraryPicker
           kind="material"
@@ -535,7 +550,7 @@ function QuickBox() {
 }
 
 /**
- * 首頁: a greeting with the quick box, the two tools as one radiogroup of tiles under it (the other four
+ * 首頁: a greeting with the quick box, the three ways as one radiogroup of tiles under it (the other four
  * are offered in the conversation or by typing them; 更多設定 goes to the full form), and the latest prep sessions.
  */
 export function PrepHomePage() {

@@ -355,7 +355,7 @@ describe("首頁: a tool from the quick box drafts objectives first", () => {
     const dialog = within(screen.getByRole("dialog", { name: "貼上文字" }));
     await user.type(dialog.getByRole("textbox", { name: "貼上教材文字" }), "Bees help plants.");
     await user.click(dialog.getByRole("button", { name: "附上" }));
-    await user.click(within(screen.getByRole("radiogroup", { name: "要做什麼" })).getByRole("radio", { name: "完整學習單" }));
+    await user.click(within(screen.getByRole("radiogroup", { name: "要做什麼" })).getByRole("radio", { name: "AI 幫我設計" }));
     await user.type(screen.getByRole("textbox", { name: "給 Manna 的要求" }), "多一點討論");
     await user.click(screen.getByRole("button", { name: "送出" }));
 

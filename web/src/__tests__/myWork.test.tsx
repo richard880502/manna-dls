@@ -257,7 +257,7 @@ describe("我的作品", () => {
     const { router } = renderApp("/prep");
     await screen.findByRole("list", { name: "我的作品" });
     const chips = within(screen.getByRole("group", { name: "作品類型" }));
-    expect(chips.getAllByRole("button").map((b) => b.textContent)).toEqual(["全部 5", "學習單 3", "課堂活動 1", "問 Manna 1"]);
+    expect(chips.getAllByRole("button").map((b) => b.textContent)).toEqual(["全部 5", "學習單 3", "課堂活動 1", "問 Manna 1", "逐步設計 0"]);
     expect(chips.getByRole("button", { name: /^全部/ })).toHaveAttribute("aria-pressed", "true");
 
     await user.click(chips.getByRole("button", { name: /^學習單/ }));

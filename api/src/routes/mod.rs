@@ -105,6 +105,7 @@ pub fn api_router() -> Router<AppState> {
             "/units/{id}/lessons",
             get(lessons::list).post(lessons::create),
         )
+        .route("/stepwise-lessons", get(lessons::list_stepwise))
         .route("/lessons/{id}", get(lessons::detail).put(lessons::update))
         .route("/lessons/{id}/versions", post(lessons::create_version))
         .route("/lessons/{id}/core-links", put(lessons::set_core_links))

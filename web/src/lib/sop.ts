@@ -24,6 +24,11 @@ export const STAGES: ReadonlyArray<{ step: 1 | 2 | 3 | 4 | 5 | 6 | 7; name: stri
 
 export const stageName = (step: number): string => STAGES.find((s) => s.step === step)?.name ?? "";
 
+/** Where a 逐步設計 lesson stands, for 我的作品: its first empty step, or 「已完成」. */
+export function stepwiseProgress(nextStep: number | null): string {
+  return nextStep === null ? "已完成" : `第 ${nextStep} 步：${stageName(nextStep)}`;
+}
+
 /** 資訊處理功能（規格 §2、§8）, in the order tasks usually progress. */
 export const INFO_FUNCTIONS: ReadonlyArray<{ value: InfoFunction; label: string }> = [
   { value: "discover", label: "發現資訊" },
