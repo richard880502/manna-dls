@@ -61,3 +61,26 @@ fn provider_execution_has_no_application_or_feature_dependencies() {
         );
     }
 }
+
+#[test]
+fn worksheet_revision_rules_do_not_depend_on_io_or_persistence() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/worksheet/revise/rules.rs");
+    let source = code(&path);
+    let production = source.split("#[cfg(test)]").next().unwrap();
+    for dependency in [
+        "usesuper::*",
+        "super::persistence",
+        "worksheet::revise::persistence",
+        "worksheet::store",
+        "super::super::store",
+        "sqlx::",
+        "reqwest::",
+        "axum::",
+        "crate::routes",
+    ] {
+        assert!(
+            !production.contains(dependency),
+            "worksheet revision rules must not depend on I/O or persistence: {dependency}"
+        );
+    }
+}

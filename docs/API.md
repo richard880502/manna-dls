@@ -1212,7 +1212,7 @@ interface WsSheet {
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
 | GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
-| POST | `/api/worksheets/:id/sop-sync` | `{ confirm: true, keys: string[], sop_version_no }` | `{ sop_version_no, applied }`。沒有 `confirm: true` → 400；課例在預覽之後改過 → 409 |
+| POST | `/api/worksheets/:id/sop-sync` | `{ confirm: true, keys: string[], sop_version_no, worksheet_version_no?, worksheet_updated_at?, lesson_id? }` | `{ sop_version_no, applied }`。沒有 `confirm: true` → 400；課例／學習單版本或連結與預覽不符 → 409 |
 | PUT | `/api/worksheets/:id/link` | `{ lesson_id: number \| null }` | `WorksheetState`：連結既有課例或取消連結（不改課例內容） |
 | POST | `/api/worksheets/:id/save-as-lesson` | `{ unit_id, title }` | `WorksheetState`：在這個單元建立新課例，把教材、目標與任務寫成它的第一版 SOP，並連結 |
 | POST | `/api/worksheets/:id/checks/vocabulary` | `{ level, target_level? }` | `WsVocabCheck`。詞彙表未匯入 → 409 |
@@ -1280,13 +1280,19 @@ interface SopSyncChange {
   label: string; before: string; after: string;
 }
 interface SopSyncPreview {
-  lesson_id: number; sop_version_no: number | null;
+  lesson_id: number; sop_version_no: number | null; worksheet_version_no: number; worksheet_updated_at: string;
   changes: SopSyncChange[];
   core_suggestions: [];                     // 預留：「建議補充至單元想法（CoRe）」；這一版永遠是空陣列
 }
 ```
 
-`POST …/sop-sync { confirm: true, keys, sop_version_no }` 只套用 `keys` 裡的項目，寫成課例 SOP 的**新版本**（只增不改，舊版本仍在）。對應方式：目標以 `sop_id` 對應；活動區塊以 `sop_block_id` 對應，寫回時每一題成為一個 SOP 任務（`text` = 題目，`function` = 區塊的資訊處理功能，三種鷹架各自合併成文字，`origin` 依學習單的 `origin` 轉成 `teacher`／`ai_adopted`／`ai_edited`）。套用後學習單的 `sop_id`／`sop_block_id` 會補上。
+`POST …/sop-sync { confirm: true, keys, sop_version_no, worksheet_version_no, worksheet_updated_at, lesson_id }` 只套用 `keys` 裡的項目，寫成課例 SOP 的**新版本**（只增不改，舊版本仍在）。對應方式：目標以 `sop_id` 對應；活動區塊以 `sop_block_id` 對應，寫回時每一題成為一個 SOP 任務（`text` = 題目，`function` = 區塊的資訊處理功能，三種鷹架各自合併成文字，`origin` 依學習單的 `origin` 轉成 `teacher`／`ai_adopted`／`ai_edited`）。套用後學習單的 `sop_id`／`sop_block_id` 會補上。
+
+預覽從同一個資料庫快照讀取課例與學習單。確認時先鎖學習單、再鎖課例，於鎖內重讀所有權、
+課例連結及兩邊版本；不符回 409，請重新預覽。`worksheet_version_no`、`worksheet_updated_at` 與 `lesson_id` 是新增的
+確認保護；更新時間也涵蓋未新增內容版本的教材／設定變更。舊客戶端未傳仍相容；新版網頁固定帶入預覽回傳的值。課例版本、學習單對應 ids 與
+`worksheet_sop_synced` 研究事件在**同一交易**提交，任一步失敗全部回滾。連結／另存新課例
+也使用單一交易，另存失敗不會留下半完成課例、教材或連結。
 
 ## 詞彙級別檢查（規格 §9.6 的決定性部分）
 
