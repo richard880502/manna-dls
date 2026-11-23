@@ -1087,3 +1087,107 @@ async fn a_worksheet_from_the_sop_uses_the_choices_made_in_the_steps_and_asks_no
         .collect();
     assert!(direct_kinds.contains(&"exit_ticket"), "{direct_kinds:?}");
 }
+
+/// The exit ticket the SOP leaves out is the last step of the run, and the run's last job stays
+/// open until the worksheet is saved: a page that sees nothing running finds the new version,
+/// not the empty one with 「這次產生中斷了」. The save is held back with a table lock, so the
+/// moment between the last step and the save is long enough to look at.
+#[tokio::test]
+async fn a_run_without_an_exit_ticket_is_running_until_its_worksheet_is_saved() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-16", "general").await;
+    let id = ready(&app, &t, "").await;
+    put_sop(
+        &app,
+        &t,
+        id,
+        json!({ "objectives": objectives(), "options": { "exit_ticket": false } }),
+    )
+    .await;
+    let (s, ws) = app
+        .post("/api/worksheets", Some(&t), json!({ "lesson_id": id }))
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{ws}");
+    assert_eq!(ws["settings"]["skip_exit_ticket"], true);
+    let ws_id = ws["id"].as_i64().unwrap();
+
+    // Reads go on; the generated version cannot be written until the lock goes.
+    let mut lock = app.db.begin().await.unwrap();
+    sqlx::query("LOCK TABLE worksheet_versions IN EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let (s, v) = app
+        .post(
+            &format!("/api/worksheets/{ws_id}/generate"),
+            Some(&t),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let mut waiting = false;
+    for _ in 0..1000 {
+        waiting = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                     WHERE datname = current_database() AND wait_event_type = 'Lock'
+                       AND query LIKE '%INSERT INTO worksheet_versions%')",
+        )
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+        if waiting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(waiting, "the run never reached the save of its worksheet");
+
+    // Every step has its outcome; the worksheet is not saved yet, so the run is still going.
+    let (s, polled) = app
+        .get(&format!("/api/worksheets/{ws_id}/jobs"), Some(&t))
+        .await;
+    assert_eq!(s, StatusCode::OK, "{polled}");
+    assert_eq!(polled["running"], true, "{polled}");
+    assert_eq!(polled["version_no"], 1, "{polled}");
+    // As after a written exit ticket: its steps have ended, none of them failed, and the step
+    // that is not run is not listed.
+    let steps = polled["progress"]["steps"].as_array().unwrap();
+    assert!(
+        steps.iter().all(|s| s["status"] != "failed"),
+        "{}",
+        polled["progress"]
+    );
+    assert!(
+        steps.iter().all(|s| s["key"] != "exit_ticket"),
+        "{}",
+        polled["progress"]
+    );
+    let exit = polled["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["step"] == "exit_ticket")
+        .unwrap();
+    assert_eq!(exit["outcome"], "skipped", "{exit}");
+    assert_ne!(exit["status"], "done", "{exit}");
+
+    lock.rollback().await.unwrap();
+    let done = wait_worksheet(&app, &t, ws_id).await;
+    assert_eq!(done["progress"]["status"], "done", "{}", done["progress"]);
+    let kinds: Vec<&str> = done["content"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["kind"].as_str().unwrap())
+        .collect();
+    assert!(kinds.contains(&"activity"), "{kinds:?}");
+    assert!(!kinds.contains(&"exit_ticket"), "{kinds:?}");
+    let exit = done["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["step"] == "exit_ticket")
+        .unwrap();
+    assert_eq!(exit["status"], "done", "{exit}");
+    assert_eq!(exit["outcome"], "skipped", "{exit}");
+}

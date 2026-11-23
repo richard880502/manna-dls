@@ -688,6 +688,24 @@ impl Run {
         &self.state.db
     }
 
+    /// Records how a step ended (shown, failed or skipped) on its job. The run's last job
+    /// (`hold`) only gets its outcome and stays open ([`mark_held`]): [`spawn_run`] closes it
+    /// once the work has returned, so no page sees the run over before its worksheet is saved.
+    async fn record_outcome(
+        &self,
+        job_id: i64,
+        outcome: &str,
+        message: Option<&str>,
+        interaction_id: Option<i64>,
+        context: &[AiContextItem],
+    ) -> sqlx::Result<()> {
+        if self.hold == Some(job_id) {
+            mark_held(self.db(), job_id, outcome, message, interaction_id, context).await
+        } else {
+            mark_done(self.db(), job_id, outcome, message, interaction_id, context).await
+        }
+    }
+
     /// The block of shared context for prompts that predate `{{teacher_objective}}` and
     /// `{{teacher_request}}`: the shared annotations, then the teacher's objectives (when
     /// `with_objectives`: the four steps list them in `{{objectives_summary}}` instead) and
@@ -1223,27 +1241,8 @@ async fn close<T>(
             output,
         } => {
             run.progress.done(key).await;
-            if run.hold == Some(job_id) {
-                mark_held(
-                    run.db(),
-                    job_id,
-                    "shown",
-                    None,
-                    Some(interaction_id),
-                    context,
-                )
+            run.record_outcome(job_id, "shown", None, Some(interaction_id), context)
                 .await?;
-            } else {
-                mark_done(
-                    run.db(),
-                    job_id,
-                    "shown",
-                    None,
-                    Some(interaction_id),
-                    context,
-                )
-                .await?;
-            }
             Ok(Ok((output, interaction_id)))
         }
         StepResult::Failed {
@@ -1253,27 +1252,8 @@ async fn close<T>(
         } => {
             let message = format!("{reason}，這一步沒有產生成功；你可以繼續手動完成。");
             run.progress.fail(key, &message).await;
-            if run.hold == Some(job_id) {
-                mark_held(
-                    run.db(),
-                    job_id,
-                    outcome,
-                    Some(&message),
-                    interaction_id,
-                    context,
-                )
+            run.record_outcome(job_id, outcome, Some(&message), interaction_id, context)
                 .await?;
-            } else {
-                mark_done(
-                    run.db(),
-                    job_id,
-                    outcome,
-                    Some(&message),
-                    interaction_id,
-                    context,
-                )
-                .await?;
-            }
             Ok(Err(reason))
         }
     }
@@ -1891,6 +1871,9 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     if !chosen.settings.wants(GEN_WARMUP) {
         run.progress.skip(STEP_WARMUP).await;
     }
+    if chosen.settings.skip_exit_ticket {
+        run.progress.skip(STEP_EXIT).await;
+    }
     let levels = chosen.settings.levels.clone();
     let ticked = assemble::selected_kinds(&chosen.settings);
     let objective_ids = run.objective_ids();
@@ -1958,8 +1941,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let warmup = if chosen.settings.wants(GEN_WARMUP) {
         Some(step_warmup(run, jobs[STEP_WARMUP], chosen.settings.minutes, &raw_blocks).await?)
     } else {
-        mark_done(
-            db,
+        run.record_outcome(
             jobs[STEP_WARMUP],
             "skipped",
             Some("沒有勾選「加入暖身活動」。"),
@@ -1977,8 +1959,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     }
     targets.extend(raw_blocks.iter().map(target_of_raw));
     let scaffold_sets: Vec<RawScaffoldSet> = if targets.is_empty() {
-        mark_done(
-            db,
+        run.record_outcome(
             jobs[STEP_SCAFFOLDS],
             "skipped",
             Some("沒有可以安排鷹架的區塊。"),
@@ -2002,10 +1983,10 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
     let set_for = |target: &str| scaffold_sets.iter().find(|s| s.target == target);
 
     // ---- (f) exit ticket
-    // The lesson's SOP can leave the exit ticket out (「產生設定」 on its last step).
+    // The lesson's SOP can leave the exit ticket out (「產生設定」 on its last step). Its job is
+    // the run's last one: it is held open like a written exit ticket until the sheet is saved.
     let exit = if chosen.settings.skip_exit_ticket {
-        mark_done(
-            db,
+        run.record_outcome(
             jobs[STEP_EXIT],
             "skipped",
             Some("課例 SOP 的產生設定沒有要 Exit ticket。"),
@@ -2210,15 +2191,17 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
     Ok(())
 }
 
-async fn skip(db: &PgPool, job_id: Option<&i64>, message: &str) -> sqlx::Result<()> {
+async fn skip(run: &Run, job_id: Option<&i64>, message: &str) -> sqlx::Result<()> {
     match job_id {
-        Some(id) => mark_done(db, *id, "skipped", Some(message), None, &[]).await,
+        Some(id) => {
+            run.record_outcome(*id, "skipped", Some(message), None, &[])
+                .await
+        }
         None => Ok(()),
     }
 }
 
 async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) -> AppResult<()> {
-    let db = run.db();
     let ws = &run.input.worksheet;
     let material = &ws.material;
     let content = &run.input.content;
@@ -2280,11 +2263,11 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             )
             .await?;
             let Ok((raw, interaction_id)) = tasks else {
-                skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
+                skip(run, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
             };
             let Some(mut raw) = raw.into_iter().next() else {
-                skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
+                skip(run, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
             };
             // Q4: the block keeps its place in 示範 → 獨立應用.
@@ -2321,7 +2304,7 @@ async fn regenerate(run: &Run, jobs: &HashMap<&'static str, i64>, old: Block) ->
             )
             .await?;
             let Ok((w, interaction_id)) = warmup else {
-                skip(db, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
+                skip(run, jobs.get(STEP_SCAFFOLDS), SKIPPED).await?;
                 return Ok(());
             };
             let mut block = assemble::warmup_block(&w, material, &levels);
