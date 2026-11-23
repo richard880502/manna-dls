@@ -1,16 +1,33 @@
-# 教師長期記憶（#82，Phase 1 + Phase 2）
+# 教師長期記憶（#82，Phase 1 + Phase 2；對話中偵測 #97）
+
+> **⚠️ 研究設計變更，請 PI 知悉並核准（#97）**
+> 本版讓 Manna 在老師「打給 Manna 的話」裡偵測長期習慣，並以一鍵建議的方式詢問是否記住
+> （仍然只有老師按「記住」後才寫入，「必須由老師確認後才記住」不變）。同時新增「自由習慣」
+> （封閉的 10 類之外、一句話、不含個人資訊）並把每位老師的有效習慣上限由 10 項改為 100 項。
+> 這改變了介入的形態與強度（老師不必特地去設定頁），也改變了研究紀錄與模型呼叫成本，詳見
+> 「對話中偵測」「自由習慣」「帶入哪些習慣」「索引成本」。**研究開關仍預設關閉，只有 PI 能開。**
+> 需要 PI 核准的事項整理在文末〈待 PI 核准〉。
 
 ## 使用與研究控制
 
-「備課偏好 → 我的出題習慣」一次整理一項長期習慣，先預覽，再按「確認並記住」。
-修改走相同的預覽／取代確認；「停止使用」只標失效，歷程不刪除。每位老師最多 10 項。
-記憶範圍只有該老師，不依班級或教材另存，也不保存對話摘要。沒有自動讀取對話或背景擷取。
+習慣有兩個入口，都是「先預覽，再由老師按鈕確認」：
 
-- 「取消」預覽會送到伺服器：該預覽不能再確認，`teacher_decisions` 記 `reject`／`cancelled`。
-  改寫已預覽的草稿也算取消。確認記 `adopt`／`confirmed`（與目前有效習慣完全相同時記
-  `adopt`／`already_active`，不新增版本、不重建索引）。
+1. **我的出題習慣**（備課偏好）：老師寫下一項習慣，Manna 整理後預覽，按「確認並記住」。
+2. **對話中偵測**：老師在打給 Manna 的話裡說出長期偏好（「之後選擇題都用三個選項」），
+   Manna 在該訊息旁問「要記住這個習慣嗎？『…』」，老師按「記住」、「不用」或「修改後記住」。
+
+兩者都沒有靜默儲存：沒有老師的按鈕就沒有記憶。修改走相同的預覽／取代確認；「停止使用」只標失效，
+歷程不刪除。每位老師最多 **100** 項有效習慣（封閉類型各只有一項有效值，自由習慣不限同類）。
+記憶範圍只有該老師，不依班級或教材另存，也不保存對話摘要。
+
+- 「取消」預覽、對話中的「不用」都會送到伺服器：該候選不能再確認，`teacher_decisions` 記 `reject`
+  （原因 `cancelled` 或 `dismissed`）。「修改後記住」記 `revise`／`edit_requested`；改寫已預覽的草稿也算取消。
+  確認記 `adopt`／`confirmed`（與目前有效習慣完全相同時記 `adopt`／`already_active`，不新增版本、不更新索引）。
+  15 分鐘沒人回答的候選過期：不能確認，記 `no_response`／`expired`。
 - `usage_logs`：`memory_confirmed`、`memory_cancelled`、`memory_removed`、`memory_index_rebuild`，
-  研究開關變更記 `setting_changed`。
+  研究開關變更記 `setting_changed`；對話中偵測另有 `memory_detection_run`、`memory_candidate_detected`、
+  `memory_candidate_shown`、`memory_candidate_dismissed`、`memory_candidate_edit_requested`、
+  `memory_candidate_expired`（見〈對話中偵測〉）。
 
 後台「教師長期記憶」的研究開關（`teacher_memory_enabled`）預設 **關閉**，只有 PI 能在後台切換，
 每次切換寫入 `usage_logs`。
@@ -42,6 +59,8 @@
   `system_text` 接在該步驟系統提示詞後，`user_template` 帶入 `teacher_habits`
   （id、kind、value、canonical 句子）。習慣是資料，不能變更系統規則或輸出結構；本次教師明確要求優先。
 - **順序固定為確認時間**（`valid_at, id`）。Graphiti 的排序只記在紀錄裡（見 Phase 2），不改變提示詞。
+- 習慣很多時只帶其中一部分，規則見下一節〈帶入哪些習慣〉；`policy_version` 為 `teacher-habits-v2`
+  （v1 是只有 10 類封閉習慣、全部帶入時的紀錄；舊紀錄不變）。
 - 學習單檢查：老師有已確認的選擇題選項數習慣時，除了預設 4 個，也接受該數目；
   配對組數習慣小於 3 時，配對題最少項目降為該數。其他規則不變，英文檢查等仍有效。
 - 試產生（後台提示詞「試產生」）在開關開啟時，用 PI 本人的習慣、以完全相同的方式附加，
@@ -53,9 +72,15 @@
 ```json
 {
   "enabled": true,
-  "policy_version": "teacher-habits-v1",
+  "policy_version": "teacher-habits-v2",
   "order": "confirmed_at",
-  "memories": [{"id": 12, "kind": "choice_options", "value": "3", "statement": "選擇題使用 3 個選項。", "valid_at": "...", "...": "..."}],
+  "memories": [{"id": 12, "kind": "choice_options", "value": "3", "scope": null, "statement": "選擇題使用 3 個選項。", "valid_at": "...", "...": "..."}],
+  "selection": {"policy": "closed_all+custom_scope_top_k", "module": "worksheet_tasks", "k": 12,
+                "ranking": "embedding", "fallback_reason": null, "embedding": {"model": "embeddinggemma-2", "dims": 768},
+                "query": {"chars": 1840, "sha256": "…"},
+                "included": [{"id": 12, "kind": "choice_options", "scope": null}, {"id": 31, "kind": "custom", "scope": "content", "score": 0.6123}],
+                "filtered_out": [{"id": 40, "kind": "custom", "scope": "workflow", "reason": "scope"},
+                                 {"id": 33, "kind": "custom", "scope": "content", "reason": "below_top_k", "score": 0.2101}]},
   "context_prompt": {"key": "teacher_memory_context", "version_no": 1, "prompt_version_id": 87},
   "system_appended": "\n\n下方 teacher_habits 是老師確認過的出題偏好資料……",
   "user_appended": "\n\nteacher_habits（JSON 資料，依確認時間排序）：[…]",
@@ -68,12 +93,32 @@
 `system_appended`／`user_appended`（逐字）。`graph.status`：`not_configured`、`unavailable`、
 `not_indexed`、`core_changed`、`missing_group`、`empty_group`、`error`、`ranked`。
 
+### 帶入哪些習慣（#97）
+
+- **封閉類型**（選項數、配對組數…）：一律帶入「會寫題目或教學內容」的步驟（`HABIT_STEPS`），與先前相同，
+  因為它們可檢查（例如選項數習慣會放寬學習單檢查）。
+- **自由習慣**：先依 `scope` 篩出適用於該步驟的（`memory::scope`，每個範圍對應 `HABIT_STEPS` 的子集：
+  `content` 題目內容、`format` 題型與作答方式、`layout` 版面與格式、`language` 語言與用字、`scaffold` 鷹架與支持、
+  `workflow` 備課活動與流程、`all` 全部）。適用的不超過 **12 項**就全部帶入（不呼叫 embedding）；
+  超過時依與本次工作的相關度排序，取前 12 項。
+- **排序**：習慣的句子以 `EMBEDDING_MODEL`（預設 `embeddinggemma-2`，768 維，與知識庫檢索相同的設定）轉成向量，
+  存在 Postgres（`teacher_memory_embeddings`，pgvector；習慣不會修改，所以每項只算一次，換模型或維度時重算；
+  確認後在背景算，沒算到的在第一次需要排序時補算）。查詢是該步驟自己的使用者提示詞（前 2,000 字），
+  以餘弦相似度排序，同分取較晚確認的。**不使用 FalkorDB 全文檢索**（它只依空白切詞，中文無法使用，見 Phase 2）。
+  embedding 關閉、逾時或失敗時改取「最近確認的 12 項」，並在紀錄寫明 `ranking: "recency"` 與 `fallback_reason`。
+- 帶入的習慣仍依確認時間排列，提示詞版面固定。
+- **紀錄**：`input_snapshot.teacher_memory.selection` 記錄策略版本、K、排序方式、帶入與被排除的每一項
+  （id、kind、scope、被排除原因 `scope`／`below_top_k`、分數）以及查詢的字數與 SHA-256（不存查詢全文，
+  它就是該步驟已記錄的提示詞），研究者可以重建每次生成用了哪些習慣。
+- 帶入的文字是版本化提示詞 `teacher_memory_context` v2：說明習慣是長期偏好資料、**本次明確要求優先**、
+  自由習慣只在與這一步相關且輸出結構允許時套用。
+
 ### 支援的習慣與隱私邊界
 
-為避免模型整理後仍留下姓名／健康資訊，第一版採 **封閉代碼 → 程式產生句子**。
-不保存任意模型改寫的自由文字。支援：
+第一版（#82）只有 **封閉代碼 → 程式產生句子** 的 10 類習慣；#97 保留它們（仍可檢查、仍是一項一個值），
+並加入**自由習慣**。
 
-| 類型 | 值 |
+| 封閉類型 | 值 |
 |---|---|
 | 選擇題選項數 | 2–5 |
 | 配對組數 | 2–10 |
@@ -83,21 +128,67 @@
 | 題幹長度 | 簡短、一般 |
 | 預設難度 | 基礎、一般、挑戰 |
 
+#### 自由習慣（`kind = custom`）
+
+- 內容：`statement`（一句繁體中文、≤120 字，由模型整理成教學形式）、`scope`（上述七個封閉代碼之一）、
+  `valid_at`／`invalid_at`／`superseded_by` 歷程（與封閉習慣相同的 append-only 規則與資料庫 trigger；
+  `scope` 也納入不可修改的內容）。`value` 欄位存同一句話。
+- 取代：模型可在 `replaces_id` 填目前有效的某項**自由習慣**（意思相同但內容更新）；伺服器檢查該 id 屬於同一位老師、
+  仍有效、也是自由習慣。確認時同一個交易內失效舊版並寫入新版。
+- **個人資訊一律不記**。三層防線：
+  1. 模型被要求拒絕：涉及特定學生、姓名、班級座號、健康或身心狀況、家庭、成績等可辨識資訊時
+     `supported=false`、`reason=personal_information`；
+  2. 伺服器再檢查句子（`memory::statement`）：長度 ≤120、單行單句、至少含中文、不含聯絡方式
+     （`@`、網址、6 位以上數字）、姓名加稱謂（小明同學、王老師、Tom 同學）、座號／班級編號、
+     健康／家庭／成績詞彙、疑似對模型下指令的語句（忽略以上…、system prompt…）。不通過就**不建立候選**，
+     紀錄只寫關閉的原因代碼（`statement_personal_information` 等），句子**不寫入**任何資料表或紀錄
+     （只存字數 `statement_chars`）；
+  3. 老師在按「記住」前會看到完整一句話。
+  這些檢查刻意保守（寧可誤擋，老師可改寫）；它們是備援，不保證擋掉所有識別資訊，所以仍需要第 3 層。
+- 老師輸入的原始文字（草稿）只存字數與雜湊，見下方〈待 PI 核准〉。通過檢查的句子（模型整理後的版本）
+  會存在候選、被記住的習慣與抽取紀錄的 `output`（這是與 v1 的差異：v1 只存封閉代碼）。
+
 超出範圍、多項要求、單次修改不建立候選。整理模型由目前生效的文字模型設定（部署的 `AI_PROVIDER`／`AI_MODEL` 為預設，主持人可在後台覆蓋）
-決定，不偷偷切換供應商。未進行付費供應商品質評估；測試使用合成輸入與模型 fixture。
+決定，不偷偷切換供應商；對話中偵測使用**該工作（那一輪對話、那一次修改）開始時固定的模型**。
+未進行付費供應商品質評估；測試使用合成輸入與模型 fixture。
+
+### 對話中偵測（#97）
+
+- **在哪裡**：老師「打給 Manna」的文字——首頁快速輸入開始的備課對話、備課對話中後續的訊息
+  （改學習單、問 Manna、再試一次的要求文字）、學習單逐區修改的修改指示、建立學習單時的「教師的要求」。
+  **不看**教材、附件、圖片與註記。學習單「教師的要求」只在建立時看（不看之後的自動儲存）。
+- **何時**：研究開關開啟、AI 開啟。先過確定性的前置篩選（`memory::detect::looks_persistent`）：
+  之後／以後／往後／從現在起／每次／每份／都要／一律／固定／總是／永遠／我習慣／我喜歡／不要再…，
+  與 from now on／always／never／every time／I prefer…。沒有命中的文字不呼叫模型（「這次改成三題」「第 2 題太難」）。
+- **怎麼做**：命中的文字（≤1,000 字）在**背景**送 `teacher_memory_extract` v2，不拖慢本次對話。
+  輸入是文字、出處（哪一種輸入）、老師目前有效的習慣（≤30 項全給，更多時給全部封閉習慣與最相近的自由習慣）。
+  輸出 `persistent`、`supported`、`kind`、`value`／`statement`／`scope`、`replaces_id`、`reason`；
+  檢查（封閉詞彙、自由句子、scope、替換 id）不過就不建立候選。每次呼叫是獨立的 `ai_interactions`，
+  `input_snapshot.source` 記出處（`prep_turn` 含 session／turn／entry、`block_revise` 含 worksheet／proposal、
+  `worksheet_request`）。單次要求（`persistent=false`）、不支援、含個人資訊、已經記住、已達 100 項的不建立候選。
+  同樣的文字 15 分鐘內不重複詢問；同時等待回答的建議最多 5 則。
+- **老師看到什麼**：該訊息旁的「要記住這個習慣嗎？『…』」，按鈕「記住」（走與設定頁相同的確認路徑：
+  同樣的檢查、歷程與索引更新）、「不用」（記 reject）、「修改後記住」（開啟原本的習慣對話框、預填句子）。
+  會取代既有習慣時顯示「會取代：『…』」。第一則建議附一次性說明：Manna 只會在你按「記住」後才記，可隨時停止使用。
+  等待中的建議也列在「我的出題習慣」。
+- **研究紀錄**（不含老師的文字）：`memory_detection_run`（出處、結果 `candidate`／`not_persistent`／`refused`／
+  `already_active`／`limit_reached`／`failed`、拒絕原因）、`memory_candidate_detected`（出處、kind、scope）、
+  `memory_candidate_shown`（頁面顯示時回報，只記一次）、`memory_confirmed`、`memory_candidate_dismissed`、
+  `memory_candidate_edit_requested`、`memory_candidate_expired`，與 `teacher_decisions`（adopt／reject／revise／no_response）。
 
 #### 整理呼叫的紀錄（`teacher_memory_extract`）
 
-- 回覆只由封閉代碼、布林值與 id 組成（`kind`∈KINDS、`value`∈VALUES）時，**一律保存在 output**，
-  伺服器拒絕的也保存，`check_results.reasons` 寫原因：`unsupported`、`not_persistent`、
-  `value_not_allowed_for_kind`、`replaces_id_mismatch`。
+- 回覆落在封閉詞彙內時（`kind`∈KINDS 或 `custom`、`value`∈VALUES、`scope`、`reason`、布林值與 id），
+  **一律保存在 output**，伺服器拒絕的也保存，`check_results.reasons` 寫原因：`unsupported`、`not_persistent`、
+  `value_not_allowed_for_kind`、`replaces_id_mismatch`、`scope_not_allowed`、`statement_*`。
+  自由句子只有通過個資檢查才寫進 output（否則 `statement: null`，只留 `statement_chars`）。
 - 其他回覆（可能含自由文字）不保存，`error_detail` 只寫失敗類別，不寫供應商本文
   （本文可能引用草稿）：`bad_format: …`、`refusal: …`、`http_error: HTTP 503`、
   `http_error: network error`、`timeout: …`。
 
 #### ⚠️ 待 PI 核准：原始草稿只存雜湊與字數
 
-老師輸入的原始草稿只在整理請求的記憶體中存在，會傳給已設定的模型，但**不寫入** Postgres／
+老師輸入的原始草稿（我的出題習慣頁、備課對話訊息、逐區修改指示、學習單要求，視出處而定）只在整理請求的記憶體中存在，會傳給已設定的模型，但**不寫入** Postgres／
 Graphiti／研究紀錄。研究紀錄只有其字數與 SHA-256 摘要（`input_snapshot.draft`）及不含草稿的
 完整提示詞／版本。因此 **無法從研究紀錄重播或還原原始草稿**。這是實作者採取的隱私預設，
 與「每次模型呼叫輸入都可追溯」的研究原則有出入，**尚待 PI 正式核准**；若 PI 決定要保存全文，
@@ -105,14 +196,18 @@ Graphiti／研究紀錄。研究紀錄只有其字數與 SHA-256 摘要（`input
 
 確認後的習慣、生成時附加的內容、Graphiti 的全部模型請求／回覆則完整可追溯。
 Graphiti 的 episode 只有程式產生、老師確認過的習慣句子，不包含原始對話／教材／草稿。
-新增習慣類型需擴充代碼、驗證與 canonical renderer，並更新 `POLICY_VERSION`。
+新增封閉習慣類型需擴充代碼、驗證與 canonical renderer；自由習慣不需要。
+（備課對話的訊息與修改指示本來就存在各自的資料表；記憶系統不另存，也不從那裡讀回。）
 
 ## Phase 1：Postgres 正本
 
 Migration `0040_teacher_memory.sql`、`0041_memory_sidecar_version.sql`、
-`0042_teacher_memory_hardening.sql`（0040／0041 未修改；所有修正都在新的 0042）：
+`0042_teacher_memory_hardening.sql`（0040／0041 未修改；所有修正都在新的 0042）、
+`0046_memory_in_conversation.sql`（自由習慣、候選的出處、embedding、增量索引；同樣不修改舊檔）：
 
 - `memory_candidates`：老師專屬的安全預覽，15 分鐘有效，確認或取消（`cancelled_at`）只能一次。
+  0046 加 `source`（`manual`／`prep_turn`／`block_revise`／`worksheet_request`）、連到出處的 id、`scope`、
+  文字摘要 `source_digest`（不存文字）、`shown_at`、`expiry_logged_at`。
 - `teacher_memories`：`valid_at`、`invalid_at`、`superseded_by`、失效原因及整理 interaction。
   資料庫 trigger：
   - 禁止 DELETE 與 **TRUNCATE**；
@@ -122,7 +217,8 @@ Migration `0040_teacher_memory.sql`、`0041_memory_sidecar_version.sql`、
   - `superseded_by` 必須是**同一位老師、同一類型**、在失效同一時點生效的新版本（commit 時檢查）。
   停止使用保留研究歷程，並非個資硬刪除。
 - 確認與停止使用鎖該老師列；取代、時點與索引 outbox 在同一交易內完成。
-  同類型只能有一項有效；過期、已取消或與目前版本不一致的候選回 409，必須重新預覽。
+  同一**封閉類型**只能有一項有效（0046 起這個唯一索引不含自由習慣）；每位老師最多 100 項有效習慣，
+  計數在同一個鎖內檢查。過期、已取消或與目前版本不一致的候選回 409，必須重新預覽。
   同時確認同一預覽、同時兩個取代、確認與停止使用同時發生，都只會有一個成功（測試涵蓋）。
 
 ## Phase 2：Graphiti 索引（可選）
@@ -156,10 +252,17 @@ worker 啟動時會比對每位老師最後變更時間與已發布快照時間�
 
 ### 同步、搜尋、失敗與重建
 
-1. 每次確認／停止使用（有設定索引時）在交易內增加 `memory_indexes.revision`。worker 每 10 秒接手；
+1. 每次確認／停止使用（有設定索引時）在交易內增加 `memory_indexes.revision`，並把**被改動的那一項**
+   寫進 `memory_index_ops`（`add` 新確認的習慣、`remove` 被停止或取代的習慣）。worker 每 10 秒接手；
    lease 10 分鐘，HTTP 索引上限 8 分鐘。中斷後 lease 到期就能由新程序恢復。
-2. 每次嘗試使用獨立 group（老師 + revision + 隨機碼），把 **目前有效的正本快照**
+2. **完整重建**（沒有已發布的 group、PI 按「從正本重建」、核心版本改變、group 不見、啟動時發現快照過時）：
+   每次嘗試使用獨立 group（老師 + revision + 隨機碼），把 **目前有效的正本快照**
    按確認時間順序寫入。`reference_time` 使用老師確認時間，不用索引重建時間。
+   **增量更新**（一般的確認／取代／停止使用）：sidecar `POST /index` 的 `mode: "delta"` 對**已發布的 group**
+   只加入新確認的習慣（`memories`）並移除被停止的習慣的 episode（`remove_ids`，Graphiti `remove_episode`，
+   不呼叫模型）。一次最多處理 25 項，其餘留在佇列，處理完才讓 `indexed_revision` 追上。先加入又停止、
+   尚未索引的習慣不會被加入。sidecar 回 409（group 不見了）時標記 `full_rebuild`，下一輪改做完整重建。
+   增量工作不產生新 group，也沒有舊 group 要清除。
 3. 寫完、版本相符、而且 **lease 仍有效、revision 未變** 時才 CAS 發布，並記下建立它的核心版本
    （`indexed_graphiti_version`）。索引期間老師又改了習慣：舊 revision 不發布，該次 group 排入清除，
    下一輪重建最新快照（測試涵蓋）。
@@ -180,7 +283,14 @@ worker 啟動時會比對每位老師最後變更時間與已發布快照時間�
 模型改寫過的中文事實通常查不到。sidecar 的 Chinese smoke test 記錄了這個行為。這也是
 排序只當 metadata、提示詞順序固定的原因。
 
-本版每次變更都重建該老師的完整有效快照（最多 10 項），寫入模型成本會隨有效習慣數增加。
+#### 索引成本（#97）
+
+每項習慣寫入 Graphiti 要數次模型呼叫（擷取實體／關係、去重、embedding）。#82 每次變更都重建該老師的整份快照
+（最多 10 項）；上限提高到 100 項後這不可行，所以一般變更現在只索引被改的那一項（成本與習慣總數無關），
+完整重建只在上述情況發生，仍是 PI 的「從正本重建記憶索引」。完整重建 100 項仍要數百次模型呼叫、可能超過 8 分鐘
+的 HTTP 上限（那次嘗試會失敗並以退避重試；Postgres 不受影響），這是已知限制，**尚未實測**。
+索引只供研究 metadata，不影響生成，所以索引落後或失敗不影響老師。API 與 sidecar 的介面版本升為 2（`SIDECAR_API_VERSION`、
+`API_VERSION`）；先部署的主服務遇到舊 sidecar 會視為不相容、只用 Postgres，直到 sidecar 也部署為止。
 
 ### 模型轉發（只在內部連接埠）
 
@@ -213,7 +323,7 @@ Sidecar 沒有上游 API key。它的 chat／embedding 請求回到主服務的 
 `GET /health`（服務 token）只對 FalkorDB 做一次 PING 並回報：
 
 ```json
-{"ok":true,"api_version":1,"graphiti_version":"0.31.2","policy_version":"teacher-habits-v1"}
+{"ok":true,"api_version":2,"graphiti_version":"0.31.2","policy_version":"teacher-habits-v1"}
 ```
 
 不建立 driver、不建索引（索引在 `/index` 建立該 group 時建立一次；每個 group 是獨立的圖）。
@@ -362,13 +472,15 @@ Coolify Postgres 備份涵蓋所有正本、歷程、研究與 outbox 表。`mem
 
 | 方法／路徑 | 輸入／用途 |
 |---|---|
-| `GET /api/me/memories` | 全歷程、研究開關、`graph_enabled`、索引狀態（未設定索引時 `index: null`） |
-| `POST /api/me/memories/preview` | `{text}`；安全候選 `{id,statement,replaces_id}` |
-| `POST /api/me/memories` | `{candidate_id,confirmed:true}` 確認 → `{id}`；與有效習慣相同 → `{id,unchanged:true}`；`{candidate_id,confirmed:false}` 取消 → `{ok,cancelled:true}`；過期／已確認／已取消／過時 409 |
+| `GET /api/me/memories` | 全歷程（含 `kind`、`scope`）、研究開關、`max_active`（100）、`scopes`、`pending`（等待回答的建議）、`graph_enabled`、索引狀態（未設定索引時 `index: null`） |
+| `POST /api/me/memories/preview` | `{text}`；安全候選 `{id,statement,kind,scope,replaces_id,replaces_statement}` |
+| `POST /api/me/memories` | `{candidate_id,confirmed:true}` 確認 → `{id}`；與有效習慣相同 → `{id,unchanged:true}`；`{candidate_id,confirmed:false}` 取消／不用 → `{ok,cancelled:true}`（加 `edit:true` 為「修改後記住」）；過期／已確認／已取消／過時／已有 100 項（非取代）409 |
+| `GET /api/me/memories/candidates` | 對話中偵測到的待回答建議；`?prep_session_id=` 或 `?worksheet_id=` 篩選 |
+| `POST /api/me/memories/candidates/{id}/shown` | 頁面已顯示建議（只記一次） |
 | `DELETE /api/me/memories/{id}` | 停止使用本人有效的習慣 |
 | `GET/PUT /api/admin/memory-settings` | PI；`{enabled}` 與 `graph_enabled` |
 | `GET /api/admin/memory-index` | PI；`{pending,failed,graph_enabled,providers_ready,compatible,sidecar}`（未設定索引時皆為 0／false） |
-| `POST /api/admin/memory-index/rebuild` | PI；從全部正本重建 |
+| `POST /api/admin/memory-index/rebuild` | PI；從全部正本完整重建（一般變更是增量索引） |
 
 內部連接埠（`INTERNAL_PORT`，不經 proxy）：
 
@@ -377,7 +489,7 @@ Coolify Postgres 備份涵蓋所有正本、歷程、研究與 outbox 表。`mem
 | `POST /api/internal/memory/v1/chat/completions` | 服務秘密 + job token + 版本 header；白名單欄位；研究轉發 |
 | `POST /api/internal/memory/v1/embeddings` | 同上；batch ≤ 64 |
 
-Sidecar（只在記憶資源內部，服務 token）：`GET /health`、`POST /index`、`POST /search`
+Sidecar（只在記憶資源內部，服務 token）：`GET /health`、`POST /index`（`mode: full｜delta`、`remove_ids`；delta 在 group 不存在時回 409）、`POST /search`
 （回 `{memory_ids, group: ok|missing|empty}`）、`GET /groups`、`DELETE /groups/{id}`（冪等）。
 
 ## 驗證
@@ -390,8 +502,14 @@ Sidecar（只在記憶資源內部，服務 token）：`GET /health`、`POST /in
   觸發重建且不搜尋、清除不刪已發布 group 並回收孤兒 group、健康檢查快取、不相容（介面與 policy）
   回到 Postgres；轉發只在內部連接埠、先驗證再讀 body、服務秘密與 job token、版本 header、
   欄位白名單、n／max_tokens／batch／每工作次數上限、embedding 只存維度與 hash。
+- 對話中偵測（`api/tests/memory_in_conversation.rs`）：前置篩選命中／未命中（含單次要求）；單次要求
+  `persistent=false`、個人資訊被拒（句子不寫入任何表）、不合格的句子、`replaces_id` 檢查；備課訊息與逐區修改產生候選
+  （顯示、確認建立記憶與歷程、不用記 reject、修改記 revise、過期、重複文字不再詢問、已記住不再詢問）；開關關閉不偵測；
+  100 項上限（含取代）；scope 篩選與前 K 項選擇寫入 snapshot（fake embedding）、無 embedding 時改取最近確認、
+  項數少時不呼叫 embedding；封閉類型不變（選項數放寬仍有效）；增量索引只送被改的習慣、取代時移除舊的、完整重建、
+  group 不見後改完整重建、分批 25 項。
 - Web：先預覽再明確確認、取消送到伺服器、重複確認提示、取代提示與歷程、停止使用二次確認、
-  PI 開關與索引重建。
+  PI 開關與索引重建；對話旁的「要記住這個習慣嗎？」記住／不用／修改後記住；很多習慣時分組、搜尋與「N / 100」。
 - Sidecar（`memory-sidecar/test_app.py`、`test_deployment.py`）：服務驗證、canonical episode／reference_time、
   失效／過期事實過濾、搜尋只用唯讀 driver 且不建立 group、missing／empty 回報、`/health` 只 PING、
   SDK 實際送出的欄位都在 API 白名單內且帶兩種憑證；真正的 Graphiti + FalkorDB 寫入／搜尋／清除、
@@ -408,3 +526,14 @@ MEMORY_SMOKE=true FALKORDB_HOST=127.0.0.1 FALKORDB_PASSWORD=<密碼> python -m u
 CI 的 `memory` job 在 `memory-sidecar/**`、`api/src/memory/**` 或根目錄 `docker-compose.yml` 變更時執行
 上述測試（FalkorDB 服務同樣關 browser、設密碼）、兩份 Compose 的檢查與 sidecar 映像建置；
 單改 sidecar 不觸發主應用建置／部署。
+
+## 待 PI 核准（#97）
+
+1. **偵測本身**：老師在對話裡打的文字（只有命中前置篩選的）會在背景送給目前設定的模型整理（與設定頁的整理同一個模型與隱私處理，
+   原文只存字數與雜湊）。這是新的模型呼叫與新的資料流，雖然仍須老師確認。
+2. **自由習慣的內容留存**：通過檢查的一句話（模型整理後的版本）會存在資料庫、研究紀錄與（若啟用）Graphiti；
+   個資檢查是模型指示加伺服器的保守規則加老師確認三層，**不保證**擋掉所有識別資訊。
+3. **上限由 10 項提高到 100 項**，帶入提示詞的自由習慣最多 12 項（依相關度或最近確認），改變介入強度；
+   研究者可由 `selection` 紀錄重建每次實際帶入的習慣。
+4. 原始草稿只存雜湊與字數（沿用 #82 的待核准事項，現在涵蓋更多輸入處）。
+5. 一般變更改為增量索引；完整重建 100 項的成本與時間尚未實測。

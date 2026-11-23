@@ -114,7 +114,7 @@ struct Stub {
 impl Stub {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            api_version: AtomicU32::new(1),
+            api_version: AtomicU32::new(memory::SIDECAR_API_VERSION),
             policy: Mutex::new(memory::POLICY_VERSION.into()),
             graphiti: Mutex::new("0.99.0".into()),
             health_calls: AtomicUsize::new(0),
@@ -655,7 +655,7 @@ async fn the_switch_off_leaves_every_prompt_and_check_unchanged_and_on_applies_t
         1
     );
     let context_prompt: i64 = sqlx::query_scalar(
-        "SELECT id FROM prompt_versions WHERE prompt_key='teacher_memory_context' AND version_no=1",
+        "SELECT id FROM prompt_versions WHERE prompt_key='teacher_memory_context' AND version_no=2",
     )
     .fetch_one(&app.db)
     .await
@@ -977,14 +977,28 @@ async fn graph_outbox_retries_publishes_and_ranking_is_metadata_only() {
         "not_indexed"
     );
     assert!(graph::sync_one(&app.state).await.unwrap());
-    let old_group = sent[1]["group_id"].as_str().unwrap();
-    let grace: bool =
-        sqlx::query_scalar("SELECT not_before > now() FROM memory_index_garbage WHERE group_id=$1")
-            .bind(old_group)
+    // The change is incremental: only the stopped habit leaves the published group; no new
+    // group is built and nothing is queued for deletion.
+    let sent = stub.index_bodies.lock().unwrap().clone();
+    assert_eq!(sent[1]["mode"], "full");
+    let delta = sent.last().unwrap();
+    assert_eq!(delta["mode"], "delta");
+    assert_eq!(delta["group_id"], sent[1]["group_id"]);
+    assert_eq!(delta["memories"], json!([]));
+    assert_eq!(delta["remove_ids"], json!([second]));
+    let published = sent[1]["group_id"].as_str().unwrap();
+    let garbage: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM memory_index_garbage WHERE group_id=$1")
+            .bind(published)
             .fetch_one(&app.db)
             .await
             .unwrap();
-    assert!(grace, "a replaced group waits for in-flight searches");
+    assert_eq!(garbage, 0, "an incremental job replaces no group");
+    let active = memory::list(&app.db, teacher, false).await.unwrap();
+    assert_eq!(
+        graph::observe(&app.state, teacher, &active).await.status,
+        "ranked"
+    );
     server.abort();
 }
 
@@ -1158,7 +1172,10 @@ async fn an_incompatible_sidecar_falls_back_to_postgres_without_claiming_or_sear
     let id = confirm(&app, &token, &preview(&app, &token, "之後三個選項").await).await;
     let teacher = teacher_id(&app, "T-INCOMPAT").await;
     switch(&app, true).await;
-    for (api, policy) in [(99, memory::POLICY_VERSION), (1, "teacher-habits-v0")] {
+    for (api, policy) in [
+        (99, memory::POLICY_VERSION),
+        (memory::SIDECAR_API_VERSION, "teacher-habits-v0"),
+    ] {
         stub.api_version.store(api, Ordering::SeqCst);
         *stub.policy.lock().unwrap() = policy.into();
         assert!(
@@ -1184,7 +1201,8 @@ async fn an_incompatible_sidecar_falls_back_to_postgres_without_claiming_or_sear
     assert!(stub.index_bodies.lock().unwrap().is_empty());
     assert!(stub.search_bodies.lock().unwrap().is_empty());
     // A core-only upgrade is accepted as soon as the same interface returns, no app restart.
-    stub.api_version.store(1, Ordering::SeqCst);
+    stub.api_version
+        .store(memory::SIDECAR_API_VERSION, Ordering::SeqCst);
     *stub.policy.lock().unwrap() = memory::POLICY_VERSION.into();
     assert_eq!(
         graph::compatible_sidecar(&app.state)
@@ -1275,7 +1293,7 @@ async fn the_forwarder_is_internal_authenticated_first_allowlisted_and_audited()
     let full: Vec<(&str, &str)> = vec![
         ("authorization", &bearer),
         (graph::SERVICE_TOKEN_HEADER, SERVICE),
-        (graph::API_VERSION_HEADER, "1"),
+        (graph::API_VERSION_HEADER, "2"),
         (graph::GRAPHITI_VERSION_HEADER, "0.31.2"),
         ("content-type", "application/json"),
     ];

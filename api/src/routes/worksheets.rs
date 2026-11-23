@@ -161,9 +161,18 @@ pub async fn create(
         serde_json::from_slice(&body)
             .map_err(|e| AppError::bad_request(format!("請求內容格式不正確：{e}")))?
     };
+    // 「教師的要求」 typed when the worksheet is made (not the autosaves of later edits).
+    let typed = req.request.clone().unwrap_or_default();
     let id = WorksheetService::new(&state.db)
         .create(teacher.id(), req, CreateOverrides::default())
         .await?;
+    crate::memory::detect::spawn(
+        &state,
+        teacher.id(),
+        crate::memory::Source::WorksheetRequest { worksheet_id: id },
+        &typed,
+    )
+    .await;
     Ok((StatusCode::CREATED, Json(state_of(&state, id).await?)))
 }
 

@@ -3176,11 +3176,15 @@ export interface AdminLibraryUpdate {
   tags?: string[];
 }
 
+/** 自由習慣的適用範圍代碼（封閉類型沒有）。 */
+export type MemoryScopeCode = "content" | "format" | "layout" | "language" | "scaffold" | "workflow" | "all";
 export interface TeacherMemory {
   id: number;
   kind: string;
   value: string;
   statement: string;
+  /** 只有自由習慣（kind = "custom"）有。 */
+  scope?: MemoryScopeCode | null;
   valid_at: string;
   invalid_at: string | null;
   superseded_by: number | null;
@@ -3189,11 +3193,41 @@ export interface TeacherMemory {
 }
 export interface MemoryState {
   memories: TeacherMemory[];
+  /** 每位老師最多幾項有效習慣（100）。 */
+  max_active?: number;
+  scopes?: { code: MemoryScopeCode; name: string }[];
+  /** 對話中偵測到、還沒回答的建議。 */
+  pending?: MemorySuggestion[];
   enabled: boolean;
   graph_enabled: boolean;
   index: { revision: number; indexed_revision: number; error: string | null } | null;
 }
-export interface MemoryCandidate { id: number; statement: string; replaces_id: number | null }
+export interface MemoryCandidate {
+  id: number;
+  statement: string;
+  replaces_id: number | null;
+  replaces_statement?: string | null;
+  kind?: string;
+  scope?: MemoryScopeCode | null;
+}
+/** 在備課對話、逐區修改或學習單要求中偵測到的習慣建議（老師按「記住」才會記）。 */
+export interface MemorySuggestion {
+  id: number;
+  kind: string;
+  scope: MemoryScopeCode | null;
+  statement: string;
+  replaces_id: number | null;
+  replaces_statement: string | null;
+  source: "prep_turn" | "block_revise" | "worksheet_request";
+  prep_session_id: number | null;
+  prep_turn_id: number | null;
+  worksheet_id: number | null;
+  proposal_id: number | null;
+  created_at: string;
+  expires_at: string;
+  /** 老師第一次看到建議：附上一次性說明。 */
+  intro: boolean;
+}
 export interface MemorySettings { enabled: boolean; graph_enabled: boolean }
 
 export interface MemoryIndexStatus {

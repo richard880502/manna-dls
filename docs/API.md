@@ -3758,19 +3758,32 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
 
 | 方法／路徑 | 說明 |
 |---|---|
-| `GET /api/me/memories` | 本人全歷程、`enabled`（研究開關）、`graph_enabled`、`index`（未設定索引時 `null`） |
-| `POST /api/me/memories/preview` | `{text}`（1–1000 字）→ `{id, statement, replaces_id}`；不支援／單次要求 400 |
-| `POST /api/me/memories` | `{candidate_id, confirmed: true}` → `{id}`，與有效習慣相同時 `{id, unchanged: true}`（不新增版本）；`{candidate_id, confirmed: false}` 取消預覽 → `{ok, cancelled: true}`（記 `teacher_decisions` reject）；過期／已確認／已取消／過時 409 |
+| `GET /api/me/memories` | 本人全歷程（每項有 `kind`、`scope`；`kind=custom` 為自由習慣）、`enabled`（研究開關）、`max_active`（100）、`scopes`（適用範圍代碼與名稱）、`pending`（對話中偵測、還沒回答的建議）、`graph_enabled`、`index`（未設定索引時 `null`） |
+| `POST /api/me/memories/preview` | `{text}`（1–1000 字）→ `{id, statement, kind, scope, replaces_id, replaces_statement}`；單次要求、含個人資訊、不支援 400 |
+| `POST /api/me/memories` | `{candidate_id, confirmed: true}` → `{id}`，與有效習慣相同時 `{id, unchanged: true}`（不新增版本）；`{candidate_id, confirmed: false}` 取消預覽或「不用」→ `{ok, cancelled: true}`（記 `teacher_decisions` reject）；加 `edit: true`（「修改後記住」）記為 revise；過期／已確認／已取消／過時 409；已有 100 項有效習慣且不是取代時 409 |
+| `GET /api/me/memories/candidates` | 對話中偵測到、等老師回答的建議（15 分鐘內）：`{candidates: [{id, kind, scope, statement, replaces_id, replaces_statement, source, prep_session_id, prep_turn_id, worksheet_id, proposal_id, created_at, expires_at, intro}]}`；可加 `prep_session_id` 或 `worksheet_id` 篩選。`source` 為 `prep_turn`、`block_revise` 或 `worksheet_request` |
+| `POST /api/me/memories/candidates/{id}/shown` | 頁面已顯示這則建議（研究紀錄 `memory_candidate_shown`，只記一次） |
 | `DELETE /api/me/memories/{id}` | 停止使用（只標失效） |
 | `GET`／`PUT /api/admin/memory-settings` | PI；`{enabled}`，預設 false，切換寫 `usage_logs` |
 | `GET /api/admin/memory-index` | PI；`{pending, failed, graph_enabled, providers_ready, compatible, sidecar}`，未設定索引時計數為 0 |
-| `POST /api/admin/memory-index/rebuild` | PI；從正本重建 |
+| `POST /api/admin/memory-index/rebuild` | PI；從正本完整重建（一般變更只索引被改的習慣） |
 
 - `graph_enabled` 代表部署接線完整；`providers_ready` 依目前生效（含管理員覆蓋）的文字模型與 embedding 設定計算；`compatible` 獨立表示 sidecar 健康與介面相容。provider 不可用時仍保留 outbox 與待同步數，恢復可用後自動接續。
 - 研究開關關閉時，任何產生步驟的提示詞與學習單檢查都不變。開啟時只有出題／內容產生步驟
   （`memory::HABIT_STEPS`）附加版本化提示詞 `teacher_memory_context`，`ai_interactions.input_snapshot.teacher_memory`
   記錄習慣、附加的原文（`system_appended`／`user_appended`）、提示詞版本與 Graphiti 排序 metadata。
 - 選擇題／配對題的選項數檢查：預設不變；開關開啟且有確認的選項數習慣時，另外接受該數目。
+- 對話中偵測（研究開關開啟時）：老師在備課對話打的訊息（含首頁快速輸入）、逐區修改的修改指示、建立學習單時的
+  「教師的要求」，先經確定性的前置篩選（之後／以後／每次／一律／from now on…），命中才在背景呼叫
+  `teacher_memory_extract`（使用該工作固定的模型，獨立一筆 `ai_interactions`，`input_snapshot.source` 記出處）。
+  只有判斷為長期、支援、不含個人資訊的習慣才產生候選；候選一律要老師按「記住」才進入記憶。
+  不處理教材、附件與註記。
+- 自由習慣（`kind=custom`）：一句繁體中文（≤120 字）加 `scope`（`content`／`format`／`layout`／`language`／`scaffold`／`workflow`／`all`）。
+  每位老師最多 100 項有效習慣；封閉類型各自仍只有一項有效值。
+- 研究紀錄：`memory_detection_run`、`memory_candidate_detected`、`memory_candidate_shown`、`memory_confirmed`、
+  `memory_candidate_dismissed`、`memory_candidate_edit_requested`、`memory_candidate_expired`（皆不含老師的文字）；
+  `teacher_decisions` 記 adopt／reject／revise／no_response。
+- `input_snapshot.teacher_memory.selection` 記錄這一步實際帶入與被排除的習慣、排序方式與分數。
 - 模型轉發 `POST /api/internal/memory/v1/chat/completions`、`/embeddings` **不在公開連接埠**：
   只由 `INTERNAL_PORT`（預設 8081，設定索引時才開啟）提供，需 `X-Manna-Service-Token`（`GRAPHITI_TOKEN`）、
   job token、`X-Manna-Memory-Api-Version` 與領取時的 `X-Manna-Graphiti-Version`；欄位白名單、

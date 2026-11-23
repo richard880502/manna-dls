@@ -57,10 +57,10 @@ pub async fn reconcile(state: &AppState) -> sqlx::Result<u64> {
         return Ok(0);
     }
     Ok(sqlx::query(
-        "INSERT INTO memory_indexes (teacher_id)
-        SELECT teacher_id FROM teacher_memories GROUP BY teacher_id
+        "INSERT INTO memory_indexes (teacher_id, full_rebuild)
+        SELECT teacher_id, true FROM teacher_memories GROUP BY teacher_id
         ON CONFLICT (teacher_id) DO UPDATE SET revision = memory_indexes.revision + 1,
-            attempts = 0, next_attempt_at = now(), updated_at = now()
+            full_rebuild = true, attempts = 0, next_attempt_at = now(), updated_at = now()
         WHERE memory_indexes.revision = memory_indexes.indexed_revision
           AND (memory_indexes.indexed_snapshot_at IS NULL OR memory_indexes.indexed_snapshot_at <
               (SELECT max(greatest(t.valid_at, coalesce(t.invalid_at, t.valid_at)))
@@ -76,6 +76,62 @@ struct Work {
     teacher_id: i64,
     revision: i64,
     group_id: Option<String>,
+    full_rebuild: bool,
+    indexed_graphiti_version: Option<String>,
+}
+
+/// Habits one incremental job applies at most; the rest stay queued for the next job.
+const DELTA_BATCH: i64 = 25;
+
+/// What an incremental job does to the published group.
+struct Delta {
+    /// Operations this job covers (deleted once the sidecar has applied them).
+    op_ids: Vec<i64>,
+    /// Habits still active that were confirmed since the group was built.
+    add: Vec<super::super::Memory>,
+    /// Habits stopped or replaced since: their episodes leave the graph.
+    remove_ids: Vec<i64>,
+    /// More operations are queued than this job takes.
+    more: bool,
+}
+
+/// The queued operations of a teacher, folded against what is active now: an added habit that
+/// was stopped before it was indexed is not added; its removal is still sent (idempotent).
+async fn plan_delta(state: &AppState, teacher_id: i64) -> sqlx::Result<Delta> {
+    let ops: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT id, memory_id, op FROM memory_index_ops WHERE teacher_id=$1 ORDER BY id LIMIT $2",
+    )
+    .bind(teacher_id)
+    .bind(DELTA_BATCH + 1)
+    .fetch_all(&state.db)
+    .await?;
+    let more = ops.len() as i64 > DELTA_BATCH;
+    let ops: Vec<_> = ops.into_iter().take(DELTA_BATCH as usize).collect();
+    let active = super::super::list(&state.db, teacher_id, false).await?;
+    let mut add: Vec<super::super::Memory> = Vec::new();
+    let mut remove_ids = Vec::new();
+    for (_, memory_id, op) in &ops {
+        match op.as_str() {
+            "add" => {
+                if let Some(m) = active.iter().find(|m| m.id == *memory_id) {
+                    if !add.iter().any(|a| a.id == m.id) {
+                        add.push(m.clone());
+                    }
+                }
+            }
+            _ => {
+                if !remove_ids.contains(memory_id) {
+                    remove_ids.push(*memory_id);
+                }
+            }
+        }
+    }
+    Ok(Delta {
+        op_ids: ops.iter().map(|(id, _, _)| *id).collect(),
+        add,
+        remove_ids,
+        more,
+    })
 }
 
 /// Claim a renewable durable job. Each attempt uses a distinct group, so a timed-out
@@ -105,7 +161,7 @@ async fn sync_pinned(state: &AppState) -> AppResult<bool> {
             WHERE revision>indexed_revision AND next_attempt_at<=now()
             AND (lease_until IS NULL OR lease_until<clock_timestamp())
             ORDER BY next_attempt_at,teacher_id FOR UPDATE SKIP LOCKED LIMIT 1)
-        RETURNING teacher_id,revision,group_id",
+        RETURNING teacher_id,revision,group_id,full_rebuild,indexed_graphiti_version",
     )
     .bind(sha256_hex(&token))
     .bind(&sidecar.graphiti_version)
@@ -114,31 +170,69 @@ async fn sync_pinned(state: &AppState) -> AppResult<bool> {
     let Some(work) = work else {
         return Ok(false);
     };
-    let group = format!(
-        "manna_t{}_r{}_{}",
-        work.teacher_id,
-        work.revision,
-        &token[..12]
-    );
-    // Tracked before the sidecar creates it: an attempt that is never published is deleted
-    // after its lease (10 min) and the HTTP limit (8 min) have certainly passed.
-    sqlx::query(
-        "INSERT INTO memory_index_garbage(group_id,not_before) VALUES($1,now()+interval '15 minutes')",
-    )
-    .bind(&group)
-    .execute(&state.db)
-    .await?;
-    let active = super::super::list(&state.db, work.teacher_id, false).await?;
     let cfg = &state.config.memory;
-    let result = SidecarClient::new(cfg)
-        .index(&json!({
-            "group_id":group,"memories":active,"proxy_url":cfg.proxy_url,
-            "proxy_key":token,"model":state.ai.active().model,
-            "embedding_model":state.config.embedding.model,
-            "embedding_dims":state.config.embedding.dims,
-            "policy_version":POLICY_VERSION,"api_version":SIDECAR_API_VERSION,
-        }))
-        .await;
+    // An incremental job applies the queued habits to the published group; anything that makes
+    // that group untrustworthy (no group, a rebuild asked for, another core built it) rebuilds
+    // the whole snapshot into a new group instead.
+    let delta_group = work
+        .group_id
+        .clone()
+        .filter(|_| !work.full_rebuild)
+        .filter(|_| {
+            work.indexed_graphiti_version.as_deref() == Some(sidecar.graphiti_version.as_str())
+        });
+    let (group, delta, snapshot_ops) = match &delta_group {
+        Some(existing) => (
+            existing.clone(),
+            Some(plan_delta(state, work.teacher_id).await?),
+            None,
+        ),
+        None => {
+            let group = format!(
+                "manna_t{}_r{}_{}",
+                work.teacher_id,
+                work.revision,
+                &token[..12]
+            );
+            // Tracked before the sidecar creates it: an attempt that is never published is
+            // deleted after its lease (10 min) and the HTTP limit (8 min) have certainly passed.
+            sqlx::query(
+                "INSERT INTO memory_index_garbage(group_id,not_before) VALUES($1,now()+interval '15 minutes')",
+            )
+            .bind(&group)
+            .execute(&state.db)
+            .await?;
+            // Operations queued up to here are covered by the snapshot read next.
+            let covered: Option<i64> =
+                sqlx::query_scalar("SELECT max(id) FROM memory_index_ops WHERE teacher_id=$1")
+                    .bind(work.teacher_id)
+                    .fetch_one(&state.db)
+                    .await?;
+            (group, None, covered)
+        }
+    };
+    let mut body = json!({
+        "group_id":group,"proxy_url":cfg.proxy_url,
+        "proxy_key":token,"model":state.ai.active().model,
+        "embedding_model":state.config.embedding.model,
+        "embedding_dims":state.config.embedding.dims,
+        "policy_version":POLICY_VERSION,"api_version":SIDECAR_API_VERSION,
+    });
+    match &delta {
+        Some(d) => {
+            body["mode"] = json!("delta");
+            body["memories"] = json!(d.add);
+            body["remove_ids"] = json!(d.remove_ids);
+        }
+        None => {
+            let active = super::super::list(&state.db, work.teacher_id, false).await?;
+            body["mode"] = json!("full");
+            body["memories"] = json!(active);
+            body["remove_ids"] = json!([]);
+        }
+    }
+    let result = SidecarClient::new(cfg).index(&body).await;
+    let mut group_missing = false;
     let success = match result {
         Ok(r) if r.status().is_success() => r.json::<Value>().await.ok().is_some_and(|v| {
             v["ok"] == true
@@ -146,13 +240,28 @@ async fn sync_pinned(state: &AppState) -> AppResult<bool> {
                 && v["graphiti_version"] == sidecar.graphiti_version
                 && v["policy_version"] == POLICY_VERSION
         }),
-        _ => false,
+        Ok(r) => {
+            // The sidecar no longer has the published group (its volume was lost).
+            group_missing = delta.is_some() && r.status() == reqwest::StatusCode::CONFLICT;
+            false
+        }
+        Err(_) => false,
     };
     if success {
         let mut tx = state.db.begin().await?;
-        // Compare-and-set: only the revision this job read, by this job, inside its lease.
+        // The sidecar applied these operations whatever happens to the publication below.
+        if let Some(d) = &delta {
+            sqlx::query("DELETE FROM memory_index_ops WHERE id = ANY($1)")
+                .bind(&d.op_ids)
+                .execute(&mut *tx)
+                .await?;
+        }
+        let more = delta.as_ref().is_some_and(|d| d.more);
+        // Compare-and-set: only the revision this job read, by this job, inside its lease. An
+        // incremental job with operations left stays pending.
         let published = sqlx::query(
-            "UPDATE memory_indexes SET indexed_revision=$2,group_id=$3,
+            "UPDATE memory_indexes SET indexed_revision=CASE WHEN $6 THEN indexed_revision ELSE $2 END,
+            group_id=$3,full_rebuild=false,
             indexed_graphiti_version=$5,indexed_snapshot_at=leased_at,attempts=0,
             lease_until=NULL,token_hash=NULL,last_error=NULL,updated_at=now()
             WHERE teacher_id=$1 AND revision=$2 AND token_hash=$4
@@ -163,32 +272,49 @@ async fn sync_pinned(state: &AppState) -> AppResult<bool> {
         .bind(&group)
         .bind(sha256_hex(&token))
         .bind(&sidecar.graphiti_version)
+        .bind(more)
         .execute(&mut *tx)
         .await?
         .rows_affected()
             > 0;
         if published {
-            sqlx::query("DELETE FROM memory_index_garbage WHERE group_id=$1")
-                .bind(&group)
-                .execute(&mut *tx)
-                .await?;
-            if let Some(old) = work.group_id {
-                sqlx::query(&format!(
-                    "INSERT INTO memory_index_garbage(group_id,not_before)
-                    VALUES($1,now()+interval '{REPLACED_GROUP_GRACE}') ON CONFLICT DO NOTHING"
-                ))
-                .bind(old)
-                .execute(&mut *tx)
-                .await?;
+            if let Some(covered) = snapshot_ops {
+                sqlx::query("DELETE FROM memory_index_ops WHERE teacher_id=$1 AND id<=$2")
+                    .bind(work.teacher_id)
+                    .bind(covered)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            if delta.is_none() {
+                sqlx::query("DELETE FROM memory_index_garbage WHERE group_id=$1")
+                    .bind(&group)
+                    .execute(&mut *tx)
+                    .await?;
+                if let Some(old) = work.group_id {
+                    sqlx::query(&format!(
+                        "INSERT INTO memory_index_garbage(group_id,not_before)
+                        VALUES($1,now()+interval '{REPLACED_GROUP_GRACE}') ON CONFLICT DO NOTHING"
+                    ))
+                    .bind(old)
+                    .execute(&mut *tx)
+                    .await?;
+                }
             }
         }
         tx.commit().await?;
         if !published {
-            // A newer change arrived meanwhile: the attempt group stays queued for deletion.
+            // A newer change arrived meanwhile: a full attempt's group stays queued for
+            // deletion; an incremental job's work is already in the published group.
             release(state, work.teacher_id, &token, false).await?;
         }
     } else {
         forget_health(state).await;
+        if group_missing {
+            sqlx::query("UPDATE memory_indexes SET full_rebuild=true WHERE teacher_id=$1")
+                .bind(work.teacher_id)
+                .execute(&state.db)
+                .await?;
+        }
         release(state, work.teacher_id, &token, true).await?;
     }
     Ok(true)

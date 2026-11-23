@@ -1,7 +1,8 @@
 """Internal, synchronous Graphiti adapter. No upstream credentials or raw conversations.
 
-Postgres owns history and the durable queue. A fresh group is published only once every
-confirmed habit has been indexed. BM25 retrieval does not call an LLM or embedder, and a search
+Postgres owns history and the durable queue. A full job indexes a teacher's whole
+snapshot into a fresh group that is published only once every confirmed habit is in it; an
+incremental ("delta") job adds or removes single habits in the published group. BM25 retrieval does not call an LLM or embedder, and a search
 never creates (or recreates) a group: it only sends read-only queries to an existing graph.
 """
 import asyncio
@@ -11,6 +12,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from importlib.metadata import version
+from typing import Literal
 from uuid import NAMESPACE_URL, uuid5
 
 os.environ["GRAPHITI_TELEMETRY_ENABLED"] = "false"
@@ -18,6 +20,7 @@ os.environ["GRAPHITI_TELEMETRY_ENABLED"] = "false"
 from falkordb.asyncio import FalkorDB
 from fastapi import Depends, FastAPI, Header, HTTPException
 from graphiti_core import Graphiti
+from graphiti_core.errors import NodeNotFoundError
 from graphiti_core.driver.falkordb_driver import FalkorDriver
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.llm_client.config import LLMConfig
@@ -27,7 +30,8 @@ from graphiti_core.search.search_config import EdgeSearchConfig, EdgeSearchMetho
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
-API_VERSION = 1
+# v2: `mode` (full | delta), `remove_ids`, up to 100 habits per job.
+API_VERSION = 2
 POLICY = "teacher-habits-v1"
 TOKEN = os.environ.get("GRAPHITI_TOKEN", "")
 # Manna API's internal listener (INTERNAL_PORT), never its public port.
@@ -131,6 +135,7 @@ class Habit(Strict):
     kind: str
     value: str
     statement: str = Field(max_length=120)
+    scope: str | None = None
     valid_at: datetime
     invalid_at: datetime | None = None
     superseded_by: int | None = None
@@ -140,7 +145,9 @@ class Habit(Strict):
 
 class Index(Strict):
     group_id: str = Field(pattern=GROUP)
-    memories: list[Habit] = Field(max_length=10)
+    memories: list[Habit] = Field(max_length=100)
+    mode: Literal["full", "delta"] = "full"
+    remove_ids: list[int] = Field(default_factory=list, max_length=100)
     proxy_url: str
     proxy_key: str = Field(min_length=64, max_length=64)
     model: str
@@ -183,7 +190,13 @@ async def index(req: Index):
         raise HTTPException(400, "unsupported proxy or policy")
     if any(m.invalid_at is not None for m in req.memories):
         raise HTTPException(400, "only active confirmed habits are accepted")
+    if req.mode == "full" and req.remove_ids:
+        raise HTTPException(400, "a full index has nothing to remove")
     async with INDEX_LOCK:
+        # A delta works on the published group and never creates one: a lost group is a 409 and
+        # Manna rebuilds the whole snapshot into a new group.
+        if req.mode == "delta" and not await group_exists(req.group_id):
+            raise HTTPException(409, "group missing")
         async with AsyncOpenAI(base_url=PROXY_URL, api_key=req.proxy_key,
                                max_retries=0, timeout=150,
                                default_headers=proxy_headers()) as http:
@@ -195,6 +208,12 @@ async def index(req: Index):
             graph = Graphiti(graph_driver=await ready_driver(req.group_id), llm_client=llm, embedder=embedder,
                              max_coroutines=2)
             try:
+                # A habit that was stopped or replaced leaves the graph (a missing episode is fine).
+                for memory_id in req.remove_ids:
+                    try:
+                        await graph.remove_episode(str(uuid5(NAMESPACE_URL, f"{req.group_id}:{episode_id(memory_id)}")))
+                    except NodeNotFoundError:
+                        pass
                 # Attempt-specific groups make retries safe even after caller disconnects.
                 for memory in req.memories:
                     # In 0.31.2, uuid= means "load an existing episode", not "create with uuid".
@@ -219,7 +238,7 @@ async def index(req: Index):
 class Search(Strict):
     group_id: str = Field(pattern=GROUP)
     query: str = Field(max_length=2000)
-    memory_ids: list[int] = Field(max_length=10)
+    memory_ids: list[int] = Field(max_length=100)
 
 
 async def group_exists(group_id):

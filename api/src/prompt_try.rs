@@ -355,7 +355,7 @@ pub async fn run(
     };
     // The same habit context a real run of this step gets (only the lead's own habits; the
     // index is not consulted: its ranking is metadata only and never changes the prompt).
-    let memory = crate::memory::habit_context(&state.db, lead_id, key)
+    let memory = crate::memory::habit_context(state, lead_id, key, &req.user)
         .await
         .map_err(|e| format!("無法讀取出題習慣：{e}"))?;
     let req = match &memory {

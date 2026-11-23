@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MaterialTextDialog, ParagraphPickerDialog } from "../components/material/LongMaterial";
 import { Link, useParams } from "react-router";
 import { ErrorText, Loading } from "../components/common";
+import { MemorySuggestions } from "../components/memory/MemorySuggestions";
 import { WorksheetMaterialPane, type MaterialPaneSlot } from "../components/worksheet/MaterialPane";
 import { OptionsView } from "../components/worksheet/OptionsView";
 import { ResultView } from "../components/worksheet/ResultView";
@@ -115,6 +116,8 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
           )}
         </p>
       </div>
+
+      <MemorySuggestions filter={{ worksheetId: id }} watch={`${state.versions_count}:${state.running}`} />
 
       {shown === "options" && state.generated && (
         <p className="quiet-note">

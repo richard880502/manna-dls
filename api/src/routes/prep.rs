@@ -16,6 +16,7 @@ use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::materials::ocr;
 use crate::materials::store::{self as material_store, MaterialRow};
+use crate::memory;
 use crate::prep::images as prep_images;
 use crate::prep::kit::{self, KitWorksheet};
 use crate::prep::run::{self, TurnInput};
@@ -190,7 +191,7 @@ async fn spawn_turn(
     request: &str,
     worksheet_id: Option<i64>,
     image_ids: &[i64],
-) -> AppResult<()> {
+) -> AppResult<i64> {
     // A worksheet turn follows the session's template; it waits while that is extracting.
     let template_id = if kind == KIND_WORKSHEET {
         session.template_id
@@ -212,6 +213,7 @@ async fn spawn_turn(
         payload["images"] = json!(image_ids.len());
     }
     log_usage(&state.db, teacher.id(), "prep_turn_created", payload).await?;
+    let turn_id = turn.id;
     run::start(
         state,
         TurnInput {
@@ -221,7 +223,22 @@ async fn spawn_turn(
             worksheet_id,
         },
     )
-    .await
+    .await?;
+    Ok(turn_id)
+}
+
+/// What the teacher typed may state a lasting preference: Manna may offer to remember it (only a
+/// suggestion, in the background, when the research switch is on).
+async fn offer_habit(
+    state: &AppState,
+    teacher: &AuthTeacher,
+    source: memory::Source,
+    typed: bool,
+    text: &str,
+) {
+    if typed {
+        memory::detect::spawn(state, teacher.id(), source, text).await;
+    }
 }
 
 pub async fn create(
@@ -320,6 +337,7 @@ pub async fn create(
             ));
         }
     }
+    let typed = !request.is_empty();
     let request = request_or_label(kind, request);
     let title = match (&material, &topic) {
         (Some((_, t)), _) if !t.trim().is_empty() => clip_chars(t.trim(), MAX_TITLE_CHARS - 1),
@@ -388,7 +406,13 @@ pub async fn create(
             .await?;
         }
         let id = session.id;
-        spawn_turn(&state, &teacher, session, kind, &request, None, &[]).await?;
+        let turn_id = spawn_turn(&state, &teacher, session, kind, &request, None, &[]).await?;
+        let source = memory::Source::PrepTurn {
+            session_id: id,
+            turn_id,
+            entry: known_entry(req.entry.as_ref()),
+        };
+        offer_habit(&state, &teacher, source, typed, &request).await;
         // Read the answer before the extraction starts (a fast one could otherwise finish first).
         store::session(&state, id).await
     }
@@ -762,6 +786,7 @@ pub async fn create_turn(
         Some((template_id, _)) => tpl_store::restart(db, *template_id).await?,
         None => None,
     };
+    let typed = !request.is_empty();
     let request = request_or_label(kind, request);
     let made = async {
         if let Some(t) = &restarted {
@@ -773,7 +798,7 @@ pub async fn create_turn(
             )
             .await?;
         }
-        spawn_turn(
+        let turn_id = spawn_turn(
             &state,
             &teacher,
             session,
@@ -783,6 +808,12 @@ pub async fn create_turn(
             &image_ids,
         )
         .await?;
+        let source = memory::Source::PrepTurn {
+            session_id: id,
+            turn_id,
+            entry: None,
+        };
+        offer_habit(&state, &teacher, source, typed, &request).await;
         // Read the answer before the extraction starts (a fast one could otherwise finish first).
         store::session(&state, id).await
     }

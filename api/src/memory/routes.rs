@@ -3,9 +3,10 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::{canonical, dirty, extract, list, MAX_ACTIVE};
+use super::candidates::{self, Dismissal, Filter};
+use super::{dirty, extract, list, IndexChange, MAX_ACTIVE};
 use crate::auth::AuthTeacher;
-use crate::error::{ApiJson, ApiPath, AppError, AppResult};
+use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
 use crate::AppState;
 
 pub async fn get(State(state): State<AppState>, teacher: AuthTeacher) -> AppResult<Json<Value>> {
@@ -17,8 +18,13 @@ pub async fn get(State(state): State<AppState>, teacher: AuthTeacher) -> AppResu
     .fetch_optional(&state.db)
     .await?;
     let graph_enabled = state.config.memory.enabled();
+    let pending = candidates::pending(&state.db, teacher.id(), &Filter::default()).await?;
     Ok(Json(json!({"memories": history,
         "enabled":crate::settings::teacher_memory_enabled(&state.db).await?,
+        "max_active": MAX_ACTIVE,
+        "scopes": super::scope::SCOPES.iter()
+            .map(|(code, name, _)| json!({"code": code, "name": name})).collect::<Vec<_>>(),
+        "pending": pending,
         "graph_enabled":graph_enabled,
         "index":index.filter(|_| graph_enabled).map(|(revision,indexed_revision,error)| json!({"revision":revision,
             "indexed_revision":indexed_revision,"error":error}))})))
@@ -35,15 +41,30 @@ pub async fn preview(
     teacher: AuthTeacher,
     ApiJson(req): ApiJson<Preview>,
 ) -> AppResult<Json<Value>> {
-    let (out, interaction_id) = extract(&state, teacher.id(), &req.text).await?;
-    let statement = canonical(&out.kind, &out.value).expect("validated extraction");
-    let id: i64 = sqlx::query_scalar("INSERT INTO memory_candidates
-        (teacher_id, kind, value, statement, replaces_id, interaction_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id")
-        .bind(teacher.id()).bind(&out.kind).bind(&out.value).bind(&statement)
-        .bind(out.replaces_id).bind(interaction_id).fetch_one(&state.db).await?;
-    Ok(Json(
-        json!({"id":id,"statement":statement,"replaces_id":out.replaces_id}),
-    ))
+    let (p, interaction_id) = extract(&state, teacher.id(), &req.text).await?;
+    let id = candidates::create(
+        &state.db,
+        teacher.id(),
+        &p,
+        interaction_id,
+        &candidates::Source::Manual,
+        None,
+    )
+    .await?;
+    let replaces_statement: Option<String> = match p.replaces_id {
+        Some(old) => {
+            sqlx::query_scalar(
+                "SELECT statement FROM teacher_memories WHERE id=$1 AND teacher_id=$2",
+            )
+            .bind(old)
+            .bind(teacher.id())
+            .fetch_optional(&state.db)
+            .await?
+        }
+        None => None,
+    };
+    Ok(Json(json!({"id":id,"statement":p.statement,"kind":p.kind,
+        "scope":p.scope,"replaces_id":p.replaces_id,"replaces_statement":replaces_statement})))
 }
 
 #[derive(Deserialize)]
@@ -52,36 +73,9 @@ pub struct Confirm {
     pub candidate_id: i64,
     /// `false` cancels the preview: recorded as the teacher's rejection of the suggestion.
     pub confirmed: bool,
-}
-
-#[derive(sqlx::FromRow)]
-struct Candidate {
-    kind: String,
-    value: String,
-    statement: String,
-    replaces_id: Option<i64>,
-    interaction_id: i64,
-}
-
-/// The teacher's decision on the habit-sorting suggestion, like other AI suggestions.
-async fn decide(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    interaction_id: i64,
-    teacher_id: i64,
-    decision: &str,
-    note: &str,
-) -> sqlx::Result<()> {
-    sqlx::query(
-        "INSERT INTO teacher_decisions (ai_interaction_id, teacher_id, item_index, decision, reason_note)
-         VALUES ($1, $2, 0, $3, $4)",
-    )
-    .bind(interaction_id)
-    .bind(teacher_id)
-    .bind(decision)
-    .bind(note)
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
+    /// With `confirmed: false`: the teacher closes the suggestion to edit it (修改後記住).
+    #[serde(default)]
+    pub edit: bool,
 }
 
 pub async fn confirm(
@@ -90,153 +84,53 @@ pub async fn confirm(
     ApiJson(req): ApiJson<Confirm>,
 ) -> AppResult<Json<Value>> {
     if !req.confirmed {
-        return cancel(&state, &teacher, req.candidate_id).await;
+        let how = if req.edit {
+            Dismissal::Edit
+        } else {
+            Dismissal::Cancel
+        };
+        candidates::dismiss(&state, teacher.id(), req.candidate_id, how).await?;
+        return Ok(Json(json!({"ok": true, "cancelled": true})));
     }
-    let mut tx = state.db.begin().await?;
-    // Serialize all confirms/removals for this teacher, including the limit and replacements.
-    sqlx::query("SELECT id FROM teachers WHERE id=$1 FOR UPDATE")
-        .bind(teacher.id())
-        .execute(&mut *tx)
-        .await?;
-    let c: Candidate = sqlx::query_as(
-        "SELECT kind,value,statement,replaces_id,interaction_id
-        FROM memory_candidates WHERE id=$1 AND teacher_id=$2 AND confirmed_at IS NULL
-        AND cancelled_at IS NULL AND created_at > clock_timestamp() - interval '15 minutes'
-        FOR UPDATE",
-    )
-    .bind(req.candidate_id)
-    .bind(teacher.id())
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::Conflict("預覽已過期或已確認，請重新整理習慣。".into()))?;
-    let current: Option<(i64, String)> = sqlx::query_as(
-        "SELECT id, value FROM teacher_memories
-        WHERE teacher_id=$1 AND kind=$2 AND invalid_at IS NULL",
-    )
-    .bind(teacher.id())
-    .bind(&c.kind)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let at: chrono::DateTime<chrono::Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
-        .fetch_one(&mut *tx)
-        .await?;
-    // Confirming exactly what is already active changes nothing: no new row, no re-index.
-    if let Some((same, _)) = current.as_ref().filter(|(_, value)| *value == c.value) {
-        sqlx::query("UPDATE memory_candidates SET confirmed_at=$2 WHERE id=$1")
-            .bind(req.candidate_id)
-            .bind(at)
-            .execute(&mut *tx)
-            .await?;
-        decide(
-            &mut tx,
-            c.interaction_id,
-            teacher.id(),
-            "adopt",
-            "already_active",
-        )
-        .await?;
-        crate::audit::log_usage(
-            &mut *tx,
-            teacher.id(),
-            "memory_confirmed",
-            json!({"candidate_id": req.candidate_id, "memory_id": same, "kind": c.kind,
-                "value": c.value, "unchanged": true}),
-        )
-        .await?;
-        tx.commit().await?;
-        return Ok(Json(json!({"id": same, "unchanged": true})));
+    let done = candidates::confirm(&state, teacher.id(), req.candidate_id).await?;
+    if done.unchanged {
+        Ok(Json(json!({"id": done.id, "unchanged": true})))
+    } else {
+        Ok(Json(json!({"id": done.id})))
     }
-    let current = current.map(|(id, _)| id);
-    if current != c.replaces_id {
-        return Err(AppError::Conflict(
-            "習慣已變更，請重新整理並確認取代的項目。".into(),
-        ));
-    }
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM teacher_memories WHERE teacher_id=$1 AND invalid_at IS NULL",
-    )
-    .bind(teacher.id())
-    .fetch_one(&mut *tx)
-    .await?;
-    if current.is_none() && count >= MAX_ACTIVE {
-        return Err(AppError::Conflict(
-            "最多記住 10 項習慣，請先移除一項。".into(),
-        ));
-    }
-    let id: i64 = sqlx::query_scalar("SELECT nextval('teacher_memories_id_seq')")
-        .fetch_one(&mut *tx)
-        .await?;
-    if let Some(old) = current {
-        sqlx::query("UPDATE teacher_memories SET invalid_at=$2,superseded_by=$3,invalidation_reason='replaced' WHERE id=$1")
-            .bind(old).bind(at).bind(id).execute(&mut *tx).await?;
-    }
-    sqlx::query(
-        "INSERT INTO teacher_memories (id,teacher_id,kind,value,statement,valid_at,interaction_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)",
-    )
-    .bind(id)
-    .bind(teacher.id())
-    .bind(&c.kind)
-    .bind(&c.value)
-    .bind(c.statement)
-    .bind(at)
-    .bind(c.interaction_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("UPDATE memory_candidates SET confirmed_at=$2 WHERE id=$1")
-        .bind(req.candidate_id)
-        .bind(at)
-        .execute(&mut *tx)
-        .await?;
-    decide(
-        &mut tx,
-        c.interaction_id,
-        teacher.id(),
-        "adopt",
-        "confirmed",
-    )
-    .await?;
-    crate::audit::log_usage(
-        &mut *tx,
-        teacher.id(),
-        "memory_confirmed",
-        json!({"candidate_id": req.candidate_id, "memory_id": id, "replaces_id": current,
-            "kind": c.kind, "value": c.value, "unchanged": false}),
-    )
-    .await?;
-    dirty(&mut tx, &state.config.memory, teacher.id()).await?;
-    tx.commit().await?;
-    Ok(Json(json!({"id":id})))
 }
 
-/// 取消: the preview can no longer be confirmed; the rejection is recorded.
-async fn cancel(
-    state: &AppState,
-    teacher: &AuthTeacher,
-    candidate_id: i64,
+#[derive(Deserialize, Default)]
+pub struct CandidateQuery {
+    #[serde(default)]
+    pub prep_session_id: Option<i64>,
+    #[serde(default)]
+    pub worksheet_id: Option<i64>,
+}
+
+/// `GET /api/me/memories/candidates`: the suggestions waiting for an answer, optionally only the
+/// ones from one 備課對話 or one worksheet.
+pub async fn candidates_list(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiQuery(q): ApiQuery<CandidateQuery>,
 ) -> AppResult<Json<Value>> {
-    let mut tx = state.db.begin().await?;
-    let interaction_id: Option<i64> = sqlx::query_scalar(
-        "UPDATE memory_candidates SET cancelled_at=clock_timestamp()
-        WHERE id=$1 AND teacher_id=$2 AND confirmed_at IS NULL AND cancelled_at IS NULL
-        RETURNING interaction_id",
-    )
-    .bind(candidate_id)
-    .bind(teacher.id())
-    .fetch_optional(&mut *tx)
-    .await?;
-    let interaction_id =
-        interaction_id.ok_or_else(|| AppError::Conflict("這個預覽已確認或已取消。".into()))?;
-    decide(&mut tx, interaction_id, teacher.id(), "reject", "cancelled").await?;
-    crate::audit::log_usage(
-        &mut *tx,
-        teacher.id(),
-        "memory_cancelled",
-        json!({"candidate_id": candidate_id}),
-    )
-    .await?;
-    tx.commit().await?;
-    Ok(Json(json!({"ok": true, "cancelled": true})))
+    let filter = Filter {
+        prep_session_id: q.prep_session_id,
+        worksheet_id: q.worksheet_id,
+    };
+    let list = candidates::pending(&state.db, teacher.id(), &filter).await?;
+    Ok(Json(json!({"candidates": list})))
+}
+
+/// `POST /api/me/memories/candidates/{id}/shown`: the page showed the suggestion (logged once).
+pub async fn candidate_shown(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<Value>> {
+    candidates::mark_shown(&state.db, teacher.id(), id).await?;
+    Ok(Json(json!({"ok": true})))
 }
 
 pub async fn remove(
@@ -267,11 +161,19 @@ pub async fn remove(
         json!({"memory_id": id, "kind": kind}),
     )
     .await?;
-    dirty(&mut tx, &state.config.memory, teacher.id()).await?;
+    dirty(
+        &mut tx,
+        &state.config.memory,
+        teacher.id(),
+        &[IndexChange::Remove(id)],
+    )
+    .await?;
     tx.commit().await?;
     Ok(Json(json!({"ok":true})))
 }
 
+/// The full rebuild: every teacher's whole active snapshot into a new group. Normal changes are
+/// incremental; this is for a restore, a suspect index, or a PI who wants a clean start.
 pub async fn rebuild(
     State(state): State<AppState>,
     teacher: AuthTeacher,
@@ -283,9 +185,10 @@ pub async fn rebuild(
     let mut tx = state.db.begin().await?;
     // Also recreates entries when restoring a backup taken before the outbox existed.
     sqlx::query(
-        "INSERT INTO memory_indexes(teacher_id) SELECT DISTINCT teacher_id FROM teacher_memories
+        "INSERT INTO memory_indexes(teacher_id, full_rebuild)
+        SELECT DISTINCT teacher_id, true FROM teacher_memories
         ON CONFLICT(teacher_id) DO UPDATE SET revision=memory_indexes.revision+1,
-        attempts=0,next_attempt_at=now(),updated_at=now()",
+        full_rebuild=true,attempts=0,next_attempt_at=now(),updated_at=now()",
     )
     .execute(&mut *tx)
     .await?;
