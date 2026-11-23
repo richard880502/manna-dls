@@ -1925,3 +1925,11 @@
 .memory-list small { display: block; margin-top: .35rem; }
 .memory-preview { margin: 1.25rem 0; padding: 1.25rem; border: 1px solid var(--color-rule); border-radius: 12px; }
 .teacher-memories details { margin-top: 1.5rem; }
+
+/* 對話中偵測到的習慣建議（要記住這個習慣嗎？） */
+.memory-suggestions { margin: .75rem 0 1rem; display: grid; gap: .75rem; }
+.memory-suggestion { padding: .9rem 1.1rem; border: 1px solid var(--color-rule); border-radius: 12px; }
+.memory-suggestion-ask { margin: 0 0 .35rem; }
+.memory-suggestion-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .6rem; }
+.memory-group h3 small { margin-left: .4rem; font-weight: normal; }
+.memory-pending { margin-bottom: 1rem; }

@@ -33,8 +33,8 @@ fn observed(status: &'static str) -> GraphObservation {
 /// Queue a rebuild of the published group `group` (only if it is still the published one).
 async fn request_reindex(state: &AppState, teacher_id: i64, group: &str) -> bool {
     sqlx::query(
-        "UPDATE memory_indexes SET revision=revision+1,attempts=0,next_attempt_at=now(),
-        updated_at=now() WHERE teacher_id=$1 AND group_id=$2 AND revision=indexed_revision",
+        "UPDATE memory_indexes SET revision=revision+1,full_rebuild=true,attempts=0,
+        next_attempt_at=now(),updated_at=now() WHERE teacher_id=$1 AND group_id=$2 AND revision=indexed_revision",
     )
     .bind(teacher_id)
     .bind(group)
@@ -86,7 +86,8 @@ pub async fn observe(state: &AppState, teacher_id: i64, active: &[Memory]) -> Gr
     }
     let response = SidecarClient::new(&state.config.memory)
         .search(&json!({"group_id":group,
-            "query":active.iter().map(|m|m.statement.as_str()).collect::<Vec<_>>().join(" "),
+            "query":active.iter().map(|m|m.statement.as_str()).collect::<Vec<_>>().join(" ")
+                .chars().take(2000).collect::<String>(),
             "memory_ids":active.iter().map(|m|m.id).collect::<Vec<_>>()}))
         .await;
     let Ok(v) = response else {

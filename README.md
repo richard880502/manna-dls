@@ -172,3 +172,7 @@ Coolify 預設**不會**在建置時提供 `SOURCE_COMMIT`（它會讓 Docker �
 Postgres 是正本；可選擇另建以 `memory-sidecar/docker-compose.yml` 部署的 Coolify 資源，加入 Graphiti + FalkorDB，
 不加索引也能使用全部確認習慣。部署、隱私限制、備份還原與驗證見
 [教師長期記憶](docs/TEACHER_MEMORY.md)。
+
+#97 起，Manna 也會在老師打的話（備課對話、逐區修改、學習單要求）裡偵測長期習慣，並在該訊息旁詢問
+「要記住這個習慣嗎？」，老師按「記住」才會記；新增不含個人資訊的自由習慣，每位老師上限 100 項。
+這是研究設計的變更，見 TEACHER_MEMORY.md 開頭與〈待 PI 核准〉。

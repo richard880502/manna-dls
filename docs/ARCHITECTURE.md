@@ -118,6 +118,21 @@ SOP 工作輪詢以 job id 限制同時一筆請求；回應必須仍對應目�
 這些恢復政策適用不同副作用：本次整合共同執行與錯誤處理，保留各功能既有的持久化與
 重啟政策。多 API instance 協調、統一 durable queue 或自動重播文字生成，不是目前的能力。
 
+## 教師長期記憶的模組分工
+
+| 模組 | 責任 |
+|---|---|
+| `memory`（`mod.rs`） | 封閉類型與 canonical 句子、`Memory`、帶入習慣的上下文（`habit_context`、`augment`）與研究 snapshot |
+| `memory::extraction` | `teacher_memory_extract` 的一次呼叫、回覆驗證（封閉詞彙、自由句子、scope、替換 id）與測試用 fixture |
+| `memory::statement`、`memory::scope` | 自由習慣句子的個資／格式檢查；適用範圍對應到 `HABIT_STEPS` |
+| `memory::selection` | 帶入哪些習慣：scope 篩選、embedding 排序（pgvector）、最近確認備援，並產生 `selection` 紀錄 |
+| `memory::candidates` | 候選（出處、顯示、確認、不用、修改、過期）與其研究事件；確認的交易（上限、取代、歷程、索引工作） |
+| `memory::detect` | 前置篩選與背景偵測；只提議候選，從不儲存習慣 |
+| `memory::routes` | HTTP 轉接 |
+
+`memory::detect` 由備課對話、逐區修改與學習單建立的 route 在請求完成後呼叫；它不引用 `routes`，
+與其他背景工作一樣在排入時固定模型（備課對話沿用該輪的 pin）。
+
 ## Graphiti 邊界與可用性
 
 `memory::graph` 是入口，內部分工如下：
@@ -127,7 +142,7 @@ SOP 工作輪詢以 job id 限制同時一筆請求；回應必須仍對應目�
 | `config` | 驗證 URL、服務 token、代理 URL 的部署接線，不依啟動時文字模型刪掉設定 |
 | `client` | sidecar 路徑、驗證、timeout、健康與版本相容檢查；沒有 SQL 或工作發布邏輯 |
 | `runtime` | 健康快取、工作模型 pin 及目前 provider 能力判斷 |
-| `worker` | 領取 lease、正本快照、條件發布、重試及垃圾群組回收 |
+| `worker` | 領取 lease；完整重建（正本快照、新 group、條件發布）或增量更新（已發布 group 的 `memory_index_ops`）、重試及垃圾群組回收 |
 | `observation` | 查詢已發布索引，與教師有效習慣交集，異常時要求重建 |
 | `forwarder` | 私有 HTTP 驗證、欄位白名單、呼叫配額、供應商轉發與研究追蹤 |
 | `status` | 一般 Rust 型別的佇列／能力查詢；PI 驗證與 JSON 回應由 `memory::routes` 負責 |

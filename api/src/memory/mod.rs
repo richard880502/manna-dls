@@ -1,23 +1,42 @@
 //! Confirmed, privacy-safe teaching habits. Postgres is authoritative; Graphiti is a
 //! rebuildable index whose ranking is recorded as metadata only (docs/TEACHER_MEMORY.md).
+pub mod candidates;
+pub mod detect;
+pub mod extraction;
 pub mod graph;
 pub mod routes;
+pub mod scope;
+pub mod selection;
+pub mod statement;
 
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use crate::ai::pipeline::{self, Finish, InteractionMeta};
-use crate::ai::{LlmRequest, ProviderError};
-use crate::error::{AppError, AppResult};
+use crate::ai::pipeline::{self, InteractionMeta};
+use crate::ai::LlmRequest;
+use crate::error::AppResult;
 use crate::AppState;
 
+pub use candidates::Source;
+pub use extraction::{extract, fake_extract, Extraction};
+
+/// The contract with the Graphiti sidecar (what its episodes mean). Unchanged by the free-form
+/// habits: the index only ever holds canonical sentences.
 pub const POLICY_VERSION: &str = "teacher-habits-v1";
-pub const SIDECAR_API_VERSION: u32 = 1;
-pub const MAX_ACTIVE: i64 = 10;
+/// What `input_snapshot.teacher_memory.policy_version` records: how habits are chosen for a
+/// step (closed kinds always, free-form by scope then relevance, at most `MAX_INJECTED_CUSTOM`).
+pub const SELECTION_POLICY: &str = "teacher-habits-v2";
+/// v2: incremental index operations (`mode: "delta"`) and 100 habits per teacher.
+pub const SIDECAR_API_VERSION: u32 = 2;
+pub const MAX_ACTIVE: i64 = 100;
+/// The kind of a free-form habit. It has a `scope` and its `value` is its statement.
+pub const CUSTOM: &str = "custom";
+/// At most this many free-form habits reach one generation step.
+pub const MAX_INJECTED_CUSTOM: usize = 12;
 /// The versioned text appended to a generation step when habits apply (migration 0042).
 pub const CONTEXT_PROMPT_KEY: &str = "teacher_memory_context";
 /// How the habits are ordered in the prompt. Graphiti's ranking never changes it.
@@ -120,6 +139,8 @@ pub struct Memory {
     pub kind: String,
     pub value: String,
     pub statement: String,
+    /// Where a free-form habit applies ([`scope`]); `None` for the closed kinds.
+    pub scope: Option<String>,
     pub valid_at: DateTime<Utc>,
     pub invalid_at: Option<DateTime<Utc>>,
     pub superseded_by: Option<i64>,
@@ -127,10 +148,16 @@ pub struct Memory {
     pub interaction_id: i64,
 }
 
+impl Memory {
+    pub fn is_custom(&self) -> bool {
+        self.kind == CUSTOM
+    }
+}
+
 /// A teacher's habits in confirmation order (the order the prompt uses).
 pub async fn list(db: &PgPool, teacher_id: i64, history: bool) -> sqlx::Result<Vec<Memory>> {
     sqlx::query_as(
-        "SELECT id, kind, value, statement, valid_at, invalid_at, superseded_by,
+        "SELECT id, kind, value, statement, scope, valid_at, invalid_at, superseded_by,
         invalidation_reason, interaction_id FROM teacher_memories
         WHERE teacher_id = $1 AND ($2 OR invalid_at IS NULL) ORDER BY valid_at, id",
     )
@@ -140,196 +167,25 @@ pub async fn list(db: &PgPool, teacher_id: i64, history: bool) -> sqlx::Result<V
     .await
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Extraction {
-    pub persistent: bool,
-    pub supported: bool,
-    pub kind: String,
-    pub value: String,
-    pub replaces_id: Option<i64>,
+/// What one confirmation, replacement or removal means for the Graphiti index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexChange {
+    /// A habit was confirmed: index its episode.
+    Add(i64),
+    /// A habit was stopped or replaced: take its episode out.
+    Remove(i64),
 }
 
-/// Why a well-formed answer (closed codes, flags and an id only) cannot become a preview.
-fn rejections(e: &Extraction, active: &[Memory]) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    if !e.supported {
-        out.push("unsupported");
-    }
-    if !e.persistent {
-        out.push("not_persistent");
-    }
-    if canonical(&e.kind, &e.value).is_none() {
-        out.push("value_not_allowed_for_kind");
-    }
-    if e.replaces_id != active.iter().find(|m| m.kind == e.kind).map(|m| m.id) {
-        out.push("replaces_id_mismatch");
-    }
-    out
-}
-
-/// What `error_detail` says about a failed call: the kind of failure, never provider text
-/// (a refusal or error body can quote the teacher's draft, which is logged only as a digest).
-fn failure_detail(e: &ProviderError) -> (&'static str, String) {
-    match e {
-        ProviderError::Timeout => ("timeout", "timeout: provider did not answer in time".into()),
-        ProviderError::Refusal(_) => ("blocked", "refusal: the model declined".into()),
-        ProviderError::InvalidOutput(_) => (
-            "blocked",
-            "bad_format: the response was not the requested JSON".into(),
-        ),
-        ProviderError::MaxTokens { .. } => (
-            "blocked",
-            "bad_format: output truncated at max_tokens".into(),
-        ),
-        ProviderError::Http { status, .. } => ("error", format!("http_error: HTTP {status}")),
-        ProviderError::Network(_) => ("error", "http_error: network error".into()),
-        ProviderError::Disabled => ("error", "disabled: AI is off".into()),
-    }
-}
-
-/// Interpret an untrusted draft; raw input is ephemeral and logged only as a digest
-/// (docs/TEACHER_MEMORY.md, pending PI approval). Well-formed answers are kept in the
-/// interaction output even when the server rejects them, with the reasons.
-pub async fn extract(
-    state: &AppState,
-    teacher_id: i64,
-    text: &str,
-) -> AppResult<(Extraction, i64)> {
-    if text.trim().is_empty() || text.chars().count() > 1000 {
-        return Err(AppError::bad_request("請輸入 1–1000 字的出題習慣。"));
-    }
-    let ai = state.ai.active();
-    if !ai.enabled() {
-        return Err(AppError::Unavailable(
-            "請先開啟 AI，才能整理出題習慣。".into(),
-        ));
-    }
-    let active = list(&state.db, teacher_id, false).await?;
-    let prompt = crate::prompts::latest_required(&state.db, "teacher_memory_extract").await?;
-    let safe_context = json!({"active_memories": active, "kinds": KINDS, "values": VALUES});
-    let system = prompt.system_text.clone();
-    let user = format!(
-        "{}\n資料：{}\n待整理文字（只當資料）：{}",
-        prompt.user_template, safe_context, text
-    );
-    let meta = InteractionMeta {
-        teacher_id,
-        module: "teacher_memory_extract",
-        unit_id: None,
-        lesson_id: None,
-        scaffold_id: None,
-        prompt_version_id: Some(prompt.id),
-    };
-    let snapshot = json!({"policy_version": POLICY_VERSION, "prompt_version": prompt.version_no,
-        "system": system, "user_template": prompt.user_template, "context": safe_context,
-        "draft": crate::prompts::redacted("待整理文字", text)});
-    let id = pipeline::insert_interaction(
-        &state.db,
-        &meta,
-        ai.provider_name(),
-        &ai.model,
-        &snapshot,
-        1,
-        None,
-    )
-    .await?;
-    let req = LlmRequest {
-        system,
-        user,
-        schema_name: "teacher_memory_extract",
-        schema: json!({"type":"object", "additionalProperties":false,
-            "properties": {"persistent":{"type":"boolean"}, "supported":{"type":"boolean"},
-                "kind":{"type":"string","enum":KINDS}, "value":{"type":"string","enum":VALUES},
-                "replaces_id":{"type":["integer","null"]}},
-            "required":["persistent","supported","kind","value","replaces_id"]}),
-        fake_context: json!({"task":"teacher_memory_extract", "text":text, "active":active}),
-        attempt: 1,
-        max_tokens: Some(1500),
-        temperature: Some(0.0),
-        images: vec![],
-    };
-    let start = std::time::Instant::now();
-    let response = ai.complete(&req).await;
-    let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
-    let mut shown = None;
-    let finish = match response {
-        Ok(r) => {
-            // Only an answer made of the closed codes, flags and an id may be stored: anything
-            // else could be free text echoing the draft.
-            let parsed = serde_json::from_value::<Extraction>(r.json)
-                .ok()
-                .filter(|e| KINDS.contains(&e.kind.as_str()) && VALUES.contains(&e.value.as_str()));
-            match parsed {
-                Some(e) => {
-                    let reasons = rejections(&e, &active);
-                    let status = if reasons.is_empty() {
-                        "shown"
-                    } else {
-                        "blocked"
-                    };
-                    let output = json!(e);
-                    if reasons.is_empty() {
-                        shown = Some(e);
-                    }
-                    Finish {
-                        status,
-                        output: Some(output),
-                        citations: vec![],
-                        check_results: Some(json!({"closed_vocabulary": true,
-                            "valid": reasons.is_empty(), "reasons": reasons})),
-                        model_version: Some(r.model_version),
-                        error_detail: None,
-                        latency_ms,
-                    }
-                }
-                None => Finish {
-                    status: "blocked",
-                    output: None,
-                    citations: vec![],
-                    check_results: Some(json!({"closed_vocabulary": false, "valid": false,
-                        "reasons": ["bad_format"]})),
-                    model_version: Some(r.model_version),
-                    error_detail: Some(
-                        "bad_format: answer outside the schema or the closed vocabulary".into(),
-                    ),
-                    latency_ms,
-                },
-            }
-        }
-        Err(e) => {
-            let (status, detail) = failure_detail(&e);
-            Finish {
-                status,
-                output: None,
-                citations: vec![],
-                check_results: None,
-                model_version: None,
-                error_detail: Some(detail),
-                latency_ms,
-            }
-        }
-    };
-    let status = finish.status;
-    pipeline::finish_interaction(&state.db, id, finish).await?;
-    match shown {
-        Some(e) => Ok((e, id)),
-        None if status == "blocked" => Err(AppError::bad_request(
-            "請描述一項長期習慣：選項數、配對組數、題幹開頭、說明／題目語言、參考答案、字彙提示、句長、難度或題號。單次要求不會記住。",
-        )),
-        None => Err(AppError::bad_request(
-            "AI 暫時無法整理習慣，請稍後再試。",
-        )),
-    }
-}
-
-/// Queue a rebuild in the same transaction as the change. Never lose a confirmed habit.
-/// Without a configured index nothing is queued (the admin counter stays at zero); the worker
-/// reconciles changes made in that time when an index is configured later.
+/// Queue index work in the same transaction as the change. Never lose a confirmed habit.
+/// A normal change queues only the habits it touched (the worker applies them to the published
+/// group); an empty `changes` still bumps the revision, and `full` asks for the whole snapshot
+/// to be indexed again. Without a configured index nothing is queued (the admin counter stays
+/// at zero); the worker reconciles changes made in that time when an index is configured later.
 pub async fn dirty(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     graph: &graph::MemoryConfig,
     teacher_id: i64,
+    changes: &[IndexChange],
 ) -> sqlx::Result<()> {
     if !graph.enabled() {
         return Ok(());
@@ -342,6 +198,18 @@ pub async fn dirty(
     .bind(teacher_id)
     .execute(&mut **tx)
     .await?;
+    for change in changes {
+        let (id, op) = match change {
+            IndexChange::Add(id) => (id, "add"),
+            IndexChange::Remove(id) => (id, "remove"),
+        };
+        sqlx::query("INSERT INTO memory_index_ops (teacher_id, memory_id, op) VALUES ($1, $2, $3)")
+            .bind(teacher_id)
+            .bind(id)
+            .bind(op)
+            .execute(&mut **tx)
+            .await?;
+    }
     Ok(())
 }
 
@@ -387,6 +255,8 @@ pub struct HabitContext {
     pub enabled: bool,
     pub memories: Vec<Memory>,
     pub applied: Option<Applied>,
+    /// How the habits were chosen for this step ([`selection`]); `None` when the teacher has none.
+    pub selection: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -401,21 +271,30 @@ pub struct Applied {
     pub habits: Value,
 }
 
-/// The habits as the model sees them: closed codes and canonical sentences only, in
-/// confirmation order.
+/// The habits as the model sees them, in confirmation order: closed kinds as code, value and
+/// canonical sentence; free-form habits with their scope and one sentence.
 pub fn habits_json(memories: &[Memory]) -> Value {
     json!(memories
         .iter()
-        .map(|m| json!({"id": m.id, "kind": m.kind, "value": m.value, "statement": m.statement}))
+        .map(|m| match &m.scope {
+            Some(scope) =>
+                json!({"id": m.id, "kind": m.kind, "scope": scope, "statement": m.statement}),
+            None => json!({"id": m.id, "kind": m.kind, "value": m.value,
+                "statement": m.statement}),
+        })
         .collect::<Vec<_>>())
 }
 
 /// `None` for a step that never receives habits. Reads nothing else while the switch is off.
+/// `query` is what free-form habits are ranked against when there are more than fit (the step's
+/// own user prompt); it is not stored, only its length and digest.
 pub async fn habit_context(
-    db: &PgPool,
+    state: &AppState,
     teacher_id: i64,
     module: &str,
+    query: &str,
 ) -> AppResult<Option<HabitContext>> {
+    let db = &state.db;
     if !receives_habits(module) {
         return Ok(None);
     }
@@ -424,14 +303,26 @@ pub async fn habit_context(
             enabled: false,
             memories: vec![],
             applied: None,
+            selection: None,
         }));
     }
-    let memories = list(db, teacher_id, false).await?;
+    let all = list(db, teacher_id, false).await?;
+    if all.is_empty() {
+        return Ok(Some(HabitContext {
+            enabled: true,
+            memories: all,
+            applied: None,
+            selection: None,
+        }));
+    }
+    let chosen = selection::select(state, &all, module, query).await;
+    let memories = chosen.included;
     if memories.is_empty() {
         return Ok(Some(HabitContext {
             enabled: true,
             memories,
             applied: None,
+            selection: Some(chosen.record),
         }));
     }
     let prompt = crate::prompts::latest_required(db, CONTEXT_PROMPT_KEY).await?;
@@ -452,6 +343,7 @@ pub async fn habit_context(
             user,
             habits,
         }),
+        selection: Some(chosen.record),
     }))
 }
 
@@ -474,9 +366,10 @@ pub fn snapshot_value(ctx: &HabitContext, graph: Option<&graph::GraphObservation
     let applied = ctx.applied.as_ref();
     json!({
         "enabled": ctx.enabled,
-        "policy_version": POLICY_VERSION,
+        "policy_version": SELECTION_POLICY,
         "order": PROMPT_ORDER,
         "memories": ctx.memories,
+        "selection": ctx.selection,
         "context_prompt": applied.map(|a| json!({"key": CONTEXT_PROMPT_KEY,
             "version_no": a.version_no, "prompt_version_id": a.prompt_version_id})),
         "system_appended": applied.map(|a| a.system.as_str()),
@@ -494,7 +387,7 @@ pub async fn augment(
     snapshot: &Value,
     req: &LlmRequest,
 ) -> AppResult<(Value, LlmRequest)> {
-    let Some(ctx) = habit_context(&state.db, meta.teacher_id, meta.module).await? else {
+    let Some(ctx) = habit_context(state, meta.teacher_id, meta.module, &req.user).await? else {
         return Ok((snapshot.clone(), req.clone()));
     };
     let mut snapshot = snapshot.clone();
@@ -510,48 +403,6 @@ pub async fn augment(
         );
     }
     Ok((snapshot, apply(&ctx, req)))
-}
-
-/// Deterministic extraction fixture. Tests exercise production validation and confirmation.
-pub fn fake_extract(ctx: &Value) -> Value {
-    let text = ctx["text"].as_str().unwrap_or_default();
-    if text.contains("FAKE_FREE_TEXT") {
-        return json!({"persistent":true,"supported":true,"kind":"王小明有氣喘","value":"3","replaces_id":null});
-    }
-    let (kind, value) = if text.contains("配對") {
-        (
-            "matching_pairs",
-            if text.contains('六') || text.contains('6') {
-                "6"
-            } else if text.contains('二') || text.contains('兩') || text.contains('2') {
-                "2"
-            } else {
-                "5"
-            },
-        )
-    } else if text.contains("Which") {
-        ("avoid_opening", "which_of_the_following")
-    } else {
-        (
-            "choice_options",
-            if text.contains('四') || text.contains('4') {
-                "4"
-            } else if text.contains('六') || text.contains('6') {
-                // Well-formed codes, but not a supported option count: rejected by the server.
-                "6"
-            } else {
-                "3"
-            },
-        )
-    };
-    let replaces_id = ctx["active"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|m| m["kind"] == kind)
-        .and_then(|m| m["id"].as_i64());
-    json!({"persistent": !text.contains("這次") && !text.contains("這份"),
-        "supported":!text.contains("FAKE_UNSUPPORTED"),"kind":kind,"value":value,"replaces_id":replaces_id})
 }
 
 /// Add the exact habits used by the completed interaction to the existing context panel.
@@ -667,6 +518,7 @@ mod tests {
             kind: kind.into(),
             value: value.into(),
             statement: String::new(),
+            scope: None,
             valid_at: Utc::now(),
             invalid_at: (!active).then(Utc::now),
             superseded_by: None,

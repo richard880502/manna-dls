@@ -174,6 +174,9 @@ pub async fn revise_block(
     let input = WorksheetService::new(&state.db)
         .prepare_generation(teacher.id(), teacher.track(), id)
         .await?;
+    // Only what the teacher typed as the instruction (not her notes or the worksheet) may be
+    // offered back as a habit to remember.
+    let typed = req.instruction.clone();
     let proposal = block_revise::start(
         &state,
         input,
@@ -186,6 +189,16 @@ pub async fn revise_block(
         },
     )
     .await?;
+    crate::memory::detect::spawn(
+        &state,
+        teacher.id(),
+        crate::memory::Source::BlockRevise {
+            worksheet_id: id,
+            proposal_id: proposal.id,
+        },
+        &typed,
+    )
+    .await;
     Ok((StatusCode::ACCEPTED, Json(proposal)))
 }
 

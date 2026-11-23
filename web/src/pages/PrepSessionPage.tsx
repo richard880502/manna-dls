@@ -38,6 +38,7 @@ import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ResourcesCard, ReviseCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
+import { MemorySuggestionCards, useMemorySuggestions } from "../components/memory/MemorySuggestions";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
 import {
   AI_DISCLAIMER,
@@ -86,6 +87,11 @@ function PrepSessionView({ id }: { id: number }) {
   const classes = useActiveClasses();
   const templates = useReadyTemplates();
   const [session, setSession] = useState<PrepSession | null>(null);
+  // Habit suggestions found in what the teacher typed (Manna asks; she decides).
+  const memory = useMemorySuggestions(
+    { prepSessionId: id },
+    session ? session.turns.map((t) => `${t.id}:${t.status}`).join(",") : "",
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -575,6 +581,11 @@ function PrepSessionView({ id }: { id: number }) {
               )}
               {result(turn)}
             </section>
+            <MemorySuggestionCards
+              items={memory.items.filter((c) => c.prep_turn_id === turn.id)}
+              onDone={memory.drop}
+              onRemembered={memory.reload}
+            />
           </li>
         ))}
       </ol>

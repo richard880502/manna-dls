@@ -54,6 +54,14 @@ pub fn api_router() -> Router<AppState> {
             get(crate::memory::routes::get).post(crate::memory::routes::confirm),
         )
         .route("/me/memories/preview", post(crate::memory::routes::preview))
+        .route(
+            "/me/memories/candidates",
+            get(crate::memory::routes::candidates_list),
+        )
+        .route(
+            "/me/memories/candidates/{id}/shown",
+            post(crate::memory::routes::candidate_shown),
+        )
         .route("/me/memories/{id}", delete(crate::memory::routes::remove))
         .route(
             "/admin/memory-index",

@@ -1,7 +1,7 @@
 import { loadToken } from "../lib/storage";
 import type {
   Account,
-  MemoryState, MemoryCandidate, MemorySettings, MemoryIndexStatus,
+  MemoryState, MemoryCandidate, MemorySuggestion, MemorySettings, MemoryIndexStatus,
   AdminSettings,
   AiModelSettings,
   AiModelRequest,
@@ -356,7 +356,14 @@ export const api = {
   previewMemory: (text: string) => post<MemoryCandidate>("/me/memories/preview", { text }),
   confirmMemory: (candidate_id: number) => post<{ id: number; unchanged?: boolean }>("/me/memories", { candidate_id, confirmed: true }),
   /** 取消預覽：伺服器記錄老師拒絕這項整理結果，之後不能再確認。 */
-  cancelMemory: (candidate_id: number) => post<{ ok: boolean; cancelled: boolean }>("/me/memories", { candidate_id, confirmed: false }),
+  /** `edit`: 老師要修改後再記住（研究紀錄為「修改」而不是「不用」）。 */
+  cancelMemory: (candidate_id: number, edit = false) => post<{ ok: boolean; cancelled: boolean }>("/me/memories", edit ? { candidate_id, confirmed: false, edit: true } : { candidate_id, confirmed: false }),
+  memorySuggestions: (filter: { prep_session_id?: number; worksheet_id?: number }) =>
+    get<{ candidates: MemorySuggestion[] }>("/me/memories/candidates", {
+      prep_session_id: filter.prep_session_id ? String(filter.prep_session_id) : undefined,
+      worksheet_id: filter.worksheet_id ? String(filter.worksheet_id) : undefined,
+    }),
+  memorySuggestionShown: (id: number) => post<OkResponse>(`/me/memories/candidates/${id}/shown`, {}),
   removeMemory: (id: number) => del<OkResponse>(`/me/memories/${id}`),
   memorySettings: () => get<MemorySettings>("/admin/memory-settings"),
   saveMemorySettings: (enabled: boolean) => put<MemorySettings>("/admin/memory-settings", { enabled }),

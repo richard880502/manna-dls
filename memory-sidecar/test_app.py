@@ -73,6 +73,45 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.driver_factory.assert_called_once_with(GROUP)
         graph.close.assert_awaited_once()
 
+    async def test_delta_adds_new_habits_and_removes_stopped_ones_in_the_published_group(self):
+        graph = SimpleNamespace(add_episode=AsyncMock(), remove_episode=AsyncMock(), close=AsyncMock(),
+            driver=self.driver)
+        with patch.object(app, "Graphiti", return_value=graph):
+            r = await self.http.post("/index", json=index_body(mode="delta", remove_ids=[7]))
+        self.assertEqual(r.status_code, 200, r.text)
+        graph.add_episode.assert_awaited_once()
+        graph.remove_episode.assert_awaited_once_with(str(uuid5(NAMESPACE_URL, f"{GROUP}:{app.episode_id(7)}")))
+        # The same episode id a search maps back to a habit.
+        self.assertEqual(graph.add_episode.call_args.kwargs["group_id"], GROUP)
+
+    async def test_a_removal_of_an_episode_that_is_not_there_is_fine(self):
+        graph = SimpleNamespace(add_episode=AsyncMock(),
+            remove_episode=AsyncMock(side_effect=app.NodeNotFoundError("gone")), close=AsyncMock(),
+            driver=self.driver)
+        with patch.object(app, "Graphiti", return_value=graph):
+            r = await self.http.post("/index", json=index_body(mode="delta", memories=[], remove_ids=[7]))
+        self.assertEqual(r.status_code, 200, r.text)
+        graph.add_episode.assert_not_awaited()
+
+    async def test_delta_never_creates_a_group_and_a_full_index_removes_nothing(self):
+        self.client.list_graphs = AsyncMock(return_value=["manna_memory"])
+        r = await self.http.post("/index", json=index_body(mode="delta"))
+        self.assertEqual(r.status_code, 409)
+        self.driver_factory.assert_not_called()
+        r = await self.http.post("/index", json=index_body(remove_ids=[1]))
+        self.assertEqual(r.status_code, 400)
+
+    async def test_a_free_form_habit_with_a_scope_and_up_to_one_hundred_habits_are_accepted(self):
+        habits = [dict(HABIT, id=i, kind="custom", value=f"第{i}條。", statement=f"第{i}條。",
+            scope="content") for i in range(1, 101)]
+        graph = SimpleNamespace(add_episode=AsyncMock(), close=AsyncMock(), driver=self.driver)
+        with patch.object(app, "Graphiti", return_value=graph):
+            r = await self.http.post("/index", json=index_body(memories=habits))
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(graph.add_episode.await_count, 100)
+        r = await self.http.post("/index", json=index_body(memories=habits + [HABIT]))
+        self.assertEqual(r.status_code, 422)
+
     async def test_search_excludes_invalid_expired_foreign_and_unconfirmed_ids(self):
         episode = str(uuid5(NAMESPACE_URL, f"{GROUP}:{app.episode_id(1)}"))
         def edge(group=GROUP, invalid=None, expired=None, episodes=None):
@@ -139,7 +178,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_is_cheap_and_reports_contract_and_engine_and_refuses_wrong_contract(self):
         with patch.object(app, "version", return_value="0.99.0"):
             r = await self.http.get("/health")
-        self.assertEqual(r.json(), {"ok":True,"api_version":1,"graphiti_version":"0.99.0","policy_version":app.POLICY})
+        self.assertEqual(r.json(), {"ok":True,"api_version":app.API_VERSION,"graphiti_version":"0.99.0","policy_version":app.POLICY})
         # One PING on the shared pool; no driver (index creation) per call.
         self.client.connection.ping.assert_awaited_once()
         self.driver_factory.assert_not_called()
