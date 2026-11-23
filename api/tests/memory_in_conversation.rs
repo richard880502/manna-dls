@@ -1308,3 +1308,37 @@ async fn many_queued_changes_are_applied_in_batches_without_publishing_early() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn model_free_text_in_kind_or_reason_is_never_stored_anywhere() {
+    let app = test_app!();
+    let t = app.teacher("T-LEAK", "general").await;
+    switch(&app, true).await;
+    // Through the preview (kind is a name) and through detection (reason quotes the teacher).
+    for text in [
+        "之後 FAKE_FREE_TEXT",
+        "之後 FAKE_LEAKY_REASON",
+        "之後 FAKE_PII",
+    ] {
+        let (s, _) = preview_raw(&app, &t, text).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{text}");
+    }
+    start_ask(&app, &t, "之後 FAKE_FREE_TEXT").await;
+    start_ask(&app, &t, "之後 FAKE_LEAKY_REASON").await;
+    wait_for_detection(&app, 2).await;
+    for term in ["王小明", "氣喘"] {
+        for sql in [
+            format!("SELECT count(*) FROM ai_interactions WHERE module='teacher_memory_extract' AND (output::text LIKE '%{term}%' OR check_results::text LIKE '%{term}%' OR error_detail LIKE '%{term}%' OR input_snapshot::text LIKE '%{term}%')"),
+            format!("SELECT count(*) FROM memory_candidates WHERE kind||value||statement||coalesce(scope,'') LIKE '%{term}%'"),
+            format!("SELECT count(*) FROM usage_logs WHERE payload::text LIKE '%{term}%'"),
+            format!("SELECT count(*) FROM teacher_decisions WHERE coalesce(reason_note,'') LIKE '%{term}%' OR coalesce(revised_content,'') LIKE '%{term}%'"),
+            format!("SELECT count(*) FROM teacher_memories WHERE kind||value||statement LIKE '%{term}%'"),
+        ] {
+            assert_eq!(count(&app, &sql).await, 0, "{term}: {sql}");
+        }
+    }
+    assert_eq!(
+        count(&app, "SELECT count(*) FROM memory_candidates").await,
+        0
+    );
+}

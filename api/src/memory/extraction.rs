@@ -274,10 +274,32 @@ pub async fn run(
                     let kept_statement = (e.kind == CUSTOM)
                         .then(|| statement::check(&e.statement).ok())
                         .flatten();
+                    // Model-written fields are stored only as members of a closed set (anything
+                    // else, which could quote the teacher, becomes `invalid`) or as a length.
+                    let kind = if e.kind == CUSTOM || KINDS.contains(&e.kind.as_str()) {
+                        e.kind.as_str()
+                    } else {
+                        "invalid"
+                    };
+                    let value = if VALUES.contains(&e.value.as_str()) {
+                        e.value.as_str()
+                    } else {
+                        ""
+                    };
+                    let reason = if REASONS.contains(&e.reason.as_str()) {
+                        e.reason.as_str()
+                    } else {
+                        "invalid"
+                    };
+                    let scope = if e.kind == CUSTOM && scope::is_scope(&e.scope) {
+                        e.scope.as_str()
+                    } else {
+                        "none"
+                    };
                     let output = json!({"persistent": e.persistent, "supported": e.supported,
-                        "kind": e.kind, "value": e.value,
-                        "scope": if e.kind == CUSTOM { e.scope.as_str() } else { "none" },
-                        "replaces_id": e.replaces_id, "reason": e.reason,
+                        "kind": kind, "value": value, "scope": scope,
+                        "replaces_id": e.replaces_id, "reason": reason,
+                        "reason_chars": e.reason.chars().count(),
                         "statement": kept_statement,
                         "statement_chars": e.statement.chars().count()});
                     let status = if why.is_empty() { "shown" } else { "blocked" };
@@ -365,6 +387,11 @@ pub fn fake_extract(ctx: &Value) -> Value {
     if text.contains("FAKE_FREE_TEXT") {
         return json!({"persistent":true,"supported":true,"kind":"王小明有氣喘","value":"3",
             "statement":"","scope":"none","replaces_id":null,"reason":"none"});
+    }
+    if text.contains("FAKE_LEAKY_REASON") {
+        // A refusal reason that quotes the teacher: must never be stored.
+        return json!({"persistent":true,"supported":false,"kind":"custom","value":"",
+            "statement":"","scope":"none","replaces_id":null,"reason":"提到學生王小明的氣喘"});
     }
     if text.contains("FAKE_PII") {
         return json!({"persistent":true,"supported":true,"kind":"custom","value":"",
