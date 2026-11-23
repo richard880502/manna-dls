@@ -1330,7 +1330,7 @@ async fn regenerate(
     let Ok((out, interaction_id)) =
         close(run, jobs[STEP_BLOOM], level_key(b), result, &context).await?
     else {
-        skip(db, jobs.get(STEP_BLOOM_CHECK), SKIPPED).await?;
+        skip(run, jobs.get(STEP_BLOOM_CHECK), SKIPPED).await?;
         return Ok(());
     };
     let mut drafts = vec![LevelDraft::from_output(b, out)];

@@ -1239,7 +1239,7 @@ interface WsSheet {
 | `scaffolds` | `worksheet_scaffolds` | `worksheet_scaffolds` | `SC-WS-SCAFFOLDS` | 800 + 350 × 區塊數（2000–5000） | 每個區塊的語言鷹架、教學鷹架，以及**自動加入**的程序鷹架 |
 | `exit_ticket` | `worksheet_exit_ticket` | `worksheet_exit_ticket` | `SC-WS-EXIT` | 1200 | 2–4 題：形成性評量＋學生反思或蒐集問題 |
 
-最後一步的工作會維持 `running`（`phase`「正在把結果組合成學習單」）直到新版本存好，所以輪詢看到 `running = false` 時，`GET /api/worksheets/:id` 一定已是新內容。之後由**程式組裝**（不呼叫模型）：暖身固定在最前、活動區塊依段落順序、Exit ticket 在最後；題號、版本差異、學生版／教師版都由程式決定，存成一個新的學習單版本（`cause = "generate"`）。
+最後一步的工作會維持 `running`（`phase`「正在把結果組合成學習單」）直到新版本存好，所以輪詢看到 `running = false` 時，`GET /api/worksheets/:id` 一定已是新內容。這一步被略過時也一樣（`skip_exit_ticket`：`outcome = "skipped"`，一樣等到存好才結束；進度不列「寫 Exit ticket」）。之後由**程式組裝**（不呼叫模型）：暖身固定在最前、活動區塊依段落順序、Exit ticket 在最後；題號、版本差異、學生版／教師版都由程式決定，存成一個新的學習單版本（`cause = "generate"`）。
 
 - 不選「加入暖身活動」時 `warmup` 步驟為 `skipped`。Exit ticket 預設加入（不是選項），教師之後可以關掉或刪除。
 - **版本差異（規格 §5.4）**：三個版本共用同一份目標與核心題（`core`，`levels` = 全部選到的版本）。`support` 題只在基礎版、`challenge` 題只在進階版。鷹架：基礎版顯示全部；一般版顯示程序鷹架＋字詞表、句型框架；進階版只留程序鷹架。開放題的作答行數基礎版 2、一般版 3、進階版 4。教師可以逐題、逐鷹架改 `levels`。
