@@ -484,7 +484,7 @@ pub async fn save_content_over(
     save_content_source(db, worksheet_id, content, cause, base_version_no, None).await
 }
 
-async fn save_content_source(
+pub(crate) async fn save_content_source(
     db: &PgPool,
     worksheet_id: i64,
     content: &Content,

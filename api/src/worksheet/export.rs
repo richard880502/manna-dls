@@ -20,7 +20,7 @@ mod organizer;
 
 use super::assemble::{
     printed_answer, printed_option, Sheet, SheetBlock, SheetImage, SheetItem, SheetItemSupport,
-    SheetTable,
+    SheetTable, SheetWord,
 };
 use super::organizer::SheetOrganizer;
 use super::tiered::{student_version_name, SupportKind};
@@ -627,6 +627,36 @@ fn docx_image(out: &mut String, img: &SheetImage, teacher: bool, media: &mut Med
 
 /// The paragraphs of one sheet: title, the teacher banner (`banner` replaces the usual one),
 /// the name line, objectives and blocks.
+/// The 字詞表 (Key words): inside its block, or once after the last block (字詞表放在學習單最後).
+fn docx_words(body: &mut String, words: &[SheetWord], teacher: bool) {
+    if words.is_empty() {
+        return;
+    }
+    body.push_str(&para(
+        &[run(
+            "Key words",
+            RunStyle {
+                bold: true,
+                ..RunStyle::default()
+            },
+        )],
+        &ParaStyle {
+            before: 120,
+            keep_next: true,
+            ..ParaStyle::default()
+        },
+    ));
+    let mut rows = vec![vec!["Word".to_string(), "Meaning".to_string()]];
+    for v in words {
+        let word = match (teacher, v.level) {
+            (true, Some(l)) => format!("{} (Level {l})", v.word),
+            _ => v.word.clone(),
+        };
+        rows.push(vec![word, v.definition.clone()]);
+    }
+    body.push_str(&table(&[2600, DOCX_WIDTH - 2600], &rows, None, true));
+}
+
 fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> String {
     let teacher = sheet.audience == Audience::Teacher;
     let mut body = String::new();
@@ -772,31 +802,7 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
                 },
             ));
         }
-        if !b.vocabulary.is_empty() {
-            body.push_str(&para(
-                &[run(
-                    "Key words",
-                    RunStyle {
-                        bold: true,
-                        ..RunStyle::default()
-                    },
-                )],
-                &ParaStyle {
-                    before: 120,
-                    keep_next: true,
-                    ..ParaStyle::default()
-                },
-            ));
-            let mut rows = vec![vec!["Word".to_string(), "Meaning".to_string()]];
-            for v in &b.vocabulary {
-                let word = match (teacher, v.level) {
-                    (true, Some(l)) => format!("{} (Level {l})", v.word),
-                    _ => v.word.clone(),
-                };
-                rows.push(vec![word, v.definition.clone()]);
-            }
-            body.push_str(&table(&[2600, DOCX_WIDTH - 2600], &rows, None, true));
-        }
+        docx_words(&mut body, &b.vocabulary, teacher);
         if !b.original_text.is_empty() {
             body.push_str(&para(
                 &[run(
@@ -903,6 +909,7 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
             ));
         }
     }
+    docx_words(&mut body, &sheet.end_words, teacher);
     body
 }
 
@@ -1898,6 +1905,39 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     }
 }
 
+/// The 字詞表 (Key words): inside its block, or once after the last block (字詞表放在學習單最後).
+fn pdf_words(l: &mut Layout<'_>, words: &[SheetWord], teacher: bool, body: Style) {
+    if words.is_empty() {
+        return;
+    }
+    l.paragraph(
+        "Key words",
+        Style {
+            weight: Weight::Bold,
+            before: 6.0,
+            after: 2.0,
+            ..body
+        },
+    );
+    for v in words {
+        let word = match (teacher, v.level) {
+            (true, Some(level)) => format!("{} (Level {level})", v.word),
+            _ => v.word.clone(),
+        };
+        let label = format!("{word} — ");
+        l.labelled(
+            &label,
+            &v.definition,
+            Style {
+                indent: 8.0,
+                after: 1.0,
+                ..body
+            },
+            Weight::Bold,
+        );
+    }
+}
+
 fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
     let teacher = sheet.audience == Audience::Teacher;
     let body = Style::body();
@@ -2011,34 +2051,7 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
                 },
             );
         }
-        if !b.vocabulary.is_empty() {
-            l.paragraph(
-                "Key words",
-                Style {
-                    weight: Weight::Bold,
-                    before: 6.0,
-                    after: 2.0,
-                    ..body
-                },
-            );
-            for v in &b.vocabulary {
-                let word = match (teacher, v.level) {
-                    (true, Some(level)) => format!("{} (Level {level})", v.word),
-                    _ => v.word.clone(),
-                };
-                let label = format!("{word} — ");
-                l.labelled(
-                    &label,
-                    &v.definition,
-                    Style {
-                        indent: 8.0,
-                        after: 1.0,
-                        ..body
-                    },
-                    Weight::Bold,
-                );
-            }
-        }
+        pdf_words(l, &b.vocabulary, teacher, body);
         if !b.original_text.is_empty() {
             l.paragraph(
                 ORIGINAL_TEXT,
@@ -2127,6 +2140,7 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
             );
         }
     }
+    pdf_words(l, &sheet.end_words, teacher, body);
 }
 
 fn sheet_has_cjk(sheet: &Sheet) -> bool {
@@ -2139,6 +2153,12 @@ fn printed_text(sheet: &Sheet) -> String {
     let mut out = vec![sheet.title.clone(), meta_line(sheet)];
     out.extend(sheet.tiering_note.iter().cloned());
     out.extend(sheet.objectives.iter().cloned());
+    out.extend(
+        sheet
+            .end_words
+            .iter()
+            .flat_map(|v| [v.word.clone(), v.definition.clone()]),
+    );
     for b in &sheet.blocks {
         out.extend([b.title.clone(), b.instructions.clone()]);
         out.extend(b.steps.iter().cloned());
@@ -2409,6 +2429,7 @@ mod tests {
                 original_text: vec![],
                 glosses: vec![],
             }],
+            end_words: Vec::new(),
         }
     }
 

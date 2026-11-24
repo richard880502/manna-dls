@@ -1053,6 +1053,10 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
     let extras = merge_extras(raw, m);
     block.scaffolds = extras.scaffolds;
     block.vocabulary = extras.vocabulary;
+    // Taking every row out keeps them, so 「恢復字詞表」 can bring the table back.
+    if block.vocabulary.is_empty() && !old.vocabulary.is_empty() {
+        block.vocabulary_removed = old.vocabulary.clone();
+    }
     block.glosses = extras.glosses;
     notes.extend(extras.failed);
     let mut problems = e.problems;
@@ -1686,6 +1690,10 @@ mod tests {
         assert!(m.changed);
         assert!(m.block.vocabulary.is_empty());
         let old = rich_block();
+        assert_eq!(
+            m.block.vocabulary_removed, old.vocabulary,
+            "the rows are kept so 恢復字詞表 can bring them back"
+        );
         assert_eq!(m.block.scaffolds, old.scaffolds);
         assert_eq!(m.block.glosses, old.glosses);
         assert_eq!(m.block.items, old.items);

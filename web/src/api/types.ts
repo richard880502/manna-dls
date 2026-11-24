@@ -1829,6 +1829,8 @@ export interface WsBlock {
   image_slots?: WsImageSlot[];
   /** 詞彙級別檢查「提供字義」：印在這一區最後的 Glossary，各自標出印在哪些版本。沒有時沒有這個欄位；存檔時原樣送回。 */
   glosses?: WsGloss[];
+  /** 被刪掉的字詞表各列（老師按「刪除」、或請 Manna 拿掉）；「恢復字詞表」用它放回來。沒有時沒有這個欄位；存檔時原樣送回。 */
+  vocabulary_removed?: WsVocab[];
 }
 
 /** Glossary 的一筆（詞彙級別檢查「提供字義」） */
@@ -1924,6 +1926,8 @@ export interface WorksheetContent {
   levels: WsLevel[];
   /** 學生版代碼的順序（T9）：第一個印「Version A」…；差異化學習單產生時隨機排，舊學習單沒有這個鍵（依 levels） */
   student_order?: WsLevel[];
+  /** 字詞表放在學習單最後：每一區的字詞表合成一張，印在最後一區之後（預設印在各區裡）；沒有這個鍵就是各區裡 */
+  vocabulary_at_end?: boolean;
   chosen: WsChosen | null;
   notices: string[];
 }
@@ -2457,6 +2461,8 @@ export interface WsSheet {
   tiering_note?: string;
   objectives: string[];
   blocks: WsSheetBlock[];
+  /** 字詞表放在學習單最後時：各區字詞表合成的一張（各區的 vocabulary 都是空的）；沒有時沒有這個鍵 */
+  end_words?: Array<{ word: string; level: number | null; definition: string }>;
 }
 
 export interface WsSheetBlock {

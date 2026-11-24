@@ -320,6 +320,26 @@ export function SheetPreview({
           </section>
         );
       })}
+      {(sheet.end_words ?? []).length > 0 && (
+        <section className="ws-block" aria-label="字詞表（學習單最後）">
+          <table className="ws-vocab" aria-label="字詞表">
+            <thead>
+              <tr>
+                <th scope="col">Word</th>
+                <th scope="col">Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(sheet.end_words ?? []).map((v) => (
+                <tr key={v.word}>
+                  <td>{v.word}</td>
+                  <td>{v.definition}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </article>
   );
 }

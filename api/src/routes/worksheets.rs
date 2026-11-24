@@ -288,6 +288,16 @@ pub async fn undo_block(
     Ok(Json(state_of(&state, id).await?))
 }
 
+/// `POST /api/worksheets/:id/blocks/:block_id/restore-word-table` (「恢復字詞表」)
+pub async fn restore_word_table(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, block_id)): ApiPath<(i64, String)>,
+) -> AppResult<Json<WorksheetState>> {
+    editing::restore_word_table(&state, teacher.id(), id, &block_id).await?;
+    Ok(Json(state_of(&state, id).await?))
+}
+
 // ---------------------------------------------------------------- sheets and versions
 
 #[derive(Debug, Default, Deserialize)]

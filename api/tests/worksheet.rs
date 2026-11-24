@@ -1784,3 +1784,140 @@ async fn failed_steps_are_not_printed_and_scaffold_targets_are_forgiving() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(&bytes[..2], b"PK");
 }
+
+// ---------------------------------------------------------------- 字詞表: at the end, and 恢復
+
+#[tokio::test]
+async fn the_word_table_can_move_to_the_end_of_every_printed_form() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(&app, &t, &passage("")).await["id"].as_i64().unwrap();
+    let state = generate(&app, &t, id).await;
+    let warm_words = state["content"]["blocks"][0]["vocabulary"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert!(warm_words > 0, "the warm-up lists key words");
+    let in_block = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        in_block["blocks"][0]["vocabulary"]
+            .as_array()
+            .unwrap()
+            .len(),
+        warm_words
+    );
+    assert!(in_block.get("end_words").is_none());
+
+    let mut content = state["content"].clone();
+    content["vocabulary_at_end"] = json!(true);
+    let (s, saved) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": state["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    assert_eq!(saved["content"]["vocabulary_at_end"], true);
+    assert!(saved["version_no"].as_i64() > state["version_no"].as_i64());
+    // The words stay in the block's content (editing, regenerate); only the print moves.
+    assert_eq!(
+        saved["content"]["blocks"][0]["vocabulary"]
+            .as_array()
+            .unwrap()
+            .len(),
+        warm_words
+    );
+
+    let at_end = sheet(&app, &t, id, "standard", "student").await;
+    for b in at_end["blocks"].as_array().unwrap() {
+        assert!(b["vocabulary"].as_array().unwrap().is_empty(), "{b}");
+    }
+    assert_eq!(at_end["end_words"].as_array().unwrap().len(), warm_words);
+
+    // DOCX: the Key words table comes after every block's text.
+    let xml = export_docx(&app, &t, id).await;
+    let last_block = xml.rfind("Heading2").expect("blocks are printed");
+    let key_words = xml.find("Key words").expect("the table is printed");
+    assert!(key_words > last_block, "the table is after the last block");
+    assert_eq!(xml.matches("Key words").count(), 1);
+
+    // PDF: still produced.
+    let (status, _, _, bytes) = raw_get(
+        &app,
+        &format!("/api/worksheets/{id}/export?format=pdf&level=standard&audience=student"),
+        &t,
+    )
+    .await;
+    if manna_api::worksheet::export::pdf_supports_cjk() {
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(&bytes[..4], b"%PDF");
+    }
+}
+
+#[tokio::test]
+async fn a_deleted_word_table_comes_back_with_levels_from_the_word_list() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(&app, &t, &passage("")).await["id"].as_i64().unwrap();
+    let pi = app.pi_token().await;
+    let (s, v) = app
+        .post_csv("/api/admin/vocabulary/import", Some(&pi), &vocabulary_csv())
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let state = generate(&app, &t, id).await;
+    let block_id = state["content"]["blocks"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let url = format!("/api/worksheets/{id}/blocks/{block_id}/restore-word-table");
+
+    // Nothing was deleted yet.
+    let (s, v) = app.post(&url, Some(&t), json!({})).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+
+    // What the editor sends for 「刪除」: the rows move to `vocabulary_removed`. A level the client
+    // writes is never kept.
+    let mut content = state["content"].clone();
+    let rows = content["blocks"][0]["vocabulary"].clone();
+    let count = rows.as_array().unwrap().len();
+    assert!(count > 0);
+    content["blocks"][0]["vocabulary"] = json!([]);
+    content["blocks"][0]["vocabulary_removed"] = rows.clone();
+    let (s, saved) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": state["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    assert!(saved["content"]["blocks"][0]["vocabulary"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // Another teacher cannot restore it.
+    let other = app.teacher("T-002", "general").await;
+    let (s, _) = app.post(&url, Some(&other), json!({})).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let (s, restored) = app.post(&url, Some(&t), json!({})).await;
+    assert_eq!(s, StatusCode::OK, "{restored}");
+    let block = &restored["content"]["blocks"][0];
+    let words = block["vocabulary"].as_array().unwrap();
+    assert_eq!(words.len(), count);
+    assert!(block.get("vocabulary_removed").is_none());
+    for (before, after) in rows.as_array().unwrap().iter().zip(words) {
+        assert_eq!(before["word"], after["word"]);
+        assert_eq!(before["definition"], after["definition"]);
+    }
+    let unexpected = words.iter().find(|w| w["word"] == "unexpected");
+    if let Some(w) = unexpected {
+        assert_eq!(w["level"], 4, "the level is the word list's");
+    }
+    // A new version, kept like any other edit; the history can still show the deleted state.
+    assert!(restored["version_no"].as_i64() > saved["version_no"].as_i64());
+    let (s, _) = app.post(&url, Some(&t), json!({})).await;
+    assert_eq!(s, StatusCode::CONFLICT, "nothing is left to restore");
+}

@@ -169,6 +169,10 @@ pub fn api_router() -> Router<AppState> {
             "/worksheets/{id}/blocks/{block_id}/undo",
             post(worksheets::undo_block),
         )
+        .route(
+            "/worksheets/{id}/blocks/{block_id}/restore-word-table",
+            post(worksheets::restore_word_table),
+        )
         // 修改歷程
         .route(
             "/worksheets/{id}/blocks/{block_id}/history",

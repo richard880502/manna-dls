@@ -309,6 +309,134 @@ interface BlockProps {
   supportMemory: SupportMemory;
 }
 
+/** One block's 字詞表: in its block, or (字詞表放在學習單最後) after the last block. */
+function WordTable({
+  ws,
+  block,
+  name,
+  locked,
+}: {
+  ws: WorksheetController;
+  block: WsBlock;
+  name: string;
+  locked: boolean;
+}) {
+  if (block.vocabulary.length === 0) return null;
+  const patch = (change: (b: WsBlock) => WsBlock) =>
+    ws.setContent((c) => ({
+      ...c,
+      blocks: c.blocks.map((b) => (b.id === block.id ? { ...change(b), origin: editedOrigin(b.origin) } : b)),
+    }));
+  return (
+    <>
+      <p className="ws-support-head" lang="zh-Hant">
+        <span>字詞表</span>
+        <button
+          type="button"
+          className="text-link is-plain"
+          disabled={locked}
+          aria-label={`刪除字詞表 ${name}`}
+          // The rows are kept apart so 恢復字詞表 can bring them back.
+          onClick={() => patch((b) => ({ ...b, vocabulary: [], vocabulary_removed: b.vocabulary }))}
+        >
+          刪除
+        </button>
+      </p>
+      <table className="ws-vocab" aria-label={`字詞表 ${name}`}>
+        <thead>
+          <tr>
+            <th scope="col">Word</th>
+            <th scope="col">Meaning</th>
+            <th scope="col" lang="zh-Hant">
+              級別
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {block.vocabulary.map((v, i) => (
+            <tr key={`${v.word}-${i}`}>
+              <td>{v.word}</td>
+              <td>
+                <SheetText
+                  label={`${v.word} 的解釋`}
+                  value={v.definition}
+                  disabled={locked}
+                  onChange={(definition) =>
+                    patch((b) => ({
+                      ...b,
+                      vocabulary: b.vocabulary.map((x, j) => (j === i ? { ...x, definition } : x)),
+                    }))
+                  }
+                />
+              </td>
+              <td lang="zh-Hant" className="ws-vocab-level">
+                {v.task_word ? "指示用語" : v.level === null ? "級別未知" : `第 ${v.level} 級`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+/** 恢復字詞表: a block whose table was deleted keeps its rows; the server puts them back. */
+function RestoreWordTable({
+  ws,
+  block,
+  name,
+  locked,
+}: {
+  ws: WorksheetController;
+  block: WsBlock;
+  name: string;
+  locked: boolean;
+}) {
+  if (block.vocabulary.length > 0 || (block.vocabulary_removed ?? []).length === 0) return null;
+  return (
+    <p className="ws-support-head ws-vocab-restore" lang="zh-Hant">
+      <span>字詞表已刪除</span>
+      <button
+        type="button"
+        className="text-link is-plain is-gold"
+        disabled={locked}
+        aria-label={`恢復字詞表 ${name}`}
+        onClick={() => void ws.restoreWordTable(block.id)}
+      >
+        恢復字詞表
+      </button>
+    </p>
+  );
+}
+
+/** 字詞表放在學習單最後: the blocks' tables, edited here, printed after the last block. */
+function EndWordTables({
+  ws,
+  views,
+  locked,
+}: {
+  ws: WorksheetController;
+  views: SheetBlock[];
+  locked: boolean;
+}) {
+  const withWords = views.filter((v) => v.block.vocabulary.length > 0);
+  if (withWords.length === 0) return null;
+  return (
+    <section className="ws-block ws-vocab-end" aria-label="字詞表（學習單最後）">
+      <h3 lang="zh-Hant">字詞表</h3>
+      {withWords.map((v) => (
+        <WordTable
+          key={v.block.id}
+          ws={ws}
+          block={v.block}
+          name={v.label || BLOCK_KIND_LABEL[v.block.kind]}
+          locked={locked}
+        />
+      ))}
+    </section>
+  );
+}
+
 function BlockSection({
   ws,
   view,
@@ -635,57 +763,8 @@ function BlockSection({
         </div>
       ))}
 
-      {block.vocabulary.length > 0 && (
-        <p className="ws-support-head" lang="zh-Hant">
-          <span>字詞表</span>
-          <button
-            type="button"
-            className="text-link is-plain"
-            disabled={locked}
-            aria-label={`刪除字詞表 ${name}`}
-            onClick={() => patch((b) => ({ ...b, vocabulary: [] }))}
-          >
-            刪除
-          </button>
-        </p>
-      )}
-
-      {block.vocabulary.length > 0 && (
-        <table className="ws-vocab" aria-label={`字詞表 ${name}`}>
-          <thead>
-            <tr>
-              <th scope="col">Word</th>
-              <th scope="col">Meaning</th>
-              <th scope="col" lang="zh-Hant">
-                級別
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {block.vocabulary.map((v, i) => (
-              <tr key={`${v.word}-${i}`}>
-                <td>{v.word}</td>
-                <td>
-                  <SheetText
-                    label={`${v.word} 的解釋`}
-                    value={v.definition}
-                    disabled={locked}
-                    onChange={(definition) =>
-                      patch((b) => ({
-                        ...b,
-                        vocabulary: b.vocabulary.map((x, j) => (j === i ? { ...x, definition } : x)),
-                      }))
-                    }
-                  />
-                </td>
-                <td lang="zh-Hant" className="ws-vocab-level">
-                  {v.task_word ? "指示用語" : v.level === null ? "級別未知" : `第 ${v.level} 級`}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {!ws.state?.content.vocabulary_at_end && <WordTable ws={ws} block={block} name={name} locked={locked} />}
+      <RestoreWordTable ws={ws} block={block} name={name} locked={locked} />
 
       {supports.map((s) => (
         <div key={s.id} className="ws-support" role="group" aria-label={`鷹架 ${s.kind}`}>
@@ -1054,6 +1133,15 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
           />
           <span>顯示學習目標</span>
         </label>
+        <label className="check-row ws-vocab-at-end">
+          <input
+            type="checkbox"
+            checked={content.vocabulary_at_end === true}
+            disabled={locked}
+            onChange={(e) => ws.setContent((c) => ({ ...c, vocabulary_at_end: e.target.checked }))}
+          />
+          <span>字詞表放在學習單最後</span>
+        </label>
         <Link className="text-link" to={`/worksheets/${state.id}/check`}>
           詞彙級別檢查
         </Link>
@@ -1221,6 +1309,10 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
             />
           );
         })}
+
+        {content.vocabulary_at_end && filter === null && (
+          <EndWordTables ws={ws} views={sheet.blocks} locked={locked} />
+        )}
 
         <p className="ws-add" lang="zh-Hant">
           <button

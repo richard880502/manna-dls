@@ -1209,6 +1209,7 @@ interface WsSheet {
 | GET | `/api/worksheets/:id/jobs` | – | `{ running, jobs: WsJob[], version_no }`（輪詢用） |
 | POST | `/api/worksheets/:id/blocks/:block_id/regenerate` | `{}` | 202 `WorksheetState`：只重新產生這一個區塊 |
 | POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生（或採用）之前的那一版，採用的圖片動作也一起復原；沒有上一版 → 409；採用之後這一區又改過 → 409（見「復原與修改歷程」） |
+| POST | `/api/worksheets/:id/blocks/:block_id/restore-word-table` | `{}` | `WorksheetState`：恢復字詞表。老師按「刪除」（或請 Manna 拿掉每一列）時，各列留在區塊的 `vocabulary_removed`；這裡把它們放回 `vocabulary`，級別重新查詞彙表、指示用語重新由程式找出（不用記下來的值）。寫一個新版本（`cause = "edit"`，`source.action = "restore_word_table"`）、記 `worksheet_word_table_restored`。這一區現在有字詞表、或沒有刪掉的可以恢復 → 409；學習單正在產生 → 409 |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
 | GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
@@ -2525,6 +2526,7 @@ interface WsSheetBlock { /* …既有欄位… */
   - 題目下方印這個版本的支持：「Sentence frame: …」「Fill in the blanks: …」「Start like this: …」，字庫印「Word bank: a  /  b」。
 - **教師版**保留程度名稱：橫幅「Teacher reference · Basic version (students' sheet: Version A) · …」、PDF 頁尾「Basic (Version A) · 1/2」、檔名 `<檔名>_基礎版_教師參考版.docx`；每題印這個版本的「Answer: …」「Scoring: …」，橫幅下印分層說明。
 - 代號的順序存在學習單內容的 `student_order`（`Content.student_order`）：學習單**第一次產生時隨機排**（例如基礎版＝B、一般版＝C、進階版＝A），重新產生時沿用，所以學生不會從「A」猜出哪一版支持最多（T9）。教師版、教學套件與預覽照這個順序印對應（「教師版（基礎版＝B 版）」）。沒有 `student_order` 的舊學習單（或它沒有剛好列出學習單的版本時）照版本在學習單的順序：基礎版＝A、一般版＝B、進階版＝C。這個規則適用於所有有兩個以上版本的學習單（完整學習單、照我的學習單做也是）。
+- **字詞表放在學習單最後**：內容的 `vocabulary_at_end`（`true` 時才有這個鍵；預設各區各印各的）。為 `true` 時，投影（`GET …/sheet`、DOCX、PDF、教學套件、詞彙級別檢查）把各區的字詞表合成一張（同一個字只列一次）放在 `end_words`，印在最後一區之後（標題「Key words」），各區的 `vocabulary` 是空的；區塊內容裡的 `vocabulary` 不動（編輯、重新產生照舊）。重新產生整份學習單時沿用這個選擇。只是內容的一個欄位，老師勾選後和其他編輯一樣由 `PUT /api/worksheets/:id` 存成新版本。
 - **教學套件**：學生部分的標題「學生版（A 版）」「學生版（B 版）」「學生版（C 版）」；差異化學習單的教師部分是每個版本一份教師版，標題「教師版（基礎版＝A 版）」…（各版本的支持、答案與評分說明不同）。改版前的分層練習照舊印一份合併的教師版與舊的對應說明。
 - 編輯器與備課對話的預覽：學生版標示「Version A」，預覽的名稱是「A 版 學生版」；分頁（基礎版／一般版／進階版）與教師版照舊用程度名稱。
 

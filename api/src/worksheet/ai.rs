@@ -2073,6 +2073,8 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         // T9: the students' codes of the versions in a random order (kept on regenerate).
         student_order: super::tiered::student_order_for(&levels, &latest.content.student_order),
         levels,
+        // 字詞表的位置是老師選的，重新產生也留著。
+        vocabulary_at_end: latest.content.vocabulary_at_end,
         chosen: Some(chosen),
         notices,
     };
