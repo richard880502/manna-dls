@@ -731,3 +731,11 @@ export function formatDateTime(iso: string): string {
 }
 
 export const percent = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
+
+/**
+ * Whether `level` prints the questions' own sentence frames (mirrors `assemble::frame_shown`):
+ * 基礎版 and 一般版, and 進階版 only when it is the only kind of version.
+ */
+export function frameShown(level: WsLevel, levels: readonly WsLevel[]): boolean {
+  return level !== "advanced" || !levels.some((l) => l !== "advanced");
+}

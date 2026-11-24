@@ -1590,6 +1590,76 @@ pub struct ScaffoldsCtx<'a> {
     pub targets: &'a [String],
     /// Reference answers of the main tasks: none of them may appear in a scaffold.
     pub answers: &'a [String],
+    /// The questions of each target, in the order the prompt numbers them: where a sentence
+    /// frame of its own may go (an empty list: none is accepted, as in the SOP's step 5).
+    pub items: &'a [TargetItems],
+}
+
+/// The questions of one target as the scaffolds step numbers them (1, 2 …).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetItems {
+    pub target: String,
+    /// (answer format, reference answer) of each question.
+    pub items: Vec<(String, String)>,
+}
+
+/// Most characters of a question's own sentence frame.
+pub const ITEM_FRAME_CHARS: usize = 600;
+
+/// Whether a question of this format wants a spoken or written answer of its own words, so that
+/// a sentence frame under it helps: 簡答題 and 段落寫作 (a choice, a table or a cloze has
+/// nothing to say aloud).
+pub fn frame_format(format: Option<&str>) -> bool {
+    matches!(format, Some(f) if f == super::FMT_SHORT || f == super::FMT_PARAGRAPH)
+}
+
+/// Most characters of a hint under a question.
+pub const ITEM_HINT_CHARS: usize = 200;
+
+/// A hint for one question as the model wrote it (a guiding prompt that points at where to
+/// look or what to think about, phrased as a hint): plain English, short, no answer in it.
+pub fn item_hint(raw: &str, answer: &str) -> Result<String, String> {
+    let text = clean(raw);
+    if text.is_empty() {
+        return Err("提示是空的".to_string());
+    }
+    if !english_only(&text) {
+        return Err("提示含有中文；只能用英文".to_string());
+    }
+    if text.chars().count() > ITEM_HINT_CHARS {
+        return Err(format!("提示太長（最多 {ITEM_HINT_CHARS} 字）"));
+    }
+    if contains_answer(&text, answer) {
+        return Err("提示直接寫出了參考答案".to_string());
+    }
+    Ok(text)
+}
+
+/// A question's own sentence frame as the model wrote it: plain English with at least one
+/// `___` blank, not a direction, not a copy of the answer. `Err` says what is wrong (in the
+/// teacher's words, for the repair call).
+pub fn item_frame(raw: &str, answer: &str) -> Result<String, String> {
+    let text = clean(raw);
+    if text.is_empty() {
+        return Err("句型框架是空的".to_string());
+    }
+    if !english_only(&text) {
+        return Err("句型框架含有中文；只能用英文".to_string());
+    }
+    if !has_blank_marker(&text) {
+        return Err("句型框架沒有空格 ___，學生沒有東西可以填".to_string());
+    }
+    if text.chars().count() > ITEM_FRAME_CHARS {
+        return Err(format!("句型框架太長（最多 {ITEM_FRAME_CHARS} 字）"));
+    }
+    if contains_answer(&text, answer) {
+        return Err("句型框架直接寫出了參考答案".to_string());
+    }
+    let (_, directions) = split_frames(std::slice::from_ref(&text));
+    if !directions.is_empty() && directions.len() > 1 {
+        return Err("句型框架裡寫了作答步驟；只寫有空格的句子".to_string());
+    }
+    Ok(text)
 }
 
 const SCAFFOLD_CHECKS: [&str; 6] = [
@@ -1741,6 +1811,8 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
         let mut verbal = support(&s.verbal, &VERBAL_KINDS, "語言鷹架");
         let instructional = support(&s.instructional, &INSTRUCTIONAL_KINDS, "教學鷹架");
         let directions = frames_without_directions(&target, &mut verbal, &mut t);
+        let item_frames = item_frames_of(&target, &s.item_frames, ctx, &mut t);
+        let item_hints = item_hints_of(&target, &s.item_hints, ctx, &mut t);
         let mut procedural = Vec::new();
         for p in &s.procedural {
             let mut steps = clean_all(&p.steps_en);
@@ -1811,6 +1883,8 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
             verbal,
             instructional,
             procedural,
+            item_frames,
+            item_hints,
         });
     }
     let missing: Vec<&str> = ctx
@@ -1831,6 +1905,125 @@ pub fn evaluate_scaffolds(raw: &RawScaffolds, ctx: &ScaffoldsCtx<'_>) -> Eval<Ve
     }
     let output = if sets.is_empty() { None } else { Some(sets) };
     t.finish(output)
+}
+
+/// The sentence frames of one target's questions that may stay: a frame goes only to a question
+/// that wants a spoken or written answer ([`frame_format`]); one for another question, or for a
+/// question that is not there, is dropped; one that is not a frame ([`item_frame`]) fails
+/// `supports_wellformed`, and so asks for the repair call. One frame per question (the first).
+fn item_frames_of(
+    target: &str,
+    raw: &[super::schemas::RawItemFrame],
+    ctx: &ScaffoldsCtx<'_>,
+    t: &mut Tally,
+) -> Vec<super::schemas::RawItemFrame> {
+    let items: &[(String, String)] = ctx
+        .items
+        .iter()
+        .find(|x| x.target == target)
+        .map_or(&[], |x| x.items.as_slice());
+    let mut out: Vec<super::schemas::RawItemFrame> = Vec::new();
+    for f in raw {
+        let at = usize::try_from(f.item_no)
+            .ok()
+            .filter(|n| (1..=items.len()).contains(n));
+        let Some(n) = at else {
+            if !items.is_empty() {
+                t.fixed(
+                    "supports_wellformed",
+                    format!("{target} 沒有第 {} 題，句型框架不能放在那裡。", f.item_no),
+                    "拿掉這個句型框架",
+                );
+            }
+            continue;
+        };
+        let (format, answer) = &items[n - 1];
+        if !frame_format(Some(format)) {
+            t.fixed(
+                "supports_wellformed",
+                format!("{target} 的第 {n} 題是{format}，不需要口說或書寫的句型框架。"),
+                "拿掉這個句型框架",
+            );
+            continue;
+        }
+        if out.iter().any(|o| o.item_no == f.item_no) {
+            t.fixed(
+                "supports_wellformed",
+                format!("{target} 的第 {n} 題有兩個句型框架。"),
+                "只留第一個",
+            );
+            continue;
+        }
+        match item_frame(&f.frame_en, answer) {
+            Ok(frame) => out.push(super::schemas::RawItemFrame {
+                item_no: f.item_no,
+                frame_en: frame,
+            }),
+            Err(why) => t.fail(
+                "supports_wellformed",
+                format!(
+                    "{target} 第 {n} 題的句型框架（「{}」）有問題：{why}。",
+                    clip_chars(&f.frame_en, 80)
+                ),
+                "拿掉這個句型框架",
+            ),
+        }
+    }
+    out
+}
+
+/// The hints of one target's questions that may stay: for a question that is there, one per
+/// question (the first); one that is not a hint ([`item_hint`]) fails `supports_wellformed`.
+fn item_hints_of(
+    target: &str,
+    raw: &[super::schemas::RawItemHint],
+    ctx: &ScaffoldsCtx<'_>,
+    t: &mut Tally,
+) -> Vec<super::schemas::RawItemHint> {
+    let items: &[(String, String)] = ctx
+        .items
+        .iter()
+        .find(|x| x.target == target)
+        .map_or(&[], |x| x.items.as_slice());
+    let mut out: Vec<super::schemas::RawItemHint> = Vec::new();
+    for h in raw {
+        let at = usize::try_from(h.item_no)
+            .ok()
+            .filter(|n| (1..=items.len()).contains(n));
+        let Some(n) = at else {
+            if !items.is_empty() {
+                t.fixed(
+                    "supports_wellformed",
+                    format!("{target} 沒有第 {} 題，提示不能放在那裡。", h.item_no),
+                    "拿掉這個提示",
+                );
+            }
+            continue;
+        };
+        if out.iter().any(|o| o.item_no == h.item_no) {
+            t.fixed(
+                "supports_wellformed",
+                format!("{target} 的第 {n} 題有兩個提示。"),
+                "只留第一個",
+            );
+            continue;
+        }
+        match item_hint(&h.hint_en, &items[n - 1].1) {
+            Ok(hint) => out.push(super::schemas::RawItemHint {
+                item_no: h.item_no,
+                hint_en: hint,
+            }),
+            Err(why) => t.fail(
+                "supports_wellformed",
+                format!(
+                    "{target} 第 {n} 題的提示（「{}」）有問題：{why}。",
+                    clip_chars(&h.hint_en, 80)
+                ),
+                "拿掉這個提示",
+            ),
+        }
+    }
+    out
 }
 
 /// A 句型框架 support of the scaffolds step holds frames only. Directions written in it
@@ -4597,6 +4790,8 @@ mod tests {
         let raw = RawScaffolds {
             scaffolds: vec![
                 RawScaffoldSet {
+                    item_frames: Vec::new(),
+                    item_hints: Vec::new(),
                     target: "warm_up".into(),
                     // Directions written among the frames (a teacher's 「Sentence frames」 box).
                     verbal: vec![RawSupport {
@@ -4607,6 +4802,8 @@ mod tests {
                     procedural: vec![steps(&["Read.", "Talk."])],
                 },
                 RawScaffoldSet {
+                    item_frames: Vec::new(),
+                    item_hints: Vec::new(),
                     target: "B1".into(),
                     verbal: vec![
                         RawSupport {
@@ -4631,6 +4828,8 @@ mod tests {
                     procedural: vec![],
                 },
                 RawScaffoldSet {
+                    item_frames: Vec::new(),
+                    item_hints: Vec::new(),
                     target: "B9".into(),
                     verbal: vec![],
                     instructional: vec![],
@@ -4643,6 +4842,7 @@ mod tests {
             &ScaffoldsCtx {
                 targets: &targets,
                 answers: &answers,
+                items: &[],
             },
         );
         let names = failed(&e.results);
@@ -4674,6 +4874,8 @@ mod tests {
 
         let raw = RawScaffolds {
             scaffolds: vec![RawScaffoldSet {
+                item_frames: Vec::new(),
+                item_hints: Vec::new(),
                 target: "B1".into(),
                 verbal: vec![RawSupport {
                     kind: "字詞表".into(),
@@ -4691,6 +4893,7 @@ mod tests {
             &ScaffoldsCtx {
                 targets: &["B1".to_string()],
                 answers: &[],
+                items: &[],
             },
         );
         assert!(!e.needs_repair(), "{:?}", failed(&e.results));
@@ -4703,6 +4906,8 @@ mod tests {
     #[test]
     fn scaffold_targets_are_matched_however_they_are_spelled() {
         let set = |target: &str| RawScaffoldSet {
+            item_frames: Vec::new(),
+            item_hints: Vec::new(),
             target: target.into(),
             verbal: vec![],
             instructional: vec![],
@@ -4732,6 +4937,7 @@ mod tests {
             &ScaffoldsCtx {
                 targets: &targets,
                 answers: &[],
+                items: &[],
             },
         );
         assert!(!e.needs_repair(), "{:?}", failed(&e.results));
@@ -4755,6 +4961,7 @@ mod tests {
             &ScaffoldsCtx {
                 targets: &targets,
                 answers: &[],
+                items: &[],
             },
         );
         assert_eq!(failed(&e.results), ["targets_match_blocks_and_warmup"]);
@@ -5712,5 +5919,123 @@ mod tests {
                 vec!["The author says ______.", "I think ______ because ______."]
             )]
         );
+    }
+}
+
+#[cfg(test)]
+mod item_frame_tests {
+    use super::*;
+    use crate::worksheet::schemas::{RawItemFrame, RawItemHint, RawScaffoldSet};
+
+    const FRAME: &str = "Hello, everyone. My answer is ___ because ___. Thank you.";
+
+    #[test]
+    fn a_frame_has_a_blank_english_and_no_answer() {
+        assert_eq!(item_frame(FRAME, "").unwrap(), FRAME);
+        assert!(item_frame("Say your answer in a full sentence.", "")
+            .unwrap_err()
+            .contains("空格"));
+        assert!(item_frame("我的答案是 ___。", "")
+            .unwrap_err()
+            .contains("中文"));
+        assert!(item_frame("", "").is_err());
+        assert!(item_frame(
+            "The street was empty because the shops had closed ___.",
+            "The street was empty because the shops had closed"
+        )
+        .unwrap_err()
+        .contains("答案"));
+        assert!(item_frame(&format!("{FRAME} {}", "x".repeat(700)), "").is_err());
+        assert!(item_hint("Look at the second stanza.", "").is_ok());
+        assert!(item_hint("提示", "").is_err());
+    }
+
+    fn set(frames: &[(i64, &str)], hints: &[(i64, &str)]) -> RawScaffolds {
+        RawScaffolds {
+            scaffolds: vec![RawScaffoldSet {
+                target: "B1".into(),
+                verbal: Vec::new(),
+                instructional: Vec::new(),
+                procedural: vec![crate::worksheet::schemas::RawProcedure {
+                    kind: KIND_STEPS.into(),
+                    steps_en: vec!["Read.".into(), "Write.".into()],
+                }],
+                item_frames: frames
+                    .iter()
+                    .map(|(n, f)| RawItemFrame {
+                        item_no: *n,
+                        frame_en: (*f).into(),
+                    })
+                    .collect(),
+                item_hints: hints
+                    .iter()
+                    .map(|(n, h)| RawItemHint {
+                        item_no: *n,
+                        hint_en: (*h).into(),
+                    })
+                    .collect(),
+            }],
+        }
+    }
+
+    fn ctx_items() -> Vec<TargetItems> {
+        vec![TargetItems {
+            target: "B1".into(),
+            items: vec![
+                ("簡答題".into(), "Because it rained.".into()),
+                ("選擇題".into(), "B".into()),
+                ("段落寫作".into(), "".into()),
+            ],
+        }]
+    }
+
+    fn run(raw: &RawScaffolds) -> Eval<Vec<RawScaffoldSet>> {
+        let items = ctx_items();
+        evaluate_scaffolds(
+            raw,
+            &ScaffoldsCtx {
+                targets: &["B1".to_string()],
+                answers: &[],
+                items: &items,
+            },
+        )
+    }
+
+    #[test]
+    fn frames_stay_on_open_questions_only() {
+        let e = run(&set(
+            &[(1, FRAME), (2, FRAME), (3, FRAME), (9, FRAME), (1, FRAME)],
+            &[(2, "Look at paragraph 2."), (2, "Again.")],
+        ));
+        assert!(!e.needs_repair(), "{:?}", e.problems);
+        let s = &e.output.unwrap()[0];
+        let nos: Vec<i64> = s.item_frames.iter().map(|f| f.item_no).collect();
+        assert_eq!(nos, [1, 3]);
+        assert_eq!(s.item_hints.len(), 1);
+        assert_eq!(s.item_hints[0].hint_en, "Look at paragraph 2.");
+    }
+
+    #[test]
+    fn a_frame_without_a_blank_is_sent_back_and_dropped() {
+        let e = run(&set(&[(1, "Say it in a sentence.")], &[]));
+        assert!(e.needs_repair());
+        assert!(e.problems[0].contains("第 1 題"), "{:?}", e.problems);
+        assert!(e.output.unwrap()[0].item_frames.is_empty());
+    }
+
+    #[test]
+    fn the_sop_step_takes_no_frames() {
+        let raw = set(&[(1, FRAME)], &[(1, "Look.")]);
+        let e = evaluate_scaffolds(
+            &raw,
+            &ScaffoldsCtx {
+                targets: &["B1".to_string()],
+                answers: &[],
+                items: &[],
+            },
+        );
+        assert!(!e.needs_repair());
+        let s = &e.output.unwrap()[0];
+        assert!(s.item_frames.is_empty() && s.item_hints.is_empty());
     }
 }

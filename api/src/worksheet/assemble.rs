@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use super::checks::{CleanWarmup, CleanWord};
+use super::checks::{frame_format, CleanWarmup, CleanWord};
 use super::schemas::{
     RawBlock, RawExitItem, RawScaffoldSet, TARGET_WARMUP, TIER_CHALLENGE, TIER_SUPPORT,
 };
@@ -55,6 +55,18 @@ pub fn selected_kinds(settings: &Settings) -> Vec<&'static str> {
     .filter(|(option, _)| settings.wants(option))
     .map(|(_, kind)| kind)
     .collect()
+}
+
+/// Whether the questions get sentence frames of their own: when the teacher ticked no kinds
+/// of support (Manna decides), or ticked 句型框架.
+pub fn frames_wanted(ticked: &[&str]) -> bool {
+    ticked.is_empty() || ticked.contains(&KIND_FRAMES)
+}
+
+/// Whether the questions get hints (guiding prompts) of their own: when the teacher ticked no
+/// kinds of support, or ticked 引導問題.
+pub fn hints_wanted(ticked: &[&str]) -> bool {
+    ticked.is_empty() || ticked.contains(&KIND_GUIDING)
 }
 
 /// Which versions a scaffold appears in: support is greatest in 基礎版 and least in 進階版.
@@ -217,9 +229,42 @@ pub fn attach_scaffolds(
                 heading: None,
             });
         }
+        // A sentence frame goes under its own question, when the teacher did not leave frames
+        // out by ticking other kinds of support only. Frames of the questions replace the
+        // block's one box of frames: the same sentences must not print twice.
+        let mut own_frames = 0;
+        if frames_wanted(ticked) {
+            for f in &set.item_frames {
+                let item = usize::try_from(f.item_no)
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|k| block.items.get_mut(k));
+                if let Some(item) = item.filter(|i| frame_format(i.answer_format.as_deref())) {
+                    item.frame = f.frame_en.clone();
+                    own_frames += 1;
+                }
+            }
+        }
+        // The same for guiding prompts: each is a hint under the question it serves, never a
+        // list of questions that compete with the block's own.
+        let mut own_hints = 0;
+        if hints_wanted(ticked) {
+            for h in &set.item_hints {
+                let item = usize::try_from(h.item_no)
+                    .ok()
+                    .and_then(|n| n.checked_sub(1))
+                    .and_then(|k| block.items.get_mut(k));
+                if let Some(item) = item.filter(|i| i.hint.trim().is_empty()) {
+                    item.hint = h.hint_en.clone();
+                    own_hints += 1;
+                }
+            }
+        }
         let supports = set
             .verbal
             .iter()
+            .filter(|s| own_frames == 0 || s.kind != KIND_FRAMES)
+            .filter(|s| own_hints == 0 || s.kind != KIND_GUIDING)
             .map(|s| (ScaffoldType::Verbal, "sv", s))
             .chain(
                 set.instructional
@@ -357,6 +402,7 @@ fn block_texts(b: &mut Block) -> Vec<&mut String> {
         out.push(&mut it.prompt);
         out.push(&mut it.answer);
         out.push(&mut it.hint);
+        out.push(&mut it.frame);
         out.extend(it.options.iter_mut());
     }
     for s in &mut b.scaffolds {
@@ -370,7 +416,12 @@ fn block_texts(b: &mut Block) -> Vec<&mut String> {
 fn block_strings(b: &Block) -> Vec<&str> {
     let mut out = vec![b.title.as_str(), b.instructions.as_str()];
     for it in &b.items {
-        out.extend([it.prompt.as_str(), it.answer.as_str(), it.hint.as_str()]);
+        out.extend([
+            it.prompt.as_str(),
+            it.answer.as_str(),
+            it.hint.as_str(),
+            it.frame.as_str(),
+        ]);
         out.extend(it.options.iter().map(String::as_str));
     }
     for s in &b.scaffolds {
@@ -503,6 +554,7 @@ pub fn activity_block(
                 origin: Origin::Ai,
                 bloom: it.bloom.as_deref().and_then(Bloom::parse),
                 hint: String::new(),
+                frame: String::new(),
                 tiers: Vec::new(),
                 table: None,
                 kept_options: Vec::new(),
@@ -742,6 +794,11 @@ pub struct SheetItem {
     /// versions of its own; see `support`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// The question's own sentence frame (a short paragraph with `___` blanks the student can
+    /// say or write as it stands), printed under the question in the versions that print
+    /// frames ([`frame_shown`]); absent when it has none. Both audiences.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<String>,
     /// 差異化學習單 (both audiences): this version's support under the question; absent when the
     /// version gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -907,6 +964,13 @@ pub struct Sheet {
     /// block (a word listed in two blocks once). Empty when the tables stay in their blocks.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub end_words: Vec<SheetWord>,
+}
+
+/// Whether `level` prints the questions' own sentence frames: the versions that print the
+/// block's frames (基礎版 and 一般版, [`scaffold_levels`]: support is greatest in 基礎版 and least
+/// in 進階版), and 進階版 when it is the only kind of version there is (a frame is never lost).
+pub fn frame_shown(level: Level, selected: &[Level]) -> bool {
+    level != Level::Advanced || !selected.iter().any(|l| *l != Level::Advanced)
 }
 
 /// One version's support, as printed; `None` when it gives none.
@@ -1126,6 +1190,10 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     bloom: teacher.then_some(i.bloom),
                     hint: (tier.is_none() && level == Level::Basic && !i.hint.trim().is_empty())
                         .then(|| i.hint.trim().to_string()),
+                    frame: (tier.is_none()
+                        && frame_shown(level, &content.levels)
+                        && !i.frame.trim().is_empty())
+                    .then(|| i.frame.trim().to_string()),
                     support: tier.and_then(item_support),
                     scoring: tier
                         .filter(|t| teacher && !t.scoring.trim().is_empty())
@@ -1310,6 +1378,8 @@ pub enum UnitKind {
     /// version, a cell's answer): what the question is about and its answers, never changed.
     OrganizerContent,
     Hint,
+    /// A question's own sentence frame (an 句型框架 under the question).
+    ItemFrame,
     ItemSupport,
     /// A word bank (a question's, or a 字詞表 support): the words to answer with.
     WordBank,
@@ -1329,6 +1399,7 @@ impl UnitKind {
                 | Self::TableHeading
                 | Self::OrganizerHeading
                 | Self::Hint
+                | Self::ItemFrame
                 | Self::ItemSupport
         )
     }
@@ -1411,6 +1482,13 @@ pub fn text_units(sheet: &Sheet) -> Vec<TextUnit> {
             }
             if let Some(h) = &it.hint {
                 push(format!("{name} · 第 {} 題提示", it.no), h, UnitKind::Hint);
+            }
+            if let Some(f) = &it.frame {
+                push(
+                    format!("{name} · 第 {} 題句型框架", it.no),
+                    f,
+                    UnitKind::ItemFrame,
+                );
             }
             if let Some(o) = &it.organizer {
                 // In the order the organizer prints them (as `SheetOrganizer::texts`).
@@ -1665,6 +1743,8 @@ mod tests {
             ..Block::default()
         };
         let set = RawScaffoldSet {
+            item_frames: Vec::new(),
+            item_hints: Vec::new(),
             target: "b1".into(),
             verbal: vec![
                 crate::worksheet::schemas::RawSupport {
@@ -2222,6 +2302,8 @@ mod tests {
             content_en: content.into(),
         };
         let set = RawScaffoldSet {
+            item_frames: Vec::new(),
+            item_hints: Vec::new(),
             target: "b1".into(),
             verbal: vec![
                 support(KIND_WORD_LIST, "Word Bank: reason, result, however"),
@@ -2531,6 +2613,132 @@ mod tests {
         assert_eq!(
             one[0].items[0].prompt,
             "Name one feature of expository writing."
+        );
+    }
+}
+
+#[cfg(test)]
+mod item_frame_tests {
+    use super::*;
+    use crate::worksheet::schemas::{RawItemFrame, RawItemHint, RawProcedure};
+
+    fn item(id: &str, format: &str) -> Item {
+        Item {
+            id: id.into(),
+            answer_format: Some(format.into()),
+            prompt: format!("Question {id}?"),
+            levels: Level::ALL.to_vec(),
+            ..Item::default()
+        }
+    }
+
+    fn set() -> RawScaffoldSet {
+        RawScaffoldSet {
+            target: "b1".into(),
+            verbal: vec![
+                super::super::schemas::RawSupport {
+                    kind: KIND_FRAMES.into(),
+                    content_en: "I think ___.".into(),
+                },
+                super::super::schemas::RawSupport {
+                    kind: KIND_GUIDING.into(),
+                    content_en: "Who? What? Why?".into(),
+                },
+                super::super::schemas::RawSupport {
+                    kind: KIND_WORD_LIST.into(),
+                    content_en: "Word bank: because".into(),
+                },
+            ],
+            instructional: Vec::new(),
+            procedural: vec![RawProcedure {
+                kind: KIND_STEPS.into(),
+                steps_en: vec!["Read.".into(), "Write.".into()],
+            }],
+            item_frames: vec![
+                RawItemFrame {
+                    item_no: 1,
+                    frame_en: "Hello, everyone. My answer is ___ because ___. Thank you.".into(),
+                },
+                RawItemFrame {
+                    item_no: 2,
+                    frame_en: "Closed question.".into(),
+                },
+            ],
+            item_hints: vec![RawItemHint {
+                item_no: 2,
+                hint_en: "Look at paragraph 2.".into(),
+            }],
+        }
+    }
+
+    fn block() -> Block {
+        Block {
+            id: "b1".into(),
+            items: vec![item("b1-i1", "簡答題"), item("b1-i2", "選擇題")],
+            ..Block::default()
+        }
+    }
+
+    #[test]
+    fn frames_and_hints_go_on_their_questions_instead_of_the_pooled_boxes() {
+        let mut b = block();
+        attach_scaffolds(&mut b, Some(&set()), &Level::ALL, &[]);
+        assert!(b.items[0].frame.starts_with("Hello, everyone."));
+        assert_eq!(b.items[1].frame, "", "a closed question has none");
+        assert_eq!(b.items[1].hint, "Look at paragraph 2.");
+        let kinds: Vec<&str> = b.scaffolds.iter().map(|s| s.kind.as_str()).collect();
+        assert!(
+            !kinds.contains(&KIND_FRAMES) && !kinds.contains(&KIND_GUIDING),
+            "{kinds:?}"
+        );
+        assert!(kinds.contains(&KIND_WORD_LIST) && kinds.contains(&KIND_STEPS));
+    }
+
+    #[test]
+    fn frames_are_left_out_when_the_teacher_ticked_other_supports_only() {
+        let mut b = block();
+        attach_scaffolds(&mut b, Some(&set()), &Level::ALL, &[KIND_WORD_LIST]);
+        assert_eq!(b.items[0].frame, "");
+        assert_eq!(b.items[1].hint, "");
+        let kinds: Vec<&str> = b.scaffolds.iter().map(|s| s.kind.as_str()).collect();
+        assert!(kinds.contains(&KIND_FRAMES), "{kinds:?}");
+    }
+
+    #[test]
+    fn a_frame_prints_under_its_question_in_the_versions_that_print_frames() {
+        let mut b = block();
+        attach_scaffolds(&mut b, Some(&set()), &Level::ALL, &[]);
+        let content = Content {
+            levels: Level::ALL.to_vec(),
+            blocks: vec![b],
+            ..Content::default()
+        };
+        for audience in [Audience::Student, Audience::Teacher] {
+            let basic = project("T", &content, Level::Basic, audience);
+            let standard = project("T", &content, Level::Standard, audience);
+            let advanced = project("T", &content, Level::Advanced, audience);
+            assert!(basic.blocks[0].items[0].frame.is_some());
+            assert!(standard.blocks[0].items[0].frame.is_some());
+            assert_eq!(advanced.blocks[0].items[0].frame, None);
+            assert_eq!(basic.blocks[0].items[1].frame, None);
+            assert_eq!(
+                basic.blocks[0].items[1].hint.as_deref(),
+                Some("Look at paragraph 2.")
+            );
+            let units = text_units(&basic);
+            assert!(units
+                .iter()
+                .any(|u| u.kind == UnitKind::ItemFrame && u.place.ends_with("第 1 題句型框架")));
+        }
+        // An advanced-only worksheet keeps its frames.
+        let only = Content {
+            levels: vec![Level::Advanced],
+            ..content
+        };
+        assert!(
+            project("T", &only, Level::Advanced, Audience::Student).blocks[0].items[0]
+                .frame
+                .is_some()
         );
     }
 }

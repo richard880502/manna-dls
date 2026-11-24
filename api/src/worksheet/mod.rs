@@ -621,6 +621,13 @@ pub struct Item {
     /// A hint or sentence starter, printed only in 基礎版 (閱讀理解題, and 分層練習 made before
     /// the 差異化學習單 redesign).
     pub hint: String,
+    /// 語言鷹架：給這一題的句型框架（SIOP Q2）, a short paragraph the student can say or write
+    /// word for word with `___` for the blanks («Hello, everyone. My answer is ___ because ___.
+    /// Thank you.»), printed under the question (`assemble::project`). Empty (every question
+    /// made before, and every question that needs no spoken or written answer): none. Absent
+    /// from the JSON when empty.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub frame: String,
     /// 差異化學習單: the question's support, answer and scoring note per version (T3–T6); empty
     /// for every other question, which prints `hint` and `answer` as before.
     pub tiers: Vec<ItemTier>,
@@ -1122,6 +1129,7 @@ impl Content {
                 check_text("參考答案", &i.answer)?;
                 check_text("依據", &i.evidence)?;
                 check_text("提示", &i.hint)?;
+                check_text("句型框架", &i.frame)?;
                 check_tiers(&mut i.tiers)?;
                 if let Some(org) = &mut i.organizer {
                     org.validate()?;

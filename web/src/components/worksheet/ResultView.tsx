@@ -27,6 +27,7 @@ import {
   moveBlock,
   newBlock,
   newId,
+  frameShown,
   newItem,
   projectSheet,
   studentVersionName,
@@ -811,6 +812,12 @@ function BlockSection({
           const hint = item.hint ?? "";
           const hintLabel = hintPrints ? "提示（只印在基礎版）" : "提示（只印在基礎版；這題不在基礎版，不會印出）";
           const changeItem = (change: (it: WsItem) => WsItem) => patchItem(item.id, change);
+          // The question's own sentence frame: offered under the open formats where it prints.
+          const frame = item.frame ?? "";
+          const framePrints = frameShown(level, levels);
+          const frameLabel = framePrints ? "句型框架" : "句型框架（這個版本不印）";
+          const showFrame =
+            !tier && (frame.trim() !== "" || (framePrints && (item.answer_format === "簡答題" || item.answer_format === "段落寫作")));
           const organizer = printedOrganizer(item);
           return (
             <li key={item.id} value={no}>
@@ -846,6 +853,29 @@ function BlockSection({
                     />
                   </div>
                 )
+              )}
+              {showFrame && (
+                <div className="ws-hint ws-frame" lang="zh-Hant">
+                  <span>{frameLabel}</span>
+                  <SheetText
+                    label={`${frameLabel} ${no}`}
+                    value={frame}
+                    placeholder="Hello, everyone. My answer is ___ because ___. Thank you."
+                    disabled={locked}
+                    onChange={(text) => changeItem((it) => ({ ...it, frame: text }))}
+                  />
+                  {frame.trim() !== "" && (
+                    <button
+                      type="button"
+                      className="text-link is-plain"
+                      disabled={locked}
+                      aria-label={`刪除句型框架 ${no}`}
+                      onClick={() => changeItem((it) => ({ ...it, frame: "" }))}
+                    >
+                      刪除
+                    </button>
+                  )}
+                </div>
               )}
               {/* 圖像組織 with an organizer: the chart, edited in place; every other format (and an
                   organizer question without one, which prints a box) answers as ItemAnswer draws it. */}

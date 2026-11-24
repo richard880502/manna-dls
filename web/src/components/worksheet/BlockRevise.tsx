@@ -548,6 +548,11 @@ function ItemLines({ item, teacher }: { item: WsItem; teacher: boolean }) {
           ))}
         </ul>
       )}
+      {item.frame?.trim() && (
+        <p className="ws-proposal-answer">
+          句型框架：<span lang="en">{item.frame}</span>
+        </p>
+      )}
       {teacher && item.answer.trim() && (
         <p className="ws-proposal-answer">
           參考答案：<span lang="en">{printedAnswer(item.answer_format, item.answer, item.options)}</span>

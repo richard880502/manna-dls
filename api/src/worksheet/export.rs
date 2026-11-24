@@ -401,6 +401,25 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
             },
         ));
     }
+    if let Some(f) = &it.frame {
+        out.push_str(&para(
+            &[
+                run(
+                    "Sentence frame: ",
+                    RunStyle {
+                        bold: true,
+                        ..RunStyle::default()
+                    },
+                ),
+                run(f, RunStyle::default()),
+            ],
+            &ParaStyle {
+                indent: 400,
+                before: 40,
+                ..ParaStyle::default()
+            },
+        ));
+    }
     match answer_space(it) {
         AnswerSpace::Table(t) => {
             let n = t.columns.len().max(1);
@@ -1869,6 +1888,20 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
             Weight::Bold,
         );
     }
+    if let Some(f) = &it.frame {
+        l.labelled(
+            "Sentence frame: ",
+            f,
+            Style {
+                size: 10.5,
+                indent,
+                before: 2.0,
+                after: 1.0,
+                ..body
+            },
+            Weight::Bold,
+        );
+    }
     match answer_space(it) {
         AnswerSpace::Table(t) => l.answer_table(indent, &t, 26.0),
         AnswerSpace::Organizer(o) => l.organizer(o, indent),
@@ -2178,6 +2211,7 @@ fn printed_text(sheet: &Sheet) -> String {
             out.push(it.prompt.clone());
             out.extend(bloom_tag(it));
             out.extend(it.hint.iter().cloned());
+            out.extend(it.frame.iter().cloned());
             if let Some(s) = &it.support {
                 out.extend(s.lines.iter().cloned());
                 out.extend(s.word_bank.iter().cloned());
@@ -2418,6 +2452,7 @@ mod tests {
                         evidence: teacher.then(|| "They were sure every umbrella would be gone.".to_string()),
                         bloom: None,
                         hint: None,
+                        frame: None,
                         support: None,
                         scoring: None,
                         organizer: None,
@@ -2589,6 +2624,40 @@ mod tests {
         assert!(pdf_bytes.starts_with(b"%PDF-"));
         assert!(sheet_has_cjk(&sheet(Level::Standard, Audience::Teacher)));
         assert!(!sheet_has_cjk(&sheet(Level::Basic, Audience::Student)));
+    }
+
+    #[test]
+    fn a_question_prints_its_own_sentence_frame_under_it() {
+        use crate::worksheet::{Block, Content, Item};
+        let frame = "Hello, everyone. My answer is ___ because ___. Thank you.";
+        let content = Content {
+            blocks: vec![Block {
+                id: "b1".into(),
+                title: "Look Closer".into(),
+                items: vec![Item {
+                    id: "i1".into(),
+                    answer_format: Some("簡答題".into()),
+                    prompt: "Why does the writer compare trust to an umbrella?".into(),
+                    levels: Level::ALL.to_vec(),
+                    frame: frame.into(),
+                    ..Item::default()
+                }],
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            ..Content::default()
+        };
+        for audience in [Audience::Student, Audience::Teacher] {
+            let sheet =
+                crate::worksheet::assemble::project("T", &content, Level::Standard, audience);
+            let xml = document(docx(&sheet).unwrap());
+            let at = xml.find("Why does the writer").unwrap();
+            let label = xml.find("Sentence frame: ").unwrap();
+            assert!(at < label, "the frame is under the question");
+            assert!(xml.contains("My answer is ___ because ___."));
+            assert!(printed_text(&sheet).contains(frame));
+            assert!(pdf(&sheet).unwrap().starts_with(b"%PDF-"));
+        }
     }
 
     #[test]

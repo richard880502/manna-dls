@@ -1192,6 +1192,11 @@ fn revised_block(
                 origin: Origin::Ai,
                 bloom,
                 hint: replaced.map(|i| i.hint.clone()).unwrap_or_default(),
+                // The frame fits the question it was written for only.
+                frame: replaced
+                    .filter(|i| i.prompt.trim() == it.prompt.trim())
+                    .map(|i| i.frame.clone())
+                    .unwrap_or_default(),
                 // A 差異化學習單 question keeps its versions' support only while the question
                 // itself is unchanged: a cloze cut from the old answer would not fit a new one.
                 tiers: replaced

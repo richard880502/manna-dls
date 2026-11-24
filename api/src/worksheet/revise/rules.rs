@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::super::bloom::Bloom;
-use super::super::checks::{evaluate_revision, CleanSectionItem, RevisionDraft, SectionCtx};
+use super::super::checks::{
+    evaluate_revision, frame_format, item_frame, CleanSectionItem, RevisionDraft, SectionCtx,
+    ITEM_FRAME_CHARS,
+};
 use super::super::comments::{Comment, Field};
 use super::super::images::actions::{self, RawPictureAction};
 use super::super::material::MaterialParagraph as Paragraph;
@@ -34,6 +37,10 @@ pub struct RawRevisedItem {
     pub options: Vec<String>,
     pub answer: String,
     pub bloom: String,
+    /// The question's own sentence frame: "" = as it is, [`FRAME_REMOVE`] = none, else the
+    /// frame the question has from now on. (Calls made before frames have none.)
+    #[serde(default)]
+    pub frame: String,
 }
 
 /// One scaffold of the block as the model writes it: `source` is `S1`… or `new`; what it does is
@@ -162,6 +169,23 @@ impl Extras {
     }
 }
 
+/// What the model writes in a question's `frame` to take its sentence frame away ("" leaves it).
+pub const FRAME_REMOVE: &str = "(none)";
+
+/// The sentence frame a revised question has: `Ok(None)` when it stays as it is (nothing
+/// written, or the same text), `Ok(Some(""))` when it goes, `Ok(Some(text))` for a new one, and
+/// `Err` (the reason) when what the model wrote is not a frame ([`item_frame`]).
+fn revised_frame(raw: &str, old: &str, answer: &str) -> Result<Option<String>, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == old.trim() {
+        return Ok(None);
+    }
+    if raw.eq_ignore_ascii_case(FRAME_REMOVE) || raw.eq_ignore_ascii_case("none") {
+        return Ok(Some(String::new()));
+    }
+    item_frame(raw, answer).map(Some)
+}
+
 /// Kinds of scaffold the model may add (the ones a teacher asks for by name).
 pub const ADDABLE_KINDS: [&str; 4] = [KIND_FRAMES, KIND_GUIDING, KIND_EXAMPLE, KIND_STEPS];
 pub const ACTIONS: [&str; 3] = ["keep", "change", "remove"];
@@ -197,6 +221,7 @@ pub fn schema(
         ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
         ("answer", s_max(ITEM_ANSWER_CHARS)),
         ("bloom", enum_of(&blooms)),
+        ("frame", s_max(ITEM_FRAME_CHARS)),
     ]);
     let coded = |f: fn(usize) -> String, n: usize, with_new: bool| -> Vec<String> {
         let mut v: Vec<String> = (0..n).map(f).collect();
@@ -825,7 +850,7 @@ fn parts_of(b: &Block) -> Vec<Part> {
         },
         Part {
             name: "句型框架",
-            present: kind(KIND_FRAMES),
+            present: kind(KIND_FRAMES) || b.items.iter().any(|i| !i.frame.trim().is_empty()),
             nouns: vec!["句型", "sentence frame", "句首"],
         },
         Part {
@@ -914,6 +939,8 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
     let n = old.items.len();
     let mut used = vec![false; n];
     let mut drafts: Vec<(String, RawOutItem)> = Vec::new();
+    // What the model wrote in `frame` of each draft, in the same order.
+    let mut frames: Vec<&str> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
     let mut added = 0;
     for it in &raw.items {
@@ -924,6 +951,7 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                     entries.push(Entry::Keep(i));
                 } else {
                     drafts.push((code(i), raw_out(it)));
+                    frames.push(&it.frame);
                     entries.push(Entry::Modify(i, drafts.len() - 1));
                 }
             }
@@ -932,6 +960,7 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
             None => {
                 added += 1;
                 drafts.push((format!("新增的第 {added} 題"), raw_out(it)));
+                frames.push(&it.frame);
                 entries.push(Entry::New(drafts.len() - 1));
             }
         }
@@ -1004,7 +1033,29 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
         match e {
             Entry::Keep(i) => items.push(old.items[i].clone()),
             Entry::Modify(i, d) => match &clean.items[d] {
-                Some(c) => items.push(modified(&old.items[i], c, m.block_bloom)),
+                Some(c) => {
+                    let mut item = modified(&old.items[i], c, m.block_bloom);
+                    // A question that no longer wants an answer in the student's words has no
+                    // use for a frame; otherwise the frame changes only as the model says.
+                    if !frame_format(item.answer_format.as_deref()) {
+                        item.frame.clear();
+                    }
+                    match revised_frame(frames[d], &item.frame, &item.answer) {
+                        Ok(Some(f))
+                            if frame_format(item.answer_format.as_deref()) || f.is_empty() =>
+                        {
+                            item.frame = f;
+                            item.origin = Origin::Ai;
+                        }
+                        Ok(_) => {}
+                        Err(why) => notes.push(format!("{}的句型框架（{why}）", name(i))),
+                    }
+                    items.push(if item == old.items[i] {
+                        old.items[i].clone()
+                    } else {
+                        item
+                    });
+                }
                 None => {
                     notes.push(format!("{}的修改", name(i)));
                     items.push(old.items[i].clone());
@@ -1015,6 +1066,14 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                     let bloom = m.block_bloom.or(c.bloom);
                     let id = fresh_id(m.new_prefix, made.len() + 1, m.taken, &made);
                     made.insert(id.clone());
+                    let new_frame = match revised_frame(frames[d], "", &c.answer) {
+                        Ok(Some(f)) if frame_format(Some(&c.answer_format)) => f,
+                        Ok(_) => String::new(),
+                        Err(why) => {
+                            notes.push(format!("新增的題目的句型框架（{why}）"));
+                            String::new()
+                        }
+                    };
                     items.push(Item {
                         id,
                         answer_format: Some(c.answer_format.clone()),
@@ -1027,6 +1086,7 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                         origin: Origin::Ai,
                         bloom,
                         hint: String::new(),
+                        frame: new_frame.clone(),
                         tiers: Vec::new(),
                         table: None,
                         kept_options: Vec::new(),
@@ -1283,6 +1343,7 @@ mod tests {
 
     fn keep(k: usize) -> RawRevisedItem {
         RawRevisedItem {
+            frame: String::new(),
             source: code(k),
             keep: true,
             answer_format: "簡答題".into(),
@@ -1295,6 +1356,7 @@ mod tests {
 
     fn change(source: &str, prompt: &str) -> RawRevisedItem {
         RawRevisedItem {
+            frame: String::new(),
             source: source.into(),
             keep: false,
             answer_format: "簡答題".into(),
@@ -1399,6 +1461,72 @@ mod tests {
         );
     }
 
+    fn revision_with(items: Vec<RawRevisedItem>) -> RawBlockRevision {
+        RawBlockRevision {
+            title: "".into(),
+            instructions: "".into(),
+            items,
+            picture_actions: vec![],
+            scaffolds: vec![],
+            words: vec![],
+            glossary: vec![],
+            reply: "好了。".into(),
+        }
+    }
+
+    const FRAME: &str = "Hello, everyone. My answer is ___ because ___. Thank you.";
+
+    #[test]
+    fn a_question_frame_is_added_changed_kept_or_removed_by_what_the_model_writes() {
+        let with = |source: &str, frame: &str| {
+            let mut it = change(source, "Did the neighbors like the idea?");
+            it.frame = frame.into();
+            it
+        };
+        let scope = Scope::from("加句型框架", &[], false);
+        // A frame for a question that has none.
+        let raw = revision_with(vec![keep(0), with("Q2", FRAME), keep(2)]);
+        let (m, problems) = run(&raw, &scope);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(m.block.items[1].frame, FRAME);
+        assert_eq!(
+            m.block.items[0].frame, "",
+            "kept questions are the stored ones"
+        );
+
+        // Changing the prompt and writing nothing keeps the frame it had.
+        let mut old = block();
+        old.items[1].frame = FRAME.to_string();
+        let (m, _) = run_on(
+            &old,
+            &revision_with(vec![keep(0), with("Q2", ""), keep(2)]),
+            &scope,
+        );
+        assert_eq!(m.block.items[1].frame, FRAME);
+
+        // "(none)" takes it away.
+        let (m, _) = run_on(
+            &old,
+            &revision_with(vec![keep(0), with("Q2", FRAME_REMOVE), keep(2)]),
+            &scope,
+        );
+        assert_eq!(m.block.items[1].frame, "");
+        assert!(m.changed);
+
+        // Something that is not a frame is not taken; the question keeps its own.
+        let (m, _) = run_on(
+            &old,
+            &revision_with(vec![keep(0), with("Q2", "Just answer it."), keep(2)]),
+            &scope,
+        );
+        assert_eq!(m.block.items[1].frame, FRAME);
+        assert!(
+            m.failed.iter().any(|f| f.contains("句型框架")),
+            "{:?}",
+            m.failed
+        );
+    }
+
     #[test]
     fn a_note_on_one_question_keeps_the_others_whatever_the_model_wrote() {
         let raw = RawBlockRevision {
@@ -1471,6 +1599,7 @@ mod tests {
         assert_eq!(m.failed, ["第 5 題的修改"]);
         // A copy that changes nothing is not a change either.
         let same = RawRevisedItem {
+            frame: String::new(),
             source: "Q1".into(),
             keep: false,
             answer_format: "簡答題".into(),

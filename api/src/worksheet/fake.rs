@@ -10,6 +10,7 @@
 //! | `FAKE_WS_BAD_LABEL`      | tasks: call 1 uses a student-task label outside the spec's set      |
 //! | `FAKE_WS_SPLICE_ALWAYS`  | tasks: one evidence is spliced with "..." in both calls (it is cleared) |
 //! | `FAKE_WS_WARMUP_BLOCK`   | warm-up: both calls are unusable                                    |
+//! | `FAKE_WS_FRAME_BAD`      | scaffolds: on call 1 the first question's own sentence frame has no blank and another is for a closed question (repaired by the second) |
 //! | `FAKE_WS_NO_PROCEDURAL`  | scaffolds: no procedural scaffold (the program adds its own)        |
 //! | `FAKE_WS_LEAK`           | scaffolds: call 1 puts a reference answer into a scaffold           |
 //! | `FAKE_WS_TARGET_ALIAS`   | scaffolds: targets spelled "Warm-up" / "b1", plus a "warmup" set nobody asked for |
@@ -605,6 +606,7 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
     let leak = has("FAKE_WS_LEAK") && attempt == 1;
     let frame_steps =
         has("FAKE_WS_FRAME_STEPS_ALWAYS") || (has("FAKE_WS_FRAME_STEPS") && attempt == 1);
+    let frame_bad = has("FAKE_WS_FRAME_BAD") && attempt == 1;
     let selected = strings(&ctx["selected_kinds"]);
     let content_of = |kind: &str| -> &'static str {
         match kind {
@@ -645,6 +647,34 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
                     verbal.push(json!({ "kind": "提示與追問", "content_en": format!("Hint: the answer is: {answer}") }));
                 }
             }
+            // A sentence frame under each question that wants an answer in the student's words.
+            let formats = strings(&t["formats"]);
+            let item_frames: Vec<Value> = formats
+                .iter()
+                .enumerate()
+                // A run that tests the block's one box of frames has no frames of its own.
+                .filter(|_| !has("FAKE_WS_FRAME_STEPS") && !has("FAKE_WS_FRAME_STEPS_ALWAYS"))
+                .filter(|(_, f)| f.as_str() == FMT_SHORT || f.as_str() == FMT_PARAGRAPH)
+                .map(|(k, _)| {
+                    let n = k + 1;
+                    let frame = if frame_bad && n == 1 {
+                        "Say your answer to question 1 in a full sentence."
+                    } else {
+                        "Hello, everyone. My answer to the question is ___ because ___. Thank you."
+                    };
+                    json!({ "item_no": n, "frame_en": frame })
+                })
+                .chain(
+                    (frame_bad && !formats.is_empty())
+                        .then(|| json!({ "item_no": 99, "frame_en": "I think ___." })),
+                )
+                .collect();
+            // Guiding prompts are hints under the questions they serve.
+            let item_hints: Vec<Value> = formats
+                .iter()
+                .enumerate()
+                .map(|(k, _)| json!({ "item_no": k + 1, "hint_en": "Look back at the paragraph. Which sentence helps you most?" }))
+                .collect();
             let steps: Vec<&str> = if warm {
                 vec!["Step 1: Think about the questions on your own.", "Step 2: Share your ideas with a partner."]
             } else {
@@ -663,6 +693,8 @@ pub fn scaffolds(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
                 "procedural": if no_procedural || invalid { json!([]) } else {
                     json!([{ "kind": KIND_STEPS, "steps_en": steps }])
                 },
+                "item_frames": item_frames,
+                "item_hints": item_hints,
             })
         })
         .collect();

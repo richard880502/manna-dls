@@ -1697,6 +1697,11 @@ export interface WsItem {
   /** 提示或句型開頭：只印在基礎版（閱讀理解題，與改版前的分層練習） */
   hint?: string;
   /**
+   * 這一題自己的句型框架：一小段學生可以照著說或寫的話（招呼、帶理由的回答、結尾，空格用 ___），
+   * 印在題目下面。沒有時是空字串或沒有這個鍵（舊資料）。
+   */
+  frame?: string;
+  /**
    * 差異化學習單：這一題在三個版本的支持、參考答案與評分說明（依版本順序）；其他題目是 []。
    * 舊資料沒有這個鍵。
    */
@@ -2492,6 +2497,8 @@ export interface WsSheetBlock {
     bloom?: Bloom | null;
     /** 只有基礎版（印成 "Hint: …"） */
     hint?: string;
+    /** 這一題自己的句型框架（印在題目下面；沒有時沒有這個鍵） */
+    frame?: string;
     /** 差異化學習單：這個版本的支持（不給支持時沒有這個鍵） */
     support?: { kind: WsSupportKind; heading: string; lines: string[]; word_bank: string[] };
     /** 差異化學習單，只有教師版：這個版本的評分說明 */
