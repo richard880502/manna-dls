@@ -829,8 +829,9 @@ describe("lesson workspace: Manna's suggestions", () => {
     mockApi(routes(sopState(), { "GET /api/config": config({ ai_enabled: false }) }));
     await openLesson();
     await goToStep(user, /內容目標與語言目標/);
-    const ask = screen.getByRole("button", { name: "請 Manna 推薦目標" });
+    const ask = screen.getByRole("button", { name: "請 Manna 推薦內容目標" });
     expect(ask).toBeDisabled();
+    expect(screen.getByRole("button", { name: "請 Manna 依內容目標推薦語言目標" })).toBeDisabled();
     expect(
       within(ask.closest(".ask-manna") as HTMLElement).getByText("AI 功能目前未開放，你可以繼續手動完成所有步驟。"),
     ).toBeInTheDocument();
@@ -849,11 +850,33 @@ describe("lesson workspace: Manna's suggestions", () => {
     await user.click(screen.getByRole("button", { name: "自己新增一項目標" }));
     await user.type(screen.getByRole("textbox", { name: "目標" }), "學生能說出原因");
     await user.click(screen.getByRole("button", { name: "加入目標" }));
-    await user.click(screen.getByRole("button", { name: "請 Manna 推薦目標" }));
+    await user.click(screen.getByRole("button", { name: "請 Manna 推薦內容目標" }));
     expect(await screen.findByText("請先在第 1 步貼上教材，Manna 才有東西可以讀。")).toBeInTheDocument();
     const order = api.calls.map((c) => `${c.method} ${c.path}`);
     expect(order.indexOf(`PUT ${SOP}`)).toBeGreaterThan(-1);
     expect(order.indexOf(`PUT ${SOP}`)).toBeLessThan(order.indexOf(`POST ${SOP}/objectives`));
+    expect(api.lastBody("POST", `${SOP}/objectives`)).toEqual({ only_type: "content" });
+  });
+
+  it("the 語言目標 are asked for after the 內容目標: the button waits for one, then sends the kind", async () => {
+    signIn();
+    const api = mockApi(routes(sopState()));
+    const user = userEvent.setup();
+    await openLesson();
+    await goToStep(user, /內容目標與語言目標/);
+    const language = screen.getByRole("button", { name: "請 Manna 依內容目標推薦語言目標" });
+    expect(language).toBeDisabled();
+    expect(language).toHaveAccessibleDescription(/先決定內容目標/);
+    expect(screen.getByRole("button", { name: "請 Manna 推薦內容目標" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "自己新增一項目標" }));
+    await user.type(screen.getByRole("textbox", { name: "目標" }), "學生能說出原因");
+    await user.click(screen.getByRole("button", { name: "加入目標" }));
+    const ready = screen.getByRole("button", { name: "請 Manna 依內容目標推薦語言目標" });
+    expect(ready).toBeEnabled();
+    await user.click(ready);
+    await waitFor(() => expect(api.callsTo("POST", `${SOP}/objectives`)).toHaveLength(1));
+    expect(api.lastBody("POST", `${SOP}/objectives`)).toEqual({ only_type: "language" });
   });
 });
 

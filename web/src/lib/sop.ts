@@ -50,9 +50,12 @@ export const EXIT_KINDS: ReadonlyArray<{ value: ExitKind; label: string; hint: s
 
 export const exitKindLabel = (value: ExitKind): string => EXIT_KINDS.find((k) => k.value === value)?.label ?? "";
 
+/** Why the 語言目標 cannot be asked for yet: they are derived from a 內容目標 the teacher decided on. */
+export const LANGUAGE_AFTER_CONTENT = "先決定內容目標（自己新增，或採用 Manna 的建議），才能請 Manna 依它推薦語言目標。";
+
 export const OBJECTIVE_TYPES: ReadonlyArray<{ value: ObjectiveType; label: string; hint: string }> = [
   { value: "content", label: "內容目標", hint: "學生要理解或完成什麼" },
-  { value: "language", label: "語言目標", hint: "為了做到，需要用什麼語言" },
+  { value: "language", label: "語言目標", hint: "為了做到內容目標，需要用什麼語言（讀、聽、說、寫）" },
 ];
 
 export const objectiveTypeLabel = (value: ObjectiveType): string => (value === "content" ? "內容目標" : "語言目標");

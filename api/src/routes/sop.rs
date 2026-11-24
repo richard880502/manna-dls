@@ -262,6 +262,10 @@ pub async fn version(
     Ok(Json(state_of(&state, id, Some(version), false).await?))
 }
 
+/// 語言目標 are derived from the 內容目標, so they wait until one is decided.
+const MSG_CONTENT_FIRST: &str =
+    "請先決定內容目標（自己寫，或採用 Manna 的建議），Manna 才能依它推薦語言目標。";
+
 #[derive(Debug, Default, Deserialize)]
 pub struct StartJob {
     #[serde(default)]
@@ -274,6 +278,11 @@ pub struct StartJob {
     /// 這一段再建議一次 (goals).
     #[serde(default)]
     pub paragraph_id: Option<String>,
+    /// objectives: `content` or `language`. The 內容目標 are recommended first; the 語言目標 come
+    /// after the teacher decided them and are derived from them. Absent: the 內容目標 while the
+    /// lesson has none, otherwise the 語言目標.
+    #[serde(default)]
+    pub only_type: Option<String>,
 }
 
 async fn start_job(
@@ -320,6 +329,28 @@ async fn start_job(
             "請先在第 3 步寫（或採用）至少一項目標，Manna 才知道要對應哪些目標。",
         ));
     }
+    let has_content = version
+        .content
+        .objectives
+        .iter()
+        .any(|o| o.kind == sop::ObjectiveType::Content && !o.text.trim().is_empty());
+    let only = match req.only_type.as_deref() {
+        None => None,
+        Some("content") => Some(sop::ObjectiveType::Content),
+        Some("language") => Some(sop::ObjectiveType::Language),
+        Some(_) => {
+            return Err(AppError::bad_request(
+                "only_type 需為 content 或 language。",
+            ))
+        }
+    };
+    if kind == JobKind::Objectives
+        && req.parent_job_id.is_none()
+        && only == Some(sop::ObjectiveType::Language)
+        && !has_content
+    {
+        return Err(AppError::bad_request(MSG_CONTENT_FIRST));
+    }
     let scope = match (kind, req.parent_job_id, req.paragraph_id.as_deref()) {
         (JobKind::Objectives, Some(parent_id), _) => {
             let index = req
@@ -336,6 +367,11 @@ async fn start_job(
                 paragraph_id: paragraph_id.to_string(),
             }
         }
+        (JobKind::Objectives, None, _) => Scope::Kind(only.unwrap_or(if has_content {
+            sop::ObjectiveType::Language
+        } else {
+            sop::ObjectiveType::Content
+        })),
         _ => Scope::Whole,
     };
     let today = today_objective(&state.db, id).await?;

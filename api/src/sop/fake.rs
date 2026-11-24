@@ -11,7 +11,7 @@
 //! | `FAKE_SOP_INVENT`        | objectives: call 1 cites a code that was not offered; call 2 does not |
 //! | `FAKE_SOP_INVENT_ALWAYS` | objectives: both calls cite it                                    |
 //! | `FAKE_SOP_UNLINKED`      | objectives: nothing is linked                                     |
-//! | `FAKE_SOP_ONE_TYPE`      | objectives: only content objectives                               |
+//! | `FAKE_SOP_ONE_TYPE`      | objectives: only content objectives (a run with no `only_type`)   |
 //! | `FAKE_BLOCK`             | all stages: output that fails every check                         |
 //! | `FAKE_SLOW`              | each call waits three seconds first (handled in `application::ai`) |
 //! | `FAKE_SOP_GOALS_INVENT`  | step 4: call 1 cites an objective code that does not exist; call 2 does not |
@@ -22,7 +22,9 @@
 //!
 //! Steps 5–7 are the worksheet's own steps (`worksheet_tasks`, `_scaffolds`, `_warmup`,
 //! `_exit_ticket`): their fake outputs and markers (`worksheet::fake`) apply to them as well.
-//! 換一個 (step 3) asks `sop_objectives` for one objective of one type (`only_type`).
+//! Step 3 asks `sop_objectives` for one kind at a time (`only_type`): 換一個 for one objective, a
+//! run for a kind for two (the 內容目標 first; the 語言目標 get the decided 內容目標 as
+//! `content_objectives`).
 
 use serde_json::{json, Value};
 
@@ -228,9 +230,11 @@ pub fn objectives(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Valu
             "curriculum_links": [{ "item_code": INVENTED_CODE, "why_zh": "invented" }]
         }]});
     }
-    // 換一個: one objective of the asked-for type, different with every swap.
+    // One kind only: 換一個 asks for one objective, a run for a kind for two. The 語言目標 run
+    // is told the decided 內容目標 and says which one each objective serves.
     if let Some(kind) = ctx["only_type"].as_str() {
-        let n = ctx["swap_index"].as_i64().unwrap_or(0);
+        let swap = ctx["swap_index"].as_i64();
+        let n = swap.unwrap_or(0);
         let codes: Vec<&str> = ctx["items"]
             .as_array()
             .map(|a| a.iter().filter_map(|i| i["item_code"].as_str()).collect())
@@ -241,15 +245,65 @@ pub fn objectives(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Valu
             }
             _ => Vec::new(),
         };
-        return json!({ "objectives": [{
-            "objective_id": "O1", "siop_type": kind,
-            "objective_zh": format!("學生能換個角度完成這項{kind}（換一個 {n}，測試建議）"),
-            "student_facing_en": format!("I can try a different way to reach goal {n}."),
-            "reason_zh": "（測試）換一個不同角度的目標，這是測試用的示範理由。",
-            "paragraph_refs": [1],
-            "link_status": if links.is_empty() { "unlinked" } else { "linked" },
-            "curriculum_links": links
-        }]});
+        let serves = ctx["content_objectives"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let one = |id: &str, zh: String, en: String, links: Vec<Value>| {
+            json!({
+                "objective_id": id, "siop_type": kind, "objective_zh": zh, "student_facing_en": en,
+                "reason_zh": if serves.is_empty() {
+                    "（測試）換一個不同角度的目標，這是測試用的示範理由。".to_string()
+                } else {
+                    format!("（測試）依內容目標「{serves}」推導：學生要說出或寫出成果，老師才看得出有沒有學會。")
+                },
+                "paragraph_refs": [1],
+                "link_status": if links.is_empty() { "unlinked" } else { "linked" },
+                "curriculum_links": links
+            })
+        };
+        if swap.is_some() {
+            return json!({ "objectives": [one(
+                "O1",
+                format!("學生能換個角度完成這項{kind}（換一個 {n}，測試建議）"),
+                format!("I can try a different way to reach goal {n}."),
+                links.clone(),
+            )]});
+        }
+        let invent = has("FAKE_SOP_INVENT_ALWAYS") || (has("FAKE_SOP_INVENT") && attempt == 1);
+        let mut first_links = links.clone();
+        if invent {
+            first_links
+                .push(json!({ "item_code": INVENTED_CODE, "why_zh": "（測試）憑記憶寫的代碼" }));
+        }
+        let second_links: Vec<Value> = match codes.get(1) {
+            Some(code) if !has("FAKE_SOP_UNLINKED") => {
+                vec![json!({ "item_code": code, "why_zh": "（測試）這個目標對應這一條學習表現。" })]
+            }
+            _ => Vec::new(),
+        };
+        // The wrong kind for the step asked (a 內容目標 for a 語言目標 run) is not usable.
+        let kind = if has("FAKE_SOP_ONE_TYPE") {
+            "內容目標"
+        } else {
+            kind
+        };
+        let one = |id: &str, zh: String, en: String, links: Vec<Value>| {
+            let mut o = one(id, zh, en, links);
+            o["siop_type"] = json!(kind);
+            o
+        };
+        return json!({ "objectives": [
+            one("O1",
+                format!("學生能完成第一項{kind}的示範任務（測試建議）"),
+                "I can show what I learned from the first part of the text.".to_string(),
+                first_links),
+            one("O2",
+                format!("學生能完成第二項{kind}的示範任務（測試建議）"),
+                "I can show what I learned from the second part of the text.".to_string(),
+                second_links),
+        ]});
     }
     let unlinked = has("FAKE_SOP_UNLINKED");
     let invent = has("FAKE_SOP_INVENT_ALWAYS") || (has("FAKE_SOP_INVENT") && attempt == 1);

@@ -95,6 +95,20 @@ async fn run_job(app: &common::TestApp, t: &str, lesson: i64, kind: &str) -> Val
     wait_job(app, t, job["id"].as_i64().unwrap()).await
 }
 
+async fn run_job_with(
+    app: &common::TestApp,
+    t: &str,
+    lesson: i64,
+    kind: &str,
+    body: Value,
+) -> Value {
+    let (s, job) = app
+        .post(&format!("/api/lessons/{lesson}/sop/{kind}"), Some(t), body)
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{job}");
+    wait_job(app, t, job["id"].as_i64().unwrap()).await
+}
+
 async fn wait_job(app: &common::TestApp, t: &str, id: i64) -> Value {
     for _ in 0..400 {
         let (s, job) = app.get(&format!("/api/sop-jobs/{id}"), Some(t)).await;
@@ -999,15 +1013,17 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
     let (s, saved) = put_sop(&app, &t, id, own).await;
     assert_eq!(s, StatusCode::OK, "{saved}");
 
+    // The 內容目標 come first: the lesson has none yet, so that is what is recommended.
     let job = run_job(&app, &t, id, "objectives").await;
     let result = &job["result"];
     assert_eq!(result["status"], "shown", "{result}");
+    assert_eq!(job["slot"], "");
     let out = &result["output"];
     assert_eq!(out["curriculum_available"], 2);
     let objectives = out["objectives"].as_array().unwrap();
-    assert_eq!(objectives.len(), 3);
+    assert_eq!(objectives.len(), 2);
     assert_eq!(objectives[0]["type"], "content");
-    assert_eq!(objectives[1]["type"], "language");
+    assert_eq!(objectives[1]["type"], "content");
     // Type, reason, linked item code, official text and source: all there, text from the DB.
     let link = &objectives[0]["links"][0];
     assert_eq!(objectives[0]["link_status"], "linked");
@@ -1025,9 +1041,7 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
         .unwrap()
         .starts_with("I can"));
     assert_eq!(objectives[0]["paragraph_ids"], json!(["p1"]));
-    // Nothing fits the third one: it is kept and marked, not given an invented link.
-    assert_eq!(objectives[2]["link_status"], "unlinked");
-    assert_eq!(objectives[2]["links"], json!([]));
+    assert_eq!(objectives[1]["links"][0]["item_code"], "T-G-3-V-10");
     assert_eq!(result["sources"].as_array().unwrap().len(), 2);
     let labels: Vec<&str> = result["context"]
         .as_array()
@@ -1051,6 +1065,15 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
         .as_str()
         .unwrap()
         .contains("Not only"));
+    assert!(rows[0].input_snapshot["prompt"]["user"]
+        .as_str()
+        .unwrap()
+        .contains("【這次只要內容目標】"));
+    assert_eq!(
+        failed_checks(rows[0].check_results.as_ref().unwrap()),
+        Vec::<&str>::new(),
+        "one kind is what was asked"
+    );
     let offered: Vec<String> = sqlx::query_scalar(
         "SELECT unnest(item_codes) FROM retrieval_logs WHERE ai_interaction_id = $1",
     )
@@ -1098,14 +1121,107 @@ async fn objectives_are_linked_from_the_database_and_never_overwrite_the_teacher
         .post(
             &format!("/api/ai/{interaction}/decision"),
             Some(&t),
-            json!({ "item_index": 2, "decision": "reject" }),
+            json!({ "item_index": 1, "decision": "reject" }),
         )
         .await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(
         get_sop(&app, &t, id).await["jobs"]["objectives"]["decided"],
-        json!([0, 2])
+        json!([0, 1])
     );
+}
+
+/// The 語言目標 are derived from the 內容目標 the teacher decided on, so they wait for one.
+#[tokio::test]
+async fn language_objectives_are_recommended_after_the_content_objective_is_decided() {
+    let app = test_app!();
+    let t = app.teacher("T-SOP-23", "general").await;
+    let id = lesson(&app, &t).await;
+    import_curriculum(&app).await;
+    put_material(&app, &t, id, &passage("")).await;
+
+    // No 內容目標 yet (a 語言目標 of her own does not count): asked for explicitly, or not
+    // asked at all, the request is refused or is a 內容目標 run.
+    let own_language = json!({ "objectives": [
+        { "id": "mine", "type": "language", "text": "學生能用 however 說出轉折", "origin": "teacher" }
+    ] });
+    put_sop(&app, &t, id, own_language).await;
+    let (s, refused) = app
+        .post(
+            &format!("/api/lessons/{id}/sop/objectives"),
+            Some(&t),
+            json!({ "only_type": "language" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{refused}");
+    assert!(refused.to_string().contains("內容目標"), "{refused}");
+    let (s, _) = app
+        .post(
+            &format!("/api/lessons/{id}/sop/objectives"),
+            Some(&t),
+            json!({ "only_type": "poetry" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert!(
+        interactions(&app, id).await.is_empty(),
+        "nothing was asked of the model"
+    );
+
+    // The teacher decides a 內容目標; now the 語言目標 are derived from it.
+    let content_line = "學生能說出傘為什麼回來";
+    let decided = json!({ "objectives": [
+        { "id": "c1", "type": "content", "text": content_line,
+          "student_facing_en": "I can say why the umbrella came back.", "origin": "teacher" }
+    ] });
+    let (s, saved) = put_sop(&app, &t, id, decided).await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    let job = run_job_with(
+        &app,
+        &t,
+        id,
+        "objectives",
+        json!({ "only_type": "language" }),
+    )
+    .await;
+    assert_eq!(job["result"]["status"], "shown", "{job}");
+    let objectives = job["result"]["output"]["objectives"].as_array().unwrap();
+    assert_eq!(objectives.len(), 2);
+    assert!(objectives.iter().all(|o| o["type"] == "language"));
+    let rows = interactions(&app, id).await;
+    assert_eq!(rows.len(), 1);
+    let user = rows[0].input_snapshot["prompt"]["user"].as_str().unwrap();
+    assert!(user.contains("【這次只要語言目標】"), "{user}");
+    assert!(
+        user.contains(content_line),
+        "the decided 內容目標 is sent: {user}"
+    );
+    assert!(rows[0].input_snapshot["prompt"]["system"]
+        .as_str()
+        .unwrap()
+        .contains("讀、聽、說、寫"));
+
+    // Not asking for a kind: the 語言目標, as the lesson now has a 內容目標.
+    let again = run_job(&app, &t, id, "objectives").await;
+    assert!(again["result"]["output"]["objectives"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|o| o["type"] == "language"));
+    // And the 內容目標 can still be asked for again.
+    let more = run_job_with(
+        &app,
+        &t,
+        id,
+        "objectives",
+        json!({ "only_type": "content" }),
+    )
+    .await;
+    assert!(more["result"]["output"]["objectives"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|o| o["type"] == "content"));
 }
 
 #[tokio::test]
@@ -1194,9 +1310,16 @@ async fn objectives_unlinked_and_single_type_outputs() {
         .all(|o| o["link_status"] == "unlinked"));
     assert_eq!(interactions(&app, id).await.len(), 1);
 
-    // Content objectives only, twice: SIOP needs both kinds, so nothing is shown.
+    // 內容目標 only, twice, for a 語言目標 request: nothing of the asked kind, so nothing is shown.
     let id = lesson(&app, &t).await;
     put_material(&app, &t, id, &passage("FAKE_SOP_ONE_TYPE")).await;
+    put_sop(
+        &app,
+        &t,
+        id,
+        json!({ "objectives": [{ "id": "c1", "type": "content", "text": "學生能說出主旨" }] }),
+    )
+    .await;
     let job = run_job(&app, &t, id, "objectives").await;
     assert_eq!(job["result"]["status"], "blocked", "{job}");
     assert_eq!(job["result"]["output"], Value::Null);
@@ -1205,7 +1328,7 @@ async fn objectives_unlinked_and_single_type_outputs() {
     assert!(rows.iter().all(|r| r.status == "blocked"));
     assert_eq!(
         failed_checks(rows[1].check_results.as_ref().unwrap()),
-        ["both_siop_types_present"]
+        ["asked_siop_type_present"]
     );
 
     // The class the teacher works in supplies the class profile, as for other AI calls.
