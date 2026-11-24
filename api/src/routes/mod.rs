@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod browse;
 pub mod classes;
+pub mod community;
 pub mod core;
 pub mod embeddings;
 pub mod feedback;
@@ -48,6 +49,25 @@ pub fn api_router() -> Router<AppState> {
             "/admin/memory-settings",
             get(crate::memory::routes::settings_get).put(crate::memory::routes::settings_put),
         )
+        .route(
+            "/admin/community-settings",
+            get(community::settings_get).put(community::settings_put),
+        )
+        // 社群 (docs/COMMUNITY.md)
+        .route("/community/worksheets", get(community::explore))
+        .route("/community/mine", get(community::mine))
+        .route("/community/saves", get(community::saved))
+        .route("/community/worksheets/{id}", get(community::preview))
+        .route(
+            "/community/worksheets/{id}/images/{image_id}",
+            get(community::picture),
+        )
+        .route(
+            "/community/worksheets/{id}/save",
+            post(community::save).delete(community::unsave),
+        )
+        .route("/community/worksheets/{id}/remix", post(community::remix))
+        .route("/worksheets/{id}/share", put(community::share))
         .route("/me", get(auth::me))
         .route(
             "/me/memories",
@@ -502,6 +522,8 @@ async fn public_config(State(state): State<AppState>) -> AppResult<Json<serde_js
         "ai_provider": ai.provider_name(),
         "ai_model": ai.model,
         "route_choice_enabled": crate::settings::route_choice_enabled(&state.db).await?,
+        // 社群: the PI's switch (off: the web shows nothing about it).
+        "community_enabled": crate::settings::community_enabled(&state.db).await?,
         // Whether files can be uploaded to the material library (pasting always works).
         "uploads_enabled": state.storage.is_some(),
     })))

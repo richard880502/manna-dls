@@ -126,7 +126,7 @@ export function Sidebar({
   /** Closes the drawer (narrow screens only). */
   onCloseDrawer: () => void;
 }) {
-  const { teacher, logout } = useApp();
+  const { teacher, logout, communityEnabled } = useApp();
   const { pathname } = useLocation();
   const sessions = useRecentSessions(pathname);
   const [moreOpen, setMoreOpen] = useState(() => inMore(pathname));
@@ -175,6 +175,10 @@ export function Sidebar({
             label="我的作品"
             current={inside(pathname === "/prep", pathname.startsWith("/prep/") || pathname.startsWith("/worksheets"))}
           />
+          {/* 社群 is the PI's research switch: off, nothing about it shows. */}
+          {communityEnabled && (
+            <SideLink to="/community" icon="community" label="社群" current={inside(pathname === "/community", false)} />
+          )}
         </ul>
 
         {sessions && sessions.length > 0 && (

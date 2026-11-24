@@ -8,6 +8,7 @@ pub mod application;
 pub mod audit;
 pub mod auth;
 pub mod checks;
+pub mod community;
 pub mod config;
 pub mod core_questions;
 pub mod curriculum;

@@ -77,6 +77,7 @@ export function SheetPreview({
   interactionFor,
   extras,
   pictures = null,
+  readOnly,
 }: {
   sheet: WsSheet;
   highlight: ReadonlySet<string>;
@@ -84,6 +85,11 @@ export function SheetPreview({
   extras?: (block: WsSheetBlock) => SheetBlockExtras;
   /** The worksheet's pictures and what the teacher can do with them; null: none shown. */
   pictures?: PictureActions | null;
+  /**
+   * Somebody else's worksheet (社群): no copy or rating tools, and its pictures are read through
+   * `load` (the sheet's own worksheet id and how to fetch one picture; stable between renders).
+   */
+  readOnly?: { worksheetId: number; load: (imageId: number) => Promise<Blob> };
 }) {
   const teacher = sheet.audience === "teacher";
   // T9: a student sheet is named by its neutral code, never by the level.
@@ -140,6 +146,18 @@ export function SheetPreview({
                 {b.instructions}
               </p>
             )}
+            {readOnly &&
+              (b.images ?? []).map((img) => (
+                <SlotPicture
+                  key={img.slot_id}
+                  worksheetId={readOnly.worksheetId}
+                  name={name}
+                  teacher={false}
+                  view={viewOfSheetImage(img, undefined)}
+                  actions={null}
+                  load={readOnly.load}
+                />
+              ))}
             {pictures &&
               (b.images ?? []).map((img) => (
                 <SlotPicture
@@ -326,11 +344,13 @@ export function SheetPreview({
               </div>
             )}
             {extra.below}
-            <div lang="zh-Hant">
-              <SectionTools name={`區塊 ${name}`} text={sheetBlockText(b)} interactionId={interactionFor(b)}>
-                {extra.tools}
-              </SectionTools>
-            </div>
+            {!readOnly && (
+              <div lang="zh-Hant">
+                <SectionTools name={`區塊 ${name}`} text={sheetBlockText(b)} interactionId={interactionFor(b)}>
+                  {extra.tools}
+                </SectionTools>
+              </div>
+            )}
           </section>
         );
       })}

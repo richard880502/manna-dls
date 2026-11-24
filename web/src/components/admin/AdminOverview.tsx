@@ -68,6 +68,7 @@ function Row({ label, to, linkLabel, state, children }: {
 export function AdminOverview() {
   const model = useLoad(() => api.admin.getAiModel());
   const memory = useLoad(() => Promise.all([api.memorySettings(), api.memoryIndex()]));
+  const community = useLoad(() => api.communitySettings());
   const settings = useLoad(() => api.admin.getSettings());
   const accounts = useLoad(() => api.admin.listAccounts());
   const prompts = useLoad(() => api.admin.listPrompts());
@@ -80,6 +81,9 @@ export function AdminOverview() {
         </Row>
         <Row label="教師長期記憶" to="/admin?tab=settings" linkLabel="調整" state={memory}>
           {memory.data && memoryText(memory.data[0], memory.data[1])}
+        </Row>
+        <Row label="社群" to="/admin?tab=settings" linkLabel="調整" state={community}>
+          {community.data && (community.data.enabled ? "開啟" : "關閉")}
         </Row>
         <Row label="自選備課菜單" to="/admin?tab=settings" linkLabel="調整" state={settings}>
           {settings.data && (settings.data.route_choice_enabled ? "開放" : "固定順序")}

@@ -90,6 +90,11 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
             )}
           </p>
           <h1>{shown === "options" ? "做一份學習單" : state.title || "未命名的學習單"}</h1>
+          {state.remixed_from && (
+            <p className="quiet-note ws-remix-line">
+              改編自「{state.remixed_from.title.trim() || "未命名的學習單"}」（{state.remixed_from.owner_name}）
+            </p>
+          )}
           {state.template && (
             <p className="quiet-note ws-template-line">
               依版型：<Link to={`/templates/${state.template.id}`}>{state.template.title.trim() || "未命名的版型"}</Link>{" "}

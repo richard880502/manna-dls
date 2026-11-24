@@ -311,6 +311,7 @@ export function baseRoutes(cfg: Partial<AppConfig> = {}, prefs: Preferences | nu
     "GET /api/me/preferences": prefs,
     "GET /api/me/memories": { memories: [], enabled: false, graph_enabled: false, index: null },
     "GET /api/admin/memory-settings": { enabled: false, graph_enabled: false },
+    "GET /api/admin/community-settings": { enabled: false },
     "GET /api/admin/memory-index": { pending: 0, failed: 0 },
     "GET /api/preferences/questions": { question_set_version: 1, questions: preferenceQuestions },
     "GET /api/units": [unit],

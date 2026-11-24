@@ -7,6 +7,7 @@ import { AdminLibraryPage } from "./pages/AdminLibraryPage";
 import { AdminPage } from "./pages/AdminPage";
 import { ClassPage } from "./pages/ClassPage";
 import { ClassesPage } from "./pages/ClassesPage";
+import { CommunityPage } from "./pages/CommunityPage";
 import { CorePage } from "./pages/CorePage";
 import { CreatePage } from "./pages/CreatePage";
 import { KnowledgePage } from "./pages/KnowledgePage";
@@ -105,6 +106,7 @@ export function AppRoutes() {
         <Route path="worksheets/:worksheetId" element={<WorksheetPage />} />
         <Route path="worksheets/:worksheetId/check" element={<WorksheetCheckPage />} />
         <Route path="preferences" element={<PreferencesPage />} />
+        <Route path="community" element={<CommunityPage />} />
         <Route path="admin" element={<AdminPage />} />
         {/* 教材與範本管理: pi and kb_manager seed 平台教材 and the platform 學習單範本. */}
         <Route path="admin/library" element={<AdminLibraryPage />} />

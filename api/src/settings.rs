@@ -5,12 +5,21 @@ use sqlx::PgPool;
 
 pub const ROUTE_CHOICE_ENABLED: &str = "route_choice_enabled";
 pub const TEACHER_MEMORY_ENABLED: &str = "teacher_memory_enabled";
+/// 社群 (docs/COMMUNITY.md): teachers may share worksheets with each other. Default off.
+pub const COMMUNITY_ENABLED: &str = "community_enabled";
 /// The PI's override of the text model: `{provider, model, effort, timeout_secs}`. Absent: the
 /// environment's `AI_*` values apply.
 pub const AI_TEXT_MODEL: &str = "ai_text_model";
 
 pub async fn teacher_memory_enabled(db: &PgPool) -> sqlx::Result<bool> {
     Ok(get(db, TEACHER_MEMORY_ENABLED)
+        .await?
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
+
+pub async fn community_enabled(db: &PgPool) -> sqlx::Result<bool> {
+    Ok(get(db, COMMUNITY_ENABLED)
         .await?
         .and_then(|v| v.as_bool())
         .unwrap_or(false))

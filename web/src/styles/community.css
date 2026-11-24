@@ -1,0 +1,457 @@
+/* 社群 (/community): an even grid of worksheet covers, the title on one line, the owner on the
+ * left and the counts on the right in small quiet text, save and remix over the cover. Only token
+ * variables and the app's shared classes are used, so the page follows the app's look. The
+ * ground behind each cover is the one colour of the page: it comes from the work, not the chrome. */
+
+.com-page {
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- bar */
+.com-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.com-bar .lib-search {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.com-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+}
+
+.com-browse {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  min-width: 0;
+}
+
+.com-empty {
+  padding: var(--space-xl);
+  border: var(--rule-hair) dashed var(--color-rule-strong);
+  border-radius: var(--radius-card);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- the grid of tiles */
+.com-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--space-lg) var(--space-md);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.com-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3xs) var(--space-sm);
+  min-width: 0;
+}
+
+.com-cover-wrap,
+.com-title {
+  grid-column: 1 / -1;
+}
+
+.com-cover-wrap {
+  position: relative;
+  border-radius: var(--radius-sm);
+}
+
+.com-cover-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+.com-cover-btn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* A darkening toward the bottom, behind the actions that appear there. */
+.com-cover-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(to top, var(--color-scrim), transparent 55%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-short) var(--ease-out);
+}
+
+.com-hover-acts {
+  position: absolute;
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  left: var(--space-sm);
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+}
+
+.com-hover-acts:empty {
+  display: none;
+}
+
+.com-hover-acts button {
+  box-shadow: var(--shadow-float);
+}
+
+.com-hover-acts .secondary-button[aria-pressed="true"] {
+  border-color: var(--color-rule-strong);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+}
+
+/* Where there is hover, the actions come with the pointer or the keyboard; on a touch screen
+   they are always there. */
+@media (hover: hover) {
+  .com-hover-acts {
+    opacity: 0;
+    transform: translateY(var(--space-3xs));
+    transition:
+      opacity var(--dur-short) var(--ease-out),
+      transform var(--dur-short) var(--ease-out);
+  }
+
+  .com-card:hover .com-hover-acts,
+  .com-card:focus-within .com-hover-acts,
+  .com-card:hover .com-cover-wrap::after,
+  .com-card:focus-within .com-cover-wrap::after {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.com-title {
+  margin: var(--space-xs) 0 0;
+  overflow: hidden;
+  font-size: var(--text-md);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.com-by,
+.com-counts {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-xs);
+}
+
+.com-by {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.com-owner {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.com-counts {
+  display: inline-flex;
+  gap: var(--space-sm);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- the cover */
+.com-cover {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-wash);
+  color: var(--color-ink);
+  text-align: left;
+}
+
+.com-tint-0 {
+  background: var(--color-accent-wash);
+}
+
+.com-tint-1 {
+  background: var(--color-manna-wash);
+}
+
+.com-tint-2 {
+  background: var(--color-success-wash);
+}
+
+.com-tint-3 {
+  background: var(--color-warn-wash);
+}
+
+.com-tint-4 {
+  background: var(--color-paper-3);
+}
+
+.com-tint-5 {
+  background: var(--color-accent-wash-2);
+}
+
+/* The sheet is laid out at a fixed width and scaled down to the cover (see Cover.tsx); the
+   bottom of it is cut off by the cover's edge. */
+.com-cover-stage {
+  position: absolute;
+  top: 9%;
+  left: 10%;
+  transform-origin: top left;
+  pointer-events: none;
+  box-shadow: var(--shadow-float);
+}
+
+.com-cover-stage .ws {
+  margin-top: 0;
+  max-width: none;
+}
+
+.com-cover-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+/* ---------------------------------------------------------------- the preview */
+.dialog.is-large.com-dialog {
+  width: min(90rem, 100%);
+  height: min(100%, 64rem);
+}
+
+.com-ov {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 20rem);
+  gap: var(--space-lg);
+  align-items: start;
+  margin-top: var(--space-md);
+}
+
+.com-ov-sheet {
+  min-width: 0;
+}
+
+.com-ov-sheet .ws {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.com-ov-side {
+  position: sticky;
+  top: 0;
+  display: grid;
+  gap: var(--space-sm);
+  align-content: start;
+  min-width: 0;
+}
+
+.com-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+@media (max-width: 47.5rem) {
+  .com-ov {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .com-ov-side {
+    position: static;
+    order: -1;
+  }
+}
+
+/* ---------------------------------------------------------------- 我的分享 */
+.com-rows {
+  display: grid;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.com-row {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-2);
+}
+
+.com-row-title {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.com-row-meta {
+  margin: var(--space-3xs) 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.com-row-switch {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-3xs);
+}
+
+.com-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: var(--hit);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+.com-switch:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.com-switch-track {
+  position: relative;
+  flex: none;
+  width: 3.25rem;
+  height: 1.85rem;
+  border: 1.5px solid var(--color-field-edge);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-3);
+  transition: background var(--dur-short) var(--ease-out);
+}
+
+.com-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: var(--color-field-edge);
+  transition: transform var(--dur-short) var(--ease-out);
+}
+
+.com-switch[aria-checked="true"] .com-switch-track {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.com-switch[aria-checked="true"] .com-switch-track::after {
+  background: var(--color-accent-ink);
+  transform: translateX(1.4rem);
+}
+
+.com-switch-text {
+  min-width: 4.2em;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-strong);
+  text-align: left;
+}
+
+.com-switch[aria-checked="true"] .com-switch-text {
+  color: var(--color-accent-text);
+}
+
+@media (max-width: 47.5rem) {
+  .com-row {
+    grid-template-columns: 5rem minmax(0, 1fr);
+  }
+
+  .com-row-switch {
+    grid-column: 1 / -1;
+    justify-items: start;
+  }
+}
+
+/* ---------------------------------------------------------------- the share dialog */
+.com-share {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.com-share-lists {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  font-size: var(--text-sm);
+}
+
+.com-share-lists > div {
+  padding: var(--space-sm);
+  border-radius: var(--radius-card);
+  background: var(--color-paper-2);
+}
+
+.com-share-lists > div:first-child {
+  background: var(--color-success-wash);
+}
+
+.com-share-lists h3 {
+  margin: 0 0 var(--space-3xs);
+  font-size: var(--text-sm);
+}
+
+.com-share-lists ul {
+  margin: 0;
+  padding-left: var(--space-md);
+}
+
+.com-share-field {
+  display: grid;
+  gap: var(--space-3xs);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.com-share-field legend {
+  padding: 0;
+  font-weight: var(--weight-strong);
+}
+
+@media (max-width: 47.5rem) {
+  .com-share-lists {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .com-hover-acts,
+  .com-cover-wrap::after,
+  .com-switch-track,
+  .com-switch-track::after {
+    transition: none;
+  }
+}
