@@ -718,6 +718,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         passage: &passage,
         item_count: max,
         needs_external,
+        tables_asked: false,
     };
     let taken: HashSet<String> = content
         .blocks

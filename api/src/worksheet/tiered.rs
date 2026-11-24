@@ -283,6 +283,9 @@ pub struct RawTieredItem {
     /// 圖像組織 (prompt version 2): the organizer, its cells pre-filled per version.
     #[serde(default)]
     pub organizer: Option<super::organizer::RawOrganizer>,
+    /// 表格整理: the column headings and row labels, the same in every version.
+    #[serde(default)]
+    pub table: Option<super::table::RawTable>,
     #[serde(default)]
     pub advanced: RawVersion,
     #[serde(default)]
@@ -361,6 +364,9 @@ pub fn level_schema(formats: &[&str], paragraph_codes: &[String], count: usize) 
     // pre-filled cells and support.
     if formats.contains(&FMT_ORGANIZER) {
         item.push(("organizer", super::organizer::schema(true)));
+    }
+    if formats.contains(&FMT_TABLE) {
+        item.push(("table", super::table::schema()));
     }
     item.extend([
         ("advanced", version_schema(Level::Advanced)),
@@ -592,7 +598,9 @@ mod tests {
             .map(String::as_str)
             .collect();
         assert_eq!(keys[4], "organizer");
-        assert_eq!(keys[5], "advanced");
+        assert_eq!(keys[5], "table");
+        assert_eq!(keys[6], "advanced");
+        capped(&item["table"]["anyOf"][0]);
         let org = &item["organizer"]["anyOf"][0];
         capped(org);
         assert!(

@@ -1043,6 +1043,7 @@ fn check_revision(
         passage,
         item_count: CHANGE_ITEMS_MAX,
         needs_external: false,
+        tables_asked: false,
     };
     for change in raw.changes.iter().take(CHANGES_MAX) {
         let id = change.block_id.trim();
@@ -1655,6 +1656,7 @@ mod tests {
                     answer: "To help people.".into(),
                     bloom: None,
                     organizer: None,
+                    table: None,
                 }],
             }],
             picture_actions: Vec::new(),
@@ -1718,6 +1720,7 @@ mod tests {
                     evidence: None,
                     bloom: None,
                     organizer: None,
+                    table: None,
                 })
                 .collect(),
             scaffold: String::new(),
@@ -1792,6 +1795,7 @@ mod tests {
                     evidence: None,
                     bloom: None,
                     organizer: None,
+                    table: None,
                 })
                 .collect(),
             scaffold: String::new(),

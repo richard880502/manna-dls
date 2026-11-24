@@ -6,7 +6,8 @@ import type { WsItem, WsItemTable } from "../../api/types";
 import {
   MAX_TABLE_COLUMNS,
   MAX_TABLE_ROWS,
-  columnsFromPrompt,
+  hasRowLabels,
+  namedColumns,
   optionLabel,
   tableOf,
   usesChoices,
@@ -26,7 +27,7 @@ const PROMPT_PLACEHOLDER: Record<string, string> = {
   是非題: "Statement (students mark it true or false)",
   配對題: "Items to match: 1. …  2. …  3. …",
   簡答題: "Question",
-  表格整理: "Complete the table: Column 1 / Column 2",
+  表格整理: "Complete a table with two columns: Pros and Cons. (what each row asks for)",
   圖像組織: "What to draw or fill in",
   段落寫作: "Writing task",
 };
@@ -121,24 +122,38 @@ export function ChoicesArea({
   );
 }
 
-/** 表格整理: the table students fill in, with its headings editable and its size adjustable. */
+/**
+ * 表格整理: the table students fill in, with its headings and row labels editable and its size
+ * adjustable. The headings name what is compared and the row labels what each row asks for
+ * (a first column, printed under an empty corner); a heading left empty or still 「Column 1」 does not
+ * print, and says so here.
+ */
 function TableArea({ item, no, disabled, onChange }: { item: WsItem; no: number; disabled: boolean; onChange: ItemChange }) {
   const t = tableOf(item);
-  const fromPrompt = !item.table && columnsFromPrompt(item.prompt) !== null;
+  const fromPrompt = !item.table && namedColumns(item.prompt) !== null;
   const set = (next: WsItemTable) => onChange((it) => ({ ...it, table: next }));
   const cols = t.columns.length;
+  const labelled = hasRowLabels(t);
+  const labels = Array.from({ length: t.rows }, (_, r) => t.row_labels?.[r] ?? "");
+  const blankHeading = t.columns.some((c) => c.trim() === "");
+  const setRows = (rows: number) =>
+    set({ ...t, rows, ...(labelled ? { row_labels: Array.from({ length: rows }, (_, r) => t.row_labels?.[r] ?? "") } : {}) });
   return (
     <div className="ws-answer-table">
       <table aria-label={`作答表格 ${no}`}>
         <thead>
           <tr>
+            {labelled && (
+              // oxlint-disable-next-line jsx-a11y/control-has-associated-label -- the corner over the row labels
+              <td className="ws-table-corner" />
+            )}
             {t.columns.map((c, i) => (
               // oxlint-disable-next-line react/no-array-index-key -- columns are plain strings in order
               <th key={i} scope="col">
                 <SheetText
                   label={`欄名 ${i + 1}（題目 ${no}）`}
                   value={c}
-                  placeholder={`Column ${i + 1}`}
+                  placeholder="寫上要比較的事物"
                   disabled={disabled}
                   onChange={(text) => set({ ...t, columns: t.columns.map((x, j) => (j === i ? text : x)) })}
                 />
@@ -148,8 +163,19 @@ function TableArea({ item, no, disabled, onChange }: { item: WsItem; no: number;
         </thead>
         <tbody>
           {Array.from({ length: t.rows }, (_, r) => (
-            // oxlint-disable-next-line react/no-array-index-key -- empty rows to write in
+            // oxlint-disable-next-line react/no-array-index-key -- rows to write in
             <tr key={r}>
+              {labelled && (
+                <th scope="row">
+                  <SheetText
+                    label={`列標籤 ${r + 1}（題目 ${no}）`}
+                    value={labels[r] ?? ""}
+                    placeholder="這一列要寫什麼"
+                    disabled={disabled}
+                    onChange={(text) => set({ ...t, row_labels: labels.map((x, j) => (j === r ? text : x)) })}
+                  />
+                </th>
+              )}
               {t.columns.map((_, c) => (
                 // oxlint-disable-next-line react/no-array-index-key, jsx-a11y/control-has-associated-label -- empty cells the students write in
                 <td key={c} />
@@ -185,7 +211,7 @@ function TableArea({ item, no, disabled, onChange }: { item: WsItem; no: number;
           className="text-link is-plain"
           aria-label={`加一列（題目 ${no}）`}
           disabled={disabled || t.rows >= MAX_TABLE_ROWS}
-          onClick={() => set({ ...t, rows: t.rows + 1 })}
+          onClick={() => setRows(t.rows + 1)}
         >
           加一列
         </button>
@@ -194,15 +220,31 @@ function TableArea({ item, no, disabled, onChange }: { item: WsItem; no: number;
           className="text-link is-plain"
           aria-label={`少一列（題目 ${no}）`}
           disabled={disabled || t.rows <= 1}
-          onClick={() => set({ ...t, rows: t.rows - 1 })}
+          onClick={() => setRows(t.rows - 1)}
         >
           少一列
         </button>
-        {fromPrompt && <span className="quiet-note">欄名取自題目；改了欄名就照你的。</span>}
-        {!item.table && !fromPrompt && t.columns.every((c) => c.trim() === "") && (
-          <span className="quiet-note">還沒有欄名：印出時是沒有欄名的空白表格。可以在上面寫欄名，或在題目寫「…: Who? / Why?」。</span>
-        )}
+        <button
+          type="button"
+          className="text-link is-plain"
+          aria-label={labelled ? `拿掉列標籤（題目 ${no}）` : `加列標籤（題目 ${no}）`}
+          disabled={disabled}
+          onClick={() => set({ ...t, row_labels: labelled ? [] : Array.from({ length: t.rows }, () => "") })}
+        >
+          {labelled ? "拿掉列標籤" : "加列標籤"}
+        </button>
+        {fromPrompt && !blankHeading && <span className="quiet-note">欄名取自題目；改了欄名就照你的。</span>}
       </p>
+      {blankHeading && (
+        <p className="ws-table-warning" role="note" lang="zh-Hant">
+          有欄名還是空白（沒有填的欄名不會印出）：請寫上這一欄要比較的事物，學生才知道要比什麼。
+        </p>
+      )}
+      {!labelled && cols === 2 && (
+        <p className="ws-table-warning" role="note" lang="zh-Hant">
+          還沒有列標籤：兩欄的表格通常要說明每一列比什麼（例如 Claim、Supporting detail），可以按「加列標籤」。
+        </p>
+      )}
     </div>
   );
 }

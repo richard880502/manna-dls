@@ -478,6 +478,10 @@ pub struct RawOutItem {
     /// organizer to draw; absent or `null` otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub organizer: Option<crate::worksheet::organizer::RawOrganizer>,
+    /// 表格整理 (`worksheet_template_section` version 7, when the section may use it): the
+    /// column headings and row labels; absent or `null` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<crate::worksheet::table::RawTable>,
 }
 
 /// One generated block.
@@ -666,12 +670,13 @@ pub const ITEM_ANSWER_CHARS: usize = 400;
 /// SECTION_OUT of the probe (gen2), with length caps; at most `item_count` items. Version 2 of
 /// the prompt: the scaffold is an array of lines and every item ends with its Bloom level (an
 /// enum of the six ids), written after the item so the label describes what was written.
-/// `organizers` (the section may use 圖像組織): every item has an `organizer` after its options.
+/// `organizers` (the section may use 圖像組織): every item has an `organizer` after its options;
+/// `tables` (the section may use 表格整理): and a `table` after that.
 /// `supports` (the section's support boxes): instead of `scaffold`, exactly one entry per box,
 /// its heading one of the boxes' headings, written before the items.
 pub fn section_out_schema(
     item_count: usize,
-    organizers: bool,
+    (organizers, tables): (bool, bool),
     supports: &[WsTemplateSupport],
 ) -> Value {
     let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
@@ -682,6 +687,9 @@ pub fn section_out_schema(
     ];
     if organizers {
         item.push(("organizer", crate::worksheet::organizer::schema(false)));
+    }
+    if tables {
+        item.push(("table", crate::worksheet::table::schema()));
     }
     item.extend([
         ("answer", s_max(ITEM_ANSWER_CHARS)),
@@ -1463,14 +1471,14 @@ mod tests {
         let o = outline_schema();
         let keys: Vec<&String> = o["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys.last().map(|k| k.as_str()), Some("outline"));
-        let out = section_out_schema(20, false, &[]);
+        let out = section_out_schema(20, (false, false), &[]);
         assert_eq!(out["properties"]["items"]["maxItems"], 12, "capped at 12");
         assert_eq!(
-            section_out_schema(3, false, &[])["properties"]["items"]["maxItems"],
+            section_out_schema(3, (false, false), &[])["properties"]["items"]["maxItems"],
             3
         );
         // A section that may use 圖像組織: an organizer after the options.
-        let with = section_out_schema(3, true, &[]);
+        let with = section_out_schema(3, (true, false), &[]);
         let keys: Vec<&String> = with["properties"]["items"]["items"]["properties"]
             .as_object()
             .unwrap()
@@ -1776,7 +1784,7 @@ mod tests {
                 pattern: String::new(),
             },
         ];
-        let out = section_out_schema(3, false, &boxes);
+        let out = section_out_schema(3, (false, false), &boxes);
         let keys: Vec<&String> = out["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys, ["title", "instructions", "supports", "items"]);
         let sup = &out["properties"]["supports"];
