@@ -305,7 +305,11 @@ describe("options: the four blocks of spec §5", () => {
     expect(last.settings).toEqual(emptySettings());
 
     // While Manna works the four steps are listed with their state.
-    const progress = within(await screen.findByRole("status", { name: "產生進度" }));
+    const panel = await screen.findByRole("status", { name: "產生進度" });
+    // 進度 sits at the top of the settings column, before the first settings section.
+    const firstSection = screen.getByRole("heading", { name: "要做什麼" });
+    expect(panel.compareDocumentPosition(firstSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const progress = within(panel);
     expect(progress.getByText("逐段的問題與任務")).toBeInTheDocument();
     expect(progress.getByText("進行中：正在設計題目")).toBeInTheDocument();
     expect(progress.getAllByText("排隊中")).toHaveLength(3);
