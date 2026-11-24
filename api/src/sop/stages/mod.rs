@@ -313,6 +313,22 @@ pub fn swap_note(swap: &Swap) -> String {
     )
 }
 
+/// What a run for one kind tells the model on top of the objectives prompt: the 內容目標 are
+/// decided first; the 語言目標 are then derived from the ones the teacher decided on.
+pub fn kind_note(kind: ObjectiveType, decided_content: &[String]) -> String {
+    match kind {
+        ObjectiveType::Content => "\n\n【這次只要內容目標】請推薦 2–3 項內容目標，objectives 裡的 siop_type 一定是「內容目標」，不要寫語言目標。語言目標要等教師決定好內容目標之後，才會另外請你依內容目標推導。".to_string(),
+        ObjectiveType::Language => format!(
+            "\n\n【這次只要語言目標】教師已經決定的內容目標：\n{}\n請依這些內容目標，推薦 2–3 項語言目標，objectives 裡的 siop_type 一定是「語言目標」，不要重寫內容目標。語言目標是從內容目標推出來的：先想學生要達成上面的內容目標，必須用英語讀、聽、說、寫裡的哪些能力，做出什麼看得到、聽得到的成果（例如口頭說明、寫出句子、標出線索），再寫成語言目標；reason_zh 要說明它服務哪一項內容目標、讓學生做出什麼成果，老師看到這個成果就知道學生有沒有學會內容。",
+            decided_content
+                .iter()
+                .map(|c| format!("- {}", clip_chars(c, 300)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    }
+}
+
 mod goals;
 mod tasks;
 use tasks::existing_tasks_text;

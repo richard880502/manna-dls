@@ -13,7 +13,7 @@ use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::materials::{ocr, store as material_store};
 use crate::objectives::draft::{self, DraftInput, DraftResult};
-use crate::objectives::{CONTENT_CODES, LANGUAGE_CODES};
+use crate::objectives::{Stage, CONTENT_CODES, LANGUAGE_CODES};
 use crate::prep::is_bare_label;
 use crate::progress::{self, Progress, Sink, Tracker};
 use crate::sop::{store as sop_store, MAX_MATERIAL_CHARS};
@@ -43,6 +43,8 @@ const AVOID_MAX: usize = 8;
 const AVOID_CHARS: usize = 200;
 /// Lines kept in a partial redraw: one less than the largest set (C1, C2, L1, L2).
 const KEEP_MAX: usize = 3;
+const MSG_STAGE_CONTENT: &str =
+    "語言目標要依內容目標草擬：請先決定內容目標（content 給 1–2 項），Manna 才能依它草擬語言目標。";
 const MSG_KEEP: &str =
     "keep 的 code 需為 C1、C2、L1 或 L2，最多 3 句，每個代號一句，句子不能是空的。";
 
@@ -84,6 +86,13 @@ pub struct DraftObjectives {
     /// 換掉沒勾的: the lines the teacher keeps (and edited), which the new ones go with.
     #[serde(default)]
     pub keep: Vec<KeptObjective>,
+    /// Which kind to draft: `content` (the default) or `language`. The 語言目標 are drafted
+    /// after the teacher decided the 內容目標, from them.
+    #[serde(default)]
+    pub stage: Stage,
+    /// `stage: language`: the 內容目標 the teacher decided on (1–2 lines).
+    #[serde(default)]
+    pub content: Vec<String>,
     /// The page's own key for asking how far the drafting is
     /// (`GET /api/objective-drafts/progress/:progress_id`).
     #[serde(default)]
@@ -183,6 +192,25 @@ pub async fn draft(
         }
         keep.push((code, text));
     }
+    let content: Vec<String> = req
+        .content
+        .iter()
+        .map(|c| clip_chars(c.trim(), crate::objectives::MAX_FIELD_CHARS))
+        .filter(|c| !c.is_empty())
+        .take(CONTENT_CODES.len())
+        .collect();
+    match req.stage {
+        Stage::Language if content.is_empty() => {
+            return Err(AppError::bad_request(MSG_STAGE_CONTENT));
+        }
+        Stage::Content if !content.is_empty() => {
+            return Err(AppError::bad_request(
+                "content 只在 stage 為 language 時使用。",
+            ));
+        }
+        _ => {}
+    }
+    let stage = req.stage;
     let paragraphs = material.paragraphs.len();
     let tracker = match &req.progress_id {
         Some(key) => {
@@ -202,6 +230,8 @@ pub async fn draft(
             request,
             avoid: avoid.clone(),
             keep: keep.clone(),
+            stage,
+            content,
         },
         tracker.clone(),
     )
@@ -218,7 +248,8 @@ pub async fn draft(
         teacher.id(),
         "objectives_drafted",
         json!({
-            "kind": kind, "material_id": req.material_id, "paragraphs": paragraphs,
+            "kind": kind, "stage": stage.as_str(), "material_id": req.material_id,
+            "paragraphs": paragraphs,
             "selected": req.paragraph_ids.as_ref().is_some_and(|ids| !ids.is_empty()),
             "class_id": req.class_id, "status": result.status,
             "interaction_id": result.interaction_id, "shown": result.objectives.len(),

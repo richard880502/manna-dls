@@ -517,13 +517,14 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
             json!(["evaluate", "create"]),
         ]
     );
-    // The latest version of the prompt (4: SIOP), with the objective and the request. The teacher
+    // The latest version of the prompt (5: the 語言目標 follow from the 內容目標; 4 was SIOP), with
+    // the objective and the request. The teacher
     // gave a 內容目標 only: it is passed as is; the 語言目標 is left for the model to draft.
     let rows = calls(&app, "prep_activity").await;
     assert_eq!(rows.len(), 1);
     let snapshot = &rows[0].2;
-    assert_eq!(snapshot["prompt"]["version_no"], 4);
-    // Version 4 names the two fields; the combined line still carries the 內容目標.
+    assert_eq!(snapshot["prompt"]["version_no"], 5);
+    // Version 4 and later name the two fields; the combined line still carries the 內容目標.
     assert_eq!(
         snapshot["inputs"]["teacher_objective"],
         format!("內容目標：{objective}").as_str()

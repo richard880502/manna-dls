@@ -956,6 +956,16 @@
   font-weight: var(--weight-strong);
 }
 
+/* The 內容目標 the 語言目標 are drafted from, said above them. */
+.objective-decided {
+  margin: var(--space-sm) 0;
+}
+
+.objective-decided ul {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-lg);
+}
+
 /* The drafts under the two fields: Manna's gold, a panel of the card rather than a card of its own. */
 .objective-drafts.is-embedded {
   margin-top: var(--space-md);

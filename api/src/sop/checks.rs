@@ -433,11 +433,34 @@ impl ObjectivesEval {
         }
     }
 
-    /// 換一個: only the first objective of the asked-for type is kept.
-    pub fn restrict(mut self, only: Option<ObjectiveType>) -> Self {
+    /// The checks as the log keeps them. A run for one kind (換一個, the 內容目標 step, the 語言目標
+    /// step) is not expected to have both kinds: that check says whether the asked-for kind is there.
+    pub fn results_for(&self, only: Option<ObjectiveType>) -> Vec<CheckResult> {
+        let Some(t) = only else {
+            return self.results.clone();
+        };
+        self.results
+            .iter()
+            .map(|r| {
+                if r.name != "both_siop_types_present" {
+                    r.clone()
+                } else if self.usable_for(only) {
+                    CheckResult::pass("asked_siop_type_present")
+                } else {
+                    CheckResult::fail(
+                        "asked_siop_type_present",
+                        format!("no usable {}", t.label()),
+                    )
+                }
+            })
+            .collect()
+    }
+
+    /// 換一個 or a run for one kind: only the first `max` objectives of the asked-for type are kept.
+    pub fn restrict(mut self, only: Option<ObjectiveType>, max: usize) -> Self {
         if let Some(t) = only {
             self.kept.retain(|o| o.kind == t);
-            self.kept.truncate(1);
+            self.kept.truncate(max);
         }
         self
     }

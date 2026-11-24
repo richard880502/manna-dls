@@ -410,7 +410,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "objective_draft",
         name_zh: "草擬學習目標（內容與語言目標）",
         group: G_OBJECTIVES,
-        description: "老師在「建立」頁按「幫我草擬目標」時：依教材與 SIOP 先草擬內容目標，再推出語言目標。",
+        description: "老師在「建立」頁按「請 Manna 擬一組」或不寫目標就產生時：依教材與 SIOP 先草擬內容目標；老師決定內容目標之後，再依它草擬語言目標（分兩次呼叫）。",
         uses_user_template: true,
         vars: vars![
             auto("purpose", "這一課要做什麼"),
@@ -425,6 +425,7 @@ pub static REGISTRY: &[PromptInfo] = &[
             opt("paragraph_count", "教材段數"),
             req("passage_numbered", "教材（每段有編號）"),
             opt("redo_note", "重做時的提醒（第一次是空的）"),
+            opt("stage_note", "這次要寫哪一組目標（內容目標先寫；語言目標在教師決定內容目標之後，依它寫）"),
         ],
     },
     PromptInfo {
@@ -591,7 +592,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_objectives",
         name_zh: "逐步設計第 3 步：推薦內容目標與語言目標",
         group: G_SOP,
-        description: "逐步設計第 3 步：依教材推薦內容目標與語言目標，並連結課綱條目；「換一個」只要一項時也用這一個。",
+        description: "逐步設計第 3 步：依教材推薦內容目標，老師有了內容目標之後再依它推薦語言目標（分兩次請求），並連結課綱條目；「換一個」只要一項時也用這一個。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),

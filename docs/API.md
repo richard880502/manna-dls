@@ -839,7 +839,7 @@ interface SopState {
 | GET | `/api/lessons/:id/sop/versions` | – | `Array<{ version_no, created_at, material_version_no: number \| null }>`，新到舊 |
 | GET | `/api/lessons/:id/sop/versions/:version_no` | – | `SopState`（該版本；`jobs` 皆為 null） |
 | POST | `/api/lessons/:id/sop/analysis` | `{ class_id? }` | 202 `SopJob`：逐段教材分析（第 2 步） |
-| POST | `/api/lessons/:id/sop/objectives` | `{ class_id? }` | 202 `SopJob`：SIOP 內容／語言目標推薦＋課綱連結（第 3 步） |
+| POST | `/api/lessons/:id/sop/objectives` | `{ class_id?, only_type?: "content" \| "language" }` | 202 `SopJob`：SIOP 目標推薦＋課綱連結（第 3 步）。內容目標先決定，語言目標之後才依它推薦，所以一次只推薦一種：`content` 推薦 2–3 項內容目標；`language` 要這一課已有內容目標（沒有 → 400），依教師已決定的內容目標推薦 2–3 項語言目標（user message 最後附上它們）；沒帶時這一課沒有內容目標就推薦內容目標，否則推薦語言目標。`sop_objectives` 第 2 版起 system text 有這個流程；結果與 `check_results` 檢查的是「要的那一種」（`asked_siop_type_present`），不再要求兩種都有 |
 | GET | `/api/sop-jobs/:id` | – | `SopJob` |
 
 教師自己連結課綱條目時，前端用 Phase 2.0 的 `GET /api/knowledge/curriculum`（不呼叫 AI）搜尋，把選到的 `item_code` 放進目標的 `links` 再照常儲存；只有正式課綱條目（有 `official_code`）可以連結，知識庫中手寫的示範條目不行。
@@ -3422,6 +3422,8 @@ interface ObjectiveDraftRequest {
   material?: { title?: string; text: string };   // 貼上的文字：只用來草擬，不存進教材庫
   class_id?: number;               // 自己的班級，帶入班級特性（不是自己的 → 404）
   request?: string;                // 教師的要求（≤2000；只是工具名稱的不算）
+  stage?: "content" | "language";  // 先決定內容目標，再依它擬語言目標：預設 "content"（只擬內容目標）；"language" 只擬語言目標
+  content?: string[];              // stage "language" 必填：教師已決定的內容目標（1–2 句，取前 2 句，各 ≤300 字）；stage "content" 不可帶
   avoid?: string[];                // 「換一組」「換掉沒勾的」：要換掉的句子（最多 8 句），不要重複
   keep?: { code: "C1" | "C2" | "L1" | "L2"; text: string }[];   // 「換掉沒勾的」：教師留下來的目標（最多 3 個、每個代號一個；text 是她現在的句子，改過的也算），新的要和它們搭配；沒有 keep ＝ 整組重擬
 }
@@ -3429,12 +3431,12 @@ interface ObjectiveDraftResult {
   interaction_id: number | null;   // 顯示的這一輪草擬；教師的決定記在這一筆
   status: "shown" | "blocked" | "timeout" | "error" | "disabled";
   message: string | null;          // 沒有草稿、或只剩一組時說明
-  objectives: ObjectiveDraft[];    // 通過 R1 與 R3 的草稿：內容目標在前；語言目標學習策略在前
+  objectives: ObjectiveDraft[];    // 通過 R1 與 R3 的草稿（只有 stage 要的那一種）；語言目標學習策略在前
   hidden: number;                  // 這一輪沒有通過檢查、沒有列出的數量
   context: AiContextItem[];        // 「Manna 已帶入的資訊」
 }
 interface ObjectiveDraft {
-  index: number;                   // 在模型輸出裡的位置（內容目標在前）＝決定的 item_index
+  index: number;                   // 在這一次呼叫輸出裡的位置＝決定的 item_index（語言目標從 0 起算）
   kind: "content" | "language";
   code: string;                    // "C1" "C2" "L1" "L2"
   text: string;                    // 給學生的 "I can …"（採用時放進欄位的句子）
@@ -3446,14 +3448,16 @@ interface ObjectiveDraft {
 }
 ```
 
-缺教材或貼上的文字是空的、`kind` 不對、`keep` 的代號不對／重複／超過 3 個／句子是空的 → 400；沒有開啟 AI → 200 `status: "disabled"`（前端直接產生）。
+**先內容目標、再語言目標**：語言目標是為了達成內容目標，學生需要用什麼語言（要讀、聽、說、寫出什麼成果，老師看到成果就知道學生有沒有學會內容目標），所以內容目標決定之後才擬語言目標，每次請求只擬一種。第一次請求（`stage: "content"`）擬內容目標；教師決定之後，第二次請求（`stage: "language"`、`content` 帶她留下的內容目標，代號依序是 C1、C2）擬語言目標，`supports` 只能是這些代號，審查（R3）時它們當作已決定的上下文、不再判斷。`objective_draft` 第 2 版起 user template 有 `{{stage_note}}`（說明這次要寫哪一組、語言目標要依哪些內容目標推導）；一次只擬一種，所以輸出 schema 另一組的陣列是空的（`maxItems: 0`）。前端：「請 Manna 擬內容目標」與「產生」（兩格都空）先擬內容目標，按「用勾選的 N 個內容目標，請 Manna 擬語言目標」才擬語言目標（或「只用勾選的 N 個內容目標」略過）；語言目標欄旁的「請 Manna 依內容目標擬語言目標」在內容目標欄有字時才能按。
+
+缺教材或貼上的文字是空的、`kind` 不對、`stage` 不是 content／language、`stage: "language"` 沒有 `content`（或 `stage: "content"` 帶了 `content`）、`keep` 的代號不對／重複／超過 3 個／句子是空的 → 400；沒有開啟 AI → 200 `status: "disabled"`（前端直接產生）。
 
 **流程**（`objectives::draft`；每次呼叫各一列 `ai_interactions`，教材只記字數與雜湊）：
 
 1. **草擬**（`objective_draft`，鷹架 `SC-OBJ-DRAFT`，`max_tokens` 1500）。輸入：用途（工具，例如「閱讀理解題（依 Bloom 認知層次出題…）」；不同工具的請求因此不同）、學校類型、班級特性、教師的要求、這位老師最近 3 次草擬的語言目標類別、以教材做混合檢索的前 8 個課綱條目、加段落標記的教材（全部段落，不設上限；`paragraph_ids` 選了的話只有選的）。輸出 schema（欄位照撰寫順序，每個字串都有上限）：`{ content_objectives: [1–2] { zh ≤100, en ≤180, check_zh ≤100 }, language_objectives: [1–2] { category（enum 四類）, supports（"C1"｜"C2"）, zh ≤100, en ≤180, relation_zh ≤160, check_zh ≤100 } }`——先寫內容目標，再從內容目標推出語言目標。
 2. **R1 規則檢查**（程式，`objectives::check_rules`），每一項各自判斷，不合格的拿掉：`en` 是英文、以 "I can" 開頭（"Students will be able to …" 改成 "I can …"）、不超過 30 個字、主要動詞（I can 後的第一個字與 and／or 後的字）不是 learn、know、understand 等看不到表現的動詞；`zh` 有中文、開頭（去掉「學生能」）不是了解、理解、知道、學會…；語言目標的類別是四類之一、`supports` 是通過的內容目標、`relation_zh` 寫成「學生要……才能……」；不重複。**R2**：有學習策略時排到語言目標的第一個——除非最近兩次草擬的語言目標都以策略為主（這時 prompt 請模型這次改用其他三類，讓一個單元的語言目標有變化；「單元」以這位老師最近的草擬近似，備課對話沒有單元）。規則檢查後一組都沒有時，同一次呼叫**重試一次**（temperature +0.4，附上問題）。
 3. **R3 審查**（`objective_check`，鷹架 `SC-OBJ-CHECK`，`max_tokens` 900），和 `worksheet_bloom_check` 一樣一次呼叫逐項判斷：`{ items: [正好 n 筆] { id（enum：這一輪的代號）, reason ≤100, problems: ("not_core" | "not_assessable" | "activity" | "not_readable" | "not_needed" | "no_relation")[] } }`。後兩種只用於語言目標（用在內容目標上不算）。有任何問題的草稿**不顯示**；語言目標支持的內容目標沒通過，它也不顯示；審查漏掉的項目重試一次後仍沒判斷的不顯示；審查呼叫失敗 → 這一輪都不顯示（G3）。
-4. **再草擬一次**：一組（內容或語言）沒有通過的草稿時，伺服器再草擬一輪（附上沒通過的原因，並列出已通過、可以照原句保留的目標），一樣經過 2、3。兩組都有的那一輪優先，否則留下通過較多的一輪。沒有被選的那一輪的草擬記錄標成 `blocked`。
+4. **再草擬一次**：這次要的那一種沒有通過的草稿時，伺服器再草擬一輪（附上沒通過的原因，並列出已通過、可以照原句保留的目標），一樣經過 2、3。有要的那一種的那一輪優先，否則留下通過較多的一輪。沒有被選的那一輪的草擬記錄標成 `blocked`。
 5. 顯示的那一輪的草擬記錄：有草稿是 `shown`，沒有是 `blocked`；`check_results` 記下 `r1_rules`、`r3_judge`、每一項的審查（`verdicts`）、顯示了哪些（`shown`）與程式的修改（`repairs`）。
 
 **教師的決定**：用既有的 `POST /api/ai/:interaction_id/decision`（`interaction_id` 是回應的那一筆、`item_index` 是草稿的 `index`）：

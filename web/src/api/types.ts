@@ -1352,6 +1352,8 @@ export interface SopProceduralSteps {
 
 /** 換一個（objectives）、這一段再建議一次（goals） */
 export interface SopRedoRequest {
+  /** objectives：先推薦內容目標（`content`），有了內容目標之後才依它推薦語言目標（`language`） */
+  only_type?: ObjectiveType;
   parent_job_id?: number;
   item_index?: number;
   paragraph_id?: string;
@@ -3036,6 +3038,13 @@ export interface ObjectiveDraftRequest {
   paragraph_ids?: string[];
   class_id?: number;
   request?: string;
+  /**
+   * 先決定內容目標，再依它擬語言目標：`content`（預設）只擬內容目標；`language` 只擬語言目標，
+   * 並用 `content` 帶上教師已決定的內容目標。
+   */
+  stage?: "content" | "language";
+  /** `stage: "language"`：教師已決定的內容目標（1–2 項），語言目標由它們推導 */
+  content?: string[];
   /** 「換一組」：上一組的句子，不要重複 */
   avoid?: string[];
   /** 「換掉沒勾的」：教師留下來的目標（代號是目前這一組的 C1、C2、L1、L2，句子是她現在的版本）；新的要和它們搭配 */

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import type { SopJob, SopJobKind, SopParagraph, SopScaffolds } from "../../api/types";
+import type { ObjectiveType, SopJob, SopJobKind, SopParagraph, SopScaffolds } from "../../api/types";
 import { useApp } from "../../context/AppContext";
 import { SCAFFOLD_FIELDS, paragraphMark } from "../../lib/sop";
 import { AiContextPanel } from "../AiContextPanel";
@@ -74,9 +74,20 @@ function useElapsedSeconds(since: string | null | undefined, active: boolean): n
   return Number.isNaN(start) ? 0 : Math.max(0, Math.round((now - start) / 1000));
 }
 
+/** One of several things Manna can be asked for in a stage (the objectives: 內容目標 first, then 語言目標). */
+export interface AskOption {
+  label: string;
+  /** Sent with the request (`only_type`). */
+  only: ObjectiveType;
+  /** Not available yet: said under the button why. */
+  blocked?: string | null;
+}
+
 interface AskMannaProps {
   sop: SopController;
   kind: SopJobKind;
+  /** Several buttons instead of one (`label` and `againLabel` are then not used). */
+  options?: AskOption[];
   /** The button before anything was asked, e.g. 「請 Manna 逐段分析」. */
   label: string;
   /** The button once there is a result. */
@@ -90,7 +101,7 @@ interface AskMannaProps {
  * seconds (sometimes minutes), so the request only starts a job: the teacher sees the phase and
  * the seconds, and can go on with other steps.
  */
-export function AskManna({ sop, kind, label, againLabel, shownNote }: AskMannaProps) {
+export function AskManna({ sop, kind, label, againLabel, shownNote, options }: AskMannaProps) {
   const { config } = useApp();
   const aiEnabled = config?.ai_enabled !== false;
   const job = sop.jobs[kind];
@@ -101,7 +112,7 @@ export function AskManna({ sop, kind, label, againLabel, shownNote }: AskMannaPr
 
   return (
     <div className="ask-manna">
-      {!running && (
+      {!running && !options && (
         <button
           type="button"
           className="manna-button"
@@ -112,6 +123,26 @@ export function AskManna({ sop, kind, label, againLabel, shownNote }: AskMannaPr
           {result ? againLabel : label}
         </button>
       )}
+      {!running &&
+        options?.map((option) => (
+          <div key={option.only} className="ask-option">
+            <button
+              type="button"
+              className="manna-button"
+              disabled={!aiEnabled || noMaterial || Boolean(option.blocked)}
+              aria-describedby={option.blocked ? `ask-${kind}-${option.only}-why` : undefined}
+              onClick={() => void sop.startJob(kind, { only_type: option.only })}
+            >
+              <span className="star" aria-hidden="true" />
+              {option.label}
+            </button>
+            {option.blocked && aiEnabled && !noMaterial && (
+              <p className="quiet-note" id={`ask-${kind}-${option.only}-why`}>
+                {option.blocked}
+              </p>
+            )}
+          </div>
+        ))}
       {!running && noMaterial && aiEnabled && (
         <p className="quiet-note">先在第 1 步貼上教材，Manna 才有東西可以讀。這一步也可以全部自己寫。</p>
       )}

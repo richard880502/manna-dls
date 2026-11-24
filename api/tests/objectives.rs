@@ -632,7 +632,8 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
     assert_eq!(v["status"], "shown", "{v}");
     assert_eq!(v["message"], Value::Null);
     assert_eq!(v["hidden"], 0);
-    assert_eq!(codes(&v), ["C1", "L1"]);
+    // The 內容目標 come first, alone: the 語言目標 are derived from the ones the teacher decides on.
+    assert_eq!(codes(&v), ["C1"]);
     let c = &v["objectives"][0];
     assert_eq!(c["kind"], "content");
     assert_eq!(c["index"], 0);
@@ -640,12 +641,6 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
     assert!(!c["zh"].as_str().unwrap().is_empty());
     assert!(!c["check_zh"].as_str().unwrap().is_empty());
     assert!(c.get("relation_zh").is_none());
-    let l = &v["objectives"][1];
-    assert_eq!(l["kind"], "language");
-    assert_eq!(l["index"], 1);
-    assert_eq!(l["category"], "strategy");
-    assert_eq!(l["supports"], "C1");
-    assert!(l["relation_zh"].as_str().unwrap().starts_with("學生要用"));
     assert!(v["context"]
         .as_array()
         .unwrap()
@@ -682,10 +677,58 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!(logged["shown"], 2);
+    assert_eq!(logged["shown"], 1);
+    assert_eq!(logged["stage"], "content");
+    let first_user = drafts[0].3["prompt"]["user"].as_str().unwrap();
+    assert!(first_user.contains("【這次只寫內容目標】"), "{first_user}");
 
-    // 採用 the 內容目標, 修改 the 語言目標: the existing decision endpoint.
+    // The 語言目標 are drafted after the 內容目標 are decided, from the one the teacher kept.
+    let decided = "I can explain the main idea in my own words.";
+    let lang = draft(
+        &app,
+        &t,
+        json!({ "kind": "comprehension", "material": material(""), "stage": "language",
+                "content": [decided] }),
+    )
+    .await;
+    assert_eq!(lang["status"], "shown", "{lang}");
+    assert_eq!(codes(&lang), ["L1"]);
+    let l = &lang["objectives"][0];
+    assert_eq!(l["kind"], "language");
+    assert_eq!(l["index"], 0, "its place in its own call");
+    assert_eq!(l["category"], "strategy");
+    assert_eq!(l["supports"], "C1");
+    assert!(l["relation_zh"].as_str().unwrap().starts_with("學生要用"));
+    let drafts = interactions(&app, "objective_draft").await;
+    assert_eq!(drafts.len(), 2);
+    let user = drafts[1].3["prompt"]["user"].as_str().unwrap();
+    assert!(user.contains("【這次只寫語言目標】"), "{user}");
+    assert!(user.contains(&format!("- C1：{decided}")), "{user}");
+    assert!(drafts[1].3["inputs"]["stage_note"]
+        .as_str()
+        .unwrap()
+        .contains(decided));
+    let judge = interactions(&app, "objective_check").await;
+    assert!(judge[1].3["prompt"]["user"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("C1（內容目標，教師已決定，不用判斷）{decided}")));
+    // A 語言目標 needs a decided 內容目標; the 內容目標 stage takes none.
+    for body in [
+        json!({ "kind": "comprehension", "material": material(""), "stage": "language" }),
+        json!({ "kind": "comprehension", "material": material(""), "stage": "language", "content": ["  "] }),
+        json!({ "kind": "comprehension", "material": material(""), "content": [decided] }),
+        json!({ "kind": "comprehension", "material": material(""), "stage": "other" }),
+    ] {
+        let (st, _) = app
+            .post("/api/objective-drafts", Some(&t), body.clone())
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    // 採用 the 內容目標, 修改 the 語言目標: the existing decision endpoint, on each call.
     let id = v["interaction_id"].as_i64().unwrap();
+    let lang_id = lang["interaction_id"].as_i64().unwrap();
     let (s, _) = app
         .post(
             &format!("/api/ai/{id}/decision"),
@@ -696,17 +739,17 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
     assert_eq!(s, StatusCode::OK);
     let (s, _) = app
         .post(
-            &format!("/api/ai/{id}/decision"),
+            &format!("/api/ai/{lang_id}/decision"),
             Some(&t),
-            json!({ "item_index": 1, "decision": "revise", "revised_content": "I can reread a hard sentence." }),
+            json!({ "item_index": 0, "decision": "revise", "revised_content": "I can reread a hard sentence." }),
         )
         .await;
     assert_eq!(s, StatusCode::OK);
     let rows: Vec<(i32, String, Option<String>)> = sqlx::query_as(
         "SELECT item_index, decision, revised_content FROM teacher_decisions
-          WHERE ai_interaction_id = $1 ORDER BY id",
+          WHERE ai_interaction_id = ANY($1) ORDER BY id",
     )
-    .bind(id)
+    .bind(vec![id, lang_id])
     .fetch_all(&app.db)
     .await
     .unwrap();
@@ -715,7 +758,7 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
         [
             (0, "adopt".to_string(), None),
             (
-                1,
+                0,
                 "revise".to_string(),
                 Some("I can reread a hard sentence.".to_string())
             )
@@ -738,7 +781,7 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
         &t,
         json!({
             "kind": "comprehension", "material": material(""),
-            "avoid": [v["objectives"][0]["text"], v["objectives"][1]["text"]],
+            "avoid": [v["objectives"][0]["text"]],
         }),
     )
     .await;
@@ -746,7 +789,7 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
         .as_str()
         .unwrap()
         .contains("summarize"));
-    let user = interactions(&app, "objective_draft").await[1].3["prompt"]["user"]
+    let user = interactions(&app, "objective_draft").await[2].3["prompt"]["user"]
         .as_str()
         .unwrap()
         .to_string();
@@ -758,13 +801,13 @@ async fn manna_drafts_checked_objectives_and_records_what_the_teacher_decides() 
         &t,
         json!({
             "kind": "comprehension", "material": material(""),
-            "avoid": [v["objectives"][1]["text"]],
+            "avoid": [v["objectives"][0]["text"]],
             "keep": [{ "code": "C1", "text": "I can explain the main idea in my own words." }],
         }),
     )
     .await;
     assert_eq!(partial["status"], "shown");
-    let user = interactions(&app, "objective_draft").await[2].3["prompt"]["user"]
+    let user = interactions(&app, "objective_draft").await[3].3["prompt"]["user"]
         .as_str()
         .unwrap()
         .to_string();
@@ -806,7 +849,7 @@ async fn drafts_that_fail_r1_or_r3_are_not_shown_and_the_server_tries_once_more(
     )
     .await;
     assert_eq!(v["status"], "shown");
-    assert_eq!(codes(&v), ["C1", "L1"]);
+    assert_eq!(codes(&v), ["C1"]);
     let drafts = interactions(&app, "objective_draft").await;
     assert_eq!(
         drafts
@@ -822,18 +865,20 @@ async fn drafts_that_fail_r1_or_r3_are_not_shown_and_the_server_tries_once_more(
 
     // R3 by the judge: round 1's 語言目標 is not needed; round 2 is drafted with the reasons and
     // shown (its own wording), round 1 is recorded as blocked with why.
+    let decided = ["I can explain the main point with two examples from the text."];
     let v = draft(
         &app,
         &t,
-        json!({ "kind": "worksheet", "material": material("FAKE_OBJ_R3") }),
+        json!({ "kind": "worksheet", "material": material("FAKE_OBJ_R3"),
+                "stage": "language", "content": decided }),
     )
     .await;
     assert_eq!(v["status"], "shown", "{v}");
-    assert_eq!(codes(&v), ["C1", "L1"]);
+    assert_eq!(codes(&v), ["L1"]);
     assert!(v["objectives"][0]["text"]
         .as_str()
         .unwrap()
-        .contains("describe the main problem"));
+        .contains("predict from the title"));
     let drafts = interactions(&app, "objective_draft").await;
     let (round1, round2) = (&drafts[2], &drafts[3]);
     assert_eq!(v["interaction_id"], round2.0);
@@ -850,17 +895,18 @@ async fn drafts_that_fail_r1_or_r3_are_not_shown_and_the_server_tries_once_more(
     assert_eq!(status, "blocked");
     assert!(checks.to_string().contains("not_needed"), "{checks}");
 
-    // Every 語言目標 fails, in both rounds: only the 內容目標 is shown, and the teacher is told.
+    // Every 語言目標 fails, in both rounds: nothing is shown, and the teacher is told. The
+    // 內容目標 she decided on stay hers.
     let v = draft(
         &app,
         &t,
-        json!({ "kind": "tiered", "material": material("FAKE_OBJ_R3_ALWAYS") }),
+        json!({ "kind": "tiered", "material": material("FAKE_OBJ_R3_ALWAYS"),
+                "stage": "language", "content": decided }),
     )
     .await;
-    assert_eq!(v["status"], "shown");
-    assert_eq!(codes(&v), ["C1"]);
-    assert_eq!(v["hidden"], 1);
-    assert!(v["message"].as_str().unwrap().contains("只列出內容目標"));
+    assert_eq!(v["status"], "blocked", "{v}");
+    assert!(codes(&v).is_empty());
+    assert!(v["message"].as_str().unwrap().contains("自己寫"));
 
     // Nothing usable at all.
     let v = draft(
@@ -878,43 +924,45 @@ async fn drafts_that_fail_r1_or_r3_are_not_shown_and_the_server_tries_once_more(
 async fn two_per_group_strategy_first_and_variety_within_a_unit() {
     let app = test_app!();
     let t = app.teacher("R-OBJ-9", "general").await;
-    let v = draft(
+    let c = draft(
         &app,
         &t,
         json!({ "kind": "comprehension", "material": material("FAKE_OBJ_TWO") }),
     )
     .await;
-    assert_eq!(codes(&v), ["C1", "C2", "L2", "L1"], "the strategy first");
+    assert_eq!(codes(&c), ["C1", "C2"]);
+    let v = draft(
+        &app,
+        &t,
+        json!({ "kind": "comprehension", "material": material("FAKE_OBJ_TWO"), "stage": "language",
+                "content": [c["objectives"][0]["text"], c["objectives"][1]["text"]] }),
+    )
+    .await;
+    assert_eq!(codes(&v), ["L2", "L1"], "the strategy first");
     let indexes: Vec<i64> = v["objectives"]
         .as_array()
         .unwrap()
         .iter()
         .map(|o| o["index"].as_i64().unwrap())
         .collect();
-    assert_eq!(indexes, [0, 1, 3, 2], "positions in the model's output");
-    assert_eq!(v["objectives"][3]["supports"], "C2");
+    assert_eq!(indexes, [1, 0], "positions in the model's output");
+    assert_eq!(v["objectives"][1]["supports"], "C2");
     // The first two drafts put a strategy first: the third is asked for another kind.
-    draft(
-        &app,
-        &t,
-        json!({ "kind": "activity", "material": material("") }),
-    )
-    .await;
-    draft(
-        &app,
-        &t,
-        json!({ "kind": "worksheet", "material": material("") }),
-    )
-    .await;
+    let ask = |kind: &'static str| {
+        json!({ "kind": kind, "material": material(""), "stage": "language",
+                "content": ["I can explain the main point."] })
+    };
+    draft(&app, &t, ask("activity")).await;
+    draft(&app, &t, ask("worksheet")).await;
     let drafts = interactions(&app, "objective_draft").await;
-    let third = &drafts[2].3;
+    let third = &drafts[3].3;
     assert_eq!(third["objective_draft"]["strategy_first"], false);
     assert!(third["prompt"]["system"]
         .as_str()
         .unwrap()
         .contains("最近兩次的語言目標都以學習策略為主"));
     assert_eq!(third["inputs"]["recent_categories"], "學習策略、學習策略");
-    assert_eq!(drafts[0].3["objective_draft"]["strategy_first"], true);
+    assert_eq!(drafts[1].3["objective_draft"]["strategy_first"], true);
 }
 
 #[tokio::test]
