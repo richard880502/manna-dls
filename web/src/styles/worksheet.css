@@ -781,7 +781,7 @@
   border: var(--rule-hair) solid var(--color-rule-strong);
   border-radius: var(--radius-control);
   background: var(--color-field);
-  box-shadow: 0 4px 16px var(--color-scrim);
+  box-shadow: var(--shadow-float);
 }
 
 .export-head,

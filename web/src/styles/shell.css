@@ -53,6 +53,7 @@
   min-width: 0;
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   font-weight: var(--weight-strong);
   line-height: 1;
@@ -158,13 +159,13 @@
 
 /* Where the teacher is: filled on the page itself, ink only on a page inside it. */
 .side-link[aria-current="page"] {
-  background: var(--color-accent-wash);
-  color: var(--color-accent-text);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
   font-weight: var(--weight-strong);
 }
 
 .side-link[aria-current="true"] {
-  color: var(--color-accent-text);
+  color: var(--color-ink);
   font-weight: var(--weight-strong);
 }
 
@@ -269,8 +270,8 @@
   }
 
   .side-link[aria-current="page"]:hover {
-    background: var(--color-accent-wash-2);
-    color: var(--color-accent-text);
+    background: var(--color-paper-3);
+    color: var(--color-ink);
   }
 }
 
