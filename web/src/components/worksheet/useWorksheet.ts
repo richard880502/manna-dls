@@ -35,6 +35,8 @@ export interface WorksheetController {
   generate: () => Promise<boolean>;
   regenerate: (blockId: string) => Promise<void>;
   undo: (blockId: string) => Promise<void>;
+  /** 恢復字詞表: puts back the table that was deleted from the block (levels and hints are computed again). */
+  restoreWordTable: (blockId: string) => Promise<void>;
   saveMaterial: (body: SaveWorksheetMaterialRequest) => Promise<boolean>;
   /** 只選要用的段落 (ids of the library material); `null`: all of them. The library entry is not changed. */
   saveSelection: (paragraphIds: string[] | null) => Promise<boolean>;
@@ -213,6 +215,12 @@ export function useWorksheet(id: number): WorksheetController {
     },
     [act, id],
   );
+  const restoreWordTable = useCallback(
+    async (blockId: string) => {
+      await act(() => api.restoreWordTable(id, blockId));
+    },
+    [act, id],
+  );
   const saveMaterial = useCallback(
     (body: SaveWorksheetMaterialRequest) => act(() => api.saveWorksheetMaterial(id, body)),
     [act, id],
@@ -317,6 +325,7 @@ export function useWorksheet(id: number): WorksheetController {
     generate,
     regenerate,
     undo,
+    restoreWordTable,
     saveMaterial,
     saveSelection,
     setTemplate,

@@ -905,3 +905,60 @@ describe("編輯器: 鷹架與字詞表", () => {
     expect(editorBlock().getByRole("button", { name: "刪除鷹架 句型框架" })).toBeInTheDocument();
   });
 });
+
+describe("編輯器: 字詞表的位置與恢復", () => {
+  it("字詞表放在學習單最後 moves every table after the last block and is saved with the content", async () => {
+    const before = withExtras();
+    const api = mockApi(
+      editorRoutes(worksheet({ content: contentWith(before) }), {
+        [`PUT ${WS}`]: (call: MockCall) => worksheet({ version_no: 4, content: (call.body as { content: WorksheetContent }).content }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    expect(editorBlock().getByRole("table", { name: "字詞表 B" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
+
+    await user.click(screen.getByRole("checkbox", { name: "字詞表放在學習單最後" }));
+    const end = await screen.findByRole("region", { name: "字詞表（學習單最後）" });
+    expect(within(end).getByRole("table", { name: "字詞表 B" })).toBeInTheDocument();
+    expect(editorBlock().queryByRole("table", { name: "字詞表 B" })).toBeNull();
+    // Still editable where it is now.
+    expect(within(end).getByRole("textbox", { name: "umbrella 的解釋" })).toHaveValue("雨傘");
+    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
+    const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content;
+    expect(saved.vocabulary_at_end).toBe(true);
+    expect(saved.blocks[1]!.vocabulary).toEqual(before.vocabulary);
+
+    // And back.
+    await user.click(screen.getByRole("checkbox", { name: "字詞表放在學習單最後" }));
+    await waitFor(() => expect(editorBlock().getByRole("table", { name: "字詞表 B" })).toBeInTheDocument());
+    expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
+  });
+
+  it("a deleted table keeps its rows and 恢復字詞表 asks the server to bring it back", async () => {
+    const before = withExtras();
+    const restored = { ...before, vocabulary: before.vocabulary.map((v) => ({ ...v, level: 3 })) };
+    const api = mockApi(
+      editorRoutes(worksheet({ content: contentWith(before) }), {
+        [`PUT ${WS}`]: (call: MockCall) => worksheet({ version_no: 4, content: (call.body as { content: WorksheetContent }).content }),
+        [`POST ${WS}/blocks/b2/restore-word-table`]: () => worksheet({ version_no: 5, content: contentWith(restored) }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    expect(editorBlock().queryByRole("button", { name: "恢復字詞表 B" })).toBeNull();
+    await user.click(editorBlock().getByRole("button", { name: "刪除字詞表 B" }));
+    await user.click(await editorBlock().findByRole("button", { name: "恢復字詞表 B" }));
+    // The deleted state was saved first (rows kept), then the server restored.
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/restore-word-table`)).toHaveLength(1));
+    const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content.blocks[1]!;
+    expect(saved.vocabulary).toEqual([]);
+    expect(saved.vocabulary_removed).toEqual(before.vocabulary);
+    const table = await editorBlock().findByRole("table", { name: "字詞表 B" });
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    expect(editorBlock().queryByRole("button", { name: "恢復字詞表 B" })).toBeNull();
+  });
+});

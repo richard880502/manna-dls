@@ -903,6 +903,10 @@ pub struct Sheet {
     pub tiering_note: Option<String>,
     pub objectives: Vec<String>,
     pub blocks: Vec<SheetBlock>,
+    /// 字詞表放在學習單最後: the word tables of the blocks, as one table printed after the last
+    /// block (a word listed in two blocks once). Empty when the tables stay in their blocks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub end_words: Vec<SheetWord>,
 }
 
 /// One version's support, as printed; `None` when it gives none.
@@ -1230,6 +1234,19 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         .blocks
         .iter()
         .any(|b| b.enabled && b.items.iter().any(|i| !i.tiers.is_empty()));
+    // 字詞表放在學習單最後: the tables leave their blocks (a block that only had a table was kept
+    // above) and print once, after the last block.
+    let mut end_words: Vec<SheetWord> = Vec::new();
+    if content.vocabulary_at_end {
+        for b in &mut blocks {
+            for w in std::mem::take(&mut b.vocabulary) {
+                let key = w.word.to_lowercase();
+                if !end_words.iter().any(|x| x.word.to_lowercase() == key) {
+                    end_words.push(w);
+                }
+            }
+        }
+    }
     Sheet {
         title: title.trim().to_string(),
         level,
@@ -1247,6 +1264,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             Vec::new()
         },
         blocks,
+        end_words,
     }
 }
 
@@ -1430,6 +1448,13 @@ pub fn text_units(sheet: &Sheet) -> Vec<TextUnit> {
                 }
             }
         }
+    }
+    for v in &sheet.end_words {
+        push(
+            "字詞表".to_string(),
+            &format!("{} {}", v.word, v.definition),
+            UnitKind::KeyWord,
+        );
     }
     lines
 }
@@ -1667,6 +1692,43 @@ mod tests {
             levels: all,
             ..Content::default()
         }
+    }
+
+    #[test]
+    fn word_tables_print_once_at_the_end_when_asked() {
+        let mut c = content();
+        c.blocks[1].vocabulary = vec![
+            Vocab {
+                word: "Trust".into(),
+                definition: "again".into(),
+                ..Vocab::default()
+            },
+            Vocab {
+                word: "gather".into(),
+                definition: "meet".into(),
+                ..Vocab::default()
+            },
+        ];
+        let in_blocks = project("T", &c, Level::Standard, Audience::Student);
+        assert!(in_blocks.end_words.is_empty());
+        assert_eq!(in_blocks.blocks[0].vocabulary.len(), 1);
+        c.vocabulary_at_end = true;
+        let at_end = project("T", &c, Level::Standard, Audience::Student);
+        assert!(at_end.blocks.iter().all(|b| b.vocabulary.is_empty()));
+        let words: Vec<&str> = at_end.end_words.iter().map(|w| w.word.as_str()).collect();
+        assert_eq!(
+            words,
+            ["trust", "gather"],
+            "a word listed twice prints once"
+        );
+        assert_eq!(
+            at_end.blocks.len(),
+            in_blocks.blocks.len(),
+            "no block is lost"
+        );
+        assert!(text_units(&at_end)
+            .iter()
+            .any(|u| u.place == "字詞表" && u.kind == UnitKind::KeyWord));
     }
 
     #[test]

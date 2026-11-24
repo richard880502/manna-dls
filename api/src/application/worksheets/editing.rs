@@ -383,3 +383,68 @@ async fn set_material_snapshot(
     .await?;
     Ok(())
 }
+
+/// Said when there is nothing to bring back.
+pub const MSG_NO_WORD_TABLE: &str = "這一區沒有刪掉的字詞表可以恢復。";
+
+/// 恢復字詞表: puts back the 字詞表 rows that were taken out of the block (by the teacher, or by
+/// Manna at her request). The rows are the ones kept in `vocabulary_removed`; their levels come
+/// from the word list again and the 指示用語 are found again by the code, so what comes back is
+/// what the code would compute now. Saved as a new version like any other edit.
+pub async fn restore_word_table(
+    state: &AppState,
+    teacher_id: i64,
+    id: i64,
+    block_id: &str,
+) -> AppResult<()> {
+    let db = &state.db;
+    store::owned(db, id, teacher_id).await?;
+    let (_, running) = ws_ai::jobs(state, id).await?;
+    if running {
+        return Err(AppError::Conflict(
+            "Manna 正在產生這份學習單，好了之後再恢復字詞表。".to_string(),
+        ));
+    }
+    let latest = store::latest(db, id).await?;
+    let mut content = latest.content.clone();
+    let Some(block) = content.blocks.iter_mut().find(|b| b.id == block_id) else {
+        return Err(AppError::not_found("找不到這個區塊。"));
+    };
+    if !block.vocabulary.is_empty() || block.vocabulary_removed.is_empty() {
+        return Err(AppError::Conflict(MSG_NO_WORD_TABLE.to_string()));
+    }
+    let removed = std::mem::take(&mut block.vocabulary_removed);
+    let had_task_words = removed.iter().any(|v| v.task_word);
+    block.vocabulary = removed.into_iter().filter(|v| !v.task_word).collect();
+    let lexicon = vocab::lexicon(db).await?;
+    if had_task_words {
+        crate::worksheet::task_words::refresh(&mut content, lexicon.as_ref());
+    }
+    content.normalise().map_err(AppError::bad_request)?;
+    vocab::relookup_levels(&mut content, lexicon.as_ref());
+    let restored = content
+        .blocks
+        .iter()
+        .find(|b| b.id == block_id)
+        .map_or(0, |b| b.vocabulary.len());
+    if restored == 0 {
+        return Err(AppError::Conflict(MSG_NO_WORD_TABLE.to_string()));
+    }
+    store::save_content_source(
+        db,
+        id,
+        &content,
+        "edit",
+        Some(latest.version_no),
+        Some(json!({ "cause": "edit", "action": "restore_word_table", "block_ids": [block_id] })),
+    )
+    .await?;
+    log_usage(
+        db,
+        teacher_id,
+        "worksheet_word_table_restored",
+        json!({ "worksheet_id": id, "block_id": block_id, "words": restored }),
+    )
+    .await?;
+    Ok(())
+}

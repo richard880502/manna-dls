@@ -137,4 +137,21 @@ describe("the prep preview prints the sheet as the exports do", () => {
     expect(text).toContain("   (A) Paris\n   (B) London\n   (C) Rome\n   (D) Tokyo");
     expect(text).toContain("參考答案：(B) London");
   });
+
+  it("prints the word table once after the last block when the sheet carries end_words", () => {
+    const base = sheet("student");
+    render(
+      <SheetPreview
+        sheet={{ ...base, end_words: [{ word: "umbrella", level: 2, definition: "雨傘" }] }}
+        highlight={new Set()}
+        interactionFor={() => null}
+      />,
+    );
+    const block = screen.getByRole("region", { name: "區塊 A 活動" });
+    expect(within(block).queryByRole("table")).toBeNull();
+    const end = screen.getByRole("region", { name: "字詞表（學習單最後）" });
+    expect(within(end).getByRole("cell", { name: "雨傘" })).toBeInTheDocument();
+    // After the last block in the page.
+    expect(block.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });

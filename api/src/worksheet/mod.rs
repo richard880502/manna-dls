@@ -803,6 +803,11 @@ pub struct Block {
     /// that copies the block; absent from the JSON when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub glosses: Vec<Gloss>,
+    /// 字詞表 rows the teacher (or Manna, at her request) took out of this block, kept so 「恢復字詞表」
+    /// can put them back: the levels and the 指示用語 hints are computed again, not remembered.
+    /// Never printed; absent from the JSON when empty.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vocabulary_removed: Vec<Vocab>,
 }
 
 /// One entry of a block's Glossary (詞彙級別檢查「提供字義」): a word above the target level
@@ -932,6 +937,7 @@ impl Default for Block {
             image_slots: Vec::new(),
             practice: None,
             glosses: Vec::new(),
+            vocabulary_removed: Vec::new(),
         }
     }
 }
@@ -961,6 +967,10 @@ pub struct Content {
     /// worksheets): the order of `levels`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub student_order: Vec<Level>,
+    /// 字詞表放在學習單最後: every block's word table is printed once, after the last block,
+    /// instead of inside its block. Off (the tables stay in their blocks) when absent.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub vocabulary_at_end: bool,
     pub chosen: Option<Chosen>,
     pub notices: Vec<String>,
 }
@@ -973,6 +983,7 @@ impl Default for Content {
             blocks: Vec::new(),
             levels: Vec::new(),
             student_order: Vec::new(),
+            vocabulary_at_end: false,
             chosen: None,
             notices: Vec::new(),
         }
@@ -1091,6 +1102,7 @@ impl Content {
             if b.items.len() > MAX_ITEMS
                 || b.scaffolds.len() > MAX_LIST
                 || b.vocabulary.len() > MAX_LIST
+                || b.vocabulary_removed.len() > MAX_LIST
             {
                 return Err("一個區塊裡的題目、鷹架或字詞太多了。".to_string());
             }
@@ -1166,7 +1178,7 @@ impl Content {
                 }
                 s.levels = normalise_levels(&s.levels);
             }
-            for v in &b.vocabulary {
+            for v in b.vocabulary.iter().chain(&b.vocabulary_removed) {
                 if v.word.chars().count() > 80 {
                     return Err("字詞最多 80 個字元。".to_string());
                 }

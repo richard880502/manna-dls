@@ -480,6 +480,8 @@ export const api = {
   worksheetJobs: (id: number) => get<WsJobsState>(`/worksheets/${id}/jobs`),
   regenerateWorksheetBlock: (id: number, blockId: string) =>
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/regenerate`),
+  restoreWordTable: (id: number, blockId: string) =>
+    post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/restore-word-table`),
   undoWorksheetBlock: (id: number, blockId: string) =>
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/undo`),
   // 修改歷程
