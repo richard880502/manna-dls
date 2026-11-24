@@ -117,7 +117,7 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
         </p>
       </div>
 
-      <MemorySuggestions filter={{ worksheetId: id }} watch={`${state.versions_count}:${state.running}`} />
+      <MemorySuggestions floating filter={{ worksheetId: id }} watch={`${state.versions_count}:${state.running}`} />
 
       {shown === "options" && state.generated && (
         <p className="quiet-note">
