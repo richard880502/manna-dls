@@ -316,6 +316,8 @@ export interface AppConfig {
   route_choice_enabled: boolean;
   /** 教材庫能不能上傳檔案（後端有設定儲存空間）；貼上文字不受影響 */
   uploads_enabled?: boolean;
+  /** 社群（主持人的研究開關，預設關）；關閉時網頁不顯示任何與分享有關的東西。舊伺服器沒有這個鍵 */
+  community_enabled?: boolean;
 }
 
 export interface LoginRequest {
@@ -2002,6 +2004,110 @@ export interface WorksheetState extends WorksheetSummary {
   request?: string;
   /** 各圖片位置目前的圖；舊的伺服器沒有這一欄 */
   images?: WorksheetImages;
+  /** 「改編自 …」：拿社群裡別人分享的學習單改的；原件還在分享、開關也開著時才有，否則是 null */
+  remixed_from?: CommunityRemixSource | null;
+}
+
+// ---- 社群（docs/COMMUNITY.md）----
+
+/** 「改編自 …」：原件的標題，和原作者選擇的顯示名稱（代號或「一位老師」）；沒有別的身分資料 */
+export interface CommunityRemixSource {
+  id: number;
+  title: string;
+  owner_name: string;
+}
+
+export type CommunityShareName = "code" | "anonymous";
+
+/** 探索、我的收藏的一張卡片，以及預覽的標頭 */
+export interface CommunityMeta {
+  id: number;
+  title: string;
+  /** 作者的研究代號，或「一位老師」（作者選匿名時絕不是代號） */
+  owner_name: string;
+  shared_at: string;
+  saves: number;
+  remixes: number;
+  is_mine: boolean;
+  saved: boolean;
+  allow_remix: boolean;
+  /** worksheet、comprehension、tiered */
+  output: string | null;
+  levels: WsLevel[];
+}
+
+export interface CommunityCard extends CommunityMeta {
+  /** 學生版的開頭幾題（縮小畫在封面上）；沒有內容時是 null */
+  cover: WsSheet | null;
+  /** 只有我的收藏 */
+  saved_at?: string;
+}
+
+export interface CommunityPage {
+  items: CommunityCard[];
+  total: number;
+  limit: number;
+  offset: number;
+  /** 只有我的收藏：已經取消分享或刪除、現在看不到的收藏數 */
+  unavailable?: number;
+}
+
+export type CommunitySort = "newest" | "remixed" | "saved";
+
+export interface CommunityQuery {
+  q?: string;
+  sort?: CommunitySort;
+  output?: string;
+  level?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** 我的分享：自己的一份學習單，和它的分享狀態 */
+export interface CommunityMine {
+  id: number;
+  title: string;
+  updated_at: string;
+  shared: boolean;
+  shared_at: string | null;
+  name: CommunityShareName | null;
+  allow_remix: boolean;
+  saves: number;
+  remixes: number;
+  output: string | null;
+  levels: WsLevel[];
+  cover: WsSheet | null;
+}
+
+export interface CommunityMinePage {
+  items: CommunityMine[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface CommunityPreview extends CommunityMeta {
+  level: WsLevel;
+  /** 學生版：學習單上印出來的內容，沒有別的 */
+  sheet: WsSheet;
+}
+
+export interface CommunityShareRequest {
+  shared: boolean;
+  name?: CommunityShareName;
+  allow_remix?: boolean;
+}
+
+export interface CommunityShareState {
+  id: number;
+  shared: boolean;
+  shared_at: string | null;
+  name: CommunityShareName | null;
+  allow_remix: boolean;
+}
+
+export interface CommunitySettings {
+  enabled: boolean;
 }
 
 export interface WsJobsState {

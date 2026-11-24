@@ -45,15 +45,19 @@ export function viewOfSheetImage(img: WsSheetImage, live: WsSlotImage | undefine
 }
 
 /** A picture of the teacher's worksheet as an object URL (fetched with her token). */
-export function useWorksheetImage(worksheetId: number, imageId: number | null) {
+export function useWorksheetImage(
+  worksheetId: number,
+  imageId: number | null,
+  /** Where the picture comes from when it is not the teacher's own worksheet (社群 preview). */
+  load?: (imageId: number) => Promise<Blob>,
+) {
   // What was loaded, for which picture (a different picture shows nothing until it loads).
   const [loaded, setLoaded] = useState<{ id: number; url: string | null; failed: boolean } | null>(null);
   useEffect(() => {
     if (imageId === null) return undefined;
     let alive = true;
     let made: string | null = null;
-    api
-      .worksheetImage(worksheetId, imageId)
+    (load ? load(imageId) : api.worksheetImage(worksheetId, imageId))
       .then((blob) => {
         if (!alive) return;
         made = URL.createObjectURL(blob);
@@ -66,7 +70,7 @@ export function useWorksheetImage(worksheetId: number, imageId: number | null) {
       alive = false;
       if (made) URL.revokeObjectURL(made);
     };
-  }, [worksheetId, imageId]);
+  }, [worksheetId, imageId, load]);
   const current = loaded !== null && loaded.id === imageId ? loaded : null;
   return { url: current?.url ?? null, failed: current?.failed ?? false };
 }
@@ -202,6 +206,7 @@ export function SlotPicture({
   teacher,
   actions,
   name,
+  load,
 }: {
   worksheetId: number;
   view: PictureView;
@@ -209,9 +214,11 @@ export function SlotPicture({
   actions: PictureActions | null;
   /** The block's name, for labels. */
   name: string;
+  /** A picture that is not in the teacher's own worksheet: how to fetch it (stable between renders). */
+  load?: (imageId: number) => Promise<Blob>;
 }) {
   const done = view.status === "done" && view.imageId !== null;
-  const { url, failed } = useWorksheetImage(worksheetId, done ? view.imageId : null);
+  const { url, failed } = useWorksheetImage(worksheetId, done ? view.imageId : null, load);
   if (view.status === "removed") {
     if (!actions) return null;
     return (

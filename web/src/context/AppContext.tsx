@@ -14,6 +14,8 @@ interface AppContextValue {
   sessionNotice: string | null;
   /** Platform switch (主持人後台): teachers may pick a prep route. Off → fixed goal-first order. */
   routeChoiceEnabled: boolean;
+  /** 社群 (the PI's switch, default off): the nav entry and everything about sharing only show when true. */
+  communityEnabled: boolean;
   /** Latest preferences version; null = none yet (or failed to load — see preferencesStatus). */
   preferences: Preferences | null;
   /** "loaded" with preferences === null means the first-use survey has not been done. */
@@ -185,6 +187,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       authError,
       sessionNotice,
       routeChoiceEnabled: config?.route_choice_enabled === true,
+      communityEnabled: config?.community_enabled === true,
       preferences: currentPreferences,
       preferencesStatus,
       setPreferences,

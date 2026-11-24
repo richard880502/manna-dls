@@ -78,6 +78,9 @@ pub struct WorksheetState {
     pub request: String,
     /// The pictures of the blocks' slots (docs/API.md「學習單的圖片」).
     pub images: WorksheetImages,
+    /// 「改編自 …」: the shared worksheet this one was remixed from, while it is still shared and
+    /// the 社群 switch is on; otherwise `null`.
+    pub remixed_from: Option<crate::community::RemixSource>,
 }
 
 pub(crate) async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetState> {
@@ -130,6 +133,7 @@ pub(crate) async fn state_of(state: &AppState, id: i64) -> AppResult<WorksheetSt
         brief: ws.brief,
         request: ws.request,
         images: images::states(state, id).await?,
+        remixed_from: crate::community::remix_source(db, id).await?,
     })
 }
 
@@ -533,6 +537,17 @@ pub async fn image_file(
     let (key, sha) = images::stored(&state.db, id, image_id)
         .await?
         .ok_or_else(|| AppError::not_found("找不到這張圖。"))?;
+    serve_image(&state, &key, &sha, &headers).await
+}
+
+/// A stored picture as a response (JPEG, ETag = its SHA-256, 304 on `If-None-Match`); the caller
+/// has already checked who may read it.
+pub(crate) async fn serve_image(
+    state: &AppState,
+    key: &str,
+    sha: &str,
+    headers: &HeaderMap,
+) -> AppResult<Response> {
     let etag = format!("\"{sha}\"");
     let response = Response::builder()
         .header(
@@ -551,7 +566,7 @@ pub async fn image_file(
             .body(Body::empty())
             .map_err(|e| AppError::Internal(e.into()));
     }
-    let bytes = images::bytes_of(&state, &key).await?;
+    let bytes = images::bytes_of(state, key).await?;
     response
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, images::MIME)

@@ -1,58 +1,61 @@
 /* Tokens: the source of truth for docs/DESIGN.md. Every colour, face, size, space, radius, shadow,
  * duration and layer is named here; nothing literal past this file.
- * Idea: two inks on one page. The teacher writes in ink blue; whatever Manna adds sits in gold and
- * carries its sources. A third voice, the source material, is set as print (docs/DESIGN_OVERHAUL.md).
- * Values follow the approved overhaul mockups (docs/design/overhaul/mockup.css); the contrast pairs
- * listed in DESIGN_OVERHAUL.md section 5 were computed on these values. */
+ * Idea: the chrome has no colour (white, greys, near-black); ONE blue means "you can act here"
+ * (buttons, links, selected filters, focus); every other colour comes from the content itself
+ * (worksheets, materials, images). Manna's gold survives only as the quiet marker of what the AI
+ * contributed: a thin gold edge or a small mark, never a big wash. A third voice, the source
+ * material, is set as print on its sheet (docs/DESIGN_OVERHAUL.md). The page is light-only.
+ * Contrast pairs are listed in docs/DESIGN.md and DESIGN_OVERHAUL.md section 5. */
 
 :root {
   color-scheme: light;
 
-  /* ---------- colour: paper and ink ---------- */
-  --color-paper: #f7f8fa; /* the page */
-  --color-paper-2: #eef1f5; /* neutral wells, quiet tags */
-  --color-paper-3: #e3e8ee; /* hover on paper-2, progress tracks */
-  --color-field: #fdfdfe; /* inputs: the lightest thing on screen */
-  --color-sheet: #fdfdfe; /* material and worksheet sheets (the print voice) */
-  --color-ink: #1c2533;
-  --color-ink-2: #465163;
-  --color-muted: #5a6677;
-  --color-field-edge: #7d8796; /* input and quiet-button outlines (3:1 or better) */
-  --color-rule: #dde2e9;
-  --color-rule-strong: #b9c1cc;
+  /* ---------- colour: the chrome (no hue) ---------- */
+  --color-paper: #ffffff; /* the page */
+  --color-paper-2: #f7f7f7; /* neutral wells, quiet tags, the selected sidebar pill */
+  --color-paper-3: #ededed; /* hover on paper-2, progress tracks */
+  --color-field: #ffffff; /* inputs */
+  --color-sheet: #ffffff; /* material and worksheet sheets (the print voice) */
+  --color-ink: #191919;
+  --color-ink-2: #3d3d3d;
+  --color-muted: #696969;
+  --color-field-edge: #8c8c8c; /* input and quiet-button outlines (3:1 or better on white) */
+  --color-rule: #e8e8e8;
+  --color-rule-strong: #d0d0d0;
 
-  /* ---------- colour: the teacher's ink (actions, selection, links) ---------- */
-  --color-accent: #2a5580;
-  --color-accent-hover: #204568;
-  --color-accent-press: #1a3956;
-  --color-accent-ink: #fbfcfe;
-  --color-accent-text: #2a5580;
-  --color-accent-wash: #e6eef6;
-  --color-accent-wash-2: #d5e2f0;
-  --color-accent-rule: #8fb0cf;
-  --color-focus: #1f5fd0;
+  /* ---------- colour: the one blue ("you can act here": buttons, links, selection, focus) ---------- */
+  --color-accent: #1f5eff;
+  --color-accent-hover: #1a4fd6;
+  --color-accent-press: #1541b3;
+  --color-accent-ink: #ffffff;
+  --color-accent-text: #1a52e0; /* blue text on white or on the wash (5.5:1 or better) */
+  --color-accent-wash: #eaf0ff;
+  --color-accent-wash-2: #d6e2ff;
+  --color-accent-rule: #b9ccff;
+  --color-focus: #1f5eff;
 
-  /* ---------- colour: Manna's gold (anything the AI contributed) ---------- */
-  --color-star: #e2b33a;
-  --color-manna-wash: #fbf3dc;
-  --color-manna-wash-2: #f4e6b8;
-  --color-manna-rule: #d9bd6a;
-  --color-manna-ink: #73500f;
+  /* ---------- colour: Manna's gold (only anything the AI contributed; a thin edge or a small mark) ---------- */
+  --color-star: #d4a72c;
+  --color-manna-wash: #fffaec; /* barely warm: a hint, not a fill */
+  --color-manna-wash-2: #fbf0cc;
+  --color-manna-rule: #dcc16f;
+  --color-manna-ink: #6b4a0c;
 
-  /* ---------- colour: states ---------- */
+  /* ---------- colour: states (functional, calm) ---------- */
   --color-success: #2c6a4c;
-  --color-success-wash: #e4f2ea;
-  --color-success-rule: #8fbfa5;
-  --color-warn-ink: #8a5410;
-  --color-warn-wash: #fbeed8;
-  --color-warn-rule: #e0b878;
+  --color-success-wash: #eaf5ef;
+  --color-success-rule: #9cc7ae;
+  --color-warn-ink: #8a4a08;
+  --color-warn-wash: #fdf1dd;
+  --color-warn-rule: #e5b46e;
   --color-error: #a13a2c;
-  --color-error-wash: #fbe9e5;
+  --color-error-wash: #fbece8;
   /* The step being worked on in the 進度 panel (an orange dot; 3.6:1 on paper as a mark). */
   --color-progress-now: #d0640f;
 
   /* ---------- type ---------- */
-  --font-display: "Noto Serif TC Variable", "Noto Serif TC", "Songti TC", "PMingLiU", Georgia, serif;
+  /* Headings use the sans family; the serif lives only in --font-print, on worksheet and material sheets. */
+  --font-display: var(--font-body);
   --font-body: "Noto Sans TC Variable", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
   /* The print voice: source material and worksheets (used from overhaul step 2 on). */
   --font-print: Georgia, "Times New Roman", "Noto Serif TC Variable", "Songti TC", serif;
@@ -60,6 +63,8 @@
 
   --weight-regular: 400;
   --weight-strong: 600;
+  --weight-display: 700; /* headings */
+  --tracking-display: -0.025em; /* headings: tight, strong size contrast with body */
 
   /* Fixed app scale, ratio about 1.18 from a 16px body. No fluid heads. */
   --text-xs: 0.8125rem; /* 13px: tags, mono codes */
@@ -90,18 +95,18 @@
   --space-4xl: 6rem; /* 96 */
 
   /* ---------- shape ---------- */
-  --radius-sm: 0.375rem; /* 6: code chips, inset wells in a well */
-  --radius-control: 0.5rem; /* 8: buttons, inputs, wells, choice tiles */
-  --radius-card: 0.75rem; /* 12: dialogs */
-  --radius-mark: 1rem; /* 16: the two big in-class buttons */
+  --radius-sm: 0.5rem; /* 8: code chips, inset wells in a well */
+  --radius-control: 0.625rem; /* 10: buttons, inputs, wells, choice tiles */
+  --radius-card: 1rem; /* 16: cards, dialogs */
+  --radius-mark: 1.25rem; /* 20: the two big in-class buttons */
   --radius-pill: 999px; /* tags, status, steppers */
   --rule-hair: 1px;
 
   /* ---------- elevation: space and hairlines do the work; shadows only on things that float ---------- */
-  --shadow-overlay: 0 -0.5rem 1.5rem rgb(28 37 51 / 0.16); /* the help sheet over a narrow screen */
-  --shadow-dialog: 0 0.75rem 2.5rem rgb(28 37 51 / 0.25); /* the choose-a-class dialog */
-  --shadow-float: 0 0.25rem 1.25rem rgb(28 37 51 / 0.08); /* the prompt card, popovers, the generator's sticky bar */
-  --color-scrim: rgb(28 37 51 / 0.38);
+  --shadow-overlay: 0 -0.5rem 1.5rem rgb(0 0 0 / 0.1); /* the help sheet over a narrow screen */
+  --shadow-dialog: 0 1.5rem 4rem rgb(0 0 0 / 0.18); /* the choose-a-class dialog */
+  --shadow-float: 0 0.25rem 1rem rgb(0 0 0 / 0.08); /* the prompt card, popovers, the generator's sticky bar */
+  --color-scrim: rgb(0 0 0 / 0.4);
 
   /* ---------- controls ---------- */
   --control-h: 2.5rem; /* 40 */

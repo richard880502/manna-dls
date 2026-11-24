@@ -335,6 +335,7 @@
   display: block;
   margin-top: var(--space-xs);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   line-height: 1.45;
 }
@@ -371,6 +372,7 @@
   background: var(--color-paper-2);
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   line-height: 1.7;
 }
@@ -449,6 +451,7 @@
 .focus-label {
   margin: 0;
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-xl);
   line-height: var(--leading-tight);
 }
@@ -486,6 +489,7 @@
   width: 2.75rem;
   color: var(--color-muted);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-xl);
   font-weight: var(--weight-strong);
   font-variant-numeric: lining-nums tabular-nums;
@@ -637,6 +641,7 @@
 .manna-dialog strong {
   display: block;
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }
@@ -957,6 +962,7 @@
   min-height: var(--control-h);
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-md);
   line-height: 1.45;
 }
@@ -976,6 +982,7 @@
   left: 0;
   color: var(--color-muted);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-md);
   font-weight: var(--weight-strong);
   font-variant-numeric: lining-nums tabular-nums;
@@ -1049,6 +1056,7 @@
 .step-row .step-number {
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   font-weight: var(--weight-strong);
   font-variant-numeric: lining-nums tabular-nums;
@@ -1126,6 +1134,7 @@
 
 .ai-suggestion .suggestion-head strong {
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   line-height: 1.45;
 }
@@ -1348,6 +1357,7 @@
   margin: 0 0 var(--space-md);
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   font-weight: var(--weight-strong);
   line-height: 1.5;
@@ -1663,7 +1673,7 @@
   background: var(--color-paper);
   border-bottom: var(--rule-hair) solid var(--color-rule);
   /* The list scrolls under the bar: a soft edge so a half-covered line reads as "behind". */
-  box-shadow: 0 0.5rem 0.5rem -0.5rem rgb(28 37 51 / 0.12);
+  box-shadow: 0 0.5rem 0.5rem -0.5rem rgb(0 0 0 / 0.08);
 }
 
 .prompt-toolbar .prompt-search {
@@ -2005,12 +2015,12 @@
 .memory-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: 1rem 0; border-bottom: 1px solid var(--color-rule); }
 .memory-list li > div { flex: 1 1 15rem; }
 .memory-list small { display: block; margin-top: .35rem; }
-.memory-preview { margin: 1.25rem 0; padding: 1.25rem; border: 1px solid var(--color-rule); border-radius: 12px; }
+.memory-preview { margin: 1.25rem 0; padding: 1.25rem; border: 1px solid var(--color-rule); border-radius: var(--radius-card); }
 .teacher-memories details { margin-top: 1.5rem; }
 
 /* 對話中偵測到的習慣建議（要記住這個習慣嗎？） */
 .memory-suggestions { margin: .75rem 0 1rem; display: grid; gap: .75rem; }
-.memory-suggestion { padding: .9rem 1.1rem; border: 1px solid var(--color-rule); border-radius: 12px; }
+.memory-suggestion { padding: .9rem 1.1rem; border: 1px solid var(--color-rule); border-radius: var(--radius-card); }
 .memory-suggestion-ask { margin: 0 0 .35rem; }
 .memory-suggestion-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .6rem; }
 /* The worksheet page: 「改這一區」 is far below the top, so the question stays in view while she scrolls. */
@@ -2020,6 +2030,6 @@
   z-index: var(--z-sticky);
 }
 .memory-suggestions.is-floating .memory-suggestion { background: var(--color-paper); }
-.memory-suggestions.is-floating > * { box-shadow: 0 4px 16px rgb(0 0 0 / .08); }
+.memory-suggestions.is-floating > * { box-shadow: var(--shadow-float); }
 .memory-group h3 small { margin-left: .4rem; font-weight: normal; }
 .memory-pending { margin-bottom: 1rem; }

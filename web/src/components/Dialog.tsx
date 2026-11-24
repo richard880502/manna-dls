@@ -70,6 +70,7 @@ export function Dialog({
   role = "dialog",
   busy: busyProp = false,
   dirty: dirtyProp = false,
+  className,
   children,
 }: {
   title: string;
@@ -87,6 +88,8 @@ export function Dialog({
   /** Same as a form's useDialogGuard, for a dialog whose state lives in its opener. */
   busy?: boolean;
   dirty?: boolean;
+  /** One more class on the dialog box (a page's own wide dialog). */
+  className?: string;
   children: ReactNode;
 }) {
   const ids = useId();
@@ -189,7 +192,7 @@ export function Dialog({
   return (
     <div className={`scrim${large ? " has-large-dialog" : ""}`}>
       <div
-        className={`dialog attach-dialog${large ? " is-large" : ""}`}
+        className={`dialog attach-dialog${large ? " is-large" : ""}${className ? ` ${className}` : ""}`}
         role={role}
         aria-modal="true"
         aria-labelledby={`${ids}-title`}
