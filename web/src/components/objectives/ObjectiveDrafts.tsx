@@ -11,6 +11,14 @@ import { ocrBusyError } from "../../lib/ocr";
 import {
   ANOTHER_SET,
   CATEGORY_LABEL,
+  DECIDED_CONTENT_HEADING,
+  DRAFTING_LANGUAGE_LINE,
+  DRAFTS_CONTENT_LEAD,
+  DRAFTS_CONTENT_READY_LINE,
+  DRAFTS_LANGUAGE_LEAD,
+  LANGUAGE_FAILED,
+  onlyContent,
+  toLanguage,
   NOTHING_CHECKED,
   NOTHING_CHECKED_GENERATE,
   REDRAW_FAILED,
@@ -39,10 +47,16 @@ import {
 } from "../../lib/objectives";
 
 export type DraftState =
-  /** `key`: the progress key sent with the request; `progress`: its steps, once the server has them. */
-  | { phase: "drafting"; key: string; progress: RunProgress | null }
+  /** `key`: the progress key sent with the request; `progress`: its steps, once the server has them; `stage`: the kind asked for. */
+  | { phase: "drafting"; key: string; progress: RunProgress | null; stage: ObjectiveStage }
   | {
       phase: "ready";
+      /** The kind this set drafts: the 內容目標 first, the 語言目標 after the teacher decided them. */
+      stage: ObjectiveStage;
+      /** `stage: "language"`: the 內容目標 the 語言目標 were derived from. */
+      decided: string[];
+      /** `stage: "language"`: the 內容目標 came from the step before in this panel (they go with the outcome). */
+      carried: boolean;
       result: ObjectiveDraftResult;
       /** For each draft shown: the draft call and the `index` it has there (the decisions go there). */
       sources: Record<number, DraftSource>;
@@ -54,6 +68,19 @@ export type DraftState =
       round: number;
     }
   | { phase: "failed"; message: string };
+
+export type ObjectiveStage = "content" | "language";
+
+/** What 請 Manna 擬語言目標 needs from the 內容目標 step: the lines decided on, and how the panel stood. */
+export interface LanguagePlan {
+  /** The checked 內容目標 as they now read. */
+  content: string[];
+  /** The decisions on the 內容目標 drafts (recorded once the 語言目標 are in). */
+  decisions: DraftDecision[];
+  /** Every draft's line as the teacher has it now, and the unchecked ones (kept if the 語言目標 do not come). */
+  texts: Record<number, string>;
+  unchecked: number[];
+}
 
 /** How often the drafting's progress is asked for. Tests shorten it. */
 export const draftConfig = { pollMs: 1000 };
@@ -84,6 +111,8 @@ export function useObjectiveDraft() {
   const seq = useRef(0);
   const rounds = useRef(0);
   const last = useRef<ObjectiveDraftRequest | null>(null);
+  /** The 語言目標 step follows a 內容目標 step of this panel (its lines are part of the outcome). */
+  const carried = useRef(false);
 
   // While Manna drafts: ask how far she is (docs/API.md「產生進度」).
   const drafting = state?.phase === "drafting" ? state.key : null;
@@ -105,10 +134,13 @@ export function useObjectiveDraft() {
     };
   }, [drafting]);
 
-  function readyFrom(result: ObjectiveDraftResult): DraftState {
+  function readyFrom(result: ObjectiveDraftResult, body: ObjectiveDraftRequest): DraftState {
     rounds.current += 1;
     return {
       phase: "ready",
+      stage: body.stage ?? "content",
+      decided: body.content ?? [],
+      carried: carried.current,
       result,
       sources: Object.fromEntries(result.objectives.map((d) => [d.index, { interaction_id: result.interaction_id, index: d.index }])),
       edits: {},
@@ -121,7 +153,7 @@ export function useObjectiveDraft() {
     const id = ++seq.current;
     last.current = body;
     const key = progressKey();
-    setState({ phase: "drafting", key, progress: null });
+    setState({ phase: "drafting", key, progress: null, stage: body.stage ?? "content" });
     try {
       const result = await api.draftObjectives({ ...body, progress_id: key });
       if (id !== seq.current) return true;
@@ -129,7 +161,7 @@ export function useObjectiveDraft() {
         setState(null);
         return false;
       }
-      setState(hasDrafts(result) ? readyFrom(result) : { phase: "failed", message: result.message ?? DRAFT_FAILED });
+      setState(hasDrafts(result) ? readyFrom(result, body) : { phase: "failed", message: result.message ?? DRAFT_FAILED });
       return true;
     } catch (err) {
       if (id !== seq.current) return true;
@@ -162,7 +194,7 @@ export function useObjectiveDraft() {
     });
     const id = ++seq.current;
     const key = progressKey();
-    setState({ phase: "drafting", key, progress: null });
+    setState({ phase: "drafting", key, progress: null, stage: before.stage });
     try {
       const result = await api.draftObjectives({
         ...base,
@@ -196,6 +228,9 @@ export function useObjectiveDraft() {
       rounds.current += 1;
       setState({
         phase: "ready",
+        stage: before.stage,
+        decided: before.decided,
+        carried: before.carried,
         result: { ...result, objectives: merged.drafts },
         sources,
         edits,
@@ -214,9 +249,59 @@ export function useObjectiveDraft() {
     }
   }
 
+  /**
+   * 請 Manna 擬語言目標: the 內容目標 she kept are sent, and the 語言目標 are drafted from them. The
+   * decisions on the 內容目標 are recorded once they are in; when Manna cannot, the 內容目標 step
+   * is as it was (the lines she edited, the boxes she unchecked), with a note.
+   */
+  async function toLanguageStep(plan: LanguagePlan): Promise<void> {
+    const base = last.current;
+    const before = state;
+    if (!base || before?.phase !== "ready") return;
+    const body: ObjectiveDraftRequest = { ...base, stage: "language", content: plan.content };
+    delete body.avoid;
+    delete body.keep;
+    const id = ++seq.current;
+    const key = progressKey();
+    const asWas = (message: string): DraftState => {
+      rounds.current += 1;
+      return {
+        ...before,
+        result: { ...before.result, message },
+        edits: plan.texts,
+        unchecked: plan.unchecked,
+        round: rounds.current,
+      };
+    };
+    setState({ phase: "drafting", key, progress: null, stage: "language" });
+    try {
+      const result = await api.draftObjectives({ ...body, progress_id: key });
+      if (id !== seq.current) return;
+      if (!hasDrafts(result)) {
+        setState(asWas(result.status === "disabled" ? LANGUAGE_FAILED : (result.message ?? LANGUAGE_FAILED)));
+        return;
+      }
+      last.current = body;
+      carried.current = true;
+      void recordDecisions(plan.decisions);
+      setState(readyFrom(result, body));
+    } catch (err) {
+      if (id !== seq.current) return;
+      if (ocrBusyError(err)) {
+        setState(null);
+        throw err;
+      }
+      setState(asWas(errorMessage(err)));
+    }
+  }
+
   return {
     state,
-    start: run,
+    start: (body: ObjectiveDraftRequest) => {
+      carried.current = false;
+      return run({ stage: "content", ...body });
+    },
+    toLanguage: toLanguageStep,
     /**
      * 換一組: the same request, with the lines shown now to be written other than. With a `plan`
      * (some drafts checked, some not) only the unchecked ones are redrawn.
@@ -260,6 +345,8 @@ interface ObjectiveDraftsProps {
   onSkip: (decisions: DraftDecision[]) => void;
   /** 換一組 (no plan) or 換掉沒勾的 (with one). */
   onAnother: (plan?: RedrawPlan) => void;
+  /** The 內容目標 step's primary: draft the 語言目標 from the checked 內容目標. */
+  onLanguage: (plan: LanguagePlan) => void;
   /** 收起: back to the form, nothing decided (nothing recorded). */
   onCancel: () => void;
   /** Inside a card of the page (/create), not a card of its own. */
@@ -332,7 +419,8 @@ function ReadyDrafts({
   onUse,
   onSkip,
   onAnother,
-}: Pick<ObjectiveDraftsProps, "disabled" | "fill" | "onUse" | "onSkip" | "onAnother"> & {
+  onLanguage,
+}: Pick<ObjectiveDraftsProps, "disabled" | "fill" | "onUse" | "onSkip" | "onAnother" | "onLanguage"> & {
   state: Extract<DraftState, { phase: "ready" }>;
 }) {
   const { result, sources } = state;
@@ -351,6 +439,18 @@ function ReadyDrafts({
   const choices = () => Object.fromEntries(drafts.map((d) => [d.index, choiceFor(d, text(d))]));
   const unused = new Set(drafts.filter((d) => !using.includes(d)).map((d) => d.index));
   const note = checkedSetNote(drafts, using);
+  // The 內容目標 step: there is no 語言目標 in the set yet, and it is drafted from the ones decided on here.
+  const awaitingLanguage = state.stage === "content" && !drafts.some((d) => d.kind === "language");
+  const inLanguage = state.stage === "language";
+  const outcome = (): DraftOutcome => ({
+    ...fieldsFrom(drafts, choices(), off),
+    // The 語言目標 step leaves the 內容目標 as they were decided (they came with the step before).
+    ...(inLanguage ? { content: state.decided.join("\n") } : {}),
+    has: {
+      content: inLanguage ? state.carried : drafts.some((d) => d.kind === "content"),
+      language: drafts.some((d) => d.kind === "language"),
+    },
+  });
   const toggle = (index: number, on: boolean) =>
     setOff((all) => {
       const next = new Set(all);
@@ -360,7 +460,19 @@ function ReadyDrafts({
     });
   return (
     <>
-      <p className="lead">{DRAFTS_LEAD}</p>
+      <p className="lead">{awaitingLanguage ? DRAFTS_CONTENT_LEAD : inLanguage ? DRAFTS_LANGUAGE_LEAD : DRAFTS_LEAD}</p>
+      {inLanguage && (
+        <div className="objective-decided" role="group" aria-label={DECIDED_CONTENT_HEADING}>
+          <p className="manna-label">{DECIDED_CONTENT_HEADING}</p>
+          <ul>
+            {state.decided.map((line) => (
+              <li key={line} lang="en">
+                {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {result.message && <p className="quiet-note">{result.message}</p>}
       {(["content", "language"] as const).map((kind) =>
         drafts
@@ -388,18 +500,32 @@ function ReadyDrafts({
           className="primary-button"
           disabled={disabled || n === 0}
           aria-describedby={n === 0 ? noteId : undefined}
-          onClick={() =>
-            onUse(
-              {
-                ...fieldsFrom(drafts, choices(), off),
-                has: { content: drafts.some((d) => d.kind === "content"), language: drafts.some((d) => d.kind === "language") },
-              },
-              decisionsAt(decisionsFor(drafts, choices(), false, off), sources),
-            )
-          }
+          onClick={() => {
+            const decisions = decisionsAt(decisionsFor(drafts, choices(), false, off), sources);
+            if (awaitingLanguage) {
+              onLanguage({
+                content: using.map((d) => text(d).trim()),
+                decisions,
+                texts: Object.fromEntries(drafts.map((d) => [d.index, text(d)])),
+                unchecked: [...off],
+              });
+            } else {
+              onUse(outcome(), decisions);
+            }
+          }}
         >
-          {useDrafts(n, fill ?? false)}
+          {awaitingLanguage ? toLanguage(n) : useDrafts(n, fill ?? false)}
         </button>
+        {awaitingLanguage && (
+          <button
+            type="button"
+            className="text-link is-plain"
+            disabled={disabled || n === 0}
+            onClick={() => onUse(outcome(), decisionsAt(decisionsFor(drafts, choices(), false, off), sources))}
+          >
+            {onlyContent(n, fill ?? false)}
+          </button>
+        )}
         <button
           type="button"
           className="text-link is-plain"
@@ -438,7 +564,17 @@ function ReadyDrafts({
  * dimmed but still editable). One primary — 用勾選的 N 個目標(產生) — with 換一組 (換掉沒勾的 when
  * some are checked) and 不用目標，直接產生 as quiet links.
  */
-export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onCancel, embedded = false, fill = false }: ObjectiveDraftsProps) {
+export function ObjectiveDrafts({
+  state,
+  disabled,
+  onUse,
+  onSkip,
+  onAnother,
+  onLanguage,
+  onCancel,
+  embedded = false,
+  fill = false,
+}: ObjectiveDraftsProps) {
   const ids = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
   // Opening (and each change of phase) takes focus to the heading and brings the panel into view.
@@ -463,7 +599,13 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
         </button>
       </div>
       <p className="sr-only" role="status">
-        {state.phase === "ready" ? (fill ? DRAFTS_READY_FILL_LINE : DRAFTS_READY_LINE) : ""}
+        {state.phase === "ready"
+          ? state.stage === "content" && !state.result.objectives.some((d) => d.kind === "language")
+            ? DRAFTS_CONTENT_READY_LINE
+            : fill
+              ? DRAFTS_READY_FILL_LINE
+              : DRAFTS_READY_LINE
+          : ""}
       </p>
       {state.phase === "drafting" && (
         <>
@@ -473,7 +615,7 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
             fallback={
               <p className="manna-label" role="status">
                 <span className="star is-working" aria-hidden="true" />
-                {DRAFTING_LINE}
+                {state.stage === "language" ? DRAFTING_LANGUAGE_LINE : DRAFTING_LINE}
               </p>
             }
           />
@@ -509,6 +651,7 @@ export function ObjectiveDrafts({ state, disabled, onUse, onSkip, onAnother, onC
           onUse={onUse}
           onSkip={onSkip}
           onAnother={onAnother}
+          onLanguage={onLanguage}
         />
       )}
     </Tag>

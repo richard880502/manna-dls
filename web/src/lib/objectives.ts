@@ -15,7 +15,8 @@ export const CONTENT_OBJECTIVE_LABEL = "內容目標（選填）";
 export const LANGUAGE_OBJECTIVE_LABEL = "語言目標（選填）";
 export const CONTENT_OBJECTIVE_PLACEHOLDER = "例如：I can explain how the writer uses examples to support the main idea.";
 export const LANGUAGE_OBJECTIVE_PLACEHOLDER = "例如：I can underline signal words like for example and such as.";
-export const OBJECTIVES_HINT = "一行一項，各寫一項就好。兩格都空著，按「產生」時 Manna 會先依文章擬一組，讓你看過再產生。";
+export const OBJECTIVES_HINT =
+  "一行一項，各寫一項就好。先決定內容目標，再依它寫語言目標（學生要用讀、聽、說、寫做出什麼，才看得出達成內容目標）。兩格都空著，按「產生」時 Manna 會先依文章擬內容目標，你決定之後再擬語言目標。";
 
 /**
  * "I can" at the start of a students' line: any case, spaces or tabs between and after the words,
@@ -45,10 +46,17 @@ export const CATEGORY_LABEL: Record<ObjectiveCategory, string> = {
 
 /** The panel's words (fixed). */
 export const DRAFTS_HEADING = "Manna 先幫你草擬目標";
-export const DRAFTING_LINE = "Manna 正在依文章草擬內容目標與語言目標，並逐項檢查…";
+export const DRAFTING_LINE = "Manna 正在依文章草擬內容目標，並逐項檢查…";
+export const DRAFTING_LANGUAGE_LINE = "Manna 正在依你決定的內容目標草擬語言目標，並逐項檢查…";
 export const DRAFTS_LEAD = "Manna 依文章擬了一組，都通過了 SIOP 的檢查。勾選要用的目標，也可以在框裡改。";
+export const DRAFTS_CONTENT_LEAD =
+  "Manna 先依文章擬了內容目標，都通過了 SIOP 的檢查。勾選要用的目標，也可以在框裡改。決定好內容目標之後，Manna 才會依它擬語言目標。";
+export const DRAFTS_LANGUAGE_LEAD =
+  "Manna 依你決定的內容目標擬了語言目標：學生要用英語讀、聽、說、寫做出什麼，老師看到成果，就知道學生有沒有學會內容目標。勾選要用的目標，也可以在框裡改。";
+export const DECIDED_CONTENT_HEADING = "你決定的內容目標";
 export const DRAFTS_READY_LINE = "Manna 擬了一組目標，看一下再產生。";
 export const DRAFTS_READY_FILL_LINE = "Manna 擬了一組目標，看一下再填入。";
+export const DRAFTS_CONTENT_READY_LINE = "Manna 擬了內容目標，看一下，決定後再擬語言目標。";
 /** The primary says how many are checked (「用勾選的 2 個目標產生」). */
 export const useDrafts = (n: number, fill: boolean) => `用勾選的 ${n} 個目標${fill ? "" : "產生"}`;
 export const NOTHING_CHECKED = "還沒勾選任何目標。勾一個，或按「不用目標」。";
@@ -59,7 +67,15 @@ export const REDRAW_FAILED = "這次沒有換成，目標維持原樣。你可�
 export const SKIP_DRAFTS = "不用目標，直接產生";
 export const SKIP_DRAFTS_FILL = "不用目標";
 export const ANOTHER_SET = "換一組";
-export const ASK_MANNA = "請 Manna 擬一組";
+export const ASK_MANNA = "請 Manna 擬內容目標";
+export const ASK_MANNA_LANGUAGE = "請 Manna 依內容目標擬語言目標";
+/** Under the language field while there is no 內容目標 to derive it from. */
+export const LANGUAGE_AFTER_CONTENT = "先決定內容目標，才能請 Manna 依它擬語言目標。";
+/** 用勾選的內容目標，請 Manna 擬語言目標: the primary of the 內容目標 step. */
+export const toLanguage = (n: number) => `用勾選的 ${n} 個內容目標，請 Manna 擬語言目標`;
+/** The quiet way out of the 內容目標 step: no 語言目標 for now. */
+export const onlyContent = (n: number, fill: boolean) => `只用勾選的 ${n} 個內容目標${fill ? "" : "產生"}`;
+export const LANGUAGE_FAILED = "這次沒有擬出語言目標，內容目標維持原樣。你可以再試一次，或自己寫語言目標。";
 export const DRAFT_FAILED = "Manna 這次沒有草擬出目標。你可以自己寫，或直接產生。";
 
 /** What the teacher chose for one draft, before it is sent. */

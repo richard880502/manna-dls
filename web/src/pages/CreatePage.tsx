@@ -37,7 +37,7 @@ import {
 } from "../components/template/SampleChooser";
 import { TemplateSelect, useReadyTemplates } from "../components/template/TemplateSelect";
 import { useApp } from "../context/AppContext";
-import { objectiveOptions, type DraftDecision } from "../lib/objectives";
+import { objectiveLines, objectiveOptions, type DraftDecision } from "../lib/objectives";
 import { ocrBusyError, ocrBusyLine, ocrOpen } from "../lib/ocr";
 import {
   EXEMPLAR_TEXT,
@@ -303,8 +303,11 @@ function Generator({ tool }: { tool: Tool }) {
     await send(contentObjective, languageObjective);
   }
 
-  /** Asks Manna for a set of objectives; `fill`: for the two fields only (nothing is generated after it). */
-  async function draft(fill: boolean) {
+  /**
+   * Asks Manna for objectives; `fill`: for the two fields only (nothing is generated after it).
+   * The 內容目標 come first; `language` asks for the 語言目標 from the 內容目標 already in the field.
+   */
+  async function draft(fill: boolean, language = false) {
     if (busy || drafts.state !== null) return;
     if (material === null) {
       setNeedMaterial(true);
@@ -315,6 +318,7 @@ function Generator({ tool }: { tool: Tool }) {
       kind: kindOf(tool),
       ...material,
       ...(classId !== null ? { class_id: classId } : {}),
+      ...(language ? { stage: "language" as const, content: objectiveLines(contentObjective).slice(0, 2) } : {}),
     };
     setError(null);
     setOcrRefusal(null);
@@ -398,6 +402,7 @@ function Generator({ tool }: { tool: Tool }) {
         language={languageObjective}
         disabled={busy}
         onAsk={() => void draft(true)}
+        onAskLanguage={() => void draft(true, true)}
         onContent={(value) => {
           setContentObjective(value);
           if (drafts.state) drafts.close();
@@ -420,6 +425,7 @@ function Generator({ tool }: { tool: Tool }) {
             if (!fillMode) void send("", "");
           }}
           onAnother={(plan) => void drafts.another(plan)}
+          onLanguage={(plan) => void drafts.toLanguage(plan).catch((err) => setError(errorMessage(err)))}
           onCancel={drafts.close}
         />
       )}

@@ -67,6 +67,8 @@ pub fn analysis_max_tokens(paragraphs: usize) -> u32 {
     (1000 + 200 * paragraphs.min(200) as u32).clamp(ANALYSIS_MAX_TOKENS, ANALYSIS_MAX_TOKENS_CAP)
 }
 pub const OBJECTIVES_MAX_TOKENS: u32 = 4000;
+/// Most suggestions of one kind a run for that kind keeps.
+pub const KIND_MAX: usize = 3;
 /// Most curriculum items put in front of the model.
 pub const CURRICULUM_LIMIT: usize = 150;
 const BASE_TEMPERATURE: f32 = 0.2;
@@ -133,6 +135,9 @@ pub struct Swap {
 #[derive(Debug, Clone)]
 pub enum Scope {
     Whole,
+    /// The whole objectives stage for one kind: 內容目標 first, then (once the teacher decided
+    /// them) 語言目標 derived from them.
+    Kind(ObjectiveType),
     Swap(Swap),
     Paragraph {
         parent_job_id: Option<i64>,
@@ -144,7 +149,7 @@ impl Scope {
     /// Part of the uniqueness of a running job: the whole stage is `""`.
     pub fn slot(&self) -> String {
         match self {
-            Self::Whole => String::new(),
+            Self::Whole | Self::Kind(_) => String::new(),
             Self::Swap(s) => format!("{}:{}", s.parent_job_id, s.index),
             Self::Paragraph { paragraph_id, .. } => format!("p:{paragraph_id}"),
         }
@@ -159,7 +164,7 @@ impl Scope {
 
     fn parent(&self) -> Option<i64> {
         match self {
-            Self::Whole => None,
+            Self::Whole | Self::Kind(_) => None,
             Self::Swap(s) => Some(s.parent_job_id),
             Self::Paragraph { parent_job_id, .. } => *parent_job_id,
         }
@@ -168,6 +173,7 @@ impl Scope {
     fn params(&self) -> Option<Value> {
         match self {
             Self::Whole => None,
+            Self::Kind(k) => Some(json!({ "only_type": k.label() })),
             Self::Swap(s) => Some(json!({
                 "index": s.index, "type": s.kind.label(),
                 // Counts only: the declined text is in the parent job's result.
@@ -441,7 +447,11 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
                         Scope::Swap(s) => Some(s),
                         _ => None,
                     };
-                    run_objectives(&state, job_id, &input, temperature, swap).await
+                    let kind = match &input.scope {
+                        Scope::Kind(k) => Some(*k),
+                        _ => None,
+                    };
+                    run_objectives(&state, job_id, &input, temperature, swap, kind).await
                 }
                 JobKind::Goals => stages::run_goals(&state, job_id, &input, temperature).await,
                 JobKind::Tasks => stages::run_tasks(&state, job_id, &input, temperature).await,
@@ -865,10 +875,32 @@ async fn run_objectives(
     input: &JobInput,
     temperature: f32,
     swap: Option<&Swap>,
+    kind: Option<ObjectiveType>,
 ) -> AppResult<Done> {
     let db = &state.db;
-    let only: Option<ObjectiveType> = swap.map(|s| s.kind);
-    let swap_note = swap.map(stages::swap_note).unwrap_or_default();
+    let only: Option<ObjectiveType> = swap.map(|s| s.kind).or(kind);
+    let decided_content: Vec<String> = input
+        .version
+        .content
+        .objectives
+        .iter()
+        .filter(|o| o.kind == ObjectiveType::Content)
+        .map(|o| {
+            let both = [o.text.trim(), o.student_facing_en.trim()]
+                .into_iter()
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>();
+            both.join("｜")
+        })
+        .filter(|t| !t.is_empty())
+        .collect();
+    // 換一個 keeps one; a whole run for one kind keeps the first few.
+    let keep_max = if swap.is_some() { 1 } else { KIND_MAX };
+    let swap_note = match (swap, kind) {
+        (Some(s), _) => stages::swap_note(s),
+        (None, Some(k)) => stages::kind_note(k, &decided_content),
+        (None, None) => String::new(),
+    };
     let paragraphs = &input.material.paragraphs;
     let prompt = prompt(db, KEY_OBJECTIVES).await?;
     let passage = numbered_passage(paragraphs);
@@ -1018,8 +1050,9 @@ async fn run_objectives(
         schema: schemas::objectives_schema(),
         fake_context: json!({
             "task": KEY_OBJECTIVES,
-            "only_type": swap.map(|s| s.kind.label()),
+            "only_type": only.map(ObjectiveType::label),
             "swap_index": swap.map(|s| s.index),
+            "content_objectives": decided_content,
             "paragraphs": paragraphs.len(),
             "items": items.iter().map(|i| json!({
                 "item_code": i.item_code, "title": i.title
@@ -1055,7 +1088,7 @@ async fn run_objectives(
                     "shown"
                 };
                 let mut results = vec![CheckResult::pass("schema")];
-                results.extend(eval.results.clone());
+                results.extend(eval.results_for(only));
                 finish_output(
                     db,
                     &a1,
@@ -1140,7 +1173,7 @@ async fn run_objectives(
                 Ok(raw) => {
                     let eval = evaluate_objectives(&raw, &allowed, paragraphs);
                     let mut results = vec![CheckResult::pass("schema")];
-                    results.extend(eval.results.clone());
+                    results.extend(eval.results_for(only));
                     second = Some((a2, eval, results));
                 }
                 Err(e) => {
@@ -1187,7 +1220,7 @@ async fn run_objectives(
             .await?;
         }
         if second_usable {
-            let out = eval.restrict(only).into_suggestion(items.len());
+            let out = eval.restrict(only, keep_max).into_suggestion(items.len());
             let sources = objective_sources(&out);
             return Ok((
                 result_json(AiResult::shown(a2.id, out, sources).with_context(context)),
@@ -1203,7 +1236,7 @@ async fn run_objectives(
             if repair {
                 set_final(db, a1.id, "shown", report_with(&results, repairs(&eval))).await?;
             }
-            let out = eval.restrict(only).into_suggestion(items.len());
+            let out = eval.restrict(only, keep_max).into_suggestion(items.len());
             let sources = objective_sources(&out);
             return Ok((
                 result_json(AiResult::shown(a1.id, out, sources).with_context(context)),
