@@ -8,10 +8,12 @@
 //!   (ids `teacher-c1`, `teacher-l1` …, [`from_settings`]), which print at the top of the sheet
 //!   and which the steps refer to as O1, O2 ….
 //! * **G2/G3**: when the teacher left both empty, `POST /api/objective-drafts` drafts them from
-//!   the material ([`draft`]). The model writes the 內容目標 first and derives the 語言目標
-//!   from them (strategy first, R2); the server checks R1 by rule ([`check_rules`]); a second
-//!   call judges R3 for every draft on its own ([`evaluate_check`]); only drafts that pass both
-//!   are shown, and when a group is left without one the server drafts once more. The
+//!   the material ([`draft`]). The two kinds are drafted one after the other ([`Stage`]): the
+//!   內容目標 first; once the teacher decided them, a second request drafts the 語言目標 from
+//!   the ones she kept (which reading, listening, speaking or writing shows that students reached
+//!   them; strategy first, R2). The server checks R1 by rule ([`check_rules`]); a second call
+//!   judges R3 for every draft on its own ([`evaluate_check`]); only drafts that pass both are
+//!   shown, and when the asked-for group is left without one the server drafts once more. The
 //!   teacher's 採用／修改／改寫 goes to `POST /api/ai/:id/decision`.
 
 pub mod draft;
@@ -256,6 +258,34 @@ pub fn category_label(id: &str) -> &'static str {
 pub const CONTENT_CODES: [&str; GROUP_MAX] = ["C1", "C2"];
 pub const LANGUAGE_CODES: [&str; GROUP_MAX] = ["L1", "L2"];
 
+/// Which kind a draft request asks for. The 語言目標 depend on the 內容目標 (they say which
+/// language students need to show they reached them), so they are drafted after the teacher
+/// decided the 內容目標, from the ones she kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Stage {
+    #[default]
+    Content,
+    Language,
+}
+
+impl Stage {
+    /// The kind of objective this stage drafts.
+    pub fn kind(self) -> ObjectiveType {
+        match self {
+            Self::Content => ObjectiveType::Content,
+            Self::Language => ObjectiveType::Language,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Content => "content",
+            Self::Language => "language",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RawContentDraft {
     pub zh: String,
@@ -280,7 +310,9 @@ pub struct RawLanguageDraft {
 /// order the gateway writes them), then the 語言目標 derived from them.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RawDrafts {
+    #[serde(default)]
     pub content_objectives: Vec<RawContentDraft>,
+    #[serde(default)]
     pub language_objectives: Vec<RawLanguageDraft>,
 }
 
@@ -291,8 +323,9 @@ impl RawDrafts {
     }
 }
 
-/// `objective_draft`: 1–2 內容目標, then 1–2 語言目標, every string capped.
-pub fn draft_schema() -> Value {
+/// `objective_draft` for one stage: 1–2 of the asked-for kind (the other group stays empty),
+/// every string capped.
+pub fn draft_schema(stage: Stage) -> Value {
     let content = obj(vec![
         ("zh", s_max(ZH_CHARS)),
         ("en", s_max(EN_CHARS)),
@@ -307,10 +340,22 @@ pub fn draft_schema() -> Value {
         ("relation_zh", s_max(RELATION_CHARS)),
         ("check_zh", s_max(CHECK_CHARS)),
     ]);
-    let group = |items: Value| json!({ "type": "array", "items": items, "minItems": GROUP_MIN, "maxItems": GROUP_MAX });
+    let group = |items: Value, asked: bool| {
+        json!({
+            "type": "array", "items": items,
+            "minItems": if asked { GROUP_MIN } else { 0 },
+            "maxItems": if asked { GROUP_MAX } else { 0 }
+        })
+    };
     obj(vec![
-        ("content_objectives", group(content)),
-        ("language_objectives", group(language)),
+        (
+            "content_objectives",
+            group(content, stage == Stage::Content),
+        ),
+        (
+            "language_objectives",
+            group(language, stage == Stage::Language),
+        ),
     ])
 }
 
@@ -479,9 +524,9 @@ impl RuleOutcome {
         self.drafts.iter().any(|d| d.kind == kind)
     }
 
-    /// Both groups have a draft.
-    pub fn complete(&self) -> bool {
-        self.has(ObjectiveType::Content) && self.has(ObjectiveType::Language)
+    /// The group the stage asked for has a draft.
+    pub fn complete(&self, stage: Stage) -> bool {
+        self.has(stage.kind())
     }
 }
 
@@ -497,13 +542,19 @@ impl RuleOutcome {
 /// A 學習策略 is moved to the front of the 語言目標 (R2: strategy first), unless the unit
 /// needs another kind this time (`strategy_first = false`, see [`draft`]).
 pub fn check_rules(raw: &RawDrafts, strategy_first: bool) -> RuleOutcome {
+    check_rules_after(raw, strategy_first, 0)
+}
+
+/// [`check_rules`] when the teacher already decided `decided` 內容目標 (`C1` …): a 語言目標 may
+/// support any of them.
+pub fn check_rules_after(raw: &RawDrafts, strategy_first: bool, decided: usize) -> RuleOutcome {
     let mut out = RuleOutcome {
         drafts: Vec::new(),
         dropped: Vec::new(),
         repairs: Vec::new(),
     };
     let mut seen: HashSet<String> = HashSet::new();
-    let mut passed_content: HashSet<&str> = HashSet::new();
+    let mut passed_content: HashSet<&str> = CONTENT_CODES.iter().copied().take(decided).collect();
     let fix_line = |code: &str, en: &str, out: &mut RuleOutcome| -> Option<String> {
         let en = clean(en, EN_CHARS);
         match i_can_line(&en) {
@@ -725,6 +776,15 @@ pub fn evaluate_check(raw: &RawCheck, drafts: &[Draft]) -> (Vec<Verdict>, Vec<St
 /// The drafts that pass R3: a verdict without problems, and (for a 語言目標) the 內容目標 it
 /// supports passed too. The others with why, for the record and the next draft.
 pub fn passing(drafts: &[Draft], verdicts: &[Verdict]) -> (Vec<Draft>, Vec<String>) {
+    passing_after(drafts, verdicts, 0)
+}
+
+/// [`passing`] when the teacher already decided `decided` 內容目標 (they need no verdict).
+pub fn passing_after(
+    drafts: &[Draft],
+    verdicts: &[Verdict],
+    decided: usize,
+) -> (Vec<Draft>, Vec<String>) {
     let mut shown: Vec<Draft> = Vec::new();
     let mut hidden: Vec<String> = Vec::new();
     for d in drafts {
@@ -738,7 +798,8 @@ pub fn passing(drafts: &[Draft], verdicts: &[Verdict]) -> (Vec<Draft>, Vec<Strin
             continue;
         }
         if let Some(s) = &d.supports {
-            if !shown.iter().any(|c| &c.code == s) {
+            let decided_code = CONTENT_CODES.iter().take(decided).any(|c| c == s);
+            if !decided_code && !shown.iter().any(|c| &c.code == s) {
                 hidden.push(format!("{}：它支持的 {s} 沒有通過檢查", d.code));
                 continue;
             }
@@ -892,14 +953,17 @@ mod tests {
     }
 
     #[test]
-    fn the_draft_schema_writes_content_before_language_and_caps_everything() {
-        let s = draft_schema();
+    fn the_draft_schema_asks_for_one_kind_per_stage_and_caps_everything() {
+        let s = draft_schema(Stage::Language);
         let keys: Vec<&String> = s["properties"].as_object().unwrap().keys().collect();
         assert_eq!(keys, ["content_objectives", "language_objectives"]);
-        for key in ["content_objectives", "language_objectives"] {
-            assert_eq!(s["properties"][key]["minItems"], 1);
-            assert_eq!(s["properties"][key]["maxItems"], 2);
-        }
+        assert_eq!(s["properties"]["language_objectives"]["minItems"], 1);
+        assert_eq!(s["properties"]["language_objectives"]["maxItems"], 2);
+        assert_eq!(s["properties"]["content_objectives"]["maxItems"], 0);
+        let c = draft_schema(Stage::Content);
+        assert_eq!(c["properties"]["content_objectives"]["minItems"], 1);
+        assert_eq!(c["properties"]["content_objectives"]["maxItems"], 2);
+        assert_eq!(c["properties"]["language_objectives"]["maxItems"], 0);
         let l = &s["properties"]["language_objectives"]["items"];
         let fields: Vec<&String> = l["properties"].as_object().unwrap().keys().collect();
         assert_eq!(
@@ -977,7 +1041,7 @@ mod tests {
             "{:?}",
             r.dropped
         );
-        assert!(r.complete());
+        assert!(r.complete(Stage::Content) && r.complete(Stage::Language));
         assert_eq!(r.repairs.len(), 2, "{:?}", r.repairs);
 
         // A language objective whose content objective did not pass, or without a relation.
@@ -994,7 +1058,7 @@ mod tests {
         assert!(r.drafts.is_empty());
         assert!(r.dropped[0].contains("know"), "{:?}", r.dropped);
         assert!(r.dropped[1].contains("supports"), "{:?}", r.dropped);
-        assert!(!r.complete());
+        assert!(!r.complete(Stage::Content) && !r.complete(Stage::Language));
 
         // Not "I can", too long, Chinese in the students' line, a category outside the four.
         let long = format!("I can {}", "read ".repeat(30));
@@ -1104,5 +1168,49 @@ mod tests {
         let (shown, hidden) = passing(two, &verdicts);
         assert!(shown.is_empty());
         assert!(hidden[1].contains("C1 沒有通過"), "{hidden:?}");
+    }
+
+    /// The 語言目標 stage: the 內容目標 the teacher decided on are the ones a 語言目標 may
+    /// support, and they need no verdict of their own.
+    #[test]
+    fn a_language_objective_may_support_a_content_objective_the_teacher_decided() {
+        let raw = RawDrafts {
+            content_objectives: vec![],
+            language_objectives: vec![
+                language(
+                    "strategy",
+                    "C1",
+                    "I can underline signal words like for example.",
+                ),
+                language(
+                    "function",
+                    "C2",
+                    "I can compare two reasons with both and but.",
+                ),
+            ],
+        };
+        // Nothing decided: both fail (the content objective they support does not exist).
+        let none = check_rules_after(&raw, true, 0);
+        assert!(none.drafts.is_empty());
+        // One decided: C1 is supported, C2 is not.
+        let one = check_rules_after(&raw, true, 1);
+        let codes: Vec<&str> = one.drafts.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(codes, ["L1"]);
+        assert!(one.complete(Stage::Language));
+        assert!(!one.complete(Stage::Content));
+        assert_eq!(one.drafts[0].index, 0, "no content drafts before it");
+        // The judge's verdicts on the 語言目標 are enough: the decided C1 has none.
+        let verdicts = vec![Verdict {
+            code: "L1".into(),
+            problems: vec![],
+            reason: "ok".into(),
+        }];
+        let (shown, hidden) = passing_after(&one.drafts, &verdicts, 1);
+        assert_eq!(shown.len(), 1, "{hidden:?}");
+        let (shown, hidden) = passing(&one.drafts, &verdicts);
+        assert!(
+            shown.is_empty() && hidden[0].contains("沒有通過檢查"),
+            "{hidden:?}"
+        );
     }
 }

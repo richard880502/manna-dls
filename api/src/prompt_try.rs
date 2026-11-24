@@ -225,6 +225,13 @@ fn prepare(key: &str, sample: &Sample) -> Result<Prepared, String> {
                         marked(&paragraphs, |n| format!("[第 {n} 段]")),
                     ),
                     ("redo_note", String::new()),
+                    (
+                        "stage_note",
+                        crate::objectives::draft::stage_note(
+                            crate::objectives::Stage::Content,
+                            &[],
+                        ),
+                    ),
                 ]),
                 vec![
                     ("purpose", "這一課要做"),
@@ -232,11 +239,11 @@ fn prepare(key: &str, sample: &Sample) -> Result<Prepared, String> {
                     ("teacher_request", "教師的要求"),
                 ],
                 crate::objectives::DRAFT_SCHEMA_NAME,
-                crate::objectives::draft_schema(),
+                crate::objectives::draft_schema(crate::objectives::Stage::Content),
                 json!({
                     "task": "objective_draft", "kind": "worksheet", "material_title": FAKE_TITLE,
                     "paragraphs": paragraphs, "round": 1, "avoid": Vec::<String>::new(),
-                    "strategy_first": false,
+                    "strategy_first": false, "stage": "content",
                 }),
                 crate::objectives::draft::DRAFT_MAX_TOKENS,
             )
@@ -424,12 +431,12 @@ fn evaluate(key: &str, output: &Value, p: &Prepared, notes: &mut Vec<String>) ->
                 Ok(raw) => {
                     let rules = crate::objectives::check_rules(&raw, false);
                     let mut out = vec![line("schema", true, None)];
+                    let stage = crate::objectives::Stage::Content;
                     out.push(line(
-                        "has_content_and_language",
-                        rules.complete(),
-                        (!rules.complete()).then(|| {
-                            "內容目標與語言目標各至少要有 1 個通過檢查的目標。".to_string()
-                        }),
+                        "has_content",
+                        rules.complete(stage),
+                        (!rules.complete(stage))
+                            .then(|| "內容目標至少要有 1 個通過檢查的目標。".to_string()),
                     ));
                     for dropped in &rules.dropped {
                         out.push(line("rules", false, dropped.clone()));

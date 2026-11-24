@@ -10,6 +10,9 @@
 //! | `FAKE_OBJ_R3_ALWAYS`   | judge: every 語言目標 is `no_relation`, in both rounds (only the 內容目標 are shown) |
 //! | `FAKE_BLOCK`           | draft: Chinese in every students' line, both attempts (nothing usable) |
 //!
+//! A draft is of one stage (`stage`: `content`, or `language` with the decided `decided_content`):
+//! the other group comes back empty.
+//!
 //! A draft with `avoid` (「換一組」) or `keep` (「換掉沒勾的」) writes another set; round 2 writes other wording, so that a
 //! test can tell the rounds apart.
 
@@ -67,6 +70,9 @@ pub fn draft(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
         "check_zh": "檢查學生在文中畫出的提示詞和例子。",
     });
     let mut language = vec![strategy];
+    // The 語言目標 stage is told which 內容目標 the teacher decided on.
+    let decided = ctx["decided_content"].as_array().map_or(0, Vec::len);
+    let language_stage = ctx["stage"] == "language";
     if has("FAKE_OBJ_TWO") {
         content.push(json!({
             "zh": "比較兩個段落提出的理由",
@@ -77,7 +83,7 @@ pub fn draft(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             0,
             json!({
                 "category": "function",
-                "supports": "C2",
+                "supports": if language_stage && decided < 2 { "C1" } else { "C2" },
                 "zh": "用 both … but … 寫出比較句",
                 "en": "I can use both and but to write a sentence that compares two reasons.",
                 "relation_zh": "學生要用 both … but … 的比較句型，才能比較兩個段落提出的理由。",
@@ -90,7 +96,12 @@ pub fn draft(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             c["en"] = json!("我能說明文章的主旨。");
         }
     }
-    json!({ "content_objectives": content, "language_objectives": language })
+    // One stage at a time: the other group is empty.
+    if language_stage {
+        json!({ "content_objectives": [], "language_objectives": language })
+    } else {
+        json!({ "content_objectives": content, "language_objectives": [] })
+    }
 }
 
 pub fn check(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {

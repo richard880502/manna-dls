@@ -598,6 +598,7 @@ function QuickBox() {
             void create("", "");
           }}
           onAnother={(plan) => void drafts.another(plan)}
+          onLanguage={(plan) => void drafts.toLanguage(plan).catch((err) => setError(errorMessage(err)))}
           onCancel={drafts.close}
         />
       )}

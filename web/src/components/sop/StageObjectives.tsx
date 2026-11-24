@@ -11,7 +11,7 @@ import type {
 } from "../../api/types";
 import { useApp } from "../../context/AppContext";
 import { logScaffold } from "../../lib/scaffold";
-import { OBJECTIVE_TYPES, newId, objectiveTypeLabel } from "../../lib/sop";
+import { LANGUAGE_AFTER_CONTENT, OBJECTIVE_TYPES, newId, objectiveTypeLabel } from "../../lib/sop";
 import { ErrorText } from "../common";
 import { GenerationChoice } from "./Choices";
 import { AskManna, MannaWell, RedoPending } from "./parts";
@@ -473,6 +473,7 @@ export function StageObjectives({ sop, todayObjective, lessonId }: StageObjectiv
 
   // The old single objective is offered here, not filed for the teacher: it never said which kind it was.
   const today = todayObjective.trim();
+  const hasContent = content.objectives.some((o) => o.type === "content" && o.text.trim() !== "");
   const todayCarried = today !== "" && content.objectives.some((o) => o.text.trim() === today);
 
   const shownNote = suggestion
@@ -483,12 +484,22 @@ export function StageObjectives({ sop, todayObjective, lessonId }: StageObjectiv
 
   return (
     <>
-      <p className="lead">這節課學生要理解什麼、要用英文做到什麼？兩種目標分開寫。</p>
+      <p className="lead">
+        這節課學生要理解什麼、要用英文做到什麼？兩種目標分開寫：先決定內容目標，再依它寫語言目標。語言目標是為了達成內容目標，學生需要用什麼語言（讀、聽、說、寫做出什麼），老師看到成果就知道學生有沒有學會內容。
+      </p>
       <AskManna
         sop={sop}
         kind="objectives"
-        label="請 Manna 推薦目標"
-        againLabel="請 Manna 再推薦一次"
+        label=""
+        againLabel=""
+        options={[
+          { label: "請 Manna 推薦內容目標", only: "content" },
+          {
+            label: "請 Manna 依內容目標推薦語言目標",
+            only: "language",
+            blocked: hasContent ? null : LANGUAGE_AFTER_CONTENT,
+          },
+        ]}
         shownNote={shownNote}
       />
 

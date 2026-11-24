@@ -3,17 +3,23 @@
 //! the generator page, so a round is two calls (draft, then judge) and there is at most one
 //! more round.
 //!
-//! 1. **Draft** (`objective_draft`): the model writes 1–2 內容目標, then 1–2 語言目標 derived
-//!    from them (strategy first, R2), each as the students' "I can …" line and the teacher's
-//!    Chinese line, a 語言目標 with its 「學生要用……，才能……」. The server checks R1 by rule
-//!    ([`super::check_rules`]); a group left empty by the rules is asked for once more in the
-//!    same call (temperature +0.4, the problems listed: the gateway caches identical requests).
+//! The two kinds are drafted one after the other ([`Stage`]): a request drafts the 內容目標, and
+//! once the teacher decided them a second request drafts the 語言目標 from the ones she kept.
+//! Their job is to name which reading, listening, speaking or writing students must produce to
+//! show they reached the 內容目標, so they cannot be written before it.
+//!
+//! 1. **Draft** (`objective_draft`): the model writes 1–2 objectives of the asked-for kind (a
+//!    語言目標 derived from the decided 內容目標, strategy first, R2), each as the students'
+//!    "I can …" line and the teacher's Chinese line, a 語言目標 with its 「學生要用……，才能……」.
+//!    The server checks R1 by rule ([`super::check_rules_after`]); an empty group is asked for
+//!    once more in the same call (temperature +0.4, the problems listed: the gateway caches
+//!    identical requests).
 //! 2. **Judge** (`objective_check`): one call judges R3 for every remaining draft on its own,
 //!    like `worksheet_bloom_check` ([`super::evaluate_check`]). Only drafts without problems
 //!    are shown (G3).
-//! 3. **Once more**: when a group has no draft left, the server drafts a second round with the
-//!    judge's reasons (what passed may be kept) and judges it; the round with both groups (or
-//!    more drafts) is shown.
+//! 3. **Once more**: when the group has no draft left, the server drafts a second round with the
+//!    judge's reasons (what passed may be kept) and judges it; the round with a draft (or more
+//!    drafts) is shown.
 //!
 //! Every call is its own `ai_interactions` row; the round shown is the one the teacher's
 //! decisions refer to (`item_index` = [`super::Draft::index`]), and its `check_results` say
@@ -27,9 +33,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::{
-    check_rules, check_schema, draft_schema, evaluate_check, passing, Draft, RawCheck, RawDrafts,
-    RuleOutcome, Verdict, CATEGORIES, CHECK_SCHEMA_NAME, DRAFT_SCHEMA_NAME, KEY_CHECK, KEY_DRAFT,
-    STRATEGY,
+    check_rules_after, check_schema, draft_schema, evaluate_check, passing_after, Draft, RawCheck,
+    RawDrafts, RuleOutcome, Stage, Verdict, CATEGORIES, CHECK_SCHEMA_NAME, DRAFT_SCHEMA_NAME,
+    KEY_CHECK, KEY_DRAFT, STRATEGY,
 };
 use crate::ai::pipeline::{AiContextItem, ContextList, InteractionMeta};
 use crate::ai::LlmRequest;
@@ -64,7 +70,7 @@ pub const MSG_ERROR: &str = "AI 暫時無法使用，這次沒有草擬目標。
 pub const MSG_NONE: &str =
     "Manna 這次草擬的目標沒有通過檢查，所以沒有列出。你可以自己寫，或直接產生。";
 pub const MSG_NO_LANGUAGE: &str =
-    "Manna 這次草擬的語言目標沒有通過檢查，所以只列出內容目標。語言目標可以自己寫。";
+    "Manna 這次草擬的語言目標沒有通過檢查，所以沒有列出。語言目標可以自己寫。";
 pub const MSG_NO_CONTENT: &str =
     "Manna 這次草擬的內容目標沒有通過檢查，所以沒有列出。你可以自己寫，或直接產生。";
 
@@ -93,6 +99,28 @@ pub struct DraftInput {
     pub avoid: Vec<String>,
     /// 換掉沒勾的: (code, line) of the objectives the teacher keeps; the new ones go with them.
     pub keep: Vec<(String, String)>,
+    /// The kind this request drafts.
+    pub stage: Stage,
+    /// [`Stage::Language`]: the 內容目標 the teacher decided on (`C1`, `C2`), which the 語言目標
+    /// are derived from.
+    pub content: Vec<String>,
+}
+
+/// What the request tells the model about the stage: which group to write, and for the 語言目標
+/// the decided 內容目標 they come from.
+pub fn stage_note(stage: Stage, content: &[String]) -> String {
+    match stage {
+        Stage::Content => "\n\n【這次只寫內容目標】只寫 content_objectives（1–2 個），language_objectives 給空陣列。語言目標會等教師決定好內容目標之後，才依它另外草擬。".to_string(),
+        Stage::Language => format!(
+            "\n\n【這次只寫語言目標】教師已經決定下面這些內容目標：\n{}\n請只寫 language_objectives（1–2 個），content_objectives 給空陣列。語言目標要從這些內容目標推出來：先想學生要達成內容目標，必須用英語讀、聽、說、寫裡的哪一種能力，做出什麼成果（老師看到這個成果，就知道學生有沒有學會內容目標），再寫成語言目標；supports 只能填上面的代號。",
+            content
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("- {}：{}", super::CONTENT_CODES[i], clip_chars(c, 300)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    }
 }
 
 /// `POST /api/objective-drafts` (docs/API.md「SIOP 目標」).
@@ -103,7 +131,7 @@ pub struct DraftResult {
     /// `shown` | `blocked` | `timeout` | `error` | `disabled`
     pub status: &'static str,
     pub message: Option<String>,
-    /// The drafts that passed R1 and R3: the 內容目標 first, then the 語言目標.
+    /// The drafts that passed R1 and R3 (of the kind the request asked for).
     pub objectives: Vec<Draft>,
     /// How many drafts of the round shown were kept back by the checks.
     pub hidden: usize,
@@ -456,10 +484,6 @@ impl Round {
         self.shown.iter().any(|d| d.kind == kind)
     }
 
-    fn complete(&self) -> bool {
-        self.has(ObjectiveType::Content) && self.has(ObjectiveType::Language)
-    }
-
     fn hidden_count(&self) -> usize {
         self.rules.dropped.len() + self.hidden.len()
     }
@@ -487,6 +511,8 @@ impl Round {
 
 struct Ctx<'a> {
     input: &'a DraftInput,
+    /// How many 內容目標 the teacher already decided on (the 語言目標 stage).
+    decided: usize,
     vars: HashMap<&'static str, String>,
     strategy_first: bool,
     codes: Vec<String>,
@@ -547,16 +573,19 @@ async fn round(
     vars.insert("redo_note", redo.clone().unwrap_or_default());
     let strategy_first = ctx.strategy_first;
     let retry_rules = no == 1;
+    let stage = input.stage;
+    let decided = ctx.decided;
     let spec = Spec {
         key: KEY_DRAFT,
         scaffold: SCAFFOLD_DRAFT,
         schema_name: DRAFT_SCHEMA_NAME,
-        schema: draft_schema(),
+        schema: draft_schema(input.stage),
         vars,
         required: vec![
             ("purpose", "這一課要做"),
             ("class_profile", "班級特性"),
             ("teacher_request", "教師的要求"),
+            ("stage_note", "這次要草擬的目標"),
         ],
         fake_context: json!({
             "task": KEY_DRAFT,
@@ -567,10 +596,13 @@ async fn round(
             "avoid": input.avoid,
             "keep": input.keep.iter().map(|(c, t)| json!({ "code": c, "text": t })).collect::<Vec<_>>(),
             "strategy_first": strategy_first,
+            "stage": input.stage.as_str(),
+            "decided_content": input.content,
         }),
         max_tokens: DRAFT_MAX_TOKENS,
         trace: json!({
-            "kind": input.kind, "round": no, "class_context": ctx.class_snapshot,
+            "kind": input.kind, "round": no, "stage": input.stage.as_str(),
+            "class_context": ctx.class_snapshot,
             "curriculum_codes": ctx.codes, "strategy_first": strategy_first,
         }),
         progress: Some((ctx.progress.clone(), draft_key)),
@@ -581,15 +613,13 @@ async fn round(
         input.teacher_id,
         spec,
         |raw: &RawDrafts| {
-            let rules = check_rules(raw, strategy_first);
-            let problems = if retry_rules && !rules.complete() {
+            let rules = check_rules_after(raw, strategy_first, decided);
+            let problems = if retry_rules && !rules.complete(stage) {
                 let mut p = rules.dropped.clone();
-                if !rules.has(ObjectiveType::Content) {
-                    p.push("沒有可用的內容目標：content_objectives 至少要有 1 個通過檢查。".to_string());
-                }
-                if !rules.has(ObjectiveType::Language) {
-                    p.push("沒有可用的語言目標：language_objectives 至少要有 1 個通過檢查，並支持一個可用的內容目標。".to_string());
-                }
+                p.push(match stage {
+                    Stage::Content => "沒有可用的內容目標：content_objectives 至少要有 1 個通過檢查。".to_string(),
+                    Stage::Language => "沒有可用的語言目標：language_objectives 至少要有 1 個通過檢查，並支持一個教師已決定的內容目標。".to_string(),
+                });
                 p
             } else {
                 Vec::new()
@@ -625,16 +655,29 @@ async fn round(
 
     // ---- the judge: every draft on its own (R3)
     let codes: Vec<String> = rules.drafts.iter().map(|d| d.code.clone()).collect();
+    // The 內容目標 the teacher decided are the context of the 語言目標 judged; they are not judged.
+    let decided_lines: Vec<String> = input
+        .content
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            format!(
+                "{}（內容目標，教師已決定，不用判斷）{}",
+                super::CONTENT_CODES[i],
+                c
+            )
+        })
+        .collect();
     let judge_vars: HashMap<&'static str, String> = HashMap::from([
         ("class_profile", ctx.vars["class_profile"].clone()),
         ("purpose", ctx.vars["purpose"].clone()),
         ("objective_count", codes.len().to_string()),
         (
             "objectives",
-            rules
-                .drafts
+            decided_lines
                 .iter()
-                .map(draft_text)
+                .cloned()
+                .chain(rules.drafts.iter().map(draft_text))
                 .collect::<Vec<_>>()
                 .join("\n"),
         ),
@@ -687,7 +730,7 @@ async fn round(
     match judged {
         Called::Shown { output, .. } => {
             ctx.progress.done(check_key).await;
-            let (shown, hidden) = passing(&r.rules.drafts, &output);
+            let (shown, hidden) = passing_after(&r.rules.drafts, &output, decided);
             r.shown = shown;
             r.hidden = hidden;
             r.verdicts = output;
@@ -722,7 +765,7 @@ fn redo_note(r: &Round) -> String {
         .map(|d| format!("- {}：{}", d.code, d.text))
         .collect();
     let mut note = format!(
-        "\n\n【重新草擬】上一次草擬的目標有些沒有通過檢查：\n{}\n請重新草擬一組，兩組目標都要有，並修正上面的問題。",
+        "\n\n【重新草擬】上一次草擬的目標有些沒有通過檢查：\n{}\n請重新草擬這一組目標，並修正上面的問題。",
         lines.join("\n")
     );
     if !kept.is_empty() {
@@ -817,6 +860,7 @@ pub async fn run(
         ("recent_categories", recent_text(&recent)),
         ("variety_note", variety_note(strategy_first)),
         ("avoid_note", avoid_note),
+        ("stage_note", stage_note(input.stage, &input.content)),
         ("curriculum_items", format_curriculum(&items)),
         ("material_title", material_title(&input.material)),
         (
@@ -827,6 +871,7 @@ pub async fn run(
     ]);
     let ctx = Ctx {
         input: &input,
+        decided: input.content.len(),
         vars,
         strategy_first,
         codes,
@@ -841,13 +886,14 @@ pub async fn run(
         Err((status, id)) => return Ok(DraftResult::failed(status, id, context)),
     };
     // G3: drafts that fail are not shown; a group left without one is drafted once more.
-    let (chosen, other) = if first.complete() {
+    let stage = input.stage;
+    let (chosen, other) = if first.has(stage.kind()) {
         (first, None)
     } else {
         match round(state, &ctx, 2, Some(redo_note(&first))).await? {
             Ok(second)
-                if second.complete()
-                    || (!first.complete() && second.shown.len() > first.shown.len()) =>
+                if second.has(stage.kind())
+                    || (!first.has(stage.kind()) && second.shown.len() > first.shown.len()) =>
             {
                 (second, Some(first))
             }
@@ -870,10 +916,11 @@ pub async fn run(
             Some("error") | Some("disabled") => Some(MSG_ERROR),
             _ => Some(MSG_NONE),
         }
-    } else if !chosen.has(ObjectiveType::Language) {
-        Some(MSG_NO_LANGUAGE)
-    } else if !chosen.has(ObjectiveType::Content) {
-        Some(MSG_NO_CONTENT)
+    } else if !chosen.has(stage.kind()) {
+        Some(match stage {
+            Stage::Content => MSG_NO_CONTENT,
+            Stage::Language => MSG_NO_LANGUAGE,
+        })
     } else {
         None
     };

@@ -378,7 +378,9 @@ async fn one_objective_can_be_replaced_without_touching_the_others() {
         .as_array()
         .unwrap()
         .clone();
-    assert!(list.len() >= 3);
+    // The lesson already has a 內容目標, so the run recommends 語言目標 derived from it.
+    assert!(list.len() >= 2);
+    assert!(list.iter().all(|o| o["type"] == "language"), "{list:?}");
     let index = list
         .iter()
         .position(|o| o["type"] == "language")
