@@ -23,6 +23,7 @@ pub mod revise;
 pub mod schemas;
 pub mod store;
 pub mod sync;
+pub mod table;
 pub mod task_words;
 pub mod template;
 pub mod thumbnail;
@@ -653,10 +654,14 @@ impl Item {
     }
 
     /// The table a 表格整理 question prints: its own, or the one its prompt names.
+    ///
+    /// A placeholder heading an older worksheet may carry (「Column 1」) never prints: the headings
+    /// the prompt names take its place, else it prints empty ([`ItemTable::without_placeholders`]).
     pub fn table_or_default(&self) -> ItemTable {
         self.table
             .clone()
             .unwrap_or_else(|| ItemTable::for_prompt(&self.prompt))
+            .without_placeholders(&self.prompt)
     }
 
     /// The organizer the sheet draws: the question's, while its format is 圖像組織.
@@ -692,6 +697,11 @@ pub struct ItemTable {
     pub columns: Vec<String>,
     #[serde(default = "table_rows")]
     pub rows: u8,
+    /// What each row asks the student to write (「Claim」, 「Supporting detail」): printed as a
+    /// first column under the headings. Empty (older tables, a table the teacher cleared): the
+    /// rows are free. Row `i` has `row_labels[i]`; rows past the end of the list have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_labels: Vec<String>,
 }
 
 fn table_rows() -> u8 {
@@ -699,13 +709,34 @@ fn table_rows() -> u8 {
 }
 
 impl ItemTable {
+    /// The table with its placeholder headings (「Column 1」, 「Header」) replaced: all headings
+    /// by the ones the question names, else only the placeholders by empty ones. Empty
+    /// headings are the teacher's own choice and stay.
+    pub fn without_placeholders(mut self, prompt: &str) -> Self {
+        let is_bad = |c: &String| !c.trim().is_empty() && table::is_placeholder(c);
+        if self.columns.iter().any(is_bad) {
+            match columns_from_prompt(prompt).or_else(|| table::columns_named_in_prompt(prompt)) {
+                Some(named) => self.columns = named,
+                None => {
+                    for c in self.columns.iter_mut().filter(|c| is_bad(c)) {
+                        c.clear();
+                    }
+                }
+            }
+        }
+        self
+    }
+
     /// The table of a question that has none of its own. The generator names the columns in the
     /// prompt (「Complete the table: Who? / What happened? / Why?」); without such a list, two
     /// columns without headings (the grid the sheet has always printed).
     pub fn for_prompt(prompt: &str) -> Self {
         Self {
-            columns: columns_from_prompt(prompt).unwrap_or_else(|| vec![String::new(); 2]),
+            columns: columns_from_prompt(prompt)
+                .or_else(|| table::columns_named_in_prompt(prompt))
+                .unwrap_or_else(|| vec![String::new(); 2]),
             rows: TABLE_ROWS,
+            row_labels: Vec::new(),
         }
     }
 }
@@ -1146,6 +1177,11 @@ impl Content {
                     }
                     if !(1..=MAX_TABLE_ROWS).contains(&t.rows) {
                         return Err(format!("表格要有 1 到 {MAX_TABLE_ROWS} 列。"));
+                    }
+                    if t.row_labels.len() > usize::from(MAX_TABLE_ROWS)
+                        || t.row_labels.iter().any(|l| l.chars().count() > 200)
+                    {
+                        return Err("列標籤太多或太長了。".to_string());
                     }
                     if t.columns.iter().any(|c| c.chars().count() > 200) {
                         return Err("表格的欄名最多 200 字。".to_string());
@@ -1746,6 +1782,41 @@ mod tests {
     // The editor reads prompts the same way: web/src/__tests__/editorControls.test.tsx has
     // these cases too.
     #[test]
+    fn a_placeholder_heading_never_prints() {
+        let t = |cols: &[&str]| ItemTable {
+            columns: labels(cols),
+            rows: 3,
+            row_labels: Vec::new(),
+        };
+        let named = "Complete a T-chart with two columns: Pros and Cons. Add one detail.";
+        // The question names the headings: they replace 「Column 1」.
+        assert_eq!(
+            t(&["Column 1", "Column 2"])
+                .without_placeholders(named)
+                .columns,
+            ["Pros", "Cons"]
+        );
+        // It names none: the placeholder goes, a real heading stays, an empty one stays empty.
+        assert_eq!(
+            t(&["Who", "Column 2", ""])
+                .without_placeholders("Complete the table.")
+                .columns,
+            ["Who", "", ""]
+        );
+        assert_eq!(
+            t(&["", ""]).without_placeholders(named).columns,
+            ["", ""],
+            "empty headings are left to the teacher"
+        );
+        // An item without a table of its own takes the one its question names.
+        let item = Item {
+            prompt: named.into(),
+            ..Item::default()
+        };
+        assert_eq!(item.table_or_default().columns, ["Pros", "Cons"]);
+    }
+
+    #[test]
     fn a_table_takes_its_columns_from_the_prompt() {
         let cols = |p: &str| columns_from_prompt(p);
         assert_eq!(
@@ -1770,7 +1841,8 @@ mod tests {
             ItemTable::for_prompt("Complete the table."),
             ItemTable {
                 columns: labels(&["", ""]),
-                rows: TABLE_ROWS
+                rows: TABLE_ROWS,
+                row_labels: Vec::new(),
             }
         );
         assert!(uses_choices(None) && uses_choices(Some(FMT_TRUE_FALSE)));
@@ -1797,6 +1869,7 @@ mod tests {
             Some(ItemTable {
                 columns: vec!["Who?".to_string(); n],
                 rows,
+                row_labels: Vec::new(),
             })
         };
         assert!(with(table(3, 3), labels(&["A", "B"])).normalise().is_ok());

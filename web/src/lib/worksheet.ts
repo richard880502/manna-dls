@@ -381,11 +381,79 @@ export function columnsFromPrompt(prompt: string): string[] | null {
   return fits ? parts : null;
 }
 
-/** The table a 表格整理 question prints: its own, else the one its prompt names, else two columns
- * without headings and three rows (what the sheet has always printed). */
-export function tableOf(item: Pick<WsItem, "table" | "prompt">): WsItemTable {
-  return item.table ?? { columns: columnsFromPrompt(item.prompt) ?? ["", ""], rows: TABLE_ROWS };
+const NUMBER_WORDS: Record<string, number> = { two: 2, "2": 2, three: 3, "3": 3, four: 4, "4": 4, five: 5, "5": 5, six: 6, "6": 6 };
+const NAMED_COLUMNS = /\b(?:(\w+)\s+)?columns?\s*(?:(?:labell?ed|titled|called|headed|named)\b\s*[:：]?|[:：])\s*([^\n]+)/i;
+const PLACEHOLDER_HEADING =
+  /^(?:(?:column|col|header|heading|row|item|field|label|title|category|topic|name)\s*[#_-]?\s*\d+|column(?:\s+(?:name|header))?|header|heading|tbd|n\/?a|none|blank|untitled|\.{2,}|…+|\?+|-+|_+|x+|(?:欄位?|列|標題|欄名)\s*\d*)$/i;
+
+/** A heading or row label that says nothing: empty, "Column 1", "Header", "Row 2", "…". The same
+ * rule as the server's `table::is_placeholder`. */
+export function isPlaceholderHeading(text: string): boolean {
+  const t = text.trim();
+  return t === "" || PLACEHOLDER_HEADING.test(t);
 }
+
+/**
+ * The headings a question names in its own words: "Complete a T-chart with two columns:
+ * Unconventional Path as a Positive Choice and Speaker Justifying His Decision. For each …". The list
+ * after "column(s)" up to the end of the sentence, split at "/", "|", ";" or commas, else at a single
+ * "and"; a stated number ("two columns") must match. Two to six short headings, else null. The same
+ * rule as the server's `columns_named_in_prompt`.
+ */
+export function columnsNamedInPrompt(prompt: string): string[] | null {
+  const m = NAMED_COLUMNS.exec(prompt);
+  if (!m) return null;
+  const stated = m[1] ? NUMBER_WORDS[m[1].toLowerCase()] : undefined;
+  let rest = (m[2] ?? "").trimEnd();
+  if (rest.endsWith(")")) {
+    const open = rest.lastIndexOf("(");
+    if (open >= 0) rest = rest.slice(0, open).trimEnd();
+  }
+  const end = /[.!?](?:\s+\p{Lu}|\s*$)/u.exec(rest);
+  const list = (end ? rest.slice(0, end.index) : rest).trim().replace(/[.。]+$/, "");
+  let parts = list
+    .split(/[/|／;；,]/)
+    .map((p) => {
+      const t = p.trim().replace(/^and\s+/i, "");
+      return t.replace(/^["'“”‘’]+|["'“”‘’]+$/g, "").trim();
+    })
+    .filter((p) => p !== "");
+  if (parts.length === 1) {
+    const at = (parts[0] ?? "").toLowerCase().indexOf(" and ");
+    if (at >= 0) parts = [(parts[0] ?? "").slice(0, at).trim(), (parts[0] ?? "").slice(at + 5).trim()];
+  }
+  const fits =
+    parts.length >= 2 &&
+    parts.length <= MAX_TABLE_COLUMNS &&
+    (stated === undefined || stated === parts.length) &&
+    parts.every((p) => [...p].length <= 60 && p.split(/\s+/).length <= 8 && !isPlaceholderHeading(p));
+  return fits ? parts : null;
+}
+
+/** The headings the question lists ("…: Who? / Why?") or names ("two columns: A and B"), else null. */
+export const namedColumns = (prompt: string): string[] | null => columnsFromPrompt(prompt) ?? columnsNamedInPrompt(prompt);
+
+/**
+ * Placeholder headings ("Column 1") never print: the headings the question names take their place,
+ * else only the placeholders go (empty ones are the teacher's own and stay). The same rule as the
+ * server's `ItemTable::without_placeholders`.
+ */
+export function withoutPlaceholders(columns: string[], prompt: string): string[] {
+  const bad = (c: string) => c.trim() !== "" && isPlaceholderHeading(c);
+  if (!columns.some(bad)) return columns;
+  return namedColumns(prompt) ?? columns.map((c) => (bad(c) ? "" : c));
+}
+
+/** The table a 表格整理 question prints: its own, else the one its prompt names, else two columns
+ * without headings and three rows (what the sheet has always printed). A placeholder heading an
+ * older worksheet carries is shown the way it prints ([`withoutPlaceholders`]). */
+export function tableOf(item: Pick<WsItem, "table" | "prompt">): WsItemTable {
+  const own = item.table ?? { columns: namedColumns(item.prompt) ?? ["", ""], rows: TABLE_ROWS };
+  return { ...own, columns: withoutPlaceholders(own.columns, item.prompt) };
+}
+
+/** Whether a table prints a first column of row labels. */
+export const hasRowLabels = (t: Pick<WsItemTable, "row_labels">): boolean => (t.row_labels ?? []).length > 0;
 
 // ---------------------------------------------------------------- 差異化學習單 support (T3, T4)
 

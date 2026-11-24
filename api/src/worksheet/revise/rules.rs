@@ -428,6 +428,7 @@ fn raw_out(it: &RawRevisedItem) -> RawOutItem {
         answer: it.answer.clone(),
         bloom: Some(it.bloom.clone()),
         organizer: None,
+        table: None,
     }
 }
 
@@ -1088,7 +1089,7 @@ pub fn merge(raw: &RawBlockRevision, m: &MergeCtx<'_>) -> (Merged, Vec<String>) 
                         hint: String::new(),
                         frame: new_frame.clone(),
                         tiers: Vec::new(),
-                        table: None,
+                        table: c.table.as_ref().map(|t| t.to_item_table()),
                         kept_options: Vec::new(),
                         organizer: c.organizer.clone(),
                     });
@@ -1377,6 +1378,7 @@ mod tests {
             passage,
             item_count: 12,
             needs_external: false,
+            tables_asked: false,
         };
         let taken: HashSet<String> = old.items.iter().map(|i| i.id.clone()).collect();
         let printed = HashMap::from([("b2-i2".to_string(), 5)]);
@@ -1761,6 +1763,7 @@ mod tests {
             passage: &paragraphs[0].text,
             item_count: 12,
             needs_external: false,
+            tables_asked: false,
         };
         let taken: HashSet<String> = old.items.iter().map(|i| i.id.clone()).collect();
         merge(

@@ -98,6 +98,7 @@ fn answer_space(item: &SheetItem) -> AnswerSpace<'_> {
         (None, Some(f)) if f == FMT_TABLE => AnswerSpace::Table(SheetTable {
             columns: vec![String::new(); 2],
             rows: super::TABLE_ROWS,
+            row_labels: Vec::new(),
         }),
         (None, Some(f)) if f == FMT_ORGANIZER => AnswerSpace::Box,
         _ => AnswerSpace::Lines(item.lines),
@@ -428,7 +429,14 @@ fn docx_item(out: &mut String, it: &SheetItem, teacher: bool) {
             if t.has_headings() {
                 rows.push(t.columns.clone());
             }
-            rows.extend((0..t.rows).map(|_| vec![String::new(); n]));
+            rows.extend((0..usize::from(t.rows)).map(|r| {
+                let mut row = vec![String::new(); n];
+                // The row labels fill the first column.
+                if let Some(label) = t.row_labels.get(r) {
+                    row[0] = label.clone();
+                }
+                row
+            }));
             out.push_str(&table(&vec![width; n], &rows, Some(520), t.has_headings()));
         }
         AnswerSpace::Organizer(o) => organizer::docx_organizer(out, o),
@@ -1721,7 +1729,7 @@ impl<'a> Layout<'a> {
     fn answer_table(&mut self, indent: f32, t: &SheetTable, row_h: f32) {
         let cols = t.columns.len().max(1);
         if !t.has_headings() {
-            self.grid(indent, cols, t.rows.into(), row_h);
+            self.grid(indent, cols, t.rows.into(), row_h, &t.row_labels);
             return;
         }
         let size = 10.0;
@@ -1771,10 +1779,12 @@ impl<'a> Layout<'a> {
         }
         // The empty rows right under the headings (the grid adds its own gap above).
         self.y = top + h - 4.0;
-        self.grid(indent, cols, t.rows.into(), row_h);
+        self.grid(indent, cols, t.rows.into(), row_h, &t.row_labels);
     }
 
-    fn grid(&mut self, indent: f32, cols: usize, rows: usize, row_h: f32) {
+    /// An empty grid of `rows` rows; `labels` (one per row, or none) are written in its first
+    /// column.
+    fn grid(&mut self, indent: f32, cols: usize, rows: usize, row_h: f32, labels: &[String]) {
         let h = row_h * rows as f32;
         self.ensure(h + 8.0);
         self.y += 4.0;
@@ -1803,6 +1813,27 @@ impl<'a> Layout<'a> {
                 width: 0.6,
                 color: RULE,
             });
+        }
+        let size = 10.0;
+        let pad = 3.0;
+        let cell_w = w / cols as f32;
+        let style = Style {
+            weight: Weight::Bold,
+            size,
+            ..Style::body()
+        };
+        for (r, label) in labels.iter().enumerate().take(rows) {
+            let max_lines = ((row_h - pad) / Self::line_height(size)).floor().max(1.0) as usize;
+            let mut y = top + row_h * r as f32 + pad;
+            for l in self
+                .wrap(label, Weight::Bold, size, cell_w - 2.0 * pad)
+                .into_iter()
+                .take(max_lines)
+            {
+                self.y = y;
+                self.draw_line(&l, x + pad, style);
+                y += Self::line_height(size);
+            }
         }
         self.y = top + h + 8.0;
     }
@@ -1905,7 +1936,7 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     match answer_space(it) {
         AnswerSpace::Table(t) => l.answer_table(indent, &t, 26.0),
         AnswerSpace::Organizer(o) => l.organizer(o, indent),
-        AnswerSpace::Box => l.grid(indent, 1, 1, 96.0),
+        AnswerSpace::Box => l.grid(indent, 1, 1, 96.0, &[]),
         AnswerSpace::Lines(n) => l.answer_lines(n, indent),
     }
     if teacher {
@@ -2221,7 +2252,11 @@ fn printed_text(sheet: &Sheet) -> String {
                 out.extend(o.texts().into_iter().map(str::to_string));
             }
             out.extend(it.options.iter().cloned());
-            out.extend(it.table.iter().flat_map(|t| t.columns.iter().cloned()));
+            out.extend(
+                it.table
+                    .iter()
+                    .flat_map(|t| t.columns.iter().chain(&t.row_labels).cloned()),
+            );
             out.extend(it.answer.iter().cloned());
             out.extend(it.evidence.iter().cloned());
         }
@@ -2445,8 +2480,13 @@ mod tests {
                         options: if no == 2 { vec!["Yes".into(), "No".into()] } else { vec![] },
                         lines: 3,
                         table: (no % 3 == 0).then(|| SheetTable {
-                            columns: if no == 3 { vec!["Who?".into(), "What happened?".into(), "Why?".into()] } else { vec![String::new(); 2] },
+                            columns: match no {
+                                3 => vec!["Who?".into(), "What happened?".into(), "Why?".into()],
+                                6 => vec![String::new(), "Path A".into(), "Path B".into()],
+                                _ => vec![String::new(); 2],
+                            },
                             rows: 3,
+                            row_labels: if no == 6 { vec!["Claim".into(), "Supporting detail".into(), String::new()] } else { Vec::new() },
                         }),
                         answer: teacher.then(|| "Because they thought every umbrella would be gone.".to_string()),
                         evidence: teacher.then(|| "They were sure every umbrella would be gone.".to_string()),
@@ -2494,11 +2534,20 @@ mod tests {
             let cell = format!("<w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">{h}</w:t>");
             assert!(xml.contains(&cell), "{h}");
         }
+        // Question 6 has row labels: a first column for them (empty heading) and two headings.
+        for h in ["Path A", "Path B"] {
+            let cell = format!("<w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">{h}</w:t>");
+            assert!(xml.contains(&cell), "{h}");
+        }
+        for label in ["Claim", "Supporting detail"] {
+            assert!(xml.contains(&format!(">{label}<")), "{label}");
+        }
         let three = (DOCX_WIDTH - 400) / 3;
         assert_eq!(
             xml.matches(&format!("<w:gridCol w:w=\"{three}\"/>"))
                 .count(),
-            3
+            6,
+            "question 3 and question 6"
         );
         // A table without headings prints only its empty rows, in two columns.
         let two = (DOCX_WIDTH - 400) / 2;

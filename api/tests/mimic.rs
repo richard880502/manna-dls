@@ -210,8 +210,9 @@ async fn a_sample_becomes_a_template_and_the_first_turn_follows_it() {
     for c in &calls {
         // Version 3 (0029_graphic_organizers.sql) is version 2 with the organizer section;
         // version 4 (0030_fill_in_blanks.sql) adds the 填空題 blank; version 5
-        // (0036_template_supports.sql) the support boxes, 是非題 and one term per sheet.
-        assert_eq!(c["prompt"]["version_no"], 5);
+        // (0036_template_supports.sql) the support boxes, 是非題 and one term per sheet; version 6
+        // (0051_table_organizer_headers.sql) the table's headings and row labels.
+        assert_eq!(c["prompt"]["version_no"], 6);
         assert!(c["prompt"]["system"]
             .as_str()
             .unwrap()

@@ -34,6 +34,9 @@ pub struct RawItem {
     /// 圖像組織 (prompt version 4): the organizer to draw; `null` for the other formats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub organizer: Option<super::organizer::RawOrganizer>,
+    /// 表格整理 (prompt version 8): the column headings and row labels; `null` for the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<super::table::RawTable>,
     pub answer_en: String,
     pub evidence: Option<String>,
     /// The item's Bloom level (prompt version 2); checked against the fixed set.
@@ -112,12 +115,13 @@ pub fn tasks_schema() -> Value {
                                     "prompt_en": { "type": "string" },
                                     "options": strings(),
                                     "organizer": super::organizer::schema(false),
+                                    "table": super::table::schema(),
                                     "answer_en": { "type": "string" },
                                     "evidence": nullable_string(),
                                     "bloom": enum_of(&blooms)
                                 },
                                 "required": ["item_id", "answer_format", "tier", "prompt_en",
-                                             "options", "organizer", "answer_en", "evidence",
+                                             "options", "organizer", "table", "answer_en", "evidence",
                                              "bloom"],
                                 "additionalProperties": false
                             }
@@ -389,6 +393,35 @@ mod tests {
             .to_string()
             .contains("清楚的分步指示及完成順序"));
         assert!(exit_schema().to_string().contains("蒐集問題"));
+    }
+
+    #[test]
+    fn tasks_items_carry_a_nullable_table_after_the_organizer() {
+        let s = tasks_schema();
+        let item = &s["properties"]["blocks"]["items"]["properties"]["items"]["items"];
+        let keys: Vec<&str> = item["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let at = |k: &str| keys.iter().position(|x| *x == k).unwrap();
+        assert_eq!(at("table"), at("organizer") + 1);
+        assert!(item["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("table")));
+        let table = &item["properties"]["table"]["anyOf"][0];
+        assert_eq!(
+            table["required"],
+            json!(["columns", "row_labels"]),
+            "headings first, then what each row is about"
+        );
+        assert_eq!(table["properties"]["columns"]["minItems"], 2);
+        assert_eq!(
+            item["properties"]["table"]["anyOf"][1]["type"],
+            json!("null")
+        );
     }
 
     #[test]

@@ -16,6 +16,7 @@ use super::schemas::{
     RawBlock, RawExit, RawExitItem, RawItem, RawScaffoldSet, RawScaffolds, RawTasks, RawWarmup,
     TARGET_WARMUP, TIER_CHALLENGE, TIER_CORE, TIER_SUPPORT,
 };
+use super::table::{self, RawTable};
 use super::template::{SupportRole, WsTemplateSupport};
 use super::tiered::{RawLinkingWords, RawTieredLevel, RawVersion};
 use super::{
@@ -955,6 +956,39 @@ fn item_wellformed(it: &RawItem, habits: OptionHabits) -> Result<(), Cow<'static
     }
 }
 
+/// 表格整理: a question's table, cleaned ([`table::check`]). A question of another format loses
+/// the table it carries. A placeholder heading is repaired from the question's own words without
+/// a repair call; headings or row labels the code cannot supply fail `items_wellformed` (one
+/// repair call, then the question keeps what it has and the teacher fills in the rest).
+/// `asked`: the schema asked for a table (a revision's does not: the stored one stays).
+fn table_of(
+    format: &str,
+    raw: Option<&RawTable>,
+    prompt: &str,
+    iname: &str,
+    (english, asked): (bool, bool),
+    t: &mut Tally,
+) -> Option<RawTable> {
+    if format != super::FMT_TABLE {
+        if let Some(p) = table::stray(raw, format, iname) {
+            t.fixed("items_wellformed", p.text, p.repair);
+        }
+        return None;
+    }
+    if !asked {
+        return None;
+    }
+    let checked = table::check(raw, prompt, english, iname);
+    for p in checked.problems {
+        if p.needs_model {
+            t.fail("items_wellformed", p.text, p.repair);
+        } else {
+            t.fixed("items_wellformed", p.text, p.repair);
+        }
+    }
+    checked.table
+}
+
 /// 圖像組織: a question's organizer, cleaned ([`organizer::from_raw`]); `None` for a question of
 /// another format (an organizer it carries is dropped) and for an organizer question without
 /// one, which prints an empty box as before. Nothing here costs a repair call except Chinese in
@@ -1228,6 +1262,14 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 &mut t,
             )
             .map(|o| RawOrganizer::from(&o));
+            item.table = table_of(
+                &item.answer_format,
+                it.table.as_ref(),
+                &item.prompt_en,
+                &iname,
+                (true, true),
+                &mut t,
+            );
             // Evidence is only a note for the teacher: one that is not verbatim is cut down to
             // its longest verbatim piece, or dropped, in code (as the SOP analysis drops it).
             // It never costs the step a repair call on its own.
@@ -2254,6 +2296,8 @@ pub struct SectionCtx<'a> {
     pub passage: &'a str,
     pub item_count: usize,
     pub needs_external: bool,
+    /// The section's schema asked for a table (表格整理 may be among its formats).
+    pub tables_asked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2269,6 +2313,8 @@ pub struct CleanSectionItem {
     pub bloom: Option<Bloom>,
     /// 圖像組織: the cleaned organizer (`None` for other formats and when none was written).
     pub organizer: Option<Organizer>,
+    /// 表格整理: the cleaned table (`None` for other formats and when the schema had none).
+    pub table: Option<RawTable>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2950,6 +2996,7 @@ fn section_item(
         // A label outside the fixed set (a provider that ignores the schema) is dropped.
         bloom: it.bloom.as_deref().and_then(Bloom::parse),
         organizer: None,
+        table: None,
     };
     if !item_checks(&mut item, iname, t) {
         return None;
@@ -2960,6 +3007,15 @@ fn section_item(
         it.organizer.as_ref(),
         iname,
         (false, false, false),
+        t,
+    );
+    // The revision's schema has no table (asked: false); a template section's has one.
+    item.table = table_of(
+        &item.answer_format,
+        it.table.as_ref(),
+        &item.prompt,
+        iname,
+        (false, ctx.tables_asked),
         t,
     );
     if ctx.needs_external {
@@ -3154,6 +3210,7 @@ struct SharedRaw<'a> {
     evidence: &'a str,
     paragraph_ids: &'a [String],
     organizer: Option<&'a RawOrganizer>,
+    table: Option<&'a RawTable>,
     /// 差異化學習單: cells are pre-filled per version.
     tiered: bool,
 }
@@ -3192,6 +3249,7 @@ fn shared_item(
         // The level is the call's, not the item's (see `CleanBloomItem`).
         bloom: None,
         organizer: None,
+        table: None,
     };
     if item.answer_format == FMT_TRUE_FALSE && item.options.is_empty() {
         item.options = vec!["True".to_string(), "False".to_string()];
@@ -3262,6 +3320,14 @@ fn shared_item(
             false,
             ctx.formats.contains(&super::FMT_ORGANIZER),
         ),
+        t,
+    );
+    item.table = table_of(
+        &item.answer_format,
+        raw.table,
+        &item.prompt,
+        iname,
+        (false, ctx.formats.contains(&super::FMT_TABLE)),
         t,
     );
     let mut paragraph_nos: Vec<usize> = raw
@@ -3343,6 +3409,7 @@ pub fn evaluate_bloom_level(raw: &RawBloomLevel, ctx: &BloomCtx<'_>) -> Eval<Cle
             evidence: &it.evidence,
             paragraph_ids: &it.paragraph_ids,
             organizer: it.organizer.as_ref(),
+            table: it.table.as_ref(),
             tiered: false,
         };
         let Some((item, paragraph_nos)) = shared_item(shared, &iname, ctx, &mut t) else {
@@ -3636,6 +3703,7 @@ pub fn evaluate_tiered_level(raw: &RawTieredLevel, ctx: &BloomCtx<'_>) -> Eval<C
             evidence: &it.evidence,
             paragraph_ids: &it.paragraph_ids,
             organizer: it.organizer.as_ref(),
+            table: it.table.as_ref(),
             tiered: true,
         };
         let Some((item, paragraph_nos)) = shared_item(shared, &iname, ctx, &mut t) else {
@@ -3880,6 +3948,7 @@ mod tests {
             answer: answer.into(),
             bloom: None,
             organizer: None,
+            table: None,
         }
     }
 
@@ -3950,6 +4019,7 @@ mod tests {
             passage: &passage,
             item_count: 5,
             needs_external: false,
+            tables_asked: false,
         };
         let e = evaluate_section(&raw, &ctx);
         let out = e.output.unwrap();
@@ -4010,6 +4080,7 @@ mod tests {
                 passage: &passage,
                 item_count: 1,
                 needs_external: false,
+                tables_asked: false,
             },
         );
         assert!(e.needs_repair());
@@ -4046,6 +4117,7 @@ mod tests {
                 passage: &passage,
                 item_count: 3,
                 needs_external: true,
+                tables_asked: false,
             },
         );
         let out = e.output.unwrap();
@@ -4062,6 +4134,7 @@ mod tests {
                 passage: &passage,
                 item_count: 3,
                 needs_external: true,
+                tables_asked: false,
             },
         );
         assert!(e.output.is_none() && e.needs_repair());
@@ -4084,6 +4157,7 @@ mod tests {
             prompt_en: prompt.into(),
             options: vec![],
             organizer: None,
+            table: None,
             answer_en: answer.into(),
             evidence: None,
             bloom: None,
@@ -4201,6 +4275,75 @@ mod tests {
         let e = evaluate_tasks(&with("簡答題", "Before"), &tasks_ctx(&p, &[]));
         assert!(!failed(&e.results).contains(&"organizer_wellformed"));
         assert!(e.output.unwrap()[0].items[0].organizer.is_none());
+    }
+
+    #[test]
+    fn task_tables_carry_real_headings_and_row_labels() {
+        let p = paragraphs();
+        let prompt = "Complete a T-chart with two columns: Unconventional Path as a Positive Choice and Speaker Justifying His Decision. For each interpretation, record its claim and one supporting detail.";
+        let with = |format: &str, prompt: &str, table: Option<RawTable>| {
+            let mut it = item(format, prompt, "Answers vary.");
+            it.table = table;
+            RawTasks {
+                blocks: staged(vec![block(&[1, 2, 3], "整理資訊", vec![it])]),
+            }
+        };
+        let table = |cols: &[&str], rows: &[&str]| RawTable {
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            row_labels: rows.iter().map(|c| c.to_string()).collect(),
+        };
+        // Real headings and labels pass untouched.
+        let good = table(&["Path", "Speaker"], &["Claim", "Supporting detail"]);
+        let e = evaluate_tasks(
+            &with("表格整理", prompt, Some(good.clone())),
+            &tasks_ctx(&p, &[]),
+        );
+        assert!(e.results.iter().all(|r| r.passed), "{:?}", e.problems);
+        assert_eq!(e.output.unwrap()[0].items[0].table, Some(good));
+        // 「Column 1」: repaired from the question's own words, no repair call.
+        let bad = table(&["Column 1", "Column 2"], &["Claim", "Supporting detail"]);
+        let e = evaluate_tasks(&with("表格整理", prompt, Some(bad)), &tasks_ctx(&p, &[]));
+        assert!(!e.needs_repair(), "{:?}", e.problems);
+        assert!(e.repairs.iter().any(|r| r.contains("欄名改用題目裡寫的")));
+        let t = e.output.unwrap()[0].items[0].table.clone().unwrap();
+        assert_eq!(
+            t.columns,
+            [
+                "Unconventional Path as a Positive Choice",
+                "Speaker Justifying His Decision"
+            ]
+        );
+        // The question names nothing and the model wrote placeholders and no labels: a repair
+        // call, and the question stays (the teacher fills the headings in).
+        let e = evaluate_tasks(
+            &with(
+                "表格整理",
+                "Complete the table.",
+                Some(table(&["Column 1", "Column 2"], &[])),
+            ),
+            &tasks_ctx(&p, &[]),
+        );
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        let t = e.output.unwrap()[0].items[0].table.clone().unwrap();
+        assert_eq!(t.columns, ["", ""]);
+        // Chinese headings in a student table: a repair call, the table is dropped.
+        let e = evaluate_tasks(
+            &with(
+                "表格整理",
+                prompt,
+                Some(table(&["優點", "Cons"], &["Claim"])),
+            ),
+            &tasks_ctx(&p, &[]),
+        );
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        assert!(e.output.unwrap()[0].items[0].table.is_none());
+        // A table on another format is dropped without a repair call.
+        let e = evaluate_tasks(
+            &with("簡答題", prompt, Some(table(&["A", "B"], &["Claim"]))),
+            &tasks_ctx(&p, &[]),
+        );
+        assert!(!e.needs_repair());
+        assert!(e.output.unwrap()[0].items[0].table.is_none());
     }
 
     #[test]
@@ -4489,6 +4632,7 @@ mod tests {
             passage: &passage,
             item_count: 5,
             needs_external: false,
+            tables_asked: false,
         };
         let e = evaluate_section(&raw, &ctx);
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -5097,6 +5241,7 @@ mod tests {
             paragraph_ids: vec!["P2".into(), "P9".into()],
             hint: "Look at paragraph 2.".into(),
             organizer: None,
+            table: None,
         }
     }
 
@@ -5261,6 +5406,7 @@ mod tests {
             evidence: P2.into(),
             paragraph_ids: vec!["P2".into()],
             organizer: None,
+            table: None,
             advanced: version(
                 "none",
                 "",
@@ -5611,6 +5757,7 @@ mod tests {
             passage: "",
             item_count: 3,
             needs_external: false,
+            tables_asked: false,
         };
         let e = evaluate_section(&raw, &ctx);
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -5729,6 +5876,7 @@ mod tests {
             passage: "Bees carry pollen from flower to flower.",
             item_count: 3,
             needs_external: false,
+            tables_asked: false,
         };
         // Written well: each box under its heading, in the sample's order (matched by heading).
         let raw = crate::worksheet::template::RawSectionOut {
@@ -5845,6 +5993,7 @@ mod tests {
             passage: "Bees carry pollen from flower to flower.",
             item_count: 4,
             needs_external: false,
+            tables_asked: false,
         };
         let raw = crate::worksheet::template::RawSectionOut {
             title: "Paragraph 1".into(),

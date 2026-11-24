@@ -339,7 +339,7 @@ describe("report 1: choosing an answer format changes the sheet", { timeout: 20_
     expect(linesOf(3)).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "題目 3" })).toHaveAttribute(
       "placeholder",
-      "Complete the table: Column 1 / Column 2",
+      "Complete a table with two columns: Pros and Cons. (what each row asks for)",
     );
 
     // The prompt names columns: the table follows it until the teacher edits a heading.

@@ -430,6 +430,9 @@ pub struct RawBloomItem {
     /// 圖像組織 (prompt version 3): the organizer; `null` for the other formats.
     #[serde(default)]
     pub organizer: Option<super::organizer::RawOrganizer>,
+    /// 表格整理: the column headings and row labels; `null` for the other formats.
+    #[serde(default)]
+    pub table: Option<super::table::RawTable>,
 }
 
 /// The questions of one level, then the block's written steps (R5, prompt version 2) and an
@@ -475,6 +478,9 @@ pub fn level_schema(formats: &[&str], paragraph_codes: &[String], count: usize) 
     ];
     if formats.contains(&FMT_ORGANIZER) {
         item.push(("organizer", super::organizer::schema(false)));
+    }
+    if formats.contains(&super::FMT_TABLE) {
+        item.push(("table", super::table::schema()));
     }
     item.extend([
         ("answer", s_max(ANSWER_CHARS)),
@@ -724,11 +730,26 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect();
+        // With 表格整理 too, a table after the organizer.
         assert_eq!(
-            &keys[..5],
-            ["answer_format", "prompt", "options", "organizer", "answer"]
+            &keys[..6],
+            [
+                "answer_format",
+                "prompt",
+                "options",
+                "organizer",
+                "table",
+                "answer"
+            ]
         );
         capped(&props["organizer"]["anyOf"][0]);
+        capped(&props["table"]["anyOf"][0]);
+        assert_eq!(props["table"]["anyOf"][1]["type"], "null");
+        let only_table = level_schema(&[FMT_TABLE], &paragraph_codes(2), 2);
+        assert!(only_table["properties"]["items"]["items"]["properties"]
+            .get("table")
+            .is_some());
+        assert!(items["items"]["properties"].get("table").is_none());
         let c = check_schema(&["Q1".to_string(), "Q2".to_string()]);
         capped(&c);
         assert_eq!(c["properties"]["items"]["maxItems"], 2);

@@ -554,7 +554,7 @@ pub fn activity_block(
                 hint: String::new(),
                 frame: String::new(),
                 tiers: Vec::new(),
-                table: None,
+                table: it.table.as_ref().map(|t| t.to_item_table()),
                 kept_options: Vec::new(),
                 organizer: it
                     .organizer
@@ -815,11 +815,39 @@ pub struct SheetItem {
 /// filled in) over `rows` empty rows, one cell per column.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct SheetTable {
+    /// The headings across the top. A table with row labels has one more column than the
+    /// question's: the first (empty heading) holds the labels.
     pub columns: Vec<String>,
     pub rows: u8,
+    /// What each row asks for, printed in the first column (`rows` of them; empty: free rows).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub row_labels: Vec<String>,
 }
 
 impl SheetTable {
+    /// The table as printed: headings and labels trimmed, a first column for the labels when
+    /// any row has one.
+    pub fn of(t: &super::ItemTable) -> Self {
+        let mut columns: Vec<String> = t.columns.iter().map(|c| c.trim().to_string()).collect();
+        let mut row_labels: Vec<String> = t
+            .row_labels
+            .iter()
+            .take(usize::from(t.rows))
+            .map(|l| l.trim().to_string())
+            .collect();
+        if row_labels.iter().all(String::is_empty) {
+            row_labels.clear();
+        } else {
+            row_labels.resize(usize::from(t.rows), String::new());
+            columns.insert(0, String::new());
+        }
+        Self {
+            columns,
+            rows: t.rows,
+            row_labels,
+        }
+    }
+
     /// Whether the first row prints headings (a table without any prints only empty rows).
     pub fn has_headings(&self) -> bool {
         self.columns.iter().any(|c| !c.is_empty())
@@ -1175,13 +1203,8 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                         Vec::new()
                     },
                     lines: answer_lines(i.answer_format.as_deref(), level),
-                    table: (i.answer_format.as_deref() == Some(FMT_TABLE)).then(|| {
-                        let t = i.table_or_default();
-                        SheetTable {
-                            columns: t.columns.iter().map(|c| c.trim().to_string()).collect(),
-                            rows: t.rows,
-                        }
-                    }),
+                    table: (i.answer_format.as_deref() == Some(FMT_TABLE))
+                        .then(|| SheetTable::of(&i.table_or_default())),
                     answer: (teacher && !answer.is_empty()).then(|| answer.to_string()),
                     evidence: (teacher && !i.evidence.trim().is_empty())
                         .then(|| i.evidence.trim().to_string()),
@@ -2338,6 +2361,36 @@ mod tests {
     }
 
     #[test]
+    fn row_labels_become_a_first_column_and_an_old_table_prints_as_before() {
+        use crate::worksheet::ItemTable;
+        let t = ItemTable {
+            columns: vec!["Path A".into(), " Path B ".into()],
+            rows: 3,
+            row_labels: vec![" Claim ".into(), "Supporting detail".into()],
+        };
+        let s = SheetTable::of(&t);
+        // A corner cell for the labels, then the headings; every row has a label (or none).
+        assert_eq!(s.columns, ["", "Path A", "Path B"]);
+        assert_eq!(s.row_labels, ["Claim", "Supporting detail", ""]);
+        assert!(s.has_headings());
+        // No labels (or only blank ones): the table the sheet always printed.
+        for labels in [vec![], vec![" ".to_string()]] {
+            let old = SheetTable::of(&ItemTable {
+                row_labels: labels,
+                ..t.clone()
+            });
+            assert_eq!(old.columns, ["Path A", "Path B"]);
+            assert!(old.row_labels.is_empty());
+        }
+        // A stored table from before row labels existed still loads.
+        let stored: ItemTable = serde_json::from_str(r#"{"columns":["A","B"],"rows":3}"#).unwrap();
+        assert!(stored.row_labels.is_empty());
+        assert!(!serde_json::to_string(&stored)
+            .unwrap()
+            .contains("row_labels"));
+    }
+
+    #[test]
     fn each_format_prints_its_own_answer_space() {
         let q = |id: &str, format: &str| Item {
             id: id.into(),
@@ -2351,6 +2404,7 @@ mod tests {
         own.table = Some(crate::worksheet::ItemTable {
             columns: vec![" Problem ".into(), "Solution".into(), String::new()],
             rows: 5,
+            row_labels: Vec::new(),
         });
         let mut legacy = q("legacy", "");
         legacy.answer_format = None;
@@ -2385,6 +2439,7 @@ mod tests {
             Some(SheetTable {
                 columns: vec!["Who?".into(), "Why?".into()],
                 rows: crate::worksheet::TABLE_ROWS,
+                row_labels: Vec::new(),
             })
         );
         let t = items[3].table.as_ref().unwrap();
