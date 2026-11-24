@@ -7,6 +7,7 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
+  MemorySuggestion,
   PrepSession,
   PrepTurn,
   WorksheetComment,
@@ -20,6 +21,7 @@ import type {
   WsProposal,
   WsSheet,
 } from "../api/types";
+import { memorySuggestionsConfig } from "../components/memory/MemorySuggestions";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { blockReviseConfig } from "../lib/blockRevise";
 import { prepConfig } from "../lib/prep";
@@ -33,12 +35,15 @@ beforeEach(() => {
   worksheetConfig.pollMs = 20;
   blockReviseConfig.pollMs = 20;
   autosaveConfig.delayMs = 20;
+  // Habit suggestions are read on load and when asked to, never on a timer here.
+  memorySuggestionsConfig.pollAtMs = [];
 });
 afterEach(() => {
   prepConfig.pollMs = 2000;
   worksheetConfig.pollMs = 2000;
   blockReviseConfig.pollMs = 2000;
   autosaveConfig.delayMs = 1500;
+  memorySuggestionsConfig.pollAtMs = [2500, 7000, 18000, 40000];
   window.getSelection()?.removeAllRanges();
 });
 
@@ -960,5 +965,81 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     const table = await editorBlock().findByRole("table", { name: "字詞表 B" });
     expect(within(table).getAllByRole("row")).toHaveLength(3);
     expect(editorBlock().queryByRole("button", { name: "恢復字詞表 B" })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- 習慣建議
+
+describe("習慣建議: 改這一區之後", () => {
+  const habit = (overrides: Partial<MemorySuggestion> = {}): MemorySuggestion => ({
+    id: 41,
+    kind: "choice_options",
+    scope: null,
+    statement: "選擇題使用 3 個選項。",
+    replaces_id: null,
+    replaces_statement: null,
+    source: "block_revise",
+    prep_session_id: null,
+    prep_turn_id: null,
+    worksheet_id: 11,
+    proposal_id: 90,
+    created_at: "2026-11-24T01:00:00Z",
+    expires_at: "2026-11-24T01:15:00Z",
+    intro: false,
+    ...overrides,
+  });
+  const CANDIDATES = "/api/me/memories/candidates";
+  const SAID = "之後選擇題都用三個選項，這一區改成選擇題";
+
+  it("on the worksheet page the question comes right after the request and stays in view", async () => {
+    let found: MemorySuggestion[] = [];
+    const api = mockApi(
+      editorRoutes(worksheet(), {
+        [`POST ${WS}/blocks/b2/revise`]: () => {
+          found = [habit()];
+          return proposal("running", { instruction: SAID, comment_ids: [] });
+        },
+        [`GET ${CANDIDATES}`]: () => ({ candidates: found }),
+        [`POST ${CANDIDATES}/41/shown`]: { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    await waitFor(() => expect(api.callsTo("GET", CANDIDATES)).toHaveLength(1));
+    await user.click(await editorBlock().findByRole("button", { name: "改這一區（區塊 B）" }));
+    const form = within(screen.getByRole("form", { name: "請 Manna 改區塊 B" }));
+    await user.type(form.getByRole("textbox", { name: "想怎麼改區塊 B？" }), SAID);
+    await user.click(form.getByRole("button", { name: "請 Manna 改這一區" }));
+    // The worksheet's version did not change (the proposal waits for 採用), yet it is asked.
+    const ask = await screen.findByText(/要記住這個習慣嗎？/);
+    expect(api.callsTo("GET", CANDIDATES).length).toBeGreaterThanOrEqual(2);
+    expect(ask.closest(".memory-suggestions")).toHaveClass("is-floating");
+  });
+
+  it("in a 備課對話 it is asked in the bottom bar, only for this conversation's worksheets", async () => {
+    let found: MemorySuggestion[] = [];
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/prep-sessions/7": session(),
+      [`GET ${WS}`]: worksheet(),
+      [`GET ${WS}/sheet`]: sheetRoute(),
+      [`GET ${WS}/comments`]: [],
+      [`GET ${WS}/proposals`]: [],
+      [`POST ${WS}/blocks/b2/revise`]: () => {
+        found = [habit(), habit({ id: 42, worksheet_id: 99, statement: "別的學習單的習慣。" })];
+        return proposal("running", { instruction: SAID, comment_ids: [] });
+      },
+      [`GET ${CANDIDATES}`]: () => ({ candidates: found }),
+      [`POST ${CANDIDATES}/41/shown`]: { ok: true },
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "改這一區（B 活動）" }));
+    await user.type(screen.getByRole("textbox", { name: "給 Manna 的話" }), `${SAID}{Enter}`);
+    const ask = await screen.findByText(/要記住這個習慣嗎？/);
+    expect(ask.closest("form")).toHaveClass("prep-bottom");
+    expect(screen.getByText("選擇題使用 3 個選項。")).toBeInTheDocument();
+    expect(screen.queryByText("別的學習單的習慣。")).not.toBeInTheDocument();
   });
 });

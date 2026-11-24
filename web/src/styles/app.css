@@ -1931,5 +1931,13 @@
 .memory-suggestion { padding: .9rem 1.1rem; border: 1px solid var(--color-rule); border-radius: 12px; }
 .memory-suggestion-ask { margin: 0 0 .35rem; }
 .memory-suggestion-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: .6rem; }
+/* The worksheet page: 「改這一區」 is far below the top, so the question stays in view while she scrolls. */
+.memory-suggestions.is-floating {
+  position: sticky;
+  top: calc(var(--banner-h) + var(--top-h) + var(--space-sm));
+  z-index: var(--z-sticky);
+}
+.memory-suggestions.is-floating .memory-suggestion { background: var(--color-paper); }
+.memory-suggestions.is-floating > * { box-shadow: 0 4px 16px rgb(0 0 0 / .08); }
 .memory-group h3 small { margin-left: .4rem; font-weight: normal; }
 .memory-pending { margin-bottom: 1rem; }

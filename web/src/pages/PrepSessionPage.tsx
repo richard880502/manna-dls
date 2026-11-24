@@ -38,7 +38,7 @@ import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ResourcesCard, ReviseCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
-import { MemorySuggestionCards, useMemorySuggestions } from "../components/memory/MemorySuggestions";
+import { MemorySuggestionCards, habitWordsSent, useMemorySuggestions } from "../components/memory/MemorySuggestions";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
 import {
   AI_DISCLAIMER,
@@ -87,9 +87,11 @@ function PrepSessionView({ id }: { id: number }) {
   const classes = useActiveClasses();
   const templates = useReadyTemplates();
   const [session, setSession] = useState<PrepSession | null>(null);
-  // Habit suggestions found in what the teacher typed (Manna asks; she decides).
+  // Habit suggestions found in what the teacher typed (Manna asks; she decides): those of this
+  // conversation's messages, and of 「改這一區」 on its worksheets (they carry the worksheet only,
+  // so the teacher's pending ones are read and kept to this conversation below).
   const memory = useMemorySuggestions(
-    { prepSessionId: id },
+    {},
     session ? session.turns.map((t) => `${t.id}:${t.status}`).join(",") : "",
   );
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -207,6 +209,10 @@ function PrepSessionView({ id }: { id: number }) {
   const locked = running || sending;
   const targets = reviseTargets(session.turns);
   const next = session.next.filter(isNextKind);
+  const sheetIds = new Set(session.turns.flatMap((t) => (t.worksheet ? [t.worksheet.id] : [])));
+  const reviseSuggestions = memory.items.filter(
+    (c) => c.source === "block_revise" && c.worksheet_id !== null && sheetIds.has(c.worksheet_id),
+  );
 
   async function send(body: CreatePrepTurnRequest): Promise<boolean> {
     setSending(true);
@@ -255,6 +261,7 @@ function PrepSessionView({ id }: { id: number }) {
         ...(attach.imageIds.length > 0 ? { image_ids: attach.imageIds } : {}),
       });
       attach.clear();
+      habitWordsSent();
       setProposalsKey((prev) => ({ ...prev, [t.worksheetId]: (prev[t.worksheetId] ?? 0) + 1 }));
       setTarget(null);
       setDraft("");
@@ -624,6 +631,8 @@ function PrepSessionView({ id }: { id: number }) {
       )}
 
       <form className="prep-bottom" onSubmit={(e) => void sendDraft(e)}>
+        {/* From 「改這一區」 (on a card above or from this bar): asked here, where she is typing. */}
+        <MemorySuggestionCards items={reviseSuggestions} onDone={memory.drop} onRemembered={memory.reload} />
         <ErrorText message={sendError} />
         {target && (
           <p className="prep-target" role="status">

@@ -30,6 +30,7 @@ import {
 import { clipQuote } from "../../lib/materials";
 import { printedAnswer, printedOption } from "../../lib/worksheet";
 import { ErrorText } from "../common";
+import { habitWordsSent } from "../memory/MemorySuggestions";
 import { PictureOutcomeList, PrepImageThumbs } from "../prep/ImageAttach";
 
 // ---------------------------------------------------------------- state
@@ -176,6 +177,8 @@ export function useBlockRevise(worksheetId: number | null, options: BlockReviseO
         setOutcomes((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
         setAcceptedAt((prev) => Object.fromEntries(Object.entries(prev).filter(([k]) => k !== blockId)));
         const p = await api.reviseWorksheetBlock(worksheetId!, blockId, body);
+        // The instruction may say a lasting habit (「之後…」): Manna looks in the background.
+        habitWordsSent();
         if (alive.current) putProposal(p);
       },
       true,
