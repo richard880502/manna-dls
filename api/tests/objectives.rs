@@ -435,9 +435,10 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
     // Version 4 (0029_graphic_organizers.sql) is version 3 with the organizer section; version 5
     // (0030_fill_in_blanks.sql) adds the 填空題 blank, version 6 (0031_sentence_frames_apart.sql)
     // that a sentence frame is not a question, version 7 (0036_template_supports.sql) the 是非題
-    // statement and wrapped frames, version 8 (0051_table_organizer_headers.sql) the table's
-    // headings and row labels.
-    assert_eq!(tasks[0].3["prompt"]["version_no"], 8);
+    // statement and wrapped frames, version 8 (0050_per_question_frames.sql) the block's
+    // instructions as a passage introduction, version 9 (0051_table_organizer_headers.sql) the
+    // table's headings and row labels.
+    assert_eq!(tasks[0].3["prompt"]["version_no"], 9);
     assert!(tasks[0].3["prompt"]["system"]
         .as_str()
         .unwrap()

@@ -400,6 +400,7 @@ pub async fn run_tasks(
                     &ScaffoldsCtx {
                         targets: &names,
                         answers: &answers,
+                        items: &[],
                     },
                 ),
                 |sets| sets,

@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::assemble::{block_name, project, text_units, Sheet};
+use super::assemble::{block_name, frame_shown, project, text_units, Sheet};
 use super::store::{self, Worksheet};
 use super::vocab::{self, OverLevelWord, VocabCheck, ACTION_GLOSS, ACTION_LEAVE, ACTION_REPLACE};
 use super::{
@@ -405,6 +405,8 @@ pub enum FieldPart {
     OrganizerLabel,
     /// 基礎版 hint (`id` = item).
     Hint,
+    /// The question's own sentence frame (`id` = item).
+    Frame,
     /// A line of this version's support under a question (`id` = item, `index`).
     TierSupport,
 }
@@ -432,6 +434,7 @@ pub fn field_mut<'a>(
     level: Level,
     key: &FieldKey,
 ) -> Option<&'a mut String> {
+    let levels = content.levels.clone();
     let b = content
         .blocks
         .iter_mut()
@@ -476,6 +479,7 @@ pub fn field_mut<'a>(
                     }
                 }
                 FieldPart::Hint if level == Level::Basic => Some(&mut it.hint),
+                FieldPart::Frame if frame_shown(level, &levels) => Some(&mut it.frame),
                 FieldPart::TierSupport => it
                     .tiers
                     .iter_mut()
@@ -536,6 +540,12 @@ pub fn changeable_fields(content: &Content, level: Level) -> Vec<(FieldKey, Stri
             if level == Level::Basic {
                 out.push((key(FieldPart::Hint, id, None), it.hint.clone()));
             }
+            if it.tiers.is_empty()
+                && frame_shown(level, &content.levels)
+                && !it.frame.trim().is_empty()
+            {
+                out.push((key(FieldPart::Frame, id, None), it.frame.clone()));
+            }
             for t in it.tiers.iter().filter(|t| t.level == level) {
                 for (i, line) in t.support.iter().enumerate() {
                     out.push((key(FieldPart::TierSupport, id, Some(i)), line.clone()));
@@ -579,6 +589,7 @@ fn label_of(sheet: &Sheet, content: &Content, key: &FieldKey) -> String {
         FieldPart::OrganizerTitle => format!("第 {} 題圖像組織標題", no()),
         FieldPart::OrganizerLabel => format!("第 {} 題圖像組織標籤 {n}", no()),
         FieldPart::Hint => format!("第 {} 題提示", no()),
+        FieldPart::Frame => format!("第 {} 題句型框架", no()),
         FieldPart::TierSupport => format!("第 {} 題支持", no()),
     };
     format!("{name} · {what}")

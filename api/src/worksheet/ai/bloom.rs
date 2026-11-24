@@ -852,6 +852,7 @@ fn level_block(
             origin: Origin::Ai,
             bloom: Some(d.label),
             hint: d.hint(),
+            frame: String::new(),
             tiers: d
                 .item
                 .tiers

@@ -392,6 +392,12 @@ fn block_detail(
         if !item.answer.trim().is_empty() {
             lines.push(format!("  參考答案：{}", item.answer.trim()));
         }
+        if !item.frame.trim().is_empty() {
+            lines.push(format!(
+                "  句型框架（印在這一題下面）：{}",
+                item.frame.trim()
+            ));
+        }
     }
     lines.extend(extras_detail(block));
     lines.join("\n")

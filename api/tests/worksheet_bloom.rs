@@ -1316,8 +1316,9 @@ async fn the_full_worksheet_still_works_and_labels_its_items() {
     }
     // The tasks step uses the latest prompt version (version 2's Bloom label, SIOP Q4's stage,
     // the organizers of 0029_graphic_organizers.sql, the blank of 0030_fill_in_blanks.sql, the
-    // frames of 0031_sentence_frames_apart.sql, the 是非題 of 0036_template_supports.sql and the
-    // table headings of 0051_table_organizer_headers.sql).
+    // frames of 0031_sentence_frames_apart.sql, the 是非題 of 0036_template_supports.sql, the
+    // block introduction of 0050_per_question_frames.sql and the table headings of
+    // 0051_table_organizer_headers.sql).
     let tasks = calls(&app, "worksheet_tasks").await;
     let (latest,): (i32,) = sqlx::query_as(
         "SELECT MAX(version_no) FROM prompt_versions WHERE prompt_key = 'worksheet_tasks'",
@@ -1325,7 +1326,7 @@ async fn the_full_worksheet_still_works_and_labels_its_items() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert!(latest >= 8);
+    assert!(latest >= 9);
     assert_eq!(tasks[0].2["prompt"]["version_no"], latest);
     assert!(tasks[0].2["prompt"]["system"]
         .as_str()

@@ -222,12 +222,34 @@ pub struct RawProcedure {
     pub steps_en: Vec<String>,
 }
 
+/// A sentence frame for one question of the block: `item_no` is the question's number in the
+/// block as the prompt lists it (1, 2 …), `frame_en` a short paragraph the student can say or
+/// write as it stands, with `___` for the blanks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RawItemFrame {
+    pub item_no: i64,
+    pub frame_en: String,
+}
+
+/// A guiding prompt for one question of the block (引導問題 serving that question): printed
+/// under it as a hint, never as a question of its own.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RawItemHint {
+    pub item_no: i64,
+    pub hint_en: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RawScaffoldSet {
     pub target: String,
     pub verbal: Vec<RawSupport>,
     pub instructional: Vec<RawSupport>,
     pub procedural: Vec<RawProcedure>,
+    /// Calls made before frames went under their question have none.
+    #[serde(default)]
+    pub item_frames: Vec<RawItemFrame>,
+    #[serde(default)]
+    pub item_hints: Vec<RawItemHint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -269,9 +291,33 @@ pub fn scaffolds_schema() -> Value {
                                 "required": ["kind", "steps_en"],
                                 "additionalProperties": false
                             }
+                        },
+                        "item_frames": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "item_no": { "type": "integer" },
+                                    "frame_en": { "type": "string" }
+                                },
+                                "required": ["item_no", "frame_en"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "item_hints": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "item_no": { "type": "integer" },
+                                    "hint_en": { "type": "string" }
+                                },
+                                "required": ["item_no", "hint_en"],
+                                "additionalProperties": false
+                            }
                         }
                     },
-                    "required": ["target", "verbal", "instructional", "procedural"],
+                    "required": ["target", "verbal", "instructional", "procedural", "item_frames", "item_hints"],
                     "additionalProperties": false
                 }
             }

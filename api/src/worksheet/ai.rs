@@ -24,7 +24,7 @@ use sqlx::PgPool;
 use super::assemble::{self, EXIT_ID, WARMUP_ID};
 use super::checks::{
     self, evaluate_exit, evaluate_scaffolds, evaluate_tasks, evaluate_warmup, Candidate,
-    CleanWarmup, Eval, ExitCtx, ScaffoldsCtx, TasksCtx, WarmupCtx,
+    CleanWarmup, Eval, ExitCtx, ScaffoldsCtx, TargetItems, TasksCtx, WarmupCtx,
 };
 use super::schemas::{
     self, RawBlock, RawExit, RawExitItem, RawScaffoldSet, RawScaffolds, RawTasks, RawWarmup,
@@ -1568,6 +1568,8 @@ struct ScaffoldTarget {
     target: String,
     detail: String,
     answers: Vec<String>,
+    /// (answer format, reference answer) of each question, numbered 1, 2 … in `detail`.
+    items: Vec<(String, String)>,
 }
 
 fn target_of_raw(b: &RawBlock) -> ScaffoldTarget {
@@ -1594,6 +1596,11 @@ fn target_of_raw(b: &RawBlock) -> ScaffoldTarget {
                 .join("\n")
         ),
         answers: b.items.iter().map(|i| i.answer_en.clone()).collect(),
+        items: b
+            .items
+            .iter()
+            .map(|i| (i.answer_format.clone(), i.answer_en.clone()))
+            .collect(),
     }
 }
 
@@ -1615,6 +1622,7 @@ fn target_of_warmup(w: &CleanWarmup) -> ScaffoldTarget {
                 .join(", ")
         ),
         answers: Vec::new(),
+        items: Vec::new(),
     }
 }
 
@@ -1649,10 +1657,21 @@ async fn step_scaffolds(
         ),
     ]);
     let names: Vec<String> = targets.iter().map(|t| t.target.clone()).collect();
+    let target_items: Vec<TargetItems> = targets
+        .iter()
+        .map(|t| TargetItems {
+            target: t.target.clone(),
+            items: t.items.clone(),
+        })
+        .collect();
     let fake_context = json!({
         "task": SCAFFOLDS.key,
         "targets": targets.iter()
-            .map(|t| json!({ "target": t.target, "answers": t.answers })).collect::<Vec<_>>(),
+            .map(|t| json!({
+                "target": t.target,
+                "answers": t.answers,
+                "formats": t.items.iter().map(|(f, _)| f.clone()).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
         "selected_kinds": ticked,
     });
     let context = run.context(&[
@@ -1675,6 +1694,7 @@ async fn step_scaffolds(
                 &ScaffoldsCtx {
                     targets: &names,
                     answers: all_answers,
+                    items: &target_items,
                 },
             )
         },

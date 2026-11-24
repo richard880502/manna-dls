@@ -1750,11 +1750,17 @@ async fn failed_steps_are_not_printed_and_scaffold_targets_are_forgiving() {
         .into_iter()
         .filter(|b| b["kind"] == "activity")
         .collect();
+    // A verbal scaffold: the questions' own frames and hints stand in for the pooled boxes.
     assert!(activities.iter().all(|b| b["scaffolds"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|s| s["type"] == "verbal")));
+        .any(|s| s["type"] == "verbal")
+        || b["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["frame"].is_string() || i["hint"] != "")));
 
     // The editor keeps the empty warm-up with its message; no printed sheet shows it.
     let warm = &blocks(&state)[0];
@@ -1920,4 +1926,77 @@ async fn a_deleted_word_table_comes_back_with_levels_from_the_word_list() {
     assert!(restored["version_no"].as_i64() > saved["version_no"].as_i64());
     let (s, _) = app.post(&url, Some(&t), json!({})).await;
     assert_eq!(s, StatusCode::CONFLICT, "nothing is left to restore");
+}
+
+#[tokio::test]
+async fn sentence_frames_and_hints_go_under_their_own_question() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let id = direct(&app, &t, &passage("FAKE_WS_FRAME_BAD")).await["id"]
+        .as_i64()
+        .unwrap();
+    // Hints come only when 引導問題 is ticked (or nothing is); frames with 句型框架.
+    let mut s = empty_settings();
+    s["levels"] = json!(["basic", "standard"]);
+    s["generation"] = json!(["加入暖身活動", "提供引導問題", "提供字詞表", "提供句型框架"]);
+    put_settings(&app, &t, id, s).await;
+    let state = generate(&app, &t, id).await;
+
+    // Call 1 wrote a frame without a blank and one for a question that is not there: the
+    // problem was stated to the model, and the second call's frames are the ones kept.
+    let calls: Vec<(i32, Value)> = sqlx::query_as(
+        "SELECT attempt, check_results FROM ai_interactions
+          WHERE module = 'worksheet_scaffolds'
+            AND (input_snapshot -> 'worksheet' ->> 'id')::bigint = $1 ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(check(&calls[0].1, "supports_wellformed")["passed"], false);
+    assert_eq!(check(&calls[1].1, "supports_wellformed")["passed"], true);
+
+    for b in blocks(&state)
+        .into_iter()
+        .filter(|b| b["kind"] == "activity")
+    {
+        // Not one box of frames or of guiding questions on top of the block.
+        for s in b["scaffolds"].as_array().unwrap() {
+            assert!(
+                s["kind"] != "句型框架" && s["kind"] != "引導問題",
+                "pooled: {s}"
+            );
+        }
+        for item in b["items"].as_array().unwrap() {
+            let open = item["answer_format"] == "簡答題" || item["answer_format"] == "段落寫作";
+            let frame = item["frame"].as_str().unwrap_or_default();
+            assert_eq!(open, !frame.is_empty(), "{item}");
+            if open {
+                assert!(frame.starts_with("Hello, everyone.") && frame.contains("___"));
+            }
+            assert!(
+                !item["hint"].as_str().unwrap_or_default().is_empty(),
+                "{} {item}",
+                b["id"]
+            );
+        }
+    }
+
+    // Printed under the question, in both audiences; the hint in 基礎版.
+    for audience in ["student", "teacher"] {
+        let printed = sheet(&app, &t, id, "basic", audience).await;
+        let items: Vec<Value> = printed["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|b| b["items"].as_array().unwrap().clone())
+            .collect();
+        let framed: Vec<&Value> = items.iter().filter(|i| i.get("frame").is_some()).collect();
+        assert!(!framed.is_empty(), "{audience}");
+        assert!(framed
+            .iter()
+            .all(|i| i["answer_format"] == "簡答題" || i["answer_format"] == "段落寫作"));
+        assert!(items.iter().any(|i| i.get("hint").is_some()));
+    }
 }

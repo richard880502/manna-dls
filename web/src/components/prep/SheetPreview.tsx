@@ -40,6 +40,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
     if (it.table?.columns.some((c) => c.trim() !== "")) lines.push(`   | ${it.table.columns.join(" | ")} |`);
     it.table?.row_labels?.forEach((l) => l.trim() && lines.push(`   | ${l} |`));
     if (it.hint?.trim()) lines.push(`   Hint: ${it.hint}`);
+    if (it.frame?.trim()) lines.push(`   Sentence frame: ${it.frame}`);
     if (it.support) {
       const [first = "", ...rest] = it.support.lines;
       lines.push(`   ${it.support.heading}: ${it.support.kind === "word_bank" ? it.support.word_bank.join(" / ") : first}`);
@@ -220,6 +221,11 @@ export function SheetPreview({
                       </ul>
                     )}
                     {it.hint?.trim() && <p className="ws-hint-print">Hint: {it.hint}</p>}
+                    {it.frame?.trim() && (
+                      <p className="ws-hint-print ws-frame-print" aria-label={`Sentence frame ${it.no}`}>
+                        <strong>Sentence frame:</strong> {it.frame}
+                      </p>
+                    )}
                     {it.support && (
                       <div className="ws-hint-print ws-item-support" aria-label={`${it.support.heading} ${it.no}`}>
                         {it.support.kind === "word_bank" ? (
