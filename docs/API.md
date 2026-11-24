@@ -3951,3 +3951,32 @@ interface WsTemplateDetail { /* …既有欄位… */
 | `prep_material_selection` | `PUT /api/prep-sessions/:id/material-selection` | `session_id`、`material_id`、`total`、`selected`、`all` |
 | `worksheet_material_selection` | `PUT /api/worksheets/:id/material-selection` | `worksheet_id`、`material_id`、`total`、`selected`、`all` |
 | `objectives_drafted` | （既有）多一欄 `selected`：是否只讀選的段落 | |
+
+## 社群（第一期；Migration `0052_community.sql`）
+
+設計、隱私與研究紀錄見 [COMMUNITY.md](COMMUNITY.md)。全部需要登入。主持人的研究開關 `community_enabled` 預設關閉：
+關閉時下列教師端點（包括分享與取消分享）一律回 **503**「社群功能目前沒有開放。」，什麼都不讀不寫。
+`GET /api/config` 多一欄 `community_enabled`。
+
+| 方法／路徑 | 說明 |
+|---|---|
+| `GET`／`PUT /api/admin/community-settings` | PI；`{enabled}`，預設 false；改動寫 `usage_logs`（`setting_changed`）。其他人 403 |
+| `PUT /api/worksheets/{id}/share` | 只有擁有者（別人 404）。`{shared: true, name: "code"｜"anonymous", allow_remix?: bool}` 分享或改選項（第一次分享 `name` 必填，沒有預設；沒有內容的學習單 409；`allow_remix` 沒給：新分享為 true、改選項時維持原值）。`{shared: false}` 取消分享（立即生效，重複取消無害）。→ `{id, shared, shared_at, name, allow_remix}` |
+| `GET /api/community/worksheets` | 探索：所有分享中、未刪除的學習單（含自己的，`is_mine`）。查詢：`q`（標題，≤100 字，`%`、`_` 當一般字元）、`sort` = `newest`（預設）／`remixed`／`saved`、`output` = `worksheet`／`comprehension`／`tiered`、`level` = `basic`／`standard`／`advanced`（有這個版本）、`limit`（預設 24，最多 60）、`offset`。→ `{items: [Card], total, limit, offset}` |
+| `GET /api/community/saves` | 我的收藏，最新收藏在前；同樣的查詢（沒有 `sort`）。→ 同上，每項多 `saved_at`，另有 `unavailable`（已取消分享或刪除、現在看不到的收藏數） |
+| `GET /api/community/mine` | 我的分享：自己有內容的學習單，最近修改在前（`q`、`limit`、`offset`）。→ `{items: [{id, title, updated_at, shared, shared_at, name, allow_remix, saves, remixes, output, levels, cover}], total, limit, offset}` |
+| `GET /api/community/worksheets/{id}` | 預覽（唯讀）：`?level=` 選版本（預設第一個）。→ 下面的 `Meta` 加 `level` 與 `sheet`（學生版 `WsSheet`，含它印的圖）。不在分享中、已刪除 404。記 `community_view` |
+| `GET /api/community/worksheets/{id}/images/{image_id}` | 預覽裡的一張圖（JPEG）；只有分享中、該位置目前的圖 |
+| `POST`／`DELETE /api/community/worksheets/{id}/save` | 收藏／取消收藏 → `{id, saved}`。不能收藏自己的（400）；不在分享中 404（取消收藏不受限）；重複無害 |
+| `POST /api/community/worksheets/{id}/remix` | 拿來改 → 201 `{worksheet_id}`（副本）。`allow_remix` 為 false 403；自己的 400；不在分享中 404 |
+
+`Meta`（探索、收藏、預覽的標頭，**沒有任何人的編號**）：
+`{id, title, owner_name, shared_at, saves, remixes, is_mine, saved, allow_remix, output, levels}`。
+`owner_name` 依 `share_name`：`code` 是研究代號，`anonymous` 是「一位老師」（匿名時絕不回代號）。
+`Card` = `Meta` + `cover`（學生版 `WsSheet` 的開頭：最多 2 區、每區 3 題、沒有圖，沒有內容時 `null`）。
+
+`WorksheetState`（`GET /api/worksheets/{id}` 等）多一欄 `remixed_from: {id, title, owner_name} | null`：
+這份是拿社群的學習單改的，且原件仍在分享、開關開著；否則 `null`。
+
+`usage_logs` 新事件：`community_share`、`community_unshare`、`community_view`、`community_save`、`community_unsave`、
+`community_remix`（只記編號與固定標籤，欄位見 COMMUNITY.md）。

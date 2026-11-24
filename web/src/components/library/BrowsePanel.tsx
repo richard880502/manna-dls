@@ -36,7 +36,7 @@ const TAGS_OFFERED = 10;
 // ---------------------------------------------------------------- the controls
 
 /** The big search field. Typing searches once it rests; Enter searches at once. */
-function SearchField({
+export function SearchField({
   label,
   placeholder,
   search,

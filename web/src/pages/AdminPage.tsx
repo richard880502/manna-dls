@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { AccountRoles } from "../components/admin/AccountRoles";
 import { AdminOverview } from "../components/admin/AdminOverview";
 import { AiModelSettings } from "../components/admin/AiModelSettings";
+import { CommunitySettings } from "../components/admin/CommunitySettings";
 import { CsvImport } from "../components/admin/CsvImport";
 import { InviteForm } from "../components/admin/InviteForm";
 import { MemorySettings } from "../components/admin/MemorySettings";
@@ -73,6 +74,7 @@ export function AdminPage() {
           <>
             <AiModelSettings onChanged={() => setModelRevision((value) => value + 1)} />
             <MemorySettings refreshVersion={modelRevision} />
+            <CommunitySettings />
             <PlatformSettings />
           </>
         )}

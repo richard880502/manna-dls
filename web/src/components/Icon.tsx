@@ -43,6 +43,8 @@ const PATHS = {
   // 英文指示／中文指示: what the sheet says to the student.
   speech: "M4 5h16v11H10l-4.5 3.5V16H4z",
   copy: "M9 9h11v12H9zM6 15H4V3h12v2",
+  // 社群: two people.
+  community: "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8.5-.5a2.5 2.5 0 1 0 0-5M2.5 19c0-2.8 2.5-5 5.5-5s5.5 2.2 5.5 5m1-4.7c.8-.2 1.5-.3 2.5-.3 2.5 0 4.5 1.8 4.5 4.5",
 } as const;
 
 export type IconName = keyof typeof PATHS;
