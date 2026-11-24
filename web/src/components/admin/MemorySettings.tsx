@@ -22,7 +22,10 @@ export function MemorySettings({ refreshVersion = 0 }: { refreshVersion?: number
     finally { setBusy(false); }
   }
   return <section className="panel-card admin-settings" aria-labelledby="memory-settings-heading">
-    <h2 id="memory-settings-heading">教師長期記憶</h2>
+    <div className="card-heading">
+      <h2 id="memory-settings-heading">教師長期記憶</h2>
+      {settings && <span className="soft-tag">{settings.enabled ? "開啟" : "關閉"}</span>}
+    </div>
     <p>預設關閉。主持人同意研究介入後再開啟；每次模型呼叫會記錄是否使用記憶與確切版本。</p>
     {settings && <label className="check-row">
       <input type="checkbox" checked={settings.enabled} disabled={busy} onChange={(e) => {

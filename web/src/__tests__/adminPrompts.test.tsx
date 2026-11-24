@@ -84,7 +84,7 @@ describe("提示詞版本 (pi)", () => {
     signIn();
     mockApi(routes());
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=prompts");
 
     const section = within(await screen.findByRole("region", { name: "提示詞版本" }));
     const warm = await section.findByRole("region", { name: "學習單產生" });
@@ -115,7 +115,7 @@ describe("提示詞版本 (pi)", () => {
       }),
     );
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=prompts");
     await user.click(await screen.findByText("worksheet_warmup", { selector: "summary code" }));
 
     // what it is for, and its variables
@@ -164,7 +164,7 @@ describe("提示詞版本 (pi)", () => {
       }),
     );
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=prompts");
     await user.click(await screen.findByText("worksheet_warmup", { selector: "summary code" }));
     await user.click(screen.getByRole("button", { name: /版本紀錄（共 3 版）/ }));
 
@@ -219,7 +219,7 @@ describe("提示詞版本 (pi)", () => {
       }),
     );
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=prompts");
     await user.click(await screen.findByText("worksheet_template_section", { selector: "summary code" }));
     expect(screen.queryByText(/試產生：先試試看/)).not.toBeInTheDocument();
     await user.click(screen.getByText("worksheet_template_section", { selector: "summary code" }));
