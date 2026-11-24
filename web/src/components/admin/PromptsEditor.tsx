@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { PromptInfo, PromptList, PromptVersion, TryResponse } from "../../api/types";
 import { formatDateTime } from "../../lib/labels";
@@ -7,6 +7,8 @@ import { ErrorText, Loading, Notice } from "../common";
 
 const UNREGISTERED = "未登記";
 const NOTE_MAX = 200;
+/** The old unit-and-lesson flow: still editable, but not what the PI reaches for first. */
+const LEGACY_GROUP = "單元與課例（舊流程）";
 
 function matches(info: PromptInfo | undefined, p: PromptVersion, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -16,10 +18,12 @@ function matches(info: PromptInfo | undefined, p: PromptVersion, query: string):
 }
 
 export function PromptsEditor() {
+  const idBase = useId();
   const [list, setList] = useState<PromptList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [newKey, setNewKey] = useState("");
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set([LEGACY_GROUP]));
 
   useEffect(() => {
     let alive = true;
@@ -64,6 +68,22 @@ export function PromptsEditor() {
       .filter((s) => s.items.length > 0);
   }, [list, byKey, query]);
   const shown = sections.reduce((n, s) => n + s.items.length, 0);
+  const searching = query.trim() !== "";
+
+  function setGroupOpen(group: string, open: boolean) {
+    setClosed((prev) => {
+      if (prev.has(group) === !open) return prev;
+      const next = new Set(prev);
+      if (open) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }
+
+  function jumpTo(group: string, index: number) {
+    setGroupOpen(group, true);
+    requestAnimationFrame(() => document.getElementById(`${idBase}-group-${index}`)?.scrollIntoView?.({ block: "start" }));
+  }
 
   return (
     <section className="panel-card prompts-panel" aria-labelledby="prompts-heading">
@@ -72,31 +92,54 @@ export function PromptsEditor() {
         <span className="soft-tag">{list ? `${list.prompts.length} 個提示詞 · 每個顯示最新版` : "每個提示詞的最新版"}</span>
       </div>
       <p className="field-hint">
-        按下一個提示詞展開來編輯。儲存永遠是新增一個版本，舊版本都留著，可以隨時查看、比較，並用舊版建立新版本。
+        按下提示詞展開來編輯。每次儲存都會新增一個版本，舊版本都留著，可以查看、比較或還原。
       </p>
       <ErrorText message={error} />
       {!list && !error && <Loading />}
       {list && (
         <>
-          <div className="prompt-search">
-            <label className="field-label" htmlFor="prompt-search">
-              搜尋提示詞
-            </label>
-            <input
-              id="prompt-search"
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="名稱、說明或 key，例如：暖身"
-            />
-            {query.trim() && <span className="soft-tag">找到 {shown} 個</span>}
+          <div className="prompt-toolbar">
+            <div className="prompt-search">
+              <label className="field-label" htmlFor="prompt-search">
+                搜尋提示詞
+              </label>
+              <input
+                id="prompt-search"
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="名稱、說明或 key，例如：暖身"
+              />
+              {searching && <span className="soft-tag">找到 {shown} 個</span>}
+            </div>
+            {sections.length > 0 && (
+              <ul className="prompt-chips" aria-label="跳到分組">
+                {sections.map((s, i) => (
+                  <li key={s.group}>
+                    <button type="button" className="prompt-chip" onClick={() => jumpTo(s.group, i)}>
+                      {s.group}
+                      <span className="prompt-chip-count">{s.items.length}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {sections.map((s) => (
-            <section key={s.group} className="prompt-group" aria-label={s.group}>
-              <h3>
-                {s.group}
-                <span className="soft-tag">{s.items.length}</span>
-              </h3>
+          {sections.map((s, i) => (
+            <section key={s.group} id={`${idBase}-group-${i}`} className="prompt-group" aria-label={s.group}>
+              <details
+                className="prompt-group-body"
+                open={searching || !closed.has(s.group)}
+                onToggle={(e) => {
+                  if (!searching) setGroupOpen(s.group, (e.currentTarget as HTMLDetailsElement).open);
+                }}
+              >
+              <summary>
+                <h3>
+                  {s.group}
+                  <span className="soft-tag">{s.items.length}</span>
+                </h3>
+              </summary>
               {s.group === UNREGISTERED && (
                 <p className="field-hint">這些 key 還沒有登記名稱與變數，程式也可能已經不用了；儲存時不會檢查變數。</p>
               )}
@@ -106,10 +149,11 @@ export function PromptsEditor() {
                   prompt={p}
                   info={byKey.get(p.prompt_key)}
                   canTry={list.try_keys.includes(p.prompt_key)}
-                  open={query.trim() !== "" && shown <= 3}
+                  open={searching && shown <= 3}
                   onSaved={onSaved}
                 />
               ))}
+              </details>
             </section>
           ))}
           {shown === 0 && <p className="field-hint">沒有符合的提示詞。</p>}

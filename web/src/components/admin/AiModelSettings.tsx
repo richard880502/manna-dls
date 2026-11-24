@@ -123,6 +123,7 @@ export function AiModelSettings({ onChanged }: { onChanged?: () => void } = {}) 
     <section className="panel-card admin-settings" aria-labelledby="ai-model-heading">
       <div className="card-heading">
         <h2 id="ai-model-heading">文字模型</h2>
+        <span className="soft-tag admin-status-tag">{settings.active.model}</span>
         <span className="soft-tag">{fromAdmin ? "後台設定" : "環境變數預設"}</span>
       </div>
       <p>

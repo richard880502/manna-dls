@@ -145,7 +145,7 @@ describe("文字模型 settings", () => {
       "GET /api/admin/memory-index": () => ({ pending: 1, failed: 0, providers_ready: ready, compatible: true }),
     });
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=settings");
     await screen.findByText(/模型設定可用後會自動接續同步/);
     await user.click(screen.getByRole("button", { name: "測試並套用" }));
     await waitFor(() => expect(api.callsTo("GET", "/api/admin/memory-index")).toHaveLength(2));

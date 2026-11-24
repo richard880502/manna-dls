@@ -58,7 +58,8 @@ describe("admin page (pi)", () => {
     expect(await screen.findByRole("heading", { name: "後台管理", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /後台管理/ })).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("研究編號"), "T-2026-009");
+    await user.click(screen.getByRole("tab", { name: "帳號" }));
+    await user.type(await screen.findByLabelText("研究編號"), "T-2026-009");
     await user.selectOptions(screen.getByLabelText("學校類型"), "vocational");
     await user.click(screen.getByRole("button", { name: "建立邀請碼" }));
     expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
@@ -68,6 +69,7 @@ describe("admin page (pi)", () => {
       role: "teacher",
     });
 
+    await user.click(screen.getByRole("tab", { name: "提示詞" }));
     await user.click(await screen.findByText("core_assist", { selector: "summary code" }));
     const system = await screen.findByLabelText(/系統提示詞/);
     await user.type(system, "，不提供答案");
@@ -82,7 +84,8 @@ describe("admin page (pi)", () => {
     expect(await screen.findByText(/已儲存為 v3/)).toBeInTheDocument();
 
     const csv = "case_code,school_track,grade,topic,summary,details,approved\nC-1,both,高二,閱讀,摘要,細節,true\n";
-    const cases = within(screen.getByRole("region", { name: "匯入教師備課經驗" }));
+    await user.click(screen.getByRole("tab", { name: "匯入" }));
+    const cases = within(await screen.findByRole("region", { name: "匯入教師備課經驗" }));
     await user.upload(cases.getByLabelText("選擇 CSV 檔案"), new File([csv], "cases.csv", { type: "text/csv" }));
     await user.click(cases.getByRole("button", { name: "匯入" }));
     expect(await cases.findByText(/已匯入 2 筆/)).toBeInTheDocument();
@@ -109,7 +112,7 @@ describe("admin page (pi)", () => {
       "POST /api/admin/invites": { code: "KBKB-1234" },
     });
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=accounts");
     await user.type(await screen.findByLabelText("研究編號"), "KB-2026-001");
     await user.selectOptions(screen.getByLabelText("學校類型"), "綜高");
     await user.selectOptions(screen.getByLabelText("角色"), "知識庫管理員");
@@ -133,7 +136,7 @@ describe("admin page (pi)", () => {
       "GET /api/admin/prompts": { prompts: [], groups: [], registry: [], try_keys: [] },
     });
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=settings");
 
     const toggle = await screen.findByRole("checkbox", { name: /允許教師自選備課菜單/ });
     expect(toggle).toBeChecked();
@@ -179,13 +182,13 @@ describe("帳號與角色 (pi)", () => {
   it("lists accounts, keeps the PI's own row read-only and explains 知識庫管理員", async () => {
     signIn();
     mockApi(routes(() => respond(500, null)));
-    renderApp("/admin");
+    renderApp("/admin?tab=accounts");
     const section = within(await screen.findByRole("region", { name: "帳號與角色" }));
     expect(await section.findByText("T-2026-007")).toBeInTheDocument();
     expect(section.getByText("2 個帳號")).toBeInTheDocument();
     expect(
-      section.getByText(
-        "「知識庫管理員」可以管理知識庫的教材、學習單範本、課綱條目與詞彙，但不能建立邀請碼或變更平台設定，也看不到其他教師的資料。",
+      screen.getByText(
+        /「知識庫管理員」可以管理知識庫的教材、學習單範本、課綱條目與詞彙，但不能建立邀請碼或變更平台設定，也看不到其他教師的資料。/,
       ),
     ).toBeInTheDocument();
 
@@ -218,7 +221,7 @@ describe("帳號與角色 (pi)", () => {
       routes((call) => ({ ...accounts[1], ...(call.body as { role: string }) })),
     );
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=accounts");
     const section = within(await screen.findByRole("region", { name: "帳號與角色" }));
     const select = await section.findByRole("combobox", { name: "T-2026-007 的角色" });
 
@@ -250,7 +253,7 @@ describe("帳號與角色 (pi)", () => {
     // e.g. another PI took this account's PI role away a moment ago
     mockApi(routes(() => respond(403, { error: { code: "forbidden", message: "只有計畫主持人可以使用這個功能。" } })));
     const user = userEvent.setup();
-    renderApp("/admin");
+    renderApp("/admin?tab=accounts");
     const section = within(await screen.findByRole("region", { name: "帳號與角色" }));
     const select = await section.findByRole("combobox", { name: "T-2026-007 的角色" });
     await user.selectOptions(select, "主持人");
