@@ -1935,6 +1935,11 @@ async fn sentence_frames_and_hints_go_under_their_own_question() {
     let id = direct(&app, &t, &passage("FAKE_WS_FRAME_BAD")).await["id"]
         .as_i64()
         .unwrap();
+    // Hints come only when 引導問題 is ticked (or nothing is); frames with 句型框架.
+    let mut s = empty_settings();
+    s["levels"] = json!(["basic", "standard"]);
+    s["generation"] = json!(["加入暖身活動", "提供引導問題", "提供字詞表", "提供句型框架"]);
+    put_settings(&app, &t, id, s).await;
     let state = generate(&app, &t, id).await;
 
     // Call 1 wrote a frame without a blank and one for a question that is not there: the
@@ -1970,7 +1975,11 @@ async fn sentence_frames_and_hints_go_under_their_own_question() {
             if open {
                 assert!(frame.starts_with("Hello, everyone.") && frame.contains("___"));
             }
-            assert!(!item["hint"].as_str().unwrap_or_default().is_empty());
+            assert!(
+                !item["hint"].as_str().unwrap_or_default().is_empty(),
+                "{} {item}",
+                b["id"]
+            );
         }
     }
 
