@@ -385,6 +385,7 @@
 
 .unit-ideas-title {
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   font-weight: var(--weight-strong);
 }
@@ -438,6 +439,7 @@
 .ledger .q {
   color: var(--color-muted);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-weight: var(--weight-strong);
 }
 
@@ -758,6 +760,7 @@
 
 .clock {
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-clock);
   font-weight: var(--weight-strong);
   font-variant-numeric: tabular-nums;

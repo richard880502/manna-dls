@@ -8,15 +8,15 @@ The visual system of the web app (`web/`). Every screen reads it; change it on p
 
 - Genre: editorial, at app scope (screens someone works in, not pages someone reads once)
 - Shape: a 56px top bar with three destinations (班級, 學習單, 教材); pages are a column of sections
-- Vibe: "a calm research notebook in two inks", with a third voice for print
-- Axes: light paper / serif heads / ink-blue accent. Posture: restrained, plus one gold with one job
+- Vibe: "a bright, plain product UI with one blue and one gold": the chrome has no colour, blue means "you can act here", gold marks what the AI contributed, and everything else colourful comes from the content
+- Axes: white page / bold sans heads / one-blue accent. Posture: restrained and flat, plus one gold with one job (light only)
 - Modes: light only (see "Not done")
 
 ## Principles (from the overhaul)
 
 1. **One view, one thing.** One filled button per view; everything else is an outline button or a text link.
-2. **Space, type size and hairlines part sections, not boxes.** Only three things are filled surfaces: what Manna suggests (gold), source material and worksheets (the print sheet, from step 2).
-3. **Three voices.** The teacher's own words and actions are ink blue. Whatever Manna (the AI) adds sits in gold and carries its sources. Source material is print: serif on the lightest sheet, paragraph numbers in the margin (step 2).
+2. **Space, type size and hairlines part sections, not boxes.** Only three things are filled surfaces: what Manna suggests (a barely warm wash with a thin gold edge), source material and worksheets (the print sheet, from step 2).
+3. **Three voices.** The teacher's own words and actions are the page ink, and the one blue (#1f5eff) marks what she can act on (buttons, links, selected filters, focus). Whatever Manna (the AI) adds carries the gold, quietly (a thin edge or a small mark, not a big wash), and its sources. Source material is print: serif on the lightest sheet, paragraph numbers in the margin (step 2).
 4. **Nothing blocks.** No required fields; every step can be skipped; what the AI produces is only written in when the teacher says so.
 5. **The teacher's words.** No 「版本」「Phase」「RAG」「選用」 on controls; navigation and buttons are in Chinese. CoRe is called 「單元想法」, with CoRe in small print.
 6. **The class is context, not a field.** The class is the one the teacher came from; it appears once, in the breadcrumb. It is asked for in exactly one place: starting a lesson from the library when several classes use its unit.
@@ -27,19 +27,19 @@ The visual system of the web app (`web/`). Every screen reads it; change it on p
 
 | Token | Value | Job |
 | --- | --- | --- |
-| `--color-paper` | `#f7f8fa` | the page |
-| `--color-paper-2` / `-3` | `#eef1f5` / `#e3e8ee` | neutral wells and quiet tags / hover, progress tracks |
-| `--color-field`, `--color-sheet` | `#fdfdfe` | inputs; the print sheet (material, worksheets) |
-| `--color-ink` | `#1c2533` | text and heads (14.5:1 on paper) |
-| `--color-ink-2` | `#465163` | secondary text, lead paragraphs (7.6:1) |
-| `--color-muted` | `#5a6677` | meta lines, hints, crumbs (5.5:1 on paper, 5.1:1 on paper-2) |
-| `--color-field-edge` | `#7d8796` | input and outline-button edges (3.4:1 or better) |
-| `--color-rule` / `-strong` | `#dde2e9` / `#b9c1cc` | hairlines between rows / the rule under a focal block or around an open form |
-| `--color-accent` (+ `-hover`, `-press`, `-ink`, `-text`) | `#2a5580` | the teacher's ink: the filled action, the current destination, links |
-| `--color-accent-wash` / `-wash-2` / `-rule` | `#e6eef6` / `#d5e2f0` / `#8fb0cf` | selected tiles / pressed / link underline |
-| `--color-focus` | `#1f5fd0` | the 3px focus ring (5.5:1 on paper) |
-| `--color-star` | `#e2b33a` | Manna's star |
-| `--color-manna-wash` / `-wash-2` / `-rule` / `-ink` | `#fbf3dc` / `#f4e6b8` / `#d9bd6a` / `#73500f` | everything Manna produced, and the button that asks her (ink on wash 6.6:1) |
+| `--color-paper` | `#ffffff` | the page |
+| `--color-paper-2` / `-3` | `#f7f7f7` / `#ededed` | neutral wells, quiet tags, the selected sidebar pill / hover, progress tracks |
+| `--color-field`, `--color-sheet` | `#ffffff` | inputs; the print sheet (material, worksheets) |
+| `--color-ink` | `#191919` | text and heads (17.6:1 on paper) |
+| `--color-ink-2` | `#3d3d3d` | secondary text, lead paragraphs (10.9:1) |
+| `--color-muted` | `#696969` | meta lines, hints, crumbs (5.5:1 on paper, 5.1:1 on paper-2, 4.7:1 on paper-3) |
+| `--color-field-edge` | `#8c8c8c` | input and outline-button edges (3.4:1 on white) |
+| `--color-rule` / `-strong` | `#e8e8e8` / `#d0d0d0` | hairlines between rows / the rule under a focal block or around an open form |
+| `--color-accent` (+ `-hover`, `-press`, `-ink`, `-text`) | `#1f5eff` (hover `#1a4fd6`, press `#1541b3`; `-text` is `#1a52e0`) | the one blue, "you can act here": the filled action, links, selected filters and tabs (white on blue 5.1:1; text 6.3:1 on white, 5.5:1 on the wash) |
+| `--color-accent-wash` / `-wash-2` / `-rule` | `#eaf0ff` / `#d6e2ff` / `#b9ccff` | selected tiles / pressed / link underline |
+| `--color-focus` | `#1f5eff` | the focus ring (5.1:1 on paper) |
+| `--color-star` | `#d4a72c` | Manna's star |
+| `--color-manna-wash` / `-wash-2` / `-rule` / `-ink` | `#fffaec` / `#fbf0cc` / `#dcc16f` / `#6b4a0c` | everything Manna produced, and the button that asks her: a faint wash, a thin gold edge, small gold marks (ink on wash 7.7:1 and 7.1:1) |
 | `--color-success`, `--color-warn-ink`, `--color-error` (+ washes) | | 順利 and saved / 卡住 and the demo banner / errors (each 5.5:1 or better on its wash) |
 
 Rules: no colour literal outside `tokens.css`; never pure black or white as a surface; grey text never sits on a coloured surface; red and green never carry meaning alone (every state also has a word or an icon).
@@ -50,7 +50,7 @@ Self-hosted with `@fontsource-variable` (pinned, `font-display: swap`, sliced by
 
 | Role | Face | Size / weight |
 | --- | --- | --- |
-| Heads, row titles, Q numbers, the lesson clock | Noto Serif TC, `--font-display` | 600 |
+| Heads (h1-h4, `--font-display` is the sans family), row titles, Q numbers, the lesson clock | Noto Sans TC, 700, letter-spacing `--tracking-display` (-0.025em) | 700 on h1-h4, 600 elsewhere |
 | Everything else | Noto Sans TC, `--font-body` | 400, 600 for labels and buttons |
 | Latin names beside CJK (CoRe), and from step 2 material and worksheets | Georgia, `--font-print` | 400 |
 | Machine identifiers only (codes, SHA, prompt templates) | system mono, `--font-mono` | 400 |
@@ -79,8 +79,8 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 ## Components
 
 - **Sidebar and home (nav redesign).** Every tool appears once and has one name (`TOOL_NAME`). The sidebar (`shell.css`) is 首頁, 我的作品 (`/prep`; also current for `/prep/:id` and `/worksheets…`), at most three 最近 sessions, a small 「教材與範本」 label over 我的教材, 平台教材 and 學習單範本, a folded 更多, then 備課偏好 and the account. It has no 建立 group: creating starts on 首頁, which is the current item on `/create/*`. The home page's composer (`.compose-card.is-quick`) is the same rounded box as the prep session's (`.prep-composer`): text on top, 附上 controls bottom-left, a round arrow bottom-right, the border and focus ring on the box. Under it three ways to prep, 「AI 幫我設計」 (the 完整學習單 tool), 「照我的範本設計」 (the 照我的學習單做 tool) and 「我想逐步設計」 (`HOME_TOOLS`, names in `HOME_NAME`, apart from `TOOL_NAME`), are one `radiogroup` of tiles (`.tool-tile`: icon, name, one-line blurb; three per row; arrow keys move and choose; chosen = ink frame plus wash, so colour is not the only cue). The other four tools (閱讀理解題, 差異化學習單, 課堂活動, 教學套件) have no tile: a quiet line (`.home-others`) says they are done in the conversation after the worksheet, or by writing them in the box (`toolFromWords` still picks them; the conversation's 接下來可以 chips and `/create/:tool` offer all six). `TOOLS` still lists all six; only the home page uses `HOME_TOOLS`. The tiles' names are the home page's own: the generator's heading, the 接下來可以 chips and 我的作品 keep the tools' names (`TOOL_NAME`), and the chip text the server recognises (`TOOL_CHIP`) is unchanged. 「我想逐步設計」 is a tile, not a generator tool (not in `TOOLS`, no `/create` page): with it chosen the box's text only names the lesson, the arrow opens a dialog (shared `Dialog`, guarded when dirty) where the teacher picks an existing unit or makes a new one and names the lesson, and the attached article goes in as step 1 (閱讀教材) of the new lesson at `/lessons/:id`. 我的作品 lists those lessons too (tag 「逐步設計」, no thumbnail, no 刪除: lessons cannot be deleted yet). With an article attached and no tile or tool word chosen, sending makes a 完整學習單 (it used to make 閱讀理解題, which no longer has a tile). Then one quiet link 「更多設定（班級、題數、Bloom、題型）」 to `/create/<tool>`. Bare tool labels (`TOOL_CHIP`) are only the request text sent when nothing was typed; they are never shown.
-- **Buttons.** `primary-button`: filled accent, **one per view** (`big-button` makes it 52px on teach-mode views: 「開始上課」). `secondary-button`: neutral outline on the field colour, for a form's own submit when the view's filled action is elsewhere. `text-link`: the default for everything else (bold; `is-plain` for utilities like 修改, 取消, 更多); on touch screens it gets a 44px box. `manna-button`: gold outline, only for asking Manna. `ghost-button`, `small-button`, `decision-button` remain inside screens not rebuilt yet. Disabled is three channels: opacity or muted colour, `not-allowed`, the native attribute.
-- **Ruled rows** (`.rows` > `.row`): the replacement for cards. A row is a title (serif 18px, a link), one quiet meta line (14px muted), and at the right a short fact with at most one or two text actions (`.side`). What a row opens in place (a note, the classes to assign) spans the row beneath it (`.row-more`). Ordered lists number their titles (`.num`). Under 760px the side drops under the title.
+- **Buttons.** `primary-button`: filled accent, **one per view** (`big-button` makes it 52px on teach-mode views: 「開始上課」). `secondary-button`: white with a light grey border, ink text, a 1px lift on hover and a pressed state (primary lifts the same way), for a form's own submit when the view's filled action is elsewhere. `text-link`: the default for everything else (bold; `is-plain` for utilities like 修改, 取消, 更多); on touch screens it gets a 44px box. `manna-button`: gold outline, only for asking Manna. `ghost-button`, `small-button`, `decision-button` remain inside screens not rebuilt yet. Disabled is three channels: opacity or muted colour, `not-allowed`, the native attribute.
+- **Ruled rows** (`.rows` > `.row`): the replacement for cards. A row is a title (sans 18px, a link), one quiet meta line (14px muted), and at the right a short fact with at most one or two text actions (`.side`). What a row opens in place (a note, the classes to assign) spans the row beneath it (`.row-more`). Ordered lists number their titles (`.num`). Under 760px the side drops under the title.
 - **Focal block** (`.next`): on the home and class pages, the next lesson: a quiet kicker (「接下來 · 高一 3 班」), the title as the page's `h1`, one sentence, and the filled 「開始上課」 with 「繼續備課」 as a text link. Closed by a strong rule.
 - **Page head** (`.page-head`, `.crumbs`, `.lead`, `.head-row`): crumbs in 14px muted, the `h1`, a lead paragraph; a `head-row` puts a section's one action at the right of its heading.
 - **Forms opened in place** (`.inline-form-block`): between two strong rules, no frame. Not for add / upload / new actions: those use the Dialog below.
@@ -98,7 +98,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 - **Tags** (`soft-tag`, `status-pill`, `record-pill`): 13px, only where they carry a fact (a mark's kind, a selection count). No 「選用」「可略過」 labels: what can be skipped is said once, in a sentence.
 - **Notices:** a tinted well (`info`, `success`, `warn`), ink text, no side stripe.
 - **Leave confirm** (`leave-confirm`): when a page with unsaved work is left, a dialog over the scrim asks 儲存後離開 / 留在這頁 (focused first, also Escape) / 不儲存，直接離開. Never `window.confirm`.
-- **In-class console:** the lesson title with the clock (44px serif, tabular figures) at its right; two big marks (順利 green, 卡住 amber; 2px outline, an icon, the word and a short caption; 200px tall, a quarter of the screen each on a phone); then what was marked, newest first, as ruled rows with quiet corrections.
+- **In-class console:** the lesson title with the clock (44px sans, tabular figures) at its right; two big marks (順利 green, 卡住 amber; 2px outline, an icon, the word and a short caption; 200px tall, a quarter of the screen each on a phone); then what was marked, newest first, as ruled rows with quiet corrections.
 
 ## Do and don't
 
@@ -128,3 +128,9 @@ Don't:
 ## Exports
 
 `web/src/styles/tokens.css` (tokens) · `base.css` (elements, focus, motion policy) · `components.css` (controls, fields, tags, notices) · `shell.css` (demo banner, top bar, frames, sign-in) · `app.css` (unit page, 單元想法, lesson planning, preferences, admin) · `record.css` (the console's parts, 課後補寫, the phone remote) · `views.css` (rows, the focal block, page heads, text links, the dialog, the console layout) · `sop.css` (the lesson workspace: rail, steps, Manna wells in a step, the print sheet and the material viewer; loaded last).
+
+## Bright restyle (colour logic and form)
+
+- **Colour logic.** The chrome has no colour: white page, `#f7f7f7` / `#ededed` surfaces, near-black ink, grey hairlines. One blue (`#1f5eff`) means "you can act here". Any other colour comes from content (worksheets, materials, images), never from chrome. Gold stays only as the AI marker, quieter than before. State colours (success, warn, error) stay functional and calm.
+- **Form.** Headings are the sans family at 700 with tight tracking; the serif (`--font-print`) is kept only on worksheet and material sheets. Radii are soft (controls 10px, cards and dialogs 16px, pills for tags and chips). Flat: hairlines and space do the work; shadows only on floating things (popovers, dialogs, sticky bars) and lighter than before. The selected sidebar item is a light-grey pill with ink text.
+- **Light only.** The page does not follow a dark colour scheme.

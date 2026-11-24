@@ -74,6 +74,7 @@
 .tap-caption {
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-xl);
   font-weight: var(--weight-strong);
   line-height: 1.2;
@@ -238,6 +239,7 @@
 
 .pip-title {
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-md);
   line-height: var(--leading-tight);
 }
@@ -455,6 +457,7 @@
 .review-card-head time {
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   font-weight: var(--weight-strong);
   font-variant-numeric: lining-nums tabular-nums;
@@ -537,6 +540,7 @@
   display: block;
   color: var(--color-ink);
   font-family: var(--font-display);
+  letter-spacing: var(--tracking-display);
   font-size: var(--text-lg);
   line-height: var(--leading-tight);
 }

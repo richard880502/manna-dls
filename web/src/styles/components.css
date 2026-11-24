@@ -34,11 +34,11 @@
   color: var(--color-accent-ink);
 }
 
-/* The alternate action: outlined in the same ink. */
+/* The alternate action: white with a light grey border; the blue stays on the filled action. */
 .secondary-button {
-  border-color: var(--color-accent-rule);
+  border-color: var(--color-rule-strong);
   background: var(--color-field);
-  color: var(--color-accent-text);
+  color: var(--color-ink);
 }
 
 /* Utilities (remove, cancel, close, move): neutral outline. */
@@ -73,7 +73,13 @@
   }
 
   .secondary-button:hover {
-    background: var(--color-accent-wash);
+    border-color: var(--color-field-edge);
+    background: var(--color-paper-2);
+  }
+
+  .primary-button:not(:disabled):hover,
+  .secondary-button:not(:disabled):hover {
+    transform: translateY(-1px);
   }
 
   .ghost-button:hover {
@@ -88,7 +94,12 @@
 
 .secondary-button:active,
 .ghost-button:active {
-  background: var(--color-accent-wash-2);
+  background: var(--color-paper-3);
+}
+
+.primary-button:not(:disabled):active,
+.secondary-button:not(:disabled):active {
+  transform: translateY(0);
 }
 
 .primary-button:disabled,
@@ -144,7 +155,8 @@
     transition:
       background-color var(--dur-micro) var(--ease-out),
       border-color var(--dur-micro) var(--ease-out),
-      color var(--dur-micro) var(--ease-out);
+      color var(--dur-micro) var(--ease-out),
+      transform var(--dur-micro) var(--ease-out);
   }
 }
 
@@ -255,7 +267,7 @@ select {
 input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"]):focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  border-color: var(--color-ink-2);
+  border-color: var(--color-focus);
   outline-color: var(--color-focus);
 }
 
@@ -298,10 +310,10 @@ input[type="file"]::file-selector-button {
   min-height: var(--control-h-sm);
   margin-right: var(--space-sm);
   padding: 0 var(--space-sm);
-  border: var(--rule-hair) solid var(--color-accent-rule);
+  border: var(--rule-hair) solid var(--color-rule-strong);
   border-radius: var(--radius-control);
   background: var(--color-field);
-  color: var(--color-accent-text);
+  color: var(--color-ink);
   font: inherit;
   font-weight: var(--weight-strong);
   cursor: pointer;
