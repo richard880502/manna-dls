@@ -592,6 +592,28 @@
   height: 1.9em;
 }
 
+/* The empty corner over the row labels, and the labels themselves (a first column). */
+.ws .ws-answer-table .ws-table-corner {
+  width: 30%;
+  border: 0;
+  background: none;
+}
+
+.ws .ws-answer-table tbody th {
+  text-align: left;
+  font-weight: inherit;
+}
+
+.ws-table-warning {
+  margin-top: var(--space-3xs);
+  padding: var(--space-3xs) var(--space-xs);
+  border-left: 3px solid var(--color-warn-rule);
+  background: var(--color-warn-wash);
+  color: var(--color-warn-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
 .ws-table-tools {
   display: flex;
   flex-wrap: wrap;

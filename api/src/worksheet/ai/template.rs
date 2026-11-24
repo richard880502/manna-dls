@@ -246,18 +246,24 @@ async fn section_call(
         "run_no": run.run_no,
     });
     let passage = run.paragraphs.join("\n");
-    let ctx = SectionCtx {
-        passage: &passage,
-        item_count: r.section.item_count.clamp(1, 12) as usize,
-        needs_external: r.section.needs_external_material,
-    };
     // 圖像組織 is in the section's formats (or it names none, so any format may come).
     let organizers = r.section.answer_formats.is_empty()
         || r.section
             .answer_formats
             .iter()
             .any(|f| f == crate::worksheet::FMT_ORGANIZER);
-    let mut schema = section_out_schema(ctx.item_count, organizers, &r.section.supports);
+    let tables = r.section.answer_formats.is_empty()
+        || r.section
+            .answer_formats
+            .iter()
+            .any(|f| f == crate::worksheet::FMT_TABLE);
+    let ctx = SectionCtx {
+        passage: &passage,
+        item_count: r.section.item_count.clamp(1, 12) as usize,
+        needs_external: r.section.needs_external_material,
+        tables_asked: tables,
+    };
+    let mut schema = section_out_schema(ctx.item_count, (organizers, tables), &r.section.supports);
     let legacy = legacy_kind(r.section);
     let supports = SupportsCtx {
         supports: &r.section.supports,
@@ -378,6 +384,7 @@ fn section_block(
             origin: Origin::Ai,
             bloom: it.bloom,
             organizer: it.organizer.clone(),
+            table: it.table.as_ref().map(|t| t.to_item_table()),
             ..Item::default()
         })
         .collect();

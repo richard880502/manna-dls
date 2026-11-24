@@ -38,6 +38,7 @@ export function sheetBlockText(b: WsSheetBlock): string {
     lines.push(`${it.no}. ${it.prompt}${tag}`);
     it.options.forEach((o, i) => lines.push(`   ${printedOption(o, i)}`));
     if (it.table?.columns.some((c) => c.trim() !== "")) lines.push(`   | ${it.table.columns.join(" | ")} |`);
+    it.table?.row_labels?.forEach((l) => l.trim() && lines.push(`   | ${l} |`));
     if (it.hint?.trim()) lines.push(`   Hint: ${it.hint}`);
     if (it.support) {
       const [first = "", ...rest] = it.support.lines;
@@ -258,10 +259,17 @@ export function SheetPreview({
                           {Array.from({ length: it.table.rows }, (_, r) => (
                             // oxlint-disable-next-line react/no-array-index-key -- empty rows to write in
                             <tr key={r}>
-                              {it.table?.columns.map((_, c) => (
-                                // oxlint-disable-next-line react/no-array-index-key, jsx-a11y/control-has-associated-label -- empty cells to write in
-                                <td key={c} />
-                              ))}
+                              {it.table?.columns.map((_, c) =>
+                                c === 0 && (it.table?.row_labels ?? []).length > 0 ? (
+                                  // oxlint-disable-next-line react/no-array-index-key -- the row's label, in the first column
+                                  <th key={c} scope="row">
+                                    {it.table?.row_labels?.[r] ?? ""}
+                                  </th>
+                                ) : (
+                                  // oxlint-disable-next-line react/no-array-index-key, jsx-a11y/control-has-associated-label -- empty cells to write in
+                                  <td key={c} />
+                                ),
+                              )}
                             </tr>
                           ))}
                         </tbody>

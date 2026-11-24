@@ -1314,11 +1314,19 @@ async fn the_full_worksheet_still_works_and_labels_its_items() {
             assert_eq!(it["hint"], "");
         }
     }
-    // The tasks step uses prompt version 7 (version 2's Bloom label, SIOP Q4's stage, the
-    // organizers of 0029_graphic_organizers.sql, the blank of 0030_fill_in_blanks.sql, the
-    // frames of 0031_sentence_frames_apart.sql and the 是非題 of 0036_template_supports.sql).
+    // The tasks step uses the latest prompt version (version 2's Bloom label, SIOP Q4's stage,
+    // the organizers of 0029_graphic_organizers.sql, the blank of 0030_fill_in_blanks.sql, the
+    // frames of 0031_sentence_frames_apart.sql, the 是非題 of 0036_template_supports.sql and the
+    // table headings of 0051_table_organizer_headers.sql).
     let tasks = calls(&app, "worksheet_tasks").await;
-    assert_eq!(tasks[0].2["prompt"]["version_no"], 7);
+    let (latest,): (i32,) = sqlx::query_as(
+        "SELECT MAX(version_no) FROM prompt_versions WHERE prompt_key = 'worksheet_tasks'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert!(latest >= 8);
+    assert_eq!(tasks[0].2["prompt"]["version_no"], latest);
     assert!(tasks[0].2["prompt"]["system"]
         .as_str()
         .unwrap()

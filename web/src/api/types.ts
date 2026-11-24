@@ -1722,6 +1722,12 @@ export interface WsItemTable {
   columns: string[];
   /** 欄名下方的空白列數，1–12 */
   rows: number;
+  /**
+   * 每一列要學生寫什麼或比較什麼（"Claim"、"Supporting detail"），印在第一欄；沒有（或全空白）就是
+   * 沒有列標籤的空白列，舊的表格也沒有這個鍵。第 i 列用第 i 個，沒有對到的列不印標籤。
+   * 學習單投影（sheet）裡有列標籤時，columns 多一個空白的第一欄（放標籤的那一欄）。
+   */
+  row_labels?: string[];
 }
 
 // ---- 圖像組織（docs/API.md「圖像組織」）----

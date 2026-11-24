@@ -104,6 +104,13 @@
 //! | marker                   | effect                                                              |
 //! |--------------------------|---------------------------------------------------------------------|
 //! | `FAKE_ORG_BAD`           | tasks and 閱讀理解題: every organizer has the type `fishbone` and eight sections of three cells, all pre-filled (the server falls back to a sequence, cuts it to six boxes of two cells and leaves one to write) |
+//!
+//! 表格整理: every 表格整理 question carries a `table` ([`fake_table`]): two real headings and the
+//! row labels 「Claim」 and 「Supporting detail」; its prompt names the same two columns. Marker:
+//!
+//! | marker                   | effect                                                              |
+//! |--------------------------|---------------------------------------------------------------------|
+//! | `FAKE_TABLE_PLACEHOLDER` | every table has the headings 「Column 1」 and 「Column 2」 (the server repairs them from the prompt) |
 
 use serde_json::{json, Value};
 
@@ -215,9 +222,9 @@ fn item(format: &str, label: &str, sentence: &str, k: usize, tier: &str) -> Valu
             None,
         ),
         f if f == FMT_TABLE => (
-            format!("Complete the table for {label}: Who? / What happened? / Why? (Question {k})"),
+            format!("Complete a T-chart with two columns: Event in {label} and Reason Given in the Text. For each event, record its claim and one supporting detail. (Question {k})"),
             Vec::new(),
-            "Who: the main character. What: the key event. Why: the reason given in the text.".to_string(),
+            "Claim: the key event. Supporting detail: the reason given in the text.".to_string(),
             Some(sentence.to_string()),
         ),
         f if f == FMT_ORGANIZER => (
@@ -246,7 +253,24 @@ fn item(format: &str, label: &str, sentence: &str, k: usize, tier: &str) -> Valu
     if format == FMT_ORGANIZER {
         out["organizer"] = fake_organizer(k, label, sentence, false);
     }
+    if format == FMT_TABLE {
+        out["table"] = fake_table(label, false);
+    }
     out
+}
+
+/// The table of a fake 表格整理 question: the two things its prompt compares and what to write
+/// about each. `placeholder` (`FAKE_TABLE_PLACEHOLDER`): the headings a model writes when it has
+/// not thought about them, which the server must repair from the question.
+pub fn fake_table(label: &str, placeholder: bool) -> Value {
+    if placeholder {
+        json!({ "columns": ["Column 1", "Column 2"], "row_labels": ["Claim", "Supporting detail"] })
+    } else {
+        json!({
+            "columns": [format!("Event in {label}"), "Reason Given in the Text"],
+            "row_labels": ["Claim", "Supporting detail"]
+        })
+    }
 }
 
 /// The organizer types in the order fake questions use them.
@@ -486,6 +510,13 @@ pub fn tasks(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 for it in &mut items {
                     if it.get("organizer").is_some() {
                         it["organizer"] = bad_organizer();
+                    }
+                }
+            }
+            if has("FAKE_TABLE_PLACEHOLDER") {
+                for it in &mut items {
+                    if it.get("table").is_some() {
+                        it["table"] = fake_table("", true);
                     }
                 }
             }
@@ -981,6 +1012,9 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
             if let Some(o) = raw.get("organizer") {
                 out["organizer"] = o.clone();
             }
+            if raw.get("table").is_some() {
+                out["table"] = fake_table(&label, has("FAKE_TABLE_PLACEHOLDER"));
+            }
             out
         })
         .collect();
@@ -1154,6 +1188,9 @@ pub fn bloom_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
                 } else {
                     o.clone()
                 };
+            }
+            if raw.get("table").is_some() {
+                out["table"] = fake_table(&label, has("FAKE_TABLE_PLACEHOLDER"));
             }
             out
         })
@@ -1607,6 +1644,9 @@ pub fn tiered_level(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Va
             });
             if format == FMT_ORGANIZER {
                 out["organizer"] = fake_organizer(k + 1, &label, &sentence, true);
+            }
+            if format == FMT_TABLE {
+                out["table"] = fake_table(&label, has("FAKE_TABLE_PLACEHOLDER"));
             }
             out
         })

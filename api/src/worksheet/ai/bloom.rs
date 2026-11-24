@@ -859,7 +859,7 @@ fn level_block(
                 .filter(|t| levels.contains(&t.level))
                 .cloned()
                 .collect(),
-            table: None,
+            table: d.item.item.table.as_ref().map(|t| t.to_item_table()),
             kept_options: Vec::new(),
             organizer: d.item.item.organizer.clone(),
         })
