@@ -229,16 +229,16 @@ pub fn attach_scaffolds(
                 heading: None,
             });
         }
+        // (A question's number is the one in its id: questions that are not in every version
+        // are not all in the block.)
         // A sentence frame goes under its own question, when the teacher did not leave frames
         // out by ticking other kinds of support only. Frames of the questions replace the
         // block's one box of frames: the same sentences must not print twice.
         let mut own_frames = 0;
         if frames_wanted(ticked) {
             for f in &set.item_frames {
-                let item = usize::try_from(f.item_no)
-                    .ok()
-                    .and_then(|n| n.checked_sub(1))
-                    .and_then(|k| block.items.get_mut(k));
+                let want = format!("{}-i{}", block.id, f.item_no);
+                let item = block.items.iter_mut().find(|i| i.id == want);
                 if let Some(item) = item.filter(|i| frame_format(i.answer_format.as_deref())) {
                     item.frame = f.frame_en.clone();
                     own_frames += 1;
@@ -250,10 +250,8 @@ pub fn attach_scaffolds(
         let mut own_hints = 0;
         if hints_wanted(ticked) {
             for h in &set.item_hints {
-                let item = usize::try_from(h.item_no)
-                    .ok()
-                    .and_then(|n| n.checked_sub(1))
-                    .and_then(|k| block.items.get_mut(k));
+                let want = format!("{}-i{}", block.id, h.item_no);
+                let item = block.items.iter_mut().find(|i| i.id == want);
                 if let Some(item) = item.filter(|i| i.hint.trim().is_empty()) {
                     item.hint = h.hint_en.clone();
                     own_hints += 1;
