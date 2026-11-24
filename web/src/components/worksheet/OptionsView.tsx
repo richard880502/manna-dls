@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ExitKind, WorksheetSettings, WorksheetState, WsJob, WsLevel, WsOutput } from "../../api/types";
 import {
@@ -165,6 +165,14 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
   // 自訂 stays 自訂 even while its counts happen to equal a preset's.
   const [presetChoice, setPresetChoice] = useState<BloomPresetId | null>(null);
   const state = ws.state;
+  const topRef = useRef<HTMLDivElement>(null);
+  const running0 = state?.running ?? false;
+  // When a run starts, bring the top of the column into view only if it is scrolled out of sight.
+  useEffect(() => {
+    const el = topRef.current;
+    if (!running0 || !el || typeof el.scrollIntoView !== "function") return;
+    if (el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [running0]);
   if (!state) return null;
   const { settings, suggested, brief, content } = state;
   const running = state.running;
@@ -243,7 +251,9 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
   }
 
   return (
-    <div className="ws-options">
+    <div className="ws-options" ref={topRef}>
+      {/* 進度 comes first, so it is the first thing seen once a run starts. */}
+      {running && <WorksheetRunProgress state={state} />}
       <section className="ws-opt" aria-labelledby={`${ids}-what`}>
         <h2 id={`${ids}-what`}>要做什麼</h2>
         <div>
@@ -565,9 +575,7 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
           />
         )}
 
-      {running ? (
-        <WorksheetRunProgress state={state} />
-      ) : fullWorksheet ? (
+      {running ? null : fullWorksheet ? (
         <div className="ws-gen-bar">
           <label className="ws-time" htmlFor={`${ids}-minutes`}>
             預計完成時間（分鐘）
