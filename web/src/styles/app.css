@@ -1428,6 +1428,11 @@
   margin-top: var(--space-md);
 }
 
+/* Room between the tab strip and whatever the tab shows. */
+.admin-page > .library-tabpanel {
+  padding-top: var(--space-lg);
+}
+
 .admin-roles-help {
   margin-bottom: var(--space-md);
   color: var(--color-muted);
@@ -1657,6 +1662,8 @@
   padding: var(--space-sm) 0;
   background: var(--color-paper);
   border-bottom: var(--rule-hair) solid var(--color-rule);
+  /* The list scrolls under the bar: a soft edge so a half-covered line reads as "behind". */
+  box-shadow: 0 0.5rem 0.5rem -0.5rem rgb(28 37 51 / 0.12);
 }
 
 .prompt-toolbar .prompt-search {
