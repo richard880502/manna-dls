@@ -625,6 +625,7 @@ async fn a_turn_is_undone_as_a_whole_until_a_block_is_edited_again() {
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["id"], turn["id"]);
     assert_eq!(v["result"]["undoable"], false);
+    assert_eq!(v["result"]["undone"], true);
     let after = worksheet(&app, &t, ws).await;
     assert_eq!(after["content"]["blocks"], before["content"]["blocks"]);
     assert_eq!(

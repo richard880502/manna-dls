@@ -1033,7 +1033,9 @@ pub async fn undo(
         }
     }
     sqlx::query(
-        "UPDATE prep_turns SET result = jsonb_set(result, '{undoable}', 'false'::jsonb)
+        "UPDATE prep_turns
+            SET result = jsonb_set(jsonb_set(result, '{undoable}', 'false'::jsonb),
+                                   '{undone}', 'true'::jsonb)
           WHERE id = $1",
     )
     .bind(turn_id)

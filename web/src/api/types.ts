@@ -3078,6 +3078,8 @@ export interface PrepChatResult {
   version_no: number | null;
   /** 這一輪的修改目前還能整輪復原 */
   undoable: boolean;
+  /** 老師已經復原了這一輪；舊的伺服器沒有這一欄 */
+  undone?: boolean;
   tool_calls: number;
 }
 

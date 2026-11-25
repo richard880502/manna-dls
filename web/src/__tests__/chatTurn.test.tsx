@@ -253,7 +253,7 @@ describe("a chat turn", () => {
       ...sheetRoutes(),
       [`GET ${S7}`]: () =>
         undone
-          ? session([sheetTurn(101, "學習單一"), { ...t, result: chat({ version_no: 5, undoable: false, answer: "已復原。" }) }])
+          ? session([sheetTurn(101, "學習單一"), { ...t, result: chat({ version_no: 4, undoable: false, undone: true }) }])
           : session([sheetTurn(101, "學習單一"), t]),
       [`POST ${S7}/turns/${t.id}/undo`]: () => {
         undone = true;
@@ -269,6 +269,7 @@ describe("a chat turn", () => {
     // The session was read again; the turn no longer offers 復原.
     await waitFor(() => expect(screen.queryByRole("button", { name: "復原這一輪" })).not.toBeInTheDocument());
     expect(api.callsTo("GET", S7).length).toBeGreaterThan(1);
+    expect(screen.getByText("這一輪的修改已經復原。")).toBeInTheDocument();
   });
 
   it("shows the server's reason when 復原 is refused with 409", async () => {

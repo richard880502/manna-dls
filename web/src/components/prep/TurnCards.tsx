@@ -569,6 +569,7 @@ export function ChatCard({
           )}
         </div>
       )}
+      {result.undone && <p className="quiet-note">這一輪的修改已經復原。</p>}
       {undoError && (
         <p className="error-text" role="alert">
           {undoError}

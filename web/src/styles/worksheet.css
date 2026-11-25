@@ -748,6 +748,20 @@
 /* Key Vocabulary: Content and Academic side by side, stacked on a narrow screen. */
 .ws-keyvocab {
   margin-top: var(--space-sm);
+  /* The two tables stack by the space they get (the worksheet pane beside the chat is narrower
+     than the screen), not by the screen width. */
+  container-type: inline-size;
+}
+
+/* Words and the POS heading never break inside: a narrow column wraps between words only. */
+.ws-keyvocab th,
+.ws-keyvocab td:first-child {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.ws-keyvocab th:nth-child(-n + 2) {
+  white-space: nowrap;
 }
 
 .ws-keyvocab-title {
@@ -775,7 +789,7 @@
   white-space: nowrap;
 }
 
-@media (max-width: 40rem) {
+@container (max-width: 40rem) {
   .ws-keyvocab-cols.is-two {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2397,10 +2411,12 @@ button.bloom-seg:focus-visible {
 
 /* 看答案: the button in a block's head (student view) and the note over the revealed answers. */
 .ws-reveal {
+  flex: none;
   margin-left: auto;
   font-family: var(--font-body);
   font-size: var(--text-sm);
   font-weight: 400;
+  white-space: nowrap;
 }
 
 .ws-answer-note {
