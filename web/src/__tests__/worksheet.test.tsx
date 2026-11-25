@@ -18,6 +18,7 @@ import type {
   WsVocabCheck,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
+import { newOrganizer } from "../lib/organizer";
 import { emptyContent } from "../lib/sop";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent, projectSheet } from "../lib/worksheet";
@@ -501,6 +502,72 @@ describe("result editor", () => {
     const edited = body.content?.blocks[1]?.items[0];
     expect(edited).toMatchObject({ answer: "Because a stranger helped her.", origin: "ai_edited" });
     expect(body.content?.blocks[1]?.origin).toBe("ai_edited");
+  });
+
+  it("看答案 reveals one block's answers in the student version, and 收起答案 hides them again", async () => {
+    const org = newOrganizer("t_chart");
+    const content = generatedContent();
+    content.blocks = content.blocks.map((b) =>
+      b.id === "b2"
+        ? {
+            ...b,
+            items: [
+              ...b.items,
+              item("b2-2", "Sort the ideas.", {
+                answer_format: "圖像組織",
+                answer: "",
+                organizer: {
+                  ...org,
+                  sections: org.sections.map((sec, i) => ({
+                    ...sec,
+                    cells: sec.cells.map((c, j) => ({ ...c, given: "", prefilled: [], answer: `Key ${i}.${j}` })),
+                  })),
+                },
+              }),
+            ],
+          }
+        : b,
+    );
+    const api = mockApi(routes(generated({ content })));
+    const user = userEvent.setup();
+    renderApp("/worksheets/5");
+    await screen.findByRole("radiogroup", { name: "顯示版本" });
+
+    // The exit ticket's question has no answer: no button there. Blocks A and B have answers.
+    expect(blockRegion("A").getByRole("button", { name: /^看答案/ })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("button", { name: /^看答案/ })).toHaveLength(3);
+    expect(screen.queryByRole("textbox", { name: /參考答案/ })).not.toBeInTheDocument();
+
+    const open = blockRegion("C").getByRole("button", { name: /^看答案/ });
+    await user.click(open);
+    // C's answers show (reference answer and the organizer's), the sheet is still the student version.
+    expect(open).toHaveTextContent("收起答案");
+    expect(open).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById(open.getAttribute("aria-controls") ?? "")).toBeInTheDocument();
+    expect(blockRegion("C").getByText("參考答案（只有你看得到）：印出與匯出的學生版不含這些答案。")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("That every umbrella would be gone.")).toBeInTheDocument();
+    expect(screen.getAllByRole("textbox", { name: /^參考答案 .*Key|^參考答案 / }).length).toBeGreaterThan(1);
+    expect(screen.getByDisplayValue("Key 0.0")).toBeInTheDocument();
+    // Block B's answer stays hidden, and so does B's teacher notes.
+    expect(screen.queryByDisplayValue("A stranger once helped her.")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("先確認大意。")).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "學生版" })).toBeChecked();
+
+    await user.click(open);
+    expect(open).toHaveTextContent("看答案");
+    expect(screen.queryByDisplayValue("That every umbrella would be gone.")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Key 0.0")).not.toBeInTheDocument();
+
+    // Keyboard: the button is a real button.
+    open.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByDisplayValue("That every umbrella would be gone.")).toBeInTheDocument();
+
+    // 教師版 shows everything and has no 看答案 buttons; the exports were never asked for.
+    await user.click(screen.getByRole("radio", { name: "教師版" }));
+    expect(screen.getByDisplayValue("A stranger once helped her.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^看答案|^收起答案/ })).not.toBeInTheDocument();
+    expect(api.callsTo("GET", `${WS}/export`)).toHaveLength(0);
   });
 
   it("edits text in place and reorders blocks with 上移／下移", async () => {

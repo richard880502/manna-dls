@@ -2394,3 +2394,18 @@ button.bloom-seg:focus-visible {
   gap: var(--space-sm);
   margin-top: var(--space-md);
 }
+
+/* 看答案: the button in a block's head (student view) and the note over the revealed answers. */
+.ws-reveal {
+  margin-left: auto;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+
+.ws-answer-note {
+  margin-top: var(--space-3xs);
+  color: var(--color-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}

@@ -3,6 +3,7 @@
 // and a 選擇題 answer key with the letter of its choice. The case tables are the server's
 // (api/src/objectives/mod.rs, api/src/worksheet/assemble.rs), so the preview and the DOCX/PDF agree.
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { WsSheet } from "../api/types";
 import { SheetPreview, sheetBlockText } from "../components/prep/SheetPreview";
@@ -136,6 +137,55 @@ describe("the prep preview prints the sheet as the exports do", () => {
     const text = sheetBlockText(sheet("teacher").blocks[0]!);
     expect(text).toContain("   (A) Paris\n   (B) London\n   (C) Rome\n   (D) Tokyo");
     expect(text).toContain("參考答案：(B) London");
+  });
+
+  it("看答案 shows one block's answers on the student sheet only when the teacher projection is given", async () => {
+    const two = (audience: "student" | "teacher"): WsSheet => {
+      const base = sheet(audience);
+      const [first] = base.blocks;
+      const second = {
+        ...first!,
+        id: "b2",
+        label: "B",
+        title: "Compare",
+        items: [
+          {
+            no: 2,
+            answer_format: "簡答題",
+            prompt: "What did the neighbors expect?",
+            options: [],
+            lines: 2,
+            ...(audience === "teacher" ? { answer: "Every umbrella would be gone.", evidence: "laughed" } : {}),
+          },
+        ],
+      };
+      return { ...base, blocks: [first!, second] };
+    };
+    const user = userEvent.setup();
+    const { rerender } = render(<SheetPreview sheet={two("student")} highlight={new Set()} interactionFor={() => null} />);
+    // No teacher projection: no button, no answers.
+    expect(screen.queryByRole("button", { name: /看答案/ })).toBeNull();
+
+    rerender(
+      <SheetPreview sheet={two("student")} answers={two("teacher")} highlight={new Set()} interactionFor={() => null} />,
+    );
+    const b = within(screen.getByRole("region", { name: "區塊 B 活動" }));
+    expect(document.body.textContent).not.toContain("Every umbrella would be gone.");
+    const open = b.getByRole("button", { name: /^看答案/ });
+    expect(open).toHaveAttribute("aria-expanded", "false");
+    // Block A has an answer too (London): its own button, still closed.
+    expect(screen.getAllByRole("button", { name: /^看答案/ })).toHaveLength(2);
+    await user.click(open);
+    expect(open).toHaveAttribute("aria-expanded", "true");
+    expect(open).toHaveTextContent("收起答案");
+    expect(b.getByText("Every umbrella would be gone.")).toBeInTheDocument();
+    expect(b.getByText("參考答案（只有你看得到）：印出與匯出的學生版不含這些答案。")).toBeInTheDocument();
+    // Block A's answer stays hidden.
+    expect(screen.queryByText("(B) London", { selector: ".ws-answer-row span" })).toBeNull();
+    await user.click(open);
+    expect(screen.queryByText("Every umbrella would be gone.")).toBeNull();
+    // 複製 copies the student block, never the answers.
+    expect(sheetBlockText(two("student").blocks[1]!)).not.toContain("參考答案");
   });
 
   it("prints the word table once after the last block when the sheet carries end_words", () => {
