@@ -1,5 +1,5 @@
 //! Tool calling for the prep chat (docs/PREP_CHAT.md): messages with tool calls and tool results,
-//! and the OpenAI chat-completions request and response for them. Only OpenAI's own API (and the
+//! and the OpenAI Responses API request and response for them. Only OpenAI's own API (and the
 //! fake provider) supports it; every other provider answers with an error. The strict
 //! `json_schema` calls every other feature makes are in [`super::openai`] and are not touched.
 
@@ -25,6 +25,9 @@ pub enum ChatMessage {
     Assistant {
         content: Option<String>,
         tool_calls: Vec<ToolCall>,
+        /// The output items the model returned for this step (reasoning, function calls), kept
+        /// opaque and sent back unchanged. Empty: spelled out from the two fields above.
+        replay: Vec<Value>,
     },
     Tool {
         call_id: String,
@@ -50,6 +53,7 @@ impl ChatMessage {
             Self::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 content.as_deref().map_or(0, |c| c.chars().count())
                     + tool_calls
@@ -87,6 +91,9 @@ pub struct ChatRequest {
     pub answer_schema_name: &'static str,
     pub answer_schema: Value,
     pub max_tokens: u32,
+    /// `prompt_cache_key`: a stable, non-identifying string per prep session, so the calls of a
+    /// session land on the same cache.
+    pub cache_key: Option<String>,
     /// Structured inputs only the fake provider reads.
     pub fake_context: Value,
 }
@@ -95,9 +102,11 @@ pub struct ChatRequest {
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
-    /// `usage.prompt_tokens_details.cached_tokens`: the prompt tokens served from OpenAI's
+    /// `usage.input_tokens_details.cached_tokens`: the prompt tokens served from OpenAI's
     /// automatic prompt cache.
     pub cached_tokens: u64,
+    /// `usage.output_tokens_details.reasoning_tokens` (already part of `completion_tokens`).
+    pub reasoning_tokens: u64,
 }
 
 impl Usage {
@@ -106,6 +115,7 @@ impl Usage {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "cached_tokens": self.cached_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
         })
     }
 }
@@ -114,86 +124,134 @@ impl Usage {
 pub struct ChatResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    /// The output items to send back with the next request when the model asked for tools.
+    pub replay: Vec<Value>,
     pub model_version: String,
     pub usage: Option<Usage>,
 }
 
 fn user_content(text: &str, images: &[LlmImage]) -> Value {
-    if images.is_empty() {
-        return json!(text);
-    }
-    let mut parts = vec![json!({ "type": "text", "text": text })];
+    let mut parts = vec![json!({ "type": "input_text", "text": text })];
     parts.extend(
         images
             .iter()
-            .map(|i| json!({ "type": "image_url", "image_url": { "url": i.data_url() } })),
+            .map(|i| json!({ "type": "input_image", "image_url": i.data_url() })),
     );
     Value::Array(parts)
 }
 
-fn message_json(m: &ChatMessage) -> Value {
+/// One returned output item as it goes back in the next request of the turn. With `store: false`
+/// OpenAI keeps nothing, so an item must not point at a stored one by its `id`: a function call
+/// goes back as its call (`call_id`, `name`, `arguments`), a message as its role and text. A
+/// reasoning item goes back whole: its `encrypted_content` is what lets the model continue.
+/// Anything else is dropped.
+fn replay_item(item: &Value) -> Option<Value> {
+    match item["type"].as_str() {
+        Some("reasoning") => {
+            let mut r = json!({ "type": "reasoning", "summary": item["summary"].clone() });
+            if r["summary"].is_null() {
+                r["summary"] = json!([]);
+            }
+            for key in ["id", "encrypted_content"] {
+                if let Some(v) = item.get(key).filter(|v| !v.is_null()) {
+                    r[key] = v.clone();
+                }
+            }
+            Some(r)
+        }
+        Some("function_call") => Some(json!({
+            "type": "function_call",
+            "call_id": item["call_id"],
+            "name": item["name"],
+            "arguments": item["arguments"],
+        })),
+        Some("message") => Some(json!({
+            "role": "assistant",
+            "content": item["content"]
+                .as_array()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter(|p| p["type"] == "output_text")
+                        .map(|p| json!({ "type": "output_text", "text": p["text"] }))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        })),
+        _ => None,
+    }
+}
+
+/// The input items one message becomes. An assistant message that carries the items the model
+/// returned (`replay`) sends them back unchanged (reasoning items included: the request is
+/// stateless); one without (built by hand) is spelled out from its text and tool calls.
+fn message_items(m: &ChatMessage) -> Vec<Value> {
     match m {
-        ChatMessage::System(t) => json!({ "role": "system", "content": t }),
+        ChatMessage::System(t) => vec![json!({ "role": "developer", "content": t })],
         ChatMessage::User { text, images } => {
-            json!({ "role": "user", "content": user_content(text, images) })
+            vec![json!({ "role": "user", "content": user_content(text, images) })]
         }
         ChatMessage::Assistant {
             content,
             tool_calls,
+            replay,
         } => {
-            let mut v = json!({ "role": "assistant", "content": content });
-            if !tool_calls.is_empty() {
-                v["tool_calls"] = json!(tool_calls
-                    .iter()
-                    .map(|c| json!({
-                        "id": c.id, "type": "function",
-                        "function": { "name": c.name, "arguments": c.arguments }
-                    }))
-                    .collect::<Vec<_>>());
+            if !replay.is_empty() {
+                return replay.iter().filter_map(replay_item).collect();
             }
-            v
+            let mut items = Vec::new();
+            if let Some(text) = content {
+                items.push(json!({
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": text }]
+                }));
+            }
+            items.extend(tool_calls.iter().map(|c| {
+                json!({
+                    "type": "function_call", "call_id": c.id,
+                    "name": c.name, "arguments": c.arguments
+                })
+            }));
+            items
         }
         ChatMessage::Tool { call_id, content } => {
-            json!({ "role": "tool", "tool_call_id": call_id, "content": content })
+            vec![json!({ "type": "function_call_output", "call_id": call_id, "output": content })]
         }
     }
 }
 
-/// The request body for OpenAI's own API: `tools` (strict function schemas), `tool_choice`,
+/// The request body for the Responses API: `input` items (instructions, the fixed prefix, the
+/// history, this turn: the cache-stable order), `tools` (strict function schemas), `tool_choice`,
 /// `parallel_tool_calls: false`, a strict `json_schema` for the final message, the reasoning
-/// effort and a token limit that leaves room for the reasoning.
-///
-/// With tools the effort is `none`: OpenAI refuses function tools together with a reasoning
-/// effort on `/v1/chat/completions` for the GPT-5.6 models (HTTP 400 "Function tools with
-/// reasoning_effort are not supported … use /v1/responses or set reasoning_effort to 'none'",
-/// first real turn on 2026-11-25). Moving this path to the Responses API would allow both.
+/// effort and a token limit that leaves room for the reasoning. `store: false` keeps the
+/// teacher's material out of OpenAI's storage; `include` returns the reasoning as encrypted
+/// content so it can be sent back with the next request of the turn.
 pub fn build_body(model: &str, effort: &str, req: &ChatRequest) -> Value {
     let mut body = json!({
         "model": model,
-        "messages": req.messages.iter().map(message_json).collect::<Vec<_>>(),
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
+        "input": req.messages.iter().flat_map(message_items).collect::<Vec<_>>(),
+        "text": {
+            "format": {
+                "type": "json_schema",
                 "name": req.answer_schema_name, "schema": req.answer_schema, "strict": true
             }
         },
-        "reasoning_effort": if req.tools.is_empty() {
-            super::openai::reasoning_effort(effort)
-        } else {
-            "none"
-        },
-        "max_completion_tokens": req.max_tokens.saturating_add(super::openai::REASONING_ROOM),
+        "reasoning": { "effort": super::openai::reasoning_effort(effort) },
+        "max_output_tokens": req.max_tokens.saturating_add(super::openai::REASONING_ROOM),
+        "store": false,
+        "include": ["reasoning.encrypted_content"],
     });
+    if let Some(key) = &req.cache_key {
+        body["prompt_cache_key"] = json!(key);
+    }
     if !req.tools.is_empty() {
         body["tools"] = json!(req
             .tools
             .iter()
             .map(|t| json!({
                 "type": "function",
-                "function": {
-                    "name": t.name, "description": t.description,
-                    "parameters": t.parameters, "strict": true
-                }
+                "name": t.name, "description": t.description,
+                "parameters": t.parameters, "strict": true
             }))
             .collect::<Vec<_>>());
         body["tool_choice"] = json!(match req.tool_choice {
@@ -218,56 +276,78 @@ pub fn parse_response(status: u16, body: &str) -> Result<ChatResponse, ProviderE
     let v: Value = serde_json::from_str(body)
         .map_err(|e| ProviderError::InvalidOutput(format!("response is not JSON: {e}")))?;
     let model_version = v["model"].as_str().unwrap_or_default().to_string();
-    let choice = &v["choices"][0];
-    let message = &choice["message"];
-    if let Some(refusal) = message["refusal"].as_str() {
-        return Err(ProviderError::Refusal(clip(refusal, 500)));
+    let output: Vec<Value> = v["output"].as_array().cloned().unwrap_or_default();
+
+    let mut tool_calls = Vec::new();
+    let mut text = String::new();
+    let mut refusal: Option<String> = None;
+    for item in &output {
+        match item["type"].as_str() {
+            Some("function_call") => tool_calls.push(ToolCall {
+                id: item["call_id"].as_str().unwrap_or_default().to_string(),
+                name: item["name"].as_str().unwrap_or_default().to_string(),
+                arguments: item["arguments"].as_str().unwrap_or_default().to_string(),
+            }),
+            Some("message") => {
+                for part in item["content"].as_array().into_iter().flatten() {
+                    match part["type"].as_str() {
+                        Some("output_text") => text.push_str(part["text"].as_str().unwrap_or("")),
+                        Some("refusal") => {
+                            refusal = Some(part["refusal"].as_str().unwrap_or("").to_string())
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
     }
-    let tool_calls: Vec<ToolCall> = message["tool_calls"]
-        .as_array()
-        .map(|calls| {
-            calls
-                .iter()
-                .map(|c| ToolCall {
-                    id: c["id"].as_str().unwrap_or_default().to_string(),
-                    name: c["function"]["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                    arguments: c["function"]["arguments"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_string(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    match choice["finish_reason"].as_str() {
-        Some("length") => {
-            return Err(ProviderError::MaxTokens {
-                partial: message["content"].as_str().unwrap_or_default().to_string(),
+    if text.is_empty() {
+        // The convenience field some SDKs and proxies add.
+        text = v["output_text"].as_str().unwrap_or_default().to_string();
+    }
+    if let Some(r) = refusal {
+        return Err(ProviderError::Refusal(clip(&r, 500)));
+    }
+    match v["status"].as_str() {
+        Some("incomplete") => {
+            return Err(match v["incomplete_details"]["reason"].as_str() {
+                Some("content_filter") => ProviderError::Refusal("content_filter".into()),
+                _ => ProviderError::MaxTokens { partial: text },
             })
         }
-        Some("content_filter") => return Err(ProviderError::Refusal("content_filter".into())),
+        Some("failed") | Some("cancelled") => {
+            let msg = v["error"]["message"]
+                .as_str()
+                .unwrap_or("the response failed");
+            return Err(ProviderError::InvalidOutput(clip(msg, 500)));
+        }
         _ => {}
     }
-    let content = message["content"]
-        .as_str()
-        .map(|c| c.replace('\0', ""))
-        .filter(|c| !c.trim().is_empty());
+    let content = Some(text.replace('\0', "")).filter(|c| !c.trim().is_empty());
     if content.is_none() && tool_calls.is_empty() {
         return Err(ProviderError::InvalidOutput("no message content".into()));
     }
     let usage = v["usage"].is_object().then(|| Usage {
-        prompt_tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
-        completion_tokens: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
-        cached_tokens: v["usage"]["prompt_tokens_details"]["cached_tokens"]
+        prompt_tokens: v["usage"]["input_tokens"].as_u64().unwrap_or(0),
+        completion_tokens: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
+        cached_tokens: v["usage"]["input_tokens_details"]["cached_tokens"]
+            .as_u64()
+            .unwrap_or(0),
+        reasoning_tokens: v["usage"]["output_tokens_details"]["reasoning_tokens"]
             .as_u64()
             .unwrap_or(0),
     });
+    // Only a turn that goes on needs the items back; they are sent as returned.
+    let replay = if tool_calls.is_empty() {
+        Vec::new()
+    } else {
+        output
+    };
     Ok(ChatResponse {
         content,
         tool_calls,
+        replay,
         model_version,
         usage,
     })
@@ -281,7 +361,10 @@ pub async fn call(
     req: &ChatRequest,
 ) -> Result<ChatResponse, ProviderError> {
     let mut rb = http
-        .post(super::openai::endpoint(super::openai::OPENAI_BASE_URL))
+        .post(format!(
+            "{}/responses",
+            super::openai::OPENAI_BASE_URL.trim_end_matches('/')
+        ))
         .json(&build_body(model, effort, req));
     if let Some(key) = api_key {
         rb = rb.bearer_auth(key);
@@ -296,25 +379,26 @@ pub async fn call(
 mod tests {
     use super::*;
 
+    fn reasoning_item() -> Value {
+        json!({"type": "reasoning", "id": "rs_1", "summary": [], "encrypted_content": "ENC"})
+    }
+
+    fn call_item() -> Value {
+        json!({"type": "function_call", "id": "fc_1", "call_id": "c1", "name": "read_block",
+               "arguments": "{\"block_id\":\"b1\"}", "status": "completed"})
+    }
+
     fn request() -> ChatRequest {
         ChatRequest {
             messages: vec![
                 ChatMessage::System("s".into()),
                 ChatMessage::User {
-                    text: "u".into(),
+                    text: "prefix".into(),
                     images: vec![],
                 },
-                ChatMessage::Assistant {
-                    content: None,
-                    tool_calls: vec![ToolCall {
-                        id: "c1".into(),
-                        name: "read_block".into(),
-                        arguments: "{\"block_id\":\"b1\"}".into(),
-                    }],
-                },
-                ChatMessage::Tool {
-                    call_id: "c1".into(),
-                    content: "ok".into(),
+                ChatMessage::User {
+                    text: "u".into(),
+                    images: vec![],
                 },
             ],
             tools: vec![ToolSpec {
@@ -326,64 +410,278 @@ mod tests {
             answer_schema_name: "prep_chat",
             answer_schema: json!({"type": "object"}),
             max_tokens: 1000,
+            cache_key: Some("prep-chat-7".into()),
             fake_context: Value::Null,
         }
     }
 
-    #[test]
-    fn the_body_has_tools_tool_choice_and_tool_messages() {
-        let b = build_body("gpt", "medium", &request());
-        assert_eq!(b["tool_choice"], "auto");
-        assert_eq!(b["parallel_tool_calls"], false);
-        assert_eq!(b["tools"][0]["type"], "function");
-        assert_eq!(b["tools"][0]["function"]["strict"], true);
-        assert_eq!(b["response_format"]["json_schema"]["strict"], true);
-        assert_eq!(b["messages"][2]["role"], "assistant");
-        assert_eq!(b["messages"][2]["content"], Value::Null);
-        assert_eq!(b["messages"][2]["tool_calls"][0]["id"], "c1");
-        assert_eq!(
-            b["messages"][2]["tool_calls"][0]["function"]["arguments"],
-            "{\"block_id\":\"b1\"}"
-        );
-        assert_eq!(
-            b["messages"][3],
-            json!({"role": "tool", "tool_call_id": "c1", "content": "ok"})
-        );
-        // OpenAI refuses function tools with a reasoning effort on chat completions.
-        assert_eq!(b["reasoning_effort"], "none");
-        let mut last = request();
-        last.tool_choice = ToolChoice::None;
-        assert_eq!(build_body("gpt", "low", &last)["tool_choice"], "none");
-        assert_eq!(build_body("gpt", "low", &last)["reasoning_effort"], "none");
-        last.tools.clear();
-        let plain = build_body("gpt", "low", &last);
-        assert!(plain.get("tools").is_none());
-        assert_eq!(plain["reasoning_effort"], "low");
+    fn second_request() -> ChatRequest {
+        let mut r = request();
+        r.messages.push(ChatMessage::Assistant {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: "c1".into(),
+                name: "read_block".into(),
+                arguments: "{\"block_id\":\"b1\"}".into(),
+            }],
+            replay: vec![reasoning_item(), call_item()],
+        });
+        r.messages.push(ChatMessage::Tool {
+            call_id: "c1".into(),
+            content: "ok".into(),
+        });
+        r
     }
 
     #[test]
-    fn tool_calls_and_cached_tokens_are_parsed() {
+    fn the_body_is_a_stateless_responses_request() {
+        let b = build_body("gpt", "medium", &request());
+        assert!(b.get("messages").is_none() && b.get("response_format").is_none());
+        assert_eq!(b["model"], "gpt");
+        assert_eq!(b["store"], false);
+        assert_eq!(b["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(b["reasoning"], json!({"effort": "medium"}));
+        assert!(b.get("reasoning_effort").is_none());
+        assert_eq!(
+            b["max_output_tokens"],
+            1000 + super::super::openai::REASONING_ROOM
+        );
+        assert_eq!(b["prompt_cache_key"], "prep-chat-7");
+        assert_eq!(b["text"]["format"]["type"], "json_schema");
+        assert_eq!(b["text"]["format"]["name"], "prep_chat");
+        assert_eq!(b["text"]["format"]["strict"], true);
+        assert_eq!(b["text"]["format"]["schema"], json!({"type": "object"}));
+        assert_eq!(b["tool_choice"], "auto");
+        assert_eq!(b["parallel_tool_calls"], false);
+        assert_eq!(
+            b["tools"][0],
+            json!({"type": "function", "name": "read_block", "description": "d",
+                   "parameters": {"type": "object"}, "strict": true})
+        );
+        // Instructions, then the fixed prefix, then the history and this turn.
+        assert_eq!(b["input"][0], json!({"role": "developer", "content": "s"}));
+        assert_eq!(b["input"][1]["content"][0]["text"], "prefix");
+        assert_eq!(b["input"][2]["content"][0]["text"], "u");
+        assert_eq!(b["input"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn effort_follows_the_setting_and_tool_choice_none() {
+        for (setting, sent) in [("low", "low"), ("medium", "medium"), ("high", "high")] {
+            assert_eq!(
+                build_body("g", setting, &request())["reasoning"]["effort"],
+                sent
+            );
+        }
+        let mut last = request();
+        last.tool_choice = ToolChoice::None;
+        let b = build_body("g", "low", &last);
+        assert_eq!(b["tool_choice"], "none");
+        assert_eq!(b["reasoning"]["effort"], "low");
+        last.tools.clear();
+        let plain = build_body("g", "low", &last);
+        assert!(plain.get("tools").is_none() && plain.get("tool_choice").is_none());
+        last.cache_key = None;
+        assert!(build_body("g", "low", &last)
+            .get("prompt_cache_key")
+            .is_none());
+    }
+
+    #[test]
+    fn images_are_input_image_parts() {
+        let mut r = request();
+        r.messages.push(ChatMessage::User {
+            text: "look".into(),
+            images: vec![LlmImage {
+                media_type: "image/png",
+                data: bytes::Bytes::from_static(&[1, 2, 3]),
+            }],
+        });
+        let b = build_body("g", "low", &r);
+        let content = &b["input"][3]["content"];
+        assert_eq!(content[0], json!({"type": "input_text", "text": "look"}));
+        assert_eq!(content[1]["type"], "input_image");
+        assert!(content[1]["image_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn the_second_request_replays_reasoning_and_calls_then_the_output() {
+        let b = build_body("gpt", "high", &second_request());
+        let input = b["input"].as_array().unwrap();
+        assert_eq!(input.len(), 6);
+        // The reasoning item goes back whole (its encrypted content); the call without the ids
+        // of stored items (`store: false`).
+        assert_eq!(input[3], reasoning_item());
+        assert_eq!(
+            input[4],
+            json!({"type": "function_call", "call_id": "c1", "name": "read_block",
+                   "arguments": "{\"block_id\":\"b1\"}"})
+        );
+        assert_eq!(
+            input[5],
+            json!({"type": "function_call_output", "call_id": "c1", "output": "ok"})
+        );
+        // The first three items (the cached prefix) are the same as in the first request.
+        let first = build_body("gpt", "high", &request());
+        assert_eq!(
+            first["input"].as_array().unwrap()[..],
+            b["input"].as_array().unwrap()[..3]
+        );
+    }
+
+    #[test]
+    fn replayed_messages_lose_stored_ids_and_unknown_items_are_dropped() {
+        let msg = json!({"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                         "content": [{"type": "output_text", "text": "hi", "annotations": []}]});
+        assert_eq!(
+            replay_item(&msg),
+            Some(json!({"role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}))
+        );
+        assert_eq!(
+            replay_item(&json!({"type": "web_search_call", "id": "ws_1"})),
+            None
+        );
+        let bare = json!({"type": "reasoning", "id": "rs_2"});
+        assert_eq!(
+            replay_item(&bare),
+            Some(json!({"type": "reasoning", "id": "rs_2", "summary": []}))
+        );
+    }
+
+    #[test]
+    fn an_assistant_message_without_replay_is_spelled_out() {
+        let items = message_items(&ChatMessage::Assistant {
+            content: Some("hi".into()),
+            tool_calls: vec![ToolCall {
+                id: "c2".into(),
+                name: "n".into(),
+                arguments: "{}".into(),
+            }],
+            replay: vec![],
+        });
+        assert_eq!(
+            items[0]["content"][0],
+            json!({"type": "output_text", "text": "hi"})
+        );
+        assert_eq!(
+            items[1],
+            json!({"type": "function_call", "call_id": "c2", "name": "n", "arguments": "{}"})
+        );
+    }
+
+    #[test]
+    fn function_calls_reasoning_and_usage_are_parsed() {
         let body = json!({
-            "model": "gpt-x",
-            "choices": [{"finish_reason": "tool_calls", "message": {"role": "assistant",
-                "content": null, "tool_calls": [{"id": "c9", "type": "function",
-                "function": {"name": "edit_block", "arguments": "{\"block_id\":\"b2\"}"}}]}}],
-            "usage": {"prompt_tokens": 2000, "completion_tokens": 30,
-                      "prompt_tokens_details": {"cached_tokens": 1536}}
+            "model": "gpt-x", "status": "completed",
+            "output": [reasoning_item(), call_item()],
+            "usage": {"input_tokens": 2000, "output_tokens": 130,
+                      "input_tokens_details": {"cached_tokens": 1536},
+                      "output_tokens_details": {"reasoning_tokens": 100}}
         })
         .to_string();
         let r = parse_response(200, &body).unwrap();
-        assert_eq!(r.tool_calls[0].name, "edit_block");
+        assert_eq!(r.model_version, "gpt-x");
         assert_eq!(r.content, None);
-        assert_eq!(r.usage.unwrap().cached_tokens, 1536);
-        let text = json!({"model": "m", "choices": [{"finish_reason": "stop",
-            "message": {"content": "{\"paragraphs\":[\"hi\"]}"}}]})
+        assert_eq!(
+            r.tool_calls,
+            vec![ToolCall {
+                id: "c1".into(),
+                name: "read_block".into(),
+                arguments: "{\"block_id\":\"b1\"}".into()
+            }]
+        );
+        assert_eq!(r.replay, vec![reasoning_item(), call_item()]);
+        let u = r.usage.unwrap();
+        assert_eq!(
+            (
+                u.prompt_tokens,
+                u.completion_tokens,
+                u.cached_tokens,
+                u.reasoning_tokens
+            ),
+            (2000, 130, 1536, 100)
+        );
+        assert_eq!(
+            u.to_json(),
+            json!({"prompt_tokens": 2000, "completion_tokens": 130,
+                   "cached_tokens": 1536, "reasoning_tokens": 100})
+        );
+    }
+
+    #[test]
+    fn the_final_text_comes_from_message_items() {
+        let body = json!({"model": "m", "status": "completed", "output": [
+            reasoning_item(),
+            {"type": "message", "role": "assistant", "content": [
+                {"type": "output_text", "text": "{\"paragraphs\":"},
+                {"type": "output_text", "text": "[\"hi\"]}"}]}]})
         .to_string();
-        let r = parse_response(200, &text).unwrap();
-        assert!(r.tool_calls.is_empty() && r.usage.is_none());
+        let r = parse_response(200, &body).unwrap();
+        assert_eq!(r.content.as_deref(), Some("{\"paragraphs\":[\"hi\"]}"));
+        assert!(r.tool_calls.is_empty() && r.replay.is_empty() && r.usage.is_none());
+        let conv = json!({"model": "m", "output": [], "output_text": "{}"}).to_string();
+        assert_eq!(
+            parse_response(200, &conv).unwrap().content.as_deref(),
+            Some("{}")
+        );
+    }
+
+    #[test]
+    fn incomplete_refusals_and_errors_map_as_before() {
+        let cut = json!({"model": "m", "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "{\"a"}]}]})
+        .to_string();
+        match parse_response(200, &cut) {
+            Err(ProviderError::MaxTokens { partial }) => assert_eq!(partial, "{\"a"),
+            other => panic!("{other:?}"),
+        }
+        let filtered = json!({"status": "incomplete",
+            "incomplete_details": {"reason": "content_filter"}, "output": []})
+        .to_string();
         assert!(matches!(
-            parse_response(500, "x"),
-            Err(ProviderError::Http { .. })
+            parse_response(200, &filtered),
+            Err(ProviderError::Refusal(_))
         ));
+        let refused = json!({"status": "completed", "output": [{"type": "message", "content": [
+            {"type": "refusal", "refusal": "no"}]}]})
+        .to_string();
+        assert!(matches!(
+            parse_response(200, &refused),
+            Err(ProviderError::Refusal(_))
+        ));
+        let failed =
+            json!({"status": "failed", "error": {"message": "boom"}, "output": []}).to_string();
+        assert!(matches!(
+            parse_response(200, &failed),
+            Err(ProviderError::InvalidOutput(_))
+        ));
+        let empty = json!({"status": "completed", "output": []}).to_string();
+        assert!(matches!(
+            parse_response(200, &empty),
+            Err(ProviderError::InvalidOutput(_))
+        ));
+        assert!(matches!(
+            parse_response(200, "nope"),
+            Err(ProviderError::InvalidOutput(_))
+        ));
+        assert!(matches!(
+            parse_response(504, ""),
+            Err(ProviderError::Timeout)
+        ));
+        assert!(matches!(
+            parse_response(408, ""),
+            Err(ProviderError::Timeout)
+        ));
+        match parse_response(400, "{\"error\":{}}") {
+            Err(ProviderError::Http { status, body }) => {
+                assert_eq!(status, 400);
+                assert!(body.contains("error"));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

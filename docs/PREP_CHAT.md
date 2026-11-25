@@ -96,7 +96,11 @@ interface PrepChatResult {
 ## 6. 模型與費用
 
 - 只用 OpenAI（AI 設定的文字模型）；國網與 Anthropic 示範不支援（第 2 節第 9 點）。
-- 提示快取：固定前綴放最前面，同一輪內的後續呼叫只在後面追加（`tools` 與 `response_format` 每次都一樣）；`ai_interactions.usage.cached_tokens` 記錄命中的 token 數。
+- **API：Responses API**（`POST https://api.openai.com/v1/responses`），不是 chat completions。2026-11-25 正式站第一輪就遇到 HTTP 400：`gpt-5.6-sol` 在 `/v1/chat/completions` 不接受「函式工具＋reasoning effort」（要用 `/v1/responses`，或把 effort 設成 `none`）。臨時修正（#109）曾在有工具時送 `reasoning_effort: "none"`；改走 Responses API 後這個限制不再存在，推理強度照 AI 設定（low／medium／high）送出。
+- 請求（`api/src/ai/chat.rs` `build_body`）：`input` 依序是 developer 指示、固定前綴、先前對話、這一輪的要求與圖片（`input_text`／`input_image`）；`tools`（`type: function`、`strict: true`）、`tool_choice`（`auto`／最後一次 `none`）、`parallel_tool_calls: false`、`reasoning: {effort}`、`text.format`（嚴格 `json_schema`，最終回答）、`max_output_tokens`（回答上限＋推理空間 `REASONING_ROOM`）。
+- **不存檔**：`store: false`，教材與學習單內容不留在 OpenAI 那邊。因為不存檔，推理內容用 `include: ["reasoning.encrypted_content"]` 取回，同一輪的下一次請求原樣送回去（`reasoning`、`function_call` 等輸出項目原封不動放在 `ChatMessage::Assistant.replay`，後面接 `function_call_output`）。只有要繼續呼叫工具的那一步需要帶回；最終回答不用。
+- 回應：`function_call` 項目成為工具呼叫（`call_id`、`name`、`arguments`）；最終文字取 `message` 項目的 `output_text`（沒有就用頂層 `output_text`）；`status: incomplete` 且原因為 `max_output_tokens` 走與「回答被截斷」相同的錯誤路徑，`content_filter` 與 `refusal` 視為拒答。HTTP 錯誤、408／504、非 JSON 的對應與以前相同。
+- 提示快取：固定前綴放最前面，同一輪內的後續呼叫只在後面追加（`tools` 與 `text.format` 每次都一樣）；另送 `prompt_cache_key = prep-chat-<對話 id>`（穩定、不含個資），讓同一場備課的呼叫落在同一份快取。`ai_interactions.usage` 記 `prompt_tokens`（`input_tokens`）、`completion_tokens`（`output_tokens`）、`cached_tokens`（`input_tokens_details.cached_tokens`）與 `reasoning_tokens`（`output_tokens_details.reasoning_tokens`，已含在 completion 裡）。
 - 費用估計：一般一輪 1–3 次模型呼叫；上限 10 次。
 
 ## 7. 測試用假模型

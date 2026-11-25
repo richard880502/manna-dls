@@ -132,6 +132,7 @@ fn describe(m: &ChatMessage) -> Value {
         ChatMessage::Assistant {
             content,
             tool_calls,
+            ..
         } => format!(
             "{}{}",
             content.clone().unwrap_or_default(),
@@ -492,6 +493,7 @@ pub async fn run(
             answer_schema_name: SCHEMA_NAME,
             answer_schema: ask_schema(),
             max_tokens: MAX_TOKENS,
+            cache_key: Some(format!("prep-chat-{}", session.id)),
             fake_context: json!({
                 "task": KEY_CHAT, "request": request, "blocks": fake_blocks,
                 "can_edit": can_edit,
@@ -516,6 +518,7 @@ pub async fn run(
         let assistant = ChatMessage::Assistant {
             content: response.content.clone(),
             tool_calls: response.tool_calls.clone(),
+            replay: response.replay.clone(),
         };
         logged.push(describe(&assistant));
         messages.push(assistant);
