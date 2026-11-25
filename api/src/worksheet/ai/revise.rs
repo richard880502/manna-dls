@@ -751,6 +751,7 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         item_count: max,
         needs_external,
         tables_asked: false,
+        english_tables: false,
     };
     let taken: HashSet<String> = content
         .blocks

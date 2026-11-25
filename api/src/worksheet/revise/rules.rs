@@ -1395,6 +1395,7 @@ mod tests {
             item_count: 12,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         let taken: HashSet<String> = old.items.iter().map(|i| i.id.clone()).collect();
         let printed = HashMap::from([("b2-i2".to_string(), 5)]);
@@ -1780,6 +1781,7 @@ mod tests {
             item_count: 12,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         let taken: HashSet<String> = old.items.iter().map(|i| i.id.clone()).collect();
         merge(

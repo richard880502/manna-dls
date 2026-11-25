@@ -934,6 +934,8 @@ pub fn revise_schema(block_ids: &[String], slot_ids: &[String], picture_max: usi
         ("prompt", s_max(ITEM_PROMPT_CHARS)),
         ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
         ("answer", s_max(ITEM_ANSWER_CHARS)),
+        // 表格整理 only (null for the other formats): what the table compares.
+        ("table", crate::worksheet::table::schema()),
     ]);
     let change = obj(vec![
         ("block_id", block_id),

@@ -14,6 +14,10 @@
 //! | `FAKE_PREP_FLAT_ONCE`  | activity: the same in the first call only; the retry has three groupings and all four skills |
 //! | `FAKE_PREP_BAD_REVISE` | revise: the change uses an answer format outside the fixed labels in both calls (it is dropped and the reply says so) |
 //! | `FAKE_PREP_REVISE_ADD` | revise: changes the **last** block that has items and adds one new item at its end |
+//! | `FAKE_PREP_REVISE_RECENT` | revise: the reply echoes how many earlier turns the request carried and the result line of the last one |
+//! | `FAKE_PREP_REVISE_TABLE` | revise: the first item of the first block with items becomes a 表格整理 question with real headings and row labels |
+//! | `FAKE_PREP_REVISE_TABLE_FIX` | revise: the same, with 「Column 1」 headings over a question that names its columns (repaired without a second call) |
+//! | `FAKE_PREP_REVISE_TABLE_BAD` | revise: the same, with 「Column 1」 headings, no labels and a question that names nothing (refused in both calls) |
 //! | `FAKE_PREP_PIC_ADD`    | revise: also proposes a picture for the first block that has items (picture_actions) |
 //! | `FAKE_PREP_PIC_REDRAW` | revise: also redraws the first picture the request listed ("no text in the picture") |
 //! | `FAKE_PREP_PIC_REMOVE` | revise: also removes the last picture the request listed |
@@ -42,7 +46,7 @@
 
 use serde_json::{json, Value};
 
-use crate::worksheet::FMT_SHORT;
+use crate::worksheet::{FMT_SHORT, FMT_TABLE};
 
 fn unusable(attempt: i32, has: &dyn Fn(&str) -> bool) -> bool {
     // FAKE_BLOCK_ONCE contains FAKE_BLOCK, so test it first.
@@ -354,15 +358,20 @@ pub fn revise(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 "prompt": if k == 0 { format!("{prompt} (revised)") } else { prompt.to_string() },
                 "options": it["options"].clone(),
                 "answer": it["answer"].clone(),
+                "table": it["table"].clone(),
             })
         })
         .collect();
+    if let Some(first) = items.first_mut().filter(|_| has("FAKE_PREP_REVISE_TABLE")) {
+        *first = table_item(has);
+    }
     if add {
         items.push(json!({
             "answer_format": FMT_SHORT,
             "prompt": "What would you add to the story? (added)",
             "options": [],
             "answer": "Answers will vary.",
+            "table": null,
         }));
     }
     let pictures = picture_actions(&blocks, has);
@@ -376,10 +385,45 @@ pub fn revise(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             "items": items,
         }])
     };
+    let mut reply = format!("已修改 {label} 區的第 1 題。（測試）");
+    if has("FAKE_PREP_REVISE_RECENT") {
+        let recent = ctx["recent"].as_array().cloned().unwrap_or_default();
+        let last = recent
+            .last()
+            .and_then(|r| r["summary"].as_str())
+            .unwrap_or_default();
+        reply = format!("參考了 {} 則先前的對話；上一則：{last}", recent.len());
+    }
     json!({
-        "reply": format!("已修改 {label} 區的第 1 題。（測試）"),
+        "reply": reply,
         "changes": changes,
         "picture_actions": pictures,
+    })
+}
+
+/// The 表格整理 question of the table markers.
+fn table_item(has: &dyn Fn(&str) -> bool) -> Value {
+    let (prompt, columns, labels) = if has("FAKE_PREP_REVISE_TABLE_BAD") {
+        ("Complete the table.", ["Column 1", "Column 2"], vec![])
+    } else if has("FAKE_PREP_REVISE_TABLE_FIX") {
+        (
+            "Complete a T-chart with two columns: Reading One and Reading Two. For each reading, record its claim.",
+            ["Column 1", "Column 2"],
+            vec!["Claim", "Supporting detail"],
+        )
+    } else {
+        (
+            "Complete a T-chart with two columns: Reading One and Reading Two.",
+            ["Reading One", "Reading Two"],
+            vec!["Claim", "Supporting detail"],
+        )
+    };
+    json!({
+        "answer_format": FMT_TABLE,
+        "prompt": prompt,
+        "options": [],
+        "answer": "Answers will vary.",
+        "table": { "columns": columns, "row_labels": labels },
     })
 }
 
