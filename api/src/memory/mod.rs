@@ -56,6 +56,7 @@ pub const HABIT_STEPS: &[&str] = &[
     "prep_activity",
     "prep_ask",
     "prep_revise",
+    "prep_chat",
     // 逐步設計: the steps that write tasks, a warm-up and an exit ticket. The English fix (3),
     // 逐段整合目標 (4) and the scaffolds of 5 do not write questions: they never receive habits.
     "sop_paragraph_tasks",
@@ -405,6 +406,18 @@ pub async fn augment(
     Ok((snapshot, apply(&ctx, req)))
 }
 
+/// `input_snapshot.teacher_memory` of a step that gets its habits itself ([`habit_context`]) and
+/// sends them in a request of its own (the prep chat): the habits and, when they were sent, what
+/// the Graphiti index said.
+pub async fn snapshot_for(state: &AppState, teacher_id: i64, ctx: &HabitContext) -> Value {
+    let graph = if ctx.applied.is_some() {
+        Some(graph::observe(state, teacher_id, &ctx.memories).await)
+    } else {
+        None
+    };
+    snapshot_value(ctx, graph.as_ref())
+}
+
 /// Add the exact habits used by the completed interaction to the existing context panel.
 pub async fn context(
     db: &PgPool,
@@ -477,6 +490,7 @@ mod tests {
                 "worksheet_block_revise",
                 "prep_revise",
                 "prep_activity",
+                "prep_chat",
                 "prep_ask",
                 "sop_paragraph_tasks",
                 "sop_warmup",

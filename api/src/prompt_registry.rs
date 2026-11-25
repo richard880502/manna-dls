@@ -393,6 +393,23 @@ pub static REGISTRY: &[PromptInfo] = &[
         ],
     },
     PromptInfo {
+        key: "prep_chat",
+        name_zh: "備課對話：問問題或用工具修改學習單",
+        group: G_PREP,
+        description: "備課對話底部的輸入框：老師問問題、要求修改，或兩者一起。Manna 先回答，需要時用工具（讀區塊、改題目、改鷹架、改 Key Vocabulary、重畫圖、新增／關閉／移動區塊）修改學習單，整輪結束時一次寫成一個新版本。只用 OpenAI 模型。",
+        uses_user_template: true,
+        vars: vars![
+            auto("class_profile", "班級特性"),
+            opt("material_title", "教材標題"),
+            opt("paragraph_count", "教材段數"),
+            req("passage_numbered", "教材（每段有編號）"),
+            opt("worksheet_title", "學習單標題"),
+            req("worksheet_compact", "學習單目前的內容（精簡版）"),
+            auto("picture_rules", "圖片的說明（能不能重畫）"),
+            opt("answer_format_labels", "作答方式的可選種類"),
+        ],
+    },
+    PromptInfo {
         key: "prep_ask",
         name_zh: "備課對話：回答老師的問題",
         group: G_PREP,

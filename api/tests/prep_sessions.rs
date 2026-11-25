@@ -792,7 +792,13 @@ async fn a_question_gets_a_plain_answer_with_the_conversation_so_far() {
     assert_eq!(done["next"], json!([]), "no material, no topic");
 
     // The bottom bar without a worksheet asks again; the earlier turn is in the context.
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "再多一個" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "ask", "request": "再多一個" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     assert_eq!(last(&v)["kind"], "ask");
     let done = wait(&app, &t, id).await;
@@ -847,7 +853,13 @@ async fn the_bottom_bar_revises_the_worksheet_in_one_version() {
         .clone();
     let block_id = target["id"].as_str().unwrap();
 
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "第一題改難一點" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "第一題改難一點" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     assert_eq!(last(&v)["kind"], "revise");
     assert_eq!(last(&v)["request"], "第一題改難一點");
@@ -1151,7 +1163,7 @@ async fn needs_rules_are_enforced() {
     assert!(bad(json!({ "kind": "revise", "request": "x" }))
         .await
         .contains("修改"));
-    assert!(bad(json!({ "kind": "chat", "request": "x" }))
+    assert!(bad(json!({ "kind": "bogus", "request": "x" }))
         .await
         .contains("kind"));
     for kind in ["comprehension", "tiered", "kit"] {
@@ -1235,7 +1247,13 @@ async fn one_turn_runs_at_a_time() {
     .await;
     let id = sid(&session);
     assert_eq!(session["running"], true);
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "還有呢？" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "ask", "request": "還有呢？" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert!(v["error"]["message"].as_str().unwrap().contains("還在處理"));
     let done = wait(&app, &t, id).await;
@@ -1243,7 +1261,13 @@ async fn one_turn_runs_at_a_time() {
 
     // A worksheet still generating cannot be revised.
     let slow = pasted(&app, &t, "worksheet", "FAKE_SLOW").await;
-    let (s, v) = post_turn(&app, &t, sid(&slow), json!({ "request": "改短一點" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        sid(&slow),
+        json!({ "kind": "revise", "request": "改短一點" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert!(v["error"]["message"].as_str().unwrap().contains("正在產生"));
 }
@@ -1421,7 +1445,13 @@ async fn deleting_a_session_hides_it_with_its_worksheets() {
     assert!(!ids.contains(&ws_id), "{list}");
     assert!(ids.contains(&other), "a worksheet of its own stays: {list}");
     // No more turns or changes on it.
-    let (s, _) = post_turn(&app, &t, id, json!({ "request": "再改一次" })).await;
+    let (s, _) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "再改一次" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = patch(&app, &path, &t, json!({ "title": "x" })).await;
     assert_eq!(s, StatusCode::NOT_FOUND);

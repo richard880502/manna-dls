@@ -654,7 +654,7 @@ fn block_text(b: &Block) -> String {
 
 /// Whether `word` (a word or a short phrase) is in `text`: as written, or with a short ending
 /// (signals, identified).
-fn occurs_in(word: &str, text: &str) -> bool {
+pub(crate) fn occurs_in(word: &str, text: &str) -> bool {
     let word = word.trim().to_lowercase();
     if word.is_empty() {
         return false;
@@ -679,7 +679,7 @@ fn sentence_with(word: &str, text: &str) -> String {
         .unwrap_or_default()
 }
 
-fn valid_word(w: &str) -> bool {
+pub(crate) fn valid_word(w: &str) -> bool {
     !w.is_empty()
         && w.chars().count() <= WORD_CHARS
         && w.chars()

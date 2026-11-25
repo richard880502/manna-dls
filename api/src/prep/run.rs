@@ -27,8 +27,8 @@ use super::{
     MaterialRef, RawAnswer, RawPlan, RawRevision, ResourceItem, Resources, Revision,
     TeacherObjectives, ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP, ASK_SCHEMA_NAME, CHANGES_MAX,
     CHANGE_ITEMS_MAX, CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK, KEY_REVISE, KIND_ACTIVITY, KIND_ASK,
-    KIND_ASSESSMENT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET, MATERIALS_TOP,
-    REPLY_CHARS, REVISE_SCHEMA_NAME,
+    KIND_ASSESSMENT, KIND_CHAT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
+    MATERIALS_TOP, REPLY_CHARS, REVISE_SCHEMA_NAME,
 };
 use crate::application::generation::{call, nothing, Call, Checked};
 use crate::application::worksheets::{CreateOverrides, CreateWorksheet, WorksheetService};
@@ -74,9 +74,9 @@ pub(super) const BASE_TEMPERATURE: f32 = 0.2;
 pub const MSG_NO_KB: &str = "知識庫裡沒有找到相關條目。";
 pub const MSG_NO_EXTERNAL: &str = "外部資源（影片、網站）搜尋還沒有開放。";
 const MSG_INTERNAL: &str = "處理這個請求時發生錯誤。請按「再試一次」。";
-const MSG_MATERIAL_GONE: &str = "這個備課對話的教材已經刪除了，請開一個新的備課對話。";
-const MSG_WORKSHEET_GONE: &str = "要修改的學習單已經刪除了。";
-const MSG_WORKSHEET_BUSY: &str =
+pub(super) const MSG_MATERIAL_GONE: &str = "這個備課對話的教材已經刪除了，請開一個新的備課對話。";
+pub(super) const MSG_WORKSHEET_GONE: &str = "要修改的學習單已經刪除了。";
+pub(super) const MSG_WORKSHEET_BUSY: &str =
     "Manna 正在產生這份學習單，這次的修改沒有套用。請等它完成後再說一次。";
 const MSG_TEMPLATE_GONE: &str =
     "這次要照著做的版型已經刪除了，所以沒有做學習單。請重新放上你的學習單範本，或選其他版型。";
@@ -153,6 +153,7 @@ pub fn own_steps(kind: &str) -> Option<Vec<Step>> {
             Step::new(progress::CURRICULUM, progress::L_CURRICULUM),
             Step::new(progress::PLAN, progress::L_PLAN),
         ]),
+        KIND_CHAT => Some(vec![Step::new(progress::READ, L_READ_WORKSHEET)]),
         KIND_REVISE => Some(vec![
             Step::new(progress::READ, L_READ_WORKSHEET),
             Step::new(REVISE, L_REVISE),
@@ -178,7 +179,7 @@ fn worksheet_failure(input: &TurnInput, e: &AppError) -> String {
     teacher_message(e)
 }
 
-fn teacher_message(e: &AppError) -> String {
+pub(super) fn teacher_message(e: &AppError) -> String {
     match e {
         AppError::BadRequest(m)
         | AppError::NotFound(m)
@@ -190,7 +191,7 @@ fn teacher_message(e: &AppError) -> String {
     }
 }
 
-type Outcome = Result<(Option<Value>, Option<i64>), String>;
+pub(super) type Outcome = Result<(Option<Value>, Option<i64>), String>;
 
 /// The outcome of a spawned piece of work: an error or a panic is a failure the teacher can
 /// read.
@@ -352,6 +353,7 @@ async fn run(state: &AppState, input: &TurnInput, progress: &Arc<Tracker>) -> Ap
         KIND_RESOURCES => resources(state, input).await,
         KIND_ASK => ask(state, input).await,
         KIND_REVISE => revise(state, input, progress).await,
+        KIND_CHAT => super::chat::run(state, input, progress).await,
         other => Err(AppError::Internal(anyhow::anyhow!(
             "prep turn kind {other} is not run in the background"
         ))),
@@ -392,7 +394,7 @@ pub(super) async fn material(
     ))
 }
 
-fn material_title(m: &Material) -> String {
+pub(super) fn material_title(m: &Material) -> String {
     if m.title.trim().is_empty() {
         "未命名教材".to_string()
     } else {
@@ -577,7 +579,7 @@ async fn activity(
 }
 
 /// Text shown to the model for an optional teacher field that may be empty.
-fn or_none(s: &str) -> String {
+pub(super) fn or_none(s: &str) -> String {
     if s.trim().is_empty() {
         "（沒有）".to_string()
     } else {
@@ -604,7 +606,11 @@ async fn teacher_request(db: &sqlx::PgPool, input: &TurnInput) -> AppResult<Stri
         .unwrap_or_default())
 }
 
-fn trace_of(input: &TurnInput, class: Option<&Value>, codes: Option<&[String]>) -> Value {
+pub(super) fn trace_of(
+    input: &TurnInput,
+    class: Option<&Value>,
+    codes: Option<&[String]>,
+) -> Value {
     json!({
         "session_id": input.session.id,
         "turn_id": input.turn.id,
@@ -828,9 +834,34 @@ async fn turn_summary(db: &sqlx::PgPool, t: &TurnRow) -> AppResult<String> {
             }
         }
         KIND_ASK => r["answer"].as_str().unwrap_or_default().to_string(),
+        KIND_CHAT => {
+            let changes: Vec<String> = r["changes"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .map(|c| {
+                            format!(
+                                "{}（{}）",
+                                c["label"].as_str().unwrap_or_default(),
+                                c["summary"].as_str().unwrap_or_default()
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let answer = clip_chars(r["answer"].as_str().unwrap_or_default().trim(), 300);
+            if changes.is_empty() {
+                answer
+            } else {
+                format!("{answer} ｜改了：{}", changes.join("；"))
+            }
+        }
         _ => r["reply"].as_str().unwrap_or_default().to_string(),
     };
-    Ok(clip_chars(text.trim(), 300))
+    Ok(clip_chars(
+        text.trim(),
+        if t.kind == KIND_CHAT { 700 } else { 300 },
+    ))
 }
 
 /// The last three turns before `seq` as the model reads them (what the teacher asked and a line
@@ -841,13 +872,23 @@ async fn recent_turns(
     session_id: i64,
     seq: i32,
 ) -> AppResult<(Vec<Value>, String)> {
+    recent_turns_n(db, session_id, seq, 3).await
+}
+
+/// [`recent_turns`] with the last `n` turns (the chat reads six).
+pub(super) async fn recent_turns_n(
+    db: &sqlx::PgPool,
+    session_id: i64,
+    seq: i32,
+    n: usize,
+) -> AppResult<(Vec<Value>, String)> {
     let earlier: Vec<TurnRow> = store::turns(db, session_id)
         .await?
         .into_iter()
         .filter(|t| t.seq < seq)
         .collect();
     let mut recent = Vec::new();
-    for t in earlier.iter().rev().take(3).rev() {
+    for t in earlier.iter().rev().take(n).rev() {
         recent.push(json!({
             "kind": t.kind,
             "request": clip_chars(&t.request, 300),
@@ -976,7 +1017,7 @@ async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
 // ---------------------------------------------------------------- 修改學習單
 
 /// A block's name in the reply: 「B 區」, or its title when it is not lettered.
-fn block_name(label: &str, title: &str) -> String {
+pub(super) fn block_name(label: &str, title: &str) -> String {
     if label.is_empty() {
         format!("「{}」", clip_chars(title.trim(), 30))
     } else {
@@ -985,7 +1026,7 @@ fn block_name(label: &str, title: &str) -> String {
 }
 
 /// Letters of the blocks as the student sheet of the worksheet's first level shows them.
-fn labels(ws: &Worksheet, content: &Content) -> HashMap<String, String> {
+pub(super) fn labels(ws: &Worksheet, content: &Content) -> HashMap<String, String> {
     let level = content.levels.first().copied().unwrap_or(Level::Standard);
     project(&ws.title, content, level, Audience::Teacher)
         .blocks
@@ -1238,7 +1279,7 @@ fn revised_table(replaced: Option<&Item>, it: &CleanSectionItem) -> Option<ItemT
 /// `old` with the change applied. Like the exit ticket's purpose, an item's Bloom label, hint
 /// and versions stay with its position; a new item takes the block's Bloom level (blocks made
 /// per Bloom level have one) and every version.
-fn revised_block(
+pub(super) fn revised_block(
     old: &Block,
     out: &CleanSection,
     levels: &[Level],
@@ -1302,7 +1343,7 @@ fn revised_block(
 
 /// Whether the worksheet's current questions were made as tiered practice (the generation's
 /// settings; before any generation, the worksheet's own).
-fn is_tiered(ws: &Worksheet, content: &Content) -> bool {
+pub(super) fn is_tiered(ws: &Worksheet, content: &Content) -> bool {
     content
         .chosen
         .as_ref()
@@ -1310,7 +1351,7 @@ fn is_tiered(ws: &Worksheet, content: &Content) -> bool {
         == Output::Tiered
 }
 
-fn same_content(a: &Block, b: &Block) -> bool {
+pub(super) fn same_content(a: &Block, b: &Block) -> bool {
     let items = |x: &Block| -> Vec<(Option<String>, String, Vec<String>, String)> {
         x.items
             .iter()

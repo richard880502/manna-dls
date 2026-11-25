@@ -24,6 +24,18 @@
 //! | `FAKE_PREP_PIC_BAD`    | revise: four invalid picture actions (unknown block, unknown slot twice, a web address) |
 //! | `FAKE_PREP_PIC_MANY`   | revise: two new pictures for every block with items (more than the server keeps) |
 //! | `FAKE_PREP_PIC_ONLY`   | revise: no text changes (only the picture actions) |
+//! | `FAKE_CHAT_ASK`        | chat: no tool call, only an answer (the answer says how many earlier turns the model was shown) |
+//! | `FAKE_CHAT_EDIT`       | chat: `edit_block` on the first block with items (first question gets " (revised)"), then the answer |
+//! | `FAKE_CHAT_EDIT_PICTURE` | chat: the edit, then `redraw_picture` of the first picture |
+//! | `FAKE_CHAT_BAD_EDIT`   | chat: `edit_block` with an answer format outside the fixed labels; after the reasons come back, the same edit fixed |
+//! | `FAKE_CHAT_REFUSED`    | chat: the bad edit again and again until the server stops it (nothing changes; listed in `not_applied`) |
+//! | `FAKE_CHAT_LOOP`       | chat: `read_block` until the tool limit |
+//! | `FAKE_CHAT_TABLE`      | chat: `edit_block` turns the first question of the first block into a 表格整理 question |
+//! | `FAKE_CHAT_PICTURE`    | chat: `redraw_picture` of the first picture the worksheet has |
+//! | `FAKE_CHAT_SCAFFOLD`   | chat: `edit_scaffolds` gives the first 簡答題 a sentence frame and the block a hint |
+//! | `FAKE_CHAT_VOCAB`      | chat: `edit_key_vocabulary` adds "trust" and switches the meanings to Chinese |
+//! | `FAKE_CHAT_BLOCKS`     | chat: `add_block` after the first block, then `move_block` of it to the front |
+//! | `FAKE_CHAT_PACED`      | chat: 400 ms before every model call (the test changes the worksheet meanwhile) |
 //! | `FAKE_SIOP_BLOCK`      | SIOP self-check: unusable output in both calls (the check fails)      |
 //! | `FAKE_SIOP_PARTIAL_ONCE` | SIOP self-check: the first call leaves out the last item, the retry has them all |
 //! | `FAKE_SIOP_FAIL_FIRST` | SIOP self-check: the first check of a turn times out; a later one (再試一次) works |
@@ -543,4 +555,262 @@ pub fn selfcheck(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value
         })
         .collect();
     json!({ "items": items })
+}
+
+// ---------------------------------------------------------------- the tool-based chat
+
+use crate::ai::chat::{ChatMessage, ChatRequest, ChatResponse, ToolCall, ToolChoice, Usage};
+use crate::ai::ProviderError;
+
+fn chat_answer(paragraphs: Vec<String>) -> Value {
+    json!({ "paragraphs": paragraphs, "follow_ups": ["再幫我改一個地方", "  "] })
+}
+
+/// The scripted model of the prep chat (docs: the markers in the table above). A marker counts
+/// only when it is in THIS turn's request (the last user message), never in the earlier turns the
+/// model is shown. A tool the server refused ends the script with an answer.
+pub fn chat(req: &ChatRequest, model: &str) -> Result<ChatResponse, ProviderError> {
+    let request = req
+        .messages
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ChatMessage::User { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let has = |m: &str| request.contains(m);
+    if has("FAKE_TIMEOUT") {
+        return Err(ProviderError::Timeout);
+    }
+    if has("FAKE_ERROR") {
+        return Err(ProviderError::Http {
+            status: 500,
+            body: "fake provider error".into(),
+        });
+    }
+    if has("FAKE_REFUSAL") {
+        return Err(ProviderError::Refusal("fake refusal".into()));
+    }
+    let after_request = req
+        .messages
+        .iter()
+        .rposition(|m| matches!(m, ChatMessage::User { .. }))
+        .map_or(0, |i| i + 1);
+    let steps = req.messages[after_request..]
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::Assistant { .. }))
+        .count();
+    let last_tool: &str = req.messages[after_request..]
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ChatMessage::Tool { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let failed = last_tool.starts_with("沒有改成") || last_tool.contains("不再重試");
+    let stopped = last_tool.contains("不再重試") || last_tool.contains("次數已經用完");
+    let blocks = req.fake_context["blocks"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let with_items = |b: &&Value| b["items"].as_array().is_some_and(|i| !i.is_empty());
+    let first = blocks.iter().find(with_items);
+    let recent = req
+        .messages
+        .iter()
+        .find_map(|m| match m {
+            ChatMessage::User { text, .. } if text.starts_with("先前的對話") => {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .map_or(0, |t| t.lines().filter(|l| l.starts_with("- ")).count());
+    let call = |name: &str, args: Value| ToolCall {
+        id: format!("call_{steps}"),
+        name: name.to_string(),
+        arguments: args.to_string(),
+    };
+    let first_id = first.map(|b| b["block_id"].as_str().unwrap_or_default().to_string());
+    // The first block's questions as the edit tool takes them, the first prompt changed.
+    let edited_items = |format: Option<&str>| -> Vec<Value> {
+        first
+            .and_then(|b| b["items"].as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(k, it)| {
+                        let prompt = it["prompt"].as_str().unwrap_or_default();
+                        json!({
+                            "answer_format": match (k, format) {
+                                (0, Some(f)) => f.to_string(),
+                                _ => it["answer_format"].as_str().unwrap_or(FMT_SHORT).to_string(),
+                            },
+                            "prompt": if k == 0 { format!("{prompt} (revised)") } else { prompt.to_string() },
+                            "options": it["options"].clone(),
+                            "answer": it["answer"].clone(),
+                            "table": it["table"].clone(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let edit = |items: Vec<Value>| {
+        call(
+            "edit_block",
+            json!({ "block_id": first_id.clone().unwrap_or_default(), "title": null,
+                    "instructions": null, "items": items }),
+        )
+    };
+    let forced = req.tool_choice == ToolChoice::None || req.tools.is_empty();
+    let tool: Option<ToolCall> = if forced || first_id.is_none() {
+        None
+    } else if has("FAKE_CHAT_LOOP") {
+        Some(call(
+            "read_block",
+            json!({ "block_id": first_id.clone().unwrap_or_default() }),
+        ))
+    } else if has("FAKE_CHAT_REFUSED") {
+        (!stopped).then(|| edit(edited_items(Some("連連看"))))
+    } else if has("FAKE_CHAT_BAD_EDIT") {
+        match steps {
+            0 => Some(edit(edited_items(Some("連連看")))),
+            1 if failed => Some(edit(edited_items(None))),
+            _ => None,
+        }
+    } else if has("FAKE_CHAT_TABLE") {
+        (steps == 0).then(|| {
+            let mut items = edited_items(Some(FMT_TABLE));
+            items[0]["prompt"] =
+                json!("Complete a T-chart with two columns: Reading One and Reading Two.");
+            items[0]["options"] = json!([]);
+            items[0]["table"] = json!({ "columns": ["Reading One", "Reading Two"],
+                                        "row_labels": ["Claim", "Supporting detail"] });
+            edit(items)
+        })
+    } else if has("FAKE_CHAT_EDIT_PICTURE") {
+        let slot = blocks
+            .iter()
+            .flat_map(|b| b["slots"].as_array().cloned().unwrap_or_default())
+            .find_map(|s| s.as_str().map(str::to_string));
+        match (steps, slot) {
+            (0, _) => Some(edit(edited_items(None))),
+            (1, Some(s)) => Some(call(
+                "redraw_picture",
+                json!({ "slot_id": s, "note": "make her a girl" }),
+            )),
+            _ => None,
+        }
+    } else if has("FAKE_CHAT_EDIT") {
+        (steps == 0).then(|| edit(edited_items(None)))
+    } else if has("FAKE_CHAT_PICTURE") {
+        let slot = blocks
+            .iter()
+            .flat_map(|b| b["slots"].as_array().cloned().unwrap_or_default())
+            .find_map(|s| s.as_str().map(str::to_string));
+        slot.filter(|_| steps == 0).map(|s| {
+            call(
+                "redraw_picture",
+                json!({ "slot_id": s, "note": "no text in the picture" }),
+            )
+        })
+    } else if has("FAKE_CHAT_SCAFFOLD") {
+        let target = blocks.iter().find(|b| {
+            b["items"]
+                .as_array()
+                .is_some_and(|i| i.iter().any(|it| it["answer_format"] == FMT_SHORT))
+        });
+        target.filter(|_| steps == 0).map(|b| {
+            let k = b["items"]
+                .as_array()
+                .and_then(|i| i.iter().position(|it| it["answer_format"] == FMT_SHORT))
+                .unwrap_or(0)
+                + 1;
+            call(
+                "edit_scaffolds",
+                json!({
+                    "block_id": b["block_id"], "steps": null,
+                    "frames": [{ "item_no": k, "frame": "I think ___ because ___." }],
+                    "hints": [{ "item_no": k, "hint": "Look at the first paragraph." }],
+                    "word_bank": null,
+                }),
+            )
+        })
+    } else if has("FAKE_CHAT_VOCAB") {
+        (steps == 0).then(|| {
+            call(
+                "edit_key_vocabulary",
+                json!({
+                    "block_id": null,
+                    "add": [{ "word": "trust", "pos": "n.", "definition": "a strong belief that people are honest",
+                              "meaning_zh": "信任" }],
+                    "remove": [], "language": "zh",
+                }),
+            )
+        })
+    } else if has("FAKE_CHAT_BLOCKS") {
+        match steps {
+            0 => Some(call(
+                "add_block",
+                json!({ "after_block_id": first_id.clone(), "title": "Extra practice",
+                        "instructions": "Answer in one sentence.",
+                        "items": [{ "answer_format": FMT_SHORT, "prompt": "Why did Mrs. Lin put the stand outside?",
+                                    "options": [], "answer": "To help people on rainy days.", "table": null }] }),
+            )),
+            1 => {
+                let new_id = last_tool
+                    .split("block_id ")
+                    .nth(1)
+                    .map(|r| r.trim_end_matches(['）', '。', ')']).to_string());
+                new_id.map(|id| {
+                    call(
+                        "move_block",
+                        json!({ "block_id": id, "after_block_id": null }),
+                    )
+                })
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let usage = {
+        let first_assistant = req
+            .messages
+            .iter()
+            .position(|m| matches!(m, ChatMessage::Assistant { .. }));
+        let chars =
+            |range: &[ChatMessage]| range.iter().map(ChatMessage::chars).sum::<usize>() as u64;
+        Usage {
+            prompt_tokens: chars(&req.messages) / 4,
+            completion_tokens: 20,
+            // Everything before the first answer of the turn is what the cache already holds.
+            cached_tokens: first_assistant.map_or(0, |i| chars(&req.messages[..i]) / 4),
+        }
+    };
+    let (content, tool_calls) = match tool {
+        Some(t) => (None, vec![t]),
+        None => {
+            let summary = if has("FAKE_CHAT_ASK") || steps == 0 {
+                format!("這是測試用的回答（參考了 {recent} 則先前的對話）。")
+            } else if failed {
+                "這次沒有改成，原因請看下面的清單。".to_string()
+            } else {
+                format!("已處理完成（工具呼叫 {steps} 次）。")
+            };
+            (
+                Some(chat_answer(vec![summary, "第二個重點。".to_string()]).to_string()),
+                Vec::new(),
+            )
+        }
+    };
+    Ok(ChatResponse {
+        content,
+        tool_calls,
+        model_version: format!("{model}-fake-1"),
+        usage: Some(usage),
+    })
 }

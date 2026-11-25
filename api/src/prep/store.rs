@@ -66,10 +66,12 @@ pub struct TurnRow {
     /// The steps the turn runs itself ([`progress::Stored`]; NULL for the other kinds and for
     /// turns made before progress was kept).
     pub progress: Option<Value>,
+    /// `chat` turns: what puts the turn's changes back ([`super::chat`]).
+    pub chat_undo: Option<Value>,
 }
 
 const TURN_COLS: &str = "id, session_id, seq, kind, request, status, error, worksheet_id, result,
-    interaction_id, created_at, finished_at, template_id, progress";
+    interaction_id, created_at, finished_at, template_id, progress, chat_undo";
 
 /// The session if it exists, is not deleted and belongs to `teacher_id`; otherwise 404 (no
 /// existence leak).
@@ -949,7 +951,7 @@ fn turn_progress(
         steps
     });
     let mut steps: Vec<Step> = match kind {
-        KIND_ACTIVITY | KIND_REVISE => own?,
+        KIND_ACTIVITY | KIND_REVISE | super::KIND_CHAT => own?,
         KIND_KIT => {
             let own = own?;
             match ws_steps {
@@ -1001,7 +1003,39 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     let mut pending: Vec<(Turn, Option<TurnRow>)> = Vec::with_capacity(rows.len());
     let turn_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let mut attached = super::images::for_turns(&state.db, &turn_ids).await?;
-    for r in rows {
+    let mut latest_content: std::collections::HashMap<i64, Option<crate::worksheet::Content>> =
+        std::collections::HashMap::new();
+    for mut r in rows {
+        // 「這一輪的修改目前還能整輪復原」: the blocks it changed are still as it left them.
+        if r.kind == super::KIND_CHAT && r.result.as_ref().is_some_and(|v| v["undoable"] == true) {
+            let ws_id = r
+                .chat_undo
+                .as_ref()
+                .and_then(|u| u["worksheet_id"].as_i64());
+            let content = match ws_id {
+                Some(id) => match latest_content.get(&id).cloned() {
+                    Some(c) => c,
+                    None => {
+                        let c = ws_store::latest(&state.db, id)
+                            .await
+                            .ok()
+                            .map(|v| v.content);
+                        latest_content.insert(id, c.clone());
+                        c
+                    }
+                },
+                None => None,
+            };
+            let ok = match (&content, &r.chat_undo) {
+                (Some(c), Some(u)) => super::chat::still_undoable(c, u),
+                _ => false,
+            };
+            if !ok {
+                if let Some(result) = r.result.as_mut() {
+                    result["undoable"] = serde_json::json!(false);
+                }
+            }
+        }
         let worksheet = match r.worksheet_id {
             Some(ws) => turn_worksheet(state, ws).await?,
             None => None,

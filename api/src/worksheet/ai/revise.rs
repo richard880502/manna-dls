@@ -230,7 +230,7 @@ fn spawn(state: &AppState, job: Job) {
     });
 }
 
-fn or_none(s: &str) -> String {
+pub(crate) fn or_none(s: &str) -> String {
     if s.trim().is_empty() {
         "（沒有）".to_string()
     } else {
@@ -376,7 +376,7 @@ fn extras_detail(block: &Block) -> Vec<String> {
 /// The block as the model reads it: title, instructions, its fixed Bloom level or need for the
 /// teacher's material, every question with its code and printed number, and then everything else
 /// the sheet prints for the block (scaffolds, word table, Glossary), each with its code.
-fn block_detail(
+pub(crate) fn block_detail(
     block: &Block,
     printed: &HashMap<String, usize>,
     bloom: Option<Bloom>,

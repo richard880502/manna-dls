@@ -564,7 +564,7 @@ async fn the_history_trigger_guards_inserts_truncate_and_successors() {
 
 // ------------------------------------------------------------------ the PI switch
 
-const RECEIVING: [&str; 14] = [
+const RECEIVING: [&str; 15] = [
     "worksheet_tasks",
     "worksheet_warmup",
     "worksheet_scaffolds",
@@ -576,6 +576,7 @@ const RECEIVING: [&str; 14] = [
     "prep_activity",
     "prep_ask",
     "prep_revise",
+    "prep_chat",
     "sop_paragraph_tasks",
     "sop_warmup",
     "sop_exit_ticket",
