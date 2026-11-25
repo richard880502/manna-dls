@@ -328,8 +328,9 @@ async fn versions_are_listed_readable_and_restorable_as_a_new_version() {
     let logged = usage(&app, "worksheet_version_restored").await;
     assert_eq!(logged.len(), 1);
     assert_eq!(logged[0]["from_version_no"], first_no);
+    assert_eq!(logged[0]["previous_version_no"], latest_no);
     assert_eq!(logged[0]["new_version_no"], latest_no + 1);
-    assert!(logged[0].as_object().unwrap().len() == 3);
+    assert!(logged[0].as_object().unwrap().len() == 4);
 }
 
 #[tokio::test]

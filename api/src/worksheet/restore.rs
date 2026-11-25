@@ -162,8 +162,9 @@ pub async fn restore(
         teacher_id,
         "worksheet_version_restored",
         json!({
+            // from = the version restored; previous = the one it replaced (the latest before).
             "worksheet_id": ws.id, "from_version_no": version_no,
-            "new_version_no": saved.version_no,
+            "previous_version_no": latest.version_no, "new_version_no": saved.version_no,
         }),
     )
     .await?;

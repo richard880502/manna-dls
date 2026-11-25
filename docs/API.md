@@ -4087,5 +4087,5 @@ interface WsTemplateDetail { /* …既有欄位… */
 - 列表用 `GET /api/worksheets/:id/versions`（新到舊；每項 `version_no`、`cause`、`source`、`created_at`）。網頁依 `source.cause`（沒有時用 `cause`）取一句話：`generate` 第一版＝Manna 產生，之後＝整份重新產生；`regenerate`＝重新產生一區；`block_proposal`／`block_proposal_pictures`＝Manna 修改一區；`prep_turn`／`revise`＝對話修改；`edit`＝手動編輯；`undo`＝復原；`vocabulary`＝字詞；`pictures`＝圖片；`restore`＝還原成第 n 版（`source.adopted_kind = "worksheet"`）或採用一區的過往版本。
 - 還原**不刪除、不覆寫**任何東西：新的一版內容＝那一版的內容；那一版當時用的圖片重新成為目前的圖（不會重畫，圖片列都還在）。`source` 為 `{ cause: "restore", adopted_kind: "worksheet", adopted_version_no, from_version_no（還原前的最新版）, block_ids（內容改變的區塊） }`；一區的「採用」則是 `adopted_kind = "version" | "proposal"`，兩者分得開。
 - 每個內容改變的區塊，都在 `worksheet_block_history` 記一列（還原前的樣子、`after_block`、新版本號），所以那一區的「修改歷程」多一步「還原」、「復原上一版」仍可用。
-- 使用紀錄 `worksheet_version_restored`：`{ worksheet_id, from_version_no, new_version_no }`（不含內容）。
+- 使用紀錄 `worksheet_version_restored`：`{ worksheet_id, from_version_no（還原的那一版）, previous_version_no（被取代的、還原前的最新版）, new_version_no }`（不含內容）。
 - 網頁入口：備課頁學習單卡片的「版本紀錄」按鈕、完整編輯頁（含備課頁的編輯模式）工具列的「版本紀錄」；學習單正在產生或備課對話正在跑時按鈕是 `aria-disabled` 並說明原因。編輯器開啟前先存好手上的修改。
