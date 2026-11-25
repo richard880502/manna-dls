@@ -26,6 +26,7 @@ import {
   stepText,
 } from "../../lib/prep";
 import { BloomChips } from "../worksheet/Bloom";
+import { VersionHistoryDialog } from "../worksheet/VersionHistory";
 import { PictureOutcomeList } from "./ImageAttach";
 import { SectionTools } from "./SectionTools";
 
@@ -470,6 +471,8 @@ export function ChatCard({
   onUndo,
   onShowBlock,
   onShowSheet,
+  worksheetId,
+  onVersionRestored,
 }: {
   result: PrepChatResult;
   interactionId: number | null;
@@ -481,7 +484,12 @@ export function ChatCard({
   onShowBlock: (blockId: string) => void;
   /** Narrow screens only: the worksheet is another tab, so offer to go there after a change. */
   onShowSheet?: (firstBlockId: string | null) => void;
+  /** The worksheet this turn changed; with it, 「產生了第 N 版」 opens 版本紀錄 at that version. */
+  worksheetId?: number | null;
+  /** 版本紀錄 restored a version from here: the page reads the worksheet again. */
+  onVersionRestored?: () => void;
 }) {
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [undoing, setUndoing] = useState(false);
   const answerRef = useRef<HTMLDivElement>(null);
@@ -532,7 +540,14 @@ export function ChatCard({
               </li>
             ))}
           </ul>
-          {result.version_no !== null && <p className="quiet-note">已存成第 {result.version_no} 版。</p>}
+          {result.version_no !== null &&
+            (worksheetId ? (
+              <button type="button" className="text-link" onClick={() => setHistoryOpen(true)}>
+                產生了第 {result.version_no} 版
+              </button>
+            ) : (
+              <p className="quiet-note">已存成第 {result.version_no} 版。</p>
+            ))}
           {onShowSheet && (
             <button
               type="button"
@@ -593,6 +608,17 @@ export function ChatCard({
             </button>
           )}
         </div>
+      )}
+      {historyOpen && worksheetId && result.version_no !== null && (
+        <VersionHistoryDialog
+          worksheetId={worksheetId}
+          initialVersionNo={result.version_no}
+          onClose={() => setHistoryOpen(false)}
+          onRestored={() => {
+            setHistoryOpen(false);
+            onVersionRestored?.();
+          }}
+        />
       )}
       {result.undone && <p className="quiet-note">這一輪的修改已經復原。</p>}
       {undoError && (

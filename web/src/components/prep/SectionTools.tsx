@@ -157,12 +157,21 @@ export function SectionTools({
 const MenuClose = createContext<() => void>(() => undefined);
 
 /** A button of 「更多…」 that does its job and then closes the menu. */
-export function MenuItem({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+export function MenuItem({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
   const close = useContext(MenuClose);
   return (
     <button
       type="button"
       className="popover-item"
+      disabled={disabled}
       onClick={() => {
         close();
         onClick();
@@ -172,3 +181,7 @@ export function MenuItem({ onClick, children }: { onClick: () => void; children:
     </button>
   );
 }
+
+/** A dialog opened from an item of 「更多…」 hands focus back to that menu's button when it closes. */
+export const menuButtonOf = (button: HTMLButtonElement | null) =>
+  button?.closest(".popover-root")?.querySelector<HTMLElement>("[aria-controls]") ?? null;

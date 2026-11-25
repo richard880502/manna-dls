@@ -2,7 +2,7 @@
 //! that changes nothing adds none. Version numbers and dates are the server's.
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -335,12 +335,25 @@ pub struct VersionSummary {
     /// the source was kept.
     pub source: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
+    /// The teacher's 快照 name on this version, if any.
+    pub snapshot: Option<Json<SnapshotLabel>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SnapshotLabel {
+    pub id: i64,
+    pub name: String,
 }
 
 pub async fn list_versions(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<VersionSummary>> {
     sqlx::query_as(
-        "SELECT version_no, cause, source, created_at FROM worksheet_versions
-          WHERE worksheet_id = $1 ORDER BY version_no DESC",
+        "SELECT v.version_no, v.cause, v.source, v.created_at,
+                CASE WHEN s.id IS NULL THEN NULL
+                     ELSE jsonb_build_object('id', s.id, 'name', s.name) END AS snapshot
+           FROM worksheet_versions v
+           LEFT JOIN worksheet_snapshots s
+             ON s.worksheet_id = v.worksheet_id AND s.version_no = v.version_no
+          WHERE v.worksheet_id = $1 ORDER BY v.version_no DESC",
     )
     .bind(worksheet_id)
     .fetch_all(db)

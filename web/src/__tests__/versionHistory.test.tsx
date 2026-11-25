@@ -253,9 +253,9 @@ describe("版本紀錄", () => {
     await waitFor(() => expect(api.callsTo("POST", `${WS}/versions/2/restore`)).toHaveLength(1));
     expect(api.lastBody("POST", `${WS}/versions/2/restore`)).toEqual({ base_version_no: 3 });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "版本紀錄" })).not.toBeInTheDocument());
-    expect(await screen.findByText("第 4 版，共 4 版")).toBeInTheDocument();
-    // The card reads the sheet again.
-    await waitFor(() => expect(api.callsTo("GET", `${WS}/sheet`).length).toBeGreaterThan(2));
+    // The editor beside the conversation shows the restored version.
+    expect(await screen.findByDisplayValue("Back to the old one")).toBeInTheDocument();
+    expect(screen.getByLabelText("版本")).toHaveTextContent("第 4 版");
   });
 
   it("shows the reason of a 409 inside the dialog and keeps it open", async () => {

@@ -2723,6 +2723,28 @@ export interface WsVersionRow {
   /** 這一版是怎麼來的（docs/API.md「版本紀錄」）；更早的版本是 null */
   source?: Record<string, unknown> | null;
   created_at: string;
+  /** 老師給這一版取的快照名稱；沒有、或舊的伺服器沒有這一欄就是 null／缺 */
+  snapshot?: WsSnapshotLabel | null;
+}
+
+export interface WsSnapshotLabel {
+  id: number;
+  name: string;
+}
+
+/** 快照：老師給某一版取的名字（版本本身不變） */
+export interface WsSnapshot {
+  id: number;
+  version_no: number;
+  name: string;
+  created_at: string;
+}
+
+/** 還原成這一版：寫成新的一版，舊的版本都還在 */
+export interface WsVersionRestored {
+  version_no: number;
+  from_version_no: number;
+  worksheet: WorksheetState;
 }
 
 /** 還原成這一版：寫成新的一版，舊的版本都還在 */

@@ -6,11 +6,12 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PrepSession, PrepTurn, ProgressStep, RunProgress } from "../api/types";
+import type { PrepSession, PrepTurn, ProgressStep, RunProgress, WorksheetState } from "../api/types";
 import { RunProgressPanel, RunProgressSlot } from "../components/RunProgress";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { prepConfig } from "../lib/prep";
 import { announcement, stepText } from "../lib/progress";
+import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn } from "../test/mockApi";
 
 beforeEach(() => {
@@ -231,19 +232,59 @@ describe("the 備課對話", () => {
       progress: null,
       worksheet: { id: 11, title: "U", version_no: 2, running: true },
     });
+    const progress: RunProgress = {
+      steps: [step("read", "讀教材", "done"), step("tasks", "寫逐段任務", "running"), step("pictures", "配圖", "pending")],
+      current: 1,
+      status: "running",
+    };
+    const regenerating: WorksheetState = {
+      id: 11,
+      title: "U",
+      filename: "U",
+      lesson: null,
+      class_id: null,
+      generated: true,
+      levels: ["standard"],
+      version_no: 2,
+      created_at: "2026-11-18T05:00:00Z",
+      updated_at: "2026-11-18T05:00:00Z",
+      material: { title: "U", paragraphs: [], source: { kind: "library", lesson_id: null, material_version_no: null, note: "", material_id: 5 } },
+      settings: emptySettings(),
+      suggested: emptySettings(),
+      brief: emptyBrief(),
+      versions_count: 2,
+      saved_at: "2026-11-18T05:00:00Z",
+      content: { ...emptyWorksheetContent(), levels: ["standard"] },
+      jobs: [
+        {
+          id: 1,
+          worksheet_id: 11,
+          run_no: 2,
+          step: "tasks",
+          block_id: null,
+          status: "running",
+          outcome: null,
+          phase: "",
+          message: null,
+          interaction_id: null,
+          context: [],
+          started_at: "2026-11-18T06:00:00Z",
+          finished_at: null,
+        },
+      ],
+      running: true,
+      progress,
+      undoable: [],
+      sop_sync: { linked: false, changes: 0 },
+      prep_session_id: 7,
+    };
     mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: { ...session(wsTurn), running: false },
-      "GET /api/worksheets/11/jobs": {
-        running: true,
-        version_no: 2,
-        jobs: [],
-        progress: {
-          steps: [step("read", "讀教材", "done"), step("tasks", "寫逐段任務", "running"), step("pictures", "配圖", "pending")],
-          current: 1,
-          status: "running",
-        },
-      },
+      "GET /api/worksheets/11": regenerating,
+      "GET /api/worksheets/11/comments": [],
+      "GET /api/worksheets/11/proposals": [],
+      "GET /api/worksheets/11/jobs": { running: true, version_no: 2, jobs: [], progress },
     });
     renderApp("/prep/7");
     const region = await screen.findByRole("region", { name: "進度" });

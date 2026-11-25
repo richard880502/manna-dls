@@ -1,7 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Link } from "react-router";
 import type {
-  WorksheetContent,
   WsAudience,
   WsBlock,
   WsItem,
@@ -13,7 +11,6 @@ import type {
 import {
   ANSWER_FORMATS,
   AUDIENCE_LABEL,
-  AUTO_FIELD_LABEL,
   BLOCK_KIND_LABEL,
   INFO_FUNCTION_LABEL,
   LEVEL_LABEL,
@@ -23,7 +20,6 @@ import {
   POS_OPTIONS,
   STEPS_LEAD,
   TIERED_FORMATS,
-  bankNeedsFill,
   buildSupport,
   editedOrigin,
   isFromManna,
@@ -54,13 +50,14 @@ import {
   type BloomFilter,
 } from "../../lib/bloom";
 import { useConfirmFocus } from "../../lib/useConfirmFocus";
-import { NOTES_HINT, holdsBlock, type SheetSelection } from "../../lib/blockRevise";
+import { holdsBlock, type SheetSelection } from "../../lib/blockRevise";
+import { editorBlockText } from "../../lib/blockText";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
+import { MenuItem, SectionTools, menuButtonOf } from "../prep/SectionTools";
 import { BloomDistribution, BloomSelect } from "./Bloom";
 import { ChoicesArea, WritingArea, promptPlaceholder } from "./ItemAnswer";
 import { BlockHistoryButton } from "./BlockHistory";
-import { VersionHistoryButton } from "./VersionHistory";
 import { SheetText } from "./SheetText";
 import { KeyVocabulary } from "./KeyVocabulary";
 import { WordBankEditor } from "./WordBankEditor";
@@ -72,7 +69,6 @@ import {
   useBlockRevise,
   type BlockRevise,
 } from "./BlockRevise";
-import { ExportMenu } from "./ExportMenu";
 import { LessonLinkControls } from "./LessonLink";
 import { OrganizerEditor } from "./Organizer";
 import { printedOrganizer } from "../../lib/organizer";
@@ -319,6 +315,22 @@ interface BlockProps {
   /** A 差異化學習單: a question added here gets its part in every version. */
   tiered: boolean;
   supportMemory: SupportMemory;
+  /** The AI call that made this block, for 有幫助／不合用 (null: nothing to rate). */
+  interactionOf: (block: WsBlock) => number | null;
+  /** This block's 1-based place on the printed sheet: which part of a shared AI call a rating is about. */
+  ratingNo: number;
+  /** Manna changed this block a moment ago. */
+  changed: boolean;
+  /** 改這一區 asks the page's bottom bar (the prep conversation) instead of opening a form here. */
+  blockTarget?: BlockTarget;
+  targeted: boolean;
+  flash: (ids: string[]) => void;
+}
+
+/** The prep page's bottom bar revises one block of this worksheet: 改這一區 points it at the block. */
+export interface BlockTarget {
+  blockId: string | null;
+  onTarget: (blockId: string, region: string) => void;
 }
 
 /** One block's 字詞表: in its block, or (字詞表放在學習單最後) after the last block. */
@@ -484,6 +496,12 @@ function BlockSection({
   revise,
   tiered,
   supportMemory,
+  interactionOf,
+  ratingNo,
+  changed,
+  blockTarget,
+  targeted,
+  flash,
 }: BlockProps) {
   const { block, label } = view;
   // While Manna revises this block, or its proposal waits for 採用／放棄, the block stays as it is.
@@ -506,7 +524,12 @@ function BlockSection({
   const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
   const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const { triggerRef: deleteTriggerRef, safeRef: deleteSafeRef } = useConfirmFocus(confirmDelete);
+  const toolsRef = useRef<HTMLDivElement>(null);
+  // Closing the question goes back to this block's 「更多…」 (the 刪除 item that asked is in its menu).
+  const { safeRef: deleteSafeRef } = useConfirmFocus(
+    confirmDelete,
+    () => toolsRef.current?.querySelector<HTMLElement>("[aria-controls]") ?? null,
+  );
   const [over, setOver] = useState(false);
   const levels = ws.state?.content.levels ?? [];
   const teacher = audience === "teacher";
@@ -517,6 +540,8 @@ function BlockSection({
   const canReveal = !teacher && hasAnswers;
   const showAnswers = teacher || (revealed && hasAnswers);
   const name = label || BLOCK_KIND_LABEL[block.kind];
+  /** How the bottom bar names it: 「B 區」 (the exit ticket has no letter). */
+  const region = label ? `${label} 區` : BLOCK_KIND_LABEL[block.kind];
   const undoable = ws.state?.undoable.includes(block.id) ?? false;
   const toggleName = block.kind === "warmup" ? "暖身" : block.kind === "exit_ticket" ? "Exit ticket" : null;
 
@@ -550,7 +575,9 @@ function BlockSection({
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- drop target for the drag handle; 上移／下移 are the keyboard way
     <section
-      className={`ws-block${isFromManna(block.origin) ? " is-manna" : ""}${over ? " is-drop" : ""}`}
+      id={`sheet-block-${block.id}`}
+      data-block={block.id}
+      className={`ws-block${isFromManna(block.origin) ? " is-manna" : ""}${over ? " is-drop" : ""}${changed ? " is-changed" : ""}${targeted ? " is-targeted" : ""}`}
       aria-label={`區塊 ${name}`}
       onDragOver={(e) => {
         if (dragging && dragging !== block.id) {
@@ -568,7 +595,7 @@ function BlockSection({
         setDragging(null);
       }}
     >
-      <div className="ws-tools" lang="zh-Hant">
+      <div className="ws-tools" lang="zh-Hant" ref={toolsRef}>
         <span
           className="ws-drag"
           draggable={!locked}
@@ -582,82 +609,76 @@ function BlockSection({
         >
           ⠿
         </span>
-        <button
-          type="button"
-          className="text-link is-plain"
-          disabled={locked || upTo === null}
-          onClick={() => upTo !== null && move(upTo)}
+        <SectionTools
+          name={`區塊 ${name}`}
+          text={editorBlockText(view)}
+          interactionId={interactionOf(block)}
+          ratingTarget={{ itemIndex: ratingNo }}
+          more={
+            <>
+              <MenuItem disabled={locked} onClick={() => void ws.regenerate(block.id)}>
+                重新產生
+              </MenuItem>
+              {ws.state && (
+                <BlockHistoryButton
+                  worksheetId={ws.state.id}
+                  blockId={block.id}
+                  label={`修改歷程（區塊 ${name}）`}
+                  className="popover-item"
+                  disabled={locked}
+                  focusAfter={menuButtonOf}
+                  beforeOpen={ws.flush}
+                  onAdopted={(done) => {
+                    ws.adopt(done.worksheet);
+                    flash([block.id]);
+                  }}
+                />
+              )}
+              {undoable && (
+                <MenuItem disabled={locked} onClick={() => void ws.undo(block.id)}>
+                  復原上一版
+                </MenuItem>
+              )}
+              <MenuItem disabled={locked || upTo === null} onClick={() => upTo !== null && move(upTo)}>
+                上移
+              </MenuItem>
+              <MenuItem disabled={locked || downTo === null} onClick={() => downTo !== null && move(downTo)}>
+                下移
+              </MenuItem>
+              {toggleName && (
+                <MenuItem disabled={locked} onClick={() => patch((b) => ({ ...b, enabled: false }), false)}>
+                  關掉{toggleName === "暖身" ? toggleName : ` ${toggleName}`}
+                </MenuItem>
+              )}
+              <MenuItem disabled={locked} onClick={() => setConfirmDelete(true)}>
+                刪除
+              </MenuItem>
+            </>
+          }
         >
-          上移
-        </button>
-        <button
-          type="button"
-          className="text-link is-plain"
-          disabled={locked || downTo === null}
-          onClick={() => downTo !== null && move(downTo)}
-        >
-          下移
-        </button>
-        <button
-          type="button"
-          className="text-link is-plain is-gold"
-          disabled={locked}
-          onClick={() => void ws.regenerate(block.id)}
-        >
-          重新產生
-        </button>
-        {undoable && (
           <button
             type="button"
-            className="text-link is-plain is-gold"
-            disabled={locked}
-            onClick={() => void ws.undo(block.id)}
+            className="decision-button"
+            aria-expanded={blockTarget ? undefined : reviseOpen}
+            aria-pressed={blockTarget ? targeted : undefined}
+            aria-label={`改這一區（區塊 ${name}）`}
+            disabled={locked || revise.running}
+            onClick={() => (blockTarget ? blockTarget.onTarget(block.id, region) : setReviseOpen((o) => !o))}
           >
-            復原上一版
+            改這一區
           </button>
-        )}
-        {ws.state && (
-          <BlockHistoryButton
-            worksheetId={ws.state.id}
-            blockId={block.id}
-            label={`修改歷程（區塊 ${name}）`}
-            className="text-link is-plain"
-            disabled={locked}
-            beforeOpen={ws.flush}
-            onAdopted={(done) => ws.adopt(done.worksheet)}
-          />
-        )}
-        <button
-          type="button"
-          className="text-link is-plain is-gold"
-          aria-expanded={reviseOpen}
-          aria-label={`改這一區（區塊 ${name}）`}
-          disabled={locked || revise.running}
-          onClick={() => setReviseOpen((o) => !o)}
-        >
-          改這一區
-        </button>
-        <button
-          type="button"
-          className="text-link is-plain"
-          aria-label={`加註記（區塊 ${name}）`}
-          disabled={editorLocked}
-          onClick={() => setDraft({ block_id: block.id, field: "block", quote: "" })}
-        >
-          加註記
-        </button>
-        <ReviseByNotesButton blockId={block.id} ctl={revise} disabled={locked} />
-        {toggleName && (
           <button
             type="button"
-            className="text-link is-plain"
-            disabled={locked}
-            onClick={() => patch((b) => ({ ...b, enabled: false }), false)}
+            className="decision-button"
+            aria-label={`加註記（區塊 ${name}）`}
+            disabled={editorLocked}
+            onClick={() => setDraft({ block_id: block.id, field: "block", quote: "" })}
           >
-            關掉{toggleName === "暖身" ? toggleName : ` ${toggleName}`}
+            加註記
           </button>
-        )}
-        {confirmDelete ? (
+          <ReviseByNotesButton blockId={block.id} ctl={revise} disabled={locked} />
+        </SectionTools>
+        {confirmDelete && (
           <span className="ws-confirm" role="group" aria-label="確認刪除">
             確定刪除這個區塊？
             <button
@@ -680,16 +701,6 @@ function BlockSection({
               不刪
             </button>
           </span>
-        ) : (
-          <button
-            type="button"
-            className="text-link is-plain"
-            ref={deleteTriggerRef}
-            disabled={locked}
-            onClick={() => setConfirmDelete(true)}
-          >
-            刪除
-          </button>
         )}
       </div>
 
@@ -1108,104 +1119,97 @@ function BlockSection({
   );
 }
 
-function ExportArea({ ws, level }: { ws: WorksheetController; level: WsLevel }) {
+/** The full page's file name for the exports (the menu itself is in the workspace's toolbar). */
+function ExportFilename({ ws, level }: { ws: WorksheetController; level: WsLevel }) {
   const code = versionCode(ws.state?.content.levels ?? [], level, ws.state?.content.student_order);
-  const ids = useId();
-  const [error, setError] = useState<string | null>(null);
+  const id = useId();
   const state = ws.state;
   if (!state) return null;
-
   return (
     <section className="ws-export" aria-label="匯出設定">
       {code && <p className="quiet-note">學生版印成「{studentVersionName(code)}」，不印程度名稱。</p>}
       <div className="ws-export-row">
-        <ExportMenu
-          worksheetId={state.id}
-          level={level}
-          levelLabel={(state.content.levels?.length ?? 0) > 1 ? LEVEL_LABEL[level] : null}
-          disabled={state.running}
-          beforeExport={() => ws.flush()}
-          onError={setError}
-          footnote="Word 可再編輯；參考答案只在教師版。"
-        />
-        <label className="ws-filename" htmlFor={`${ids}-fn`}>
+        <label className="ws-filename" htmlFor={`${id}-fn`}>
           檔名
-          <input id={`${ids}-fn`} type="text" value={state.filename} onChange={(e) => ws.setFilename(e.target.value)} />
+          <input id={`${id}-fn`} type="text" value={state.filename} onChange={(e) => ws.setFilename(e.target.value)} />
         </label>
       </div>
-      <ErrorText message={error} />
     </section>
   );
 }
 
-function chosenLine(content: WorksheetContent): string | null {
-  const chosen = content.chosen;
-  if (!chosen || chosen.auto.length === 0) return null;
-  const parts = chosen.auto.map((field) => {
-    const s = chosen.settings;
-    const values =
-      field === "levels"
-        ? s.levels.map((l) => LEVEL_LABEL[l])
-        : field === "minutes"
-          ? [`主要任務約 ${chosen.item_budget} 題`]
-          : s[field];
-    return `${AUTO_FIELD_LABEL[field]}：${values.length > 0 ? values.join("、") : "依教材判斷"}`;
-  });
-  return `這次由 Manna 決定：${parts.join("；")}。`;
-}
-
 interface ResultViewProps {
   ws: WorksheetController;
-  /** 調整設定 (back to the options). Without it the link is not drawn. */
-  onAdjust?: () => void;
+  /** The version (程度) and the audience shown; the workspace's toolbar and dialogs follow the same ones. */
+  level: WsLevel;
+  onLevel: (level: WsLevel) => void;
+  audience: WsAudience;
   /**
    * The editor sits beside the prep conversation (about half a screen): the tools that belong to
-   * the full page (export, linking the lesson, 調整設定, the long explanations) are left to it.
+   * the full page (the file name, linking the lesson) are left to it.
    */
   embedded?: boolean;
   /** Something else (a chat turn) is changing the worksheet: everything is read-only meanwhile. */
   frozen?: boolean;
+  /** The AI call that made a block (for 有幫助／不合用); without it nothing is rated. */
+  interactionOf?: (block: WsBlock) => number | null;
+  /** Blocks Manna changed in the last chat turn: lit up for a moment. */
+  highlight?: ReadonlySet<string>;
+  /** The prep conversation's bottom bar revises one block: 改這一區 points it at the block. */
+  blockTarget?: BlockTarget;
+  /** Changes when the bottom bar started a block revision (its proposal is read again). */
+  reviseReloadKey?: number;
 }
 
+const NO_BLOCKS: ReadonlySet<string> = new Set();
+const NO_INTERACTION = () => null;
+/** How long a block stays lit after Manna changed it (採用, a restored step). */
+const FLASH_MS = 4000;
+
 /**
- * The generated worksheet, edited in place: version tabs (only the selected ones), student or
- * teacher view, block tools, quiet saving. Answers exist in the page only in the teacher view.
+ * The generated worksheet, edited in place: the version tabs (when there are several), block tools,
+ * quiet saving. Answers exist in the page only in the teacher view. The toolbar above it (audience,
+ * display, export, history…) is the workspace's.
  */
-export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: ResultViewProps) {
+export function ResultView({
+  ws,
+  level,
+  onLevel,
+  audience,
+  embedded = false,
+  frozen = false,
+  interactionOf = NO_INTERACTION,
+  highlight = NO_BLOCKS,
+  blockTarget,
+  reviseReloadKey,
+}: ResultViewProps) {
   const state = ws.state;
   const levels = state?.content.levels ?? [];
-  const [level, setLevel] = useState<WsLevel>(levels[0] ?? "standard");
-  const [audience, setAudience] = useState<WsAudience>("student");
   const [dragging, setDragging] = useState<string | null>(null);
   const [bloomFilter, setBloomFilter] = useState<BloomFilter>(null);
-  const radioName = useId();
+  // Blocks lit by what happened here (採用, 修改歷程), on top of the page's `highlight`.
+  const [lit, setLit] = useState<ReadonlySet<string>>(NO_BLOCKS);
+  useEffect(() => {
+    if (lit.size === 0) return undefined;
+    const timer = setTimeout(() => setLit(NO_BLOCKS), FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [lit]);
+  const flash = (ids: string[]) => setLit(new Set(ids));
   // 逐區修改與註記: saved first; 採用 hands back the worksheet with the new version.
   const revise = useBlockRevise(state && !state.running ? state.id : null, {
     beforeAction: ws.flush,
-    onApplied: (done) => ws.adopt(done.worksheet),
+    reloadKey: reviseReloadKey,
+    onApplied: (done) => {
+      ws.adopt(done.worksheet);
+      flash([done.proposal.block_id]);
+    },
     versionNo: state?.version_no ?? null,
-    onUndone: (next) => ws.adopt(next),
+    onUndone: (next) => {
+      ws.adopt(next);
+      setLit(NO_BLOCKS);
+    },
   });
   const [supportMemory] = useState<SupportMemory>(() => new Map());
-  // Key Vocabulary in Chinese and the word banks' parts of speech: Manna writes what is missing
-  // (one call); what it could not write is said plainly and prints as it is.
-  const [fillNotice, setFillNotice] = useState<string | null>(null);
-  const [filling, setFilling] = useState(false);
-  const fill = async (scope: { tables?: boolean; banks?: boolean }) => {
-    setFilling(true);
-    setFillNotice(await ws.fillMeanings(scope));
-    setFilling(false);
-  };
-  const banksTried = useRef(false);
-  const banksMissing =
-    state !== null && !state.running && state.content.blocks.some((b) => b.scaffolds.some((s) => bankNeedsFill(s.bank)));
-  useEffect(() => {
-    // A worksheet made before the word banks had parts of speech: the first time it is open.
-    if (!banksMissing || banksTried.current) return;
-    banksTried.current = true;
-    void fill({ banks: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per opened worksheet
-  }, [banksMissing]);
 
   // The selected tab must be one of this worksheet's versions (they can change after a new run).
   const current: WsLevel = levels.includes(level) ? level : (levels[0] ?? "standard");
@@ -1215,8 +1219,6 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
   const locked = state.running || ws.busy || revise.busy || frozen;
   const sheet = projectSheet(content, current, audience);
   const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
-  const chosen = chosenLine(content);
-  const missingZh = content.blocks.some((b) => b.vocabulary.some((v) => !(v.meaning_zh ?? "").trim()));
   const needsCount = content.blocks.filter((b) => b.enabled && needsMaterial(b.message)).length;
   // The distribution of what this version prints. A filter on a level with nothing left is off.
   const bloomTally = tally(sheet.blocks.flatMap((b) => b.items.map(({ item }) => item)));
@@ -1245,111 +1247,28 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
       <SopSyncNotice ws={ws} />
 
       {/* One version only: no tab that says 「一般版」 for nothing. */}
-      {(levels.length > 1 || (onAdjust && !embedded)) && (
-      <div className="ws-tabs" {...(levels.length > 1 ? { role: "tablist", "aria-label": "版本" } : {})}>
-        {levels.length > 1 && levels.map((l) => (
-          <button
-            key={l}
-            type="button"
-            role="tab"
-            aria-selected={l === current}
-            className={l === current ? "is-current" : ""}
-            onClick={() => setLevel(l)}
-          >
-            {LEVEL_LABEL[l]}
-          </button>
-        ))}
-        {onAdjust && !embedded && (
-          <button type="button" className="text-link is-plain ws-adjust" onClick={onAdjust}>
-            調整設定
-          </button>
-        )}
-      </div>
-      )}
-
-      <div className="ws-tool-row">
-        <div className="ws-seg" role="radiogroup" aria-label="顯示版本">
-          {(["student", "teacher"] as const).map((a) => (
-            <label key={a}>
-              <input type="radio" name={radioName} checked={audience === a} onChange={() => setAudience(a)} />
-              <span>{AUDIENCE_LABEL[a]}</span>
-            </label>
+      {levels.length > 1 && (
+        <div className="ws-tabs" role="tablist" aria-label="版本">
+          {levels.map((l) => (
+            <button
+              key={l}
+              type="button"
+              role="tab"
+              aria-selected={l === current}
+              className={l === current ? "is-current" : ""}
+              onClick={() => onLevel(l)}
+            >
+              {LEVEL_LABEL[l]}
+            </button>
           ))}
         </div>
-        <label className="check-row ws-show-objectives">
-          <input
-            type="checkbox"
-            checked={content.show_objectives}
-            disabled={locked}
-            onChange={(e) => ws.setContent((c) => ({ ...c, show_objectives: e.target.checked }))}
-          />
-          <span>顯示學習目標</span>
-        </label>
-        <label className="check-row ws-vocab-at-end">
-          <input
-            type="checkbox"
-            checked={content.vocabulary_at_end === true}
-            disabled={locked}
-            onChange={(e) => ws.setContent((c) => ({ ...c, vocabulary_at_end: e.target.checked }))}
-          />
-          <span>字詞表放在學習單最後</span>
-        </label>
-        <label className="check-row ws-vocab-zh">
-          <input
-            type="checkbox"
-            checked={content.vocabulary_language === "zh"}
-            disabled={locked}
-            onChange={(e) => {
-              const zhOn = e.target.checked;
-              ws.setContent((c) => ({ ...c, vocabulary_language: zhOn ? "zh" : "en" }));
-              if (zhOn && missingZh) void fill({ tables: true });
-            }}
-          />
-          <span>字詞表的字義用中文</span>
-        </label>
-        {content.vocabulary_language === "zh" && missingZh && !filling && (
-          <button type="button" className="text-link is-plain" disabled={locked} onClick={() => void fill({ tables: true })}>
-            補上中文字義
-          </button>
-        )}
-        <Link className="text-link" to={`/worksheets/${state.id}/check`}>
-          詞彙級別檢查
-        </Link>
-        <VersionHistoryButton
-          worksheetId={state.id}
-          levels={levels}
-          blockedReason={locked ? "Manna 正在處理這份學習單，好了之後再看版本紀錄。" : null}
-          beforeOpen={ws.flush}
-          onRestored={(done) => ws.adopt(done.worksheet)}
-        />
-      </div>
-
-      {fillNotice && (
-        <p className="field-hint ws-fill-notice" role="status" lang="zh-Hant">
-          {fillNotice}
-        </p>
       )}
+
       <WorksheetRunProgress state={state} onCancelled={() => void ws.refresh()} />
-      {!state.running && <RunOutcome jobs={state.jobs} />}
+      {!state.running && <RunOutcome jobs={state.jobs} context={false} />}
       <ErrorText message={ws.actionError} />
 
-      {!embedded && (
-        <>
-          <p className="manna-label ws-draft-note">
-            <span className="star" aria-hidden="true" />
-            Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除，也可以按「改這一區」或加註記，請 Manna 只改那一區。
-            {audience === "teacher" ? "參考答案只在教師版。" : ""}
-          </p>
-          <p className="field-hint">{NOTES_HINT}</p>
-        </>
-      )}
       <LostNotes ctl={revise} />
-      {chosen && <p className="quiet-note ws-chosen">{chosen}</p>}
-      {content.chosen?.reasons.map((r) => (
-        <p key={r} className="quiet-note">
-          {r}
-        </p>
-      ))}
       {needsCount > 0 && (
         <p className="ws-needs-summary" role="note">
           有 {needsCount} 個區塊需要你提供素材（影片、錄音、圖片或另一篇文章）。Manna 不會自己編造，請在發給學生前補上。
@@ -1492,6 +1411,12 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
               revise={revise}
               tiered={tiered}
               supportMemory={supportMemory}
+              interactionOf={interactionOf}
+              ratingNo={sheet.blocks.indexOf(view) + 1}
+              changed={highlight.has(block.id) || lit.has(block.id)}
+              blockTarget={blockTarget}
+              targeted={blockTarget?.blockId === block.id}
+              flash={flash}
             />
           );
         })}
@@ -1525,7 +1450,7 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
         </p>
       </article>
 
-      {!embedded && <ExportArea ws={ws} level={current} />}
+      {!embedded && <ExportFilename ws={ws} level={current} />}
       {!embedded && <LessonLinkControls ws={ws} />}
     </div>
   );

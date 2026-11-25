@@ -1214,7 +1214,10 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/blocks/:block_id/restore-word-table` | `{}` | `WorksheetState`：恢復字詞表。老師按「刪除」（或請 Manna 拿掉每一列）時，各列留在區塊的 `vocabulary_removed`；這裡把它們放回 `vocabulary`，級別重新查詞彙表、指示用語重新由程式找出（不用記下來的值）。寫一個新版本（`cause = "edit"`，`source.action = "restore_word_table"`）、記 `worksheet_word_table_restored`。這一區現在有字詞表、或沒有刪掉的可以恢復 → 409；學習單正在產生 → 409 |
 | POST | `/api/worksheets/:id/vocabulary-meanings` | `{ "tables"?: bool, "banks"?: bool }` | `WorksheetState` 加上 `notice`（要告訴老師的話，沒有時 `null`）與 `filled`（這次從模型得到字義的字數）：補上 Key Vocabulary 缺的資料（見「Key Vocabulary」一節）。`tables`：字詞表裡沒有中文字義的字（老師把字義切到中文時）；`banks`：字詞表鷹架缺詞性或字義的字（先用詞彙表的詞性，其餘一次模型呼叫）。**沒有缺的就不呼叫模型、不寫新版本**；有缺的最多一次呼叫（`worksheet_vocab_gloss`，記在 `ai_interactions`），寫成新版本（`cause = "edit"`，`source.action = "fill_vocabulary_meanings"`）。AI 關閉、呼叫失敗或只寫出一部分時不報錯：沒有中文字義的字印英文字義、沒有詞性的字只印字，`notice` 用白話說明。學習單正在產生 → 409 |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
-| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
+| GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, source, created_at, snapshot: { id, name } \| null }>`，新到舊（`snapshot`＝老師給這一版取的快照名稱，見「快照」）；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
+| POST | `/api/worksheets/:id/snapshots` | `{ name?: string; base_version_no: number }` | `{ id, version_no, name, created_at }`：把**最新一版**標上快照名稱（版本本身不變、不寫新版本）。`name` 前後空白會去掉，沒給或空白就用預設「快照 11/25 17:30」（台北時間）；超過 60 字 → 400。409（中文原因）：`base_version_no` 不是最新（之後有新版本，網頁先存好編輯再送）、這一版已經有快照、學習單正在產生、備課對話正在修改這份學習單。別人的學習單 → 404。記 `worksheet_snapshot_saved` |
+| PATCH | `/api/worksheets/:id/snapshots/:snapshot_id` | `{ name: string }` | 改名，回 `{ id, version_no, name, created_at }`。空白或超過 60 字 → 400；別人的學習單／沒有這個快照 → 404。記 `worksheet_snapshot_renamed` |
+| DELETE | `/api/worksheets/:id/snapshots/:snapshot_id` | – | `{ ok: true }`：只拿掉名稱，**版本不刪**（版本只新增）。別人的學習單／沒有這個快照 → 404。記 `worksheet_snapshot_removed` |
 | GET | `/api/worksheets/:id/versions/:version_no/sheet?level&audience` | – | `Sheet`：那一版的學習單，形狀與 `GET /api/worksheets/:id/sheet` 相同；圖片是那一版當時用的圖（`worksheet_versions.pictures`；更早、沒有記錄的版本用現在的圖）。別人的學習單或沒有這一版 → 404；`level` 不在那一版裡 → 400 |
 | POST | `/api/worksheets/:id/versions/:version_no/restore` | `{ base_version_no }`（畫面上看到的最新版本） | `{ version_no, from_version_no, worksheet: WorksheetState }`：把整份學習單換成那一版的內容，**寫成新的一版**（`cause = "restore"`，舊版本都還在）。409（中文原因）：還原的就是最新版、內容與現在相同、`base_version_no` 不是最新（之後有新版本）、學習單正在產生、備課對話正在修改這份學習單。別人的學習單／沒有這一版 → 404 |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
@@ -4079,6 +4082,13 @@ interface WsTemplateDetail { /* …既有欄位… */
 `usage_logs` 新事件：`community_share`、`community_unshare`、`community_view`、`community_save`、`community_unsave`、
 `community_remix`（只記編號與固定標籤，欄位見 COMMUNITY.md）。
 
+
+## 快照
+
+`worksheet_snapshots (id, worksheet_id, version_no, name, created_at)`，每個版本最多一個（`UNIQUE (worksheet_id, version_no)`），學習單刪除時一起刪（migration 0058）。快照只是版本上的名稱：自動儲存每次都寫一版，老師把「現在這一版」取個名字，之後在版本紀錄找得回來。端點見上方 `…/snapshots`。
+
+- 研究紀錄：`worksheet_snapshot_saved`／`_renamed`／`_removed`，內容只有 `{ worksheet_id, version_no, named: boolean }`（`named`：存的時候老師有自己取名；不記名稱文字）。
+- 網頁：版本紀錄的每一版顯示快照名稱、可「只看快照」、可改名或移除快照；連續、沒有快照的「手動編輯」收合成一組。
 
 ## 版本紀錄與還原整份學習單
 

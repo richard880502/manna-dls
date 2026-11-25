@@ -23,6 +23,7 @@ import { emptyContent } from "../lib/sop";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent, projectSheet } from "../lib/worksheet";
 import { baseRoutes, lessonDetail, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
+import { clickBlockMore, openBarPopover, openBlockMore } from "../test/menus";
 
 const WS = "/api/worksheets/5";
 const P1 = "Mrs. Lin put an umbrella stand outside her shop. A sign said, Take one if you need it.";
@@ -453,7 +454,8 @@ describe("result editor", () => {
     expect(blockRegion("A").getByText("程序鷹架 · 自動產生")).toBeInTheDocument();
     expect(blockRegion("A").getByText("第 2 級")).toBeInTheDocument();
     expect(blockRegion("A").getByText("級別未知")).toBeInTheDocument();
-    expect(screen.getByText(/這次由 Manna 決定：素材類型：閱讀文本；版本：基礎版、一般版。/)).toBeInTheDocument();
+    const info = await openBarPopover(userEvent.setup(), "關於這份學習單");
+    expect(info.getByText(/這次由 Manna 決定：素材類型：閱讀文本；版本：基礎版、一般版。/)).toBeInTheDocument();
   });
 
   it("a block a step left empty is shown in the editor but not lettered or printed", () => {
@@ -577,9 +579,9 @@ describe("result editor", () => {
     const title = await screen.findByRole("textbox", { name: "區塊標題 B" });
     await user.clear(title);
     await user.type(title, "Read and find");
-    expect(blockRegion("A").getByRole("button", { name: "上移" })).toBeDisabled();
+    expect((await openBlockMore(user, blockRegion("A"))).getByRole("button", { name: "上移" })).toBeDisabled();
 
-    await user.click(blockRegion("C").getByRole("button", { name: "上移" }));
+    await clickBlockMore(user, blockRegion("C"), "上移");
     await settle();
     const body = api.lastBody("PUT", WS) as SaveWorksheetRequest;
     expect(body.content?.blocks.map((b) => b.id)).toEqual(["warmup", "b2", "b1", "exit"]);
@@ -593,12 +595,12 @@ describe("result editor", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/5");
     await screen.findByRole("textbox", { name: "區塊標題 B" });
-    await user.click(screen.getByRole("button", { name: "調整設定" }));
+    await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "調整設定" }));
     // The form, with a way back at the top…
     await user.click(await screen.findByRole("button", { name: "← 回到學習單" }));
     expect(await screen.findByRole("textbox", { name: "區塊標題 B" })).toBeInTheDocument();
     // …and beside the generate button.
-    await user.click(screen.getByRole("button", { name: "調整設定" }));
+    await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "調整設定" }));
     await user.click(await screen.findByRole("button", { name: "不改了，回到學習單" }));
     expect(await screen.findByRole("textbox", { name: "區塊標題 B" })).toBeInTheDocument();
     // Nothing was generated on the way.
@@ -625,16 +627,16 @@ describe("result editor", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/5");
     await screen.findByRole("textbox", { name: "區塊標題 B" });
-    expect(blockRegion("B").queryByRole("button", { name: "復原上一版" })).not.toBeInTheDocument();
+    expect((await openBlockMore(user, blockRegion("B"))).queryByRole("button", { name: "復原上一版" })).not.toBeInTheDocument();
 
-    await user.click(blockRegion("B").getByRole("button", { name: "重新產生" }));
+    await clickBlockMore(user, blockRegion("B"), "重新產生");
     expect(await screen.findByDisplayValue("Paragraph 1: Find (new)")).toBeInTheDocument();
     expect(api.callsTo("POST", `${WS}/blocks/b1/regenerate`)).toHaveLength(1);
 
-    await user.click(blockRegion("B").getByRole("button", { name: "復原上一版" }));
+    await clickBlockMore(user, blockRegion("B"), "復原上一版");
     expect(await screen.findByDisplayValue("Paragraph 1: Find")).toBeInTheDocument();
     expect(api.callsTo("POST", `${WS}/blocks/b1/undo`)).toHaveLength(1);
-    expect(blockRegion("B").queryByRole("button", { name: "復原上一版" })).not.toBeInTheDocument();
+    expect((await openBlockMore(user, blockRegion("B"))).queryByRole("button", { name: "復原上一版" })).not.toBeInTheDocument();
   });
 
   it("turns the warm-up and the exit ticket off and on, and says so honestly when a block failed", async () => {
@@ -647,8 +649,8 @@ describe("result editor", () => {
     // A failed block can still be edited.
     expect(blockRegion("A").getByRole("textbox", { name: "區塊標題 A" })).toBeEnabled();
 
-    await user.click(blockRegion("Exit ticket").getByRole("button", { name: "關掉 Exit ticket" }));
-    await user.click(blockRegion("A").getByRole("button", { name: "關掉暖身" }));
+    await clickBlockMore(user, blockRegion("Exit ticket"), "關掉 Exit ticket");
+    await clickBlockMore(user, blockRegion("A"), "關掉暖身");
     await settle();
     let body = api.lastBody("PUT", WS) as SaveWorksheetRequest;
     expect(body.content?.blocks.map((b) => b.enabled)).toEqual([false, true, true, false]);

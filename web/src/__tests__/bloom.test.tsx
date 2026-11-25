@@ -40,6 +40,7 @@ import { prepConfig } from "../lib/prep";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
+import { openBarPopover } from "../test/menus";
 
 const WS = "/api/worksheets/5";
 
@@ -668,36 +669,35 @@ const sheetFor = (first: WsLevel) => (call: MockCall): WsSheet => {
 const pane = async () => within(await screen.findByRole("complementary", { name: "目前的學習單" }));
 
 describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () => {
-  it("a 閱讀理解題 turn is a worksheet card; the teacher version shows Bloom tags and every card a read-only bar", async () => {
-    const api = mockApi({
+  it("a 閱讀理解題 turn opens in the workspace; the teacher version shows Bloom tags, the bar shows the distribution", async () => {
+    mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: session([turn("comprehension", { request: "閱讀理解題" })]),
       "GET /api/worksheets/11": prepWorksheet(["standard"]),
-      "GET /api/worksheets/11/sheet": sheetFor("standard"),
+      "GET /api/worksheets/11/comments": [],
+      "GET /api/worksheets/11/proposals": [],
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
     const result = await pane();
     const preview = await result.findByRole("article", { name: /學生版/ });
-    expect(within(preview).getByText("Why did the neighbors laugh?")).toBeInTheDocument();
-    // The student version has no tags.
-    expect(preview.querySelector(".bloom-chip")).toBeNull();
-    expect(result.getByRole("link", { name: "在完整編輯頁開啟" })).toHaveAttribute("href", "/worksheets/11");
+    expect(within(preview).getByDisplayValue("Why did the neighbors laugh?")).toBeInTheDocument();
+    expect((await openBarPopover(user, "更多…")).getByRole("link", { name: "在完整編輯頁開啟" })).toHaveAttribute(
+      "href",
+      "/worksheets/11",
+    );
 
-    // The read-only distribution of the version shown (no buttons).
-    const bar = await result.findByRole("img", { name: /Bloom 層次分布（一般版）/ });
-    expect(bar).toHaveAccessibleName("Bloom 層次分布（一般版）：記憶 1、理解 1、分析 1、未標 1");
-    expect(within(result.getByRole("group", { name: "Bloom 層次分布（一般版）" })).queryByRole("button")).toBeNull();
+    // The distribution of the version shown, with a button for each level.
+    expect(await result.findByRole("button", { name: "只看分析（1 題）" })).toBeInTheDocument();
 
     await user.click(result.getByRole("radio", { name: "教師版" }));
     const teacher = await result.findByRole("article", { name: /教師版/ });
-    const blockB = within(teacher).getByRole("region", { name: "區塊 B 活動" });
-    expect(within(blockB).getByText("分析")).toHaveAttribute("title", "Bloom：Analyze");
+    const blockB = within(teacher).getByRole("region", { name: "區塊 B" });
+    expect(within(blockB).getByRole("combobox", { name: "Bloom 層次 3" })).toHaveValue("analyze");
     expect(within(blockB).getByText("Bloom：分析 1")).toBeInTheDocument();
-    expect(api.callsTo("GET", "/api/worksheets/11/sheet").some((c) => c.url.includes("audience=teacher"))).toBe(true);
   });
 
-  it("a tiered turn made before the redesign has the three version tabs, and 基礎版 prints the hints", async () => {
+  it("a tiered turn made before the redesign has the three version tabs, and the hint says it prints in 基礎版", async () => {
     mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: session([turn("tiered", { request: "分層練習" })]),
@@ -707,12 +707,11 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     const user = userEvent.setup();
     renderApp("/prep/7");
     const result = await pane();
-    const tabs = within(await result.findByRole("tablist", { name: "版本程度" }));
+    const tabs = within(await result.findByRole("tablist", { name: "版本" }));
     expect(tabs.getAllByRole("tab").map((t) => t.textContent)).toEqual(["基礎版", "一般版", "進階版"]);
-    expect(await result.findByText("Hint: Hint for 1")).toBeInTheDocument();
+    expect(await result.findByRole("textbox", { name: "提示（只印在基礎版） 1" })).toBeInTheDocument();
     await user.click(tabs.getByRole("tab", { name: "進階版" }));
-    await result.findByRole("article", { name: "進階版 學生版" });
-    expect(result.queryByText("Hint: Hint for 1")).not.toBeInTheDocument();
+    expect(tabs.getByRole("tab", { name: "進階版" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("a 教學套件 turn: the plan with Bloom chips on its steps, the worksheet card, and one DOCX download", async () => {
@@ -757,7 +756,7 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     ).toEqual(["Bloom 層次：記憶", "Bloom 層次：理解"]);
     expect(within(result).queryByRole("group", { name: "「說說看」的 Bloom 層次" })).toBeNull();
     // The worksheet beside it.
-    expect(await (await pane()).findByRole("tablist", { name: "版本程度" })).toBeInTheDocument();
+    expect(await (await pane()).findByRole("tablist", { name: "版本" })).toBeInTheDocument();
 
     await user.click(within(result).getByRole("button", { name: "下載教學套件 (DOCX)" }));
     await waitFor(() => expect(clicked).toEqual(["教學套件.docx"]));

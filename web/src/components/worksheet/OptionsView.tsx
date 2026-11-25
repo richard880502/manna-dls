@@ -135,9 +135,10 @@ export function jobStateText(job: WsJob): string {
 }
 
 /** After a run: the steps that did not make it, said plainly. Nothing here blocks editing. */
-export function RunOutcome({ jobs }: { jobs: WsJob[] }) {
+export function RunOutcome({ jobs, context: withContext = true }: { jobs: WsJob[]; context?: boolean }) {
   const failed = jobs.filter((j) => j.status === "done" && j.outcome !== "shown" && j.outcome !== "skipped");
-  const context = jobs.find((j) => j.context.length > 0)?.context ?? [];
+  // 「Manna 已帶入的資訊」: the workspace keeps it in its ⓘ (`context={false}`).
+  const context = withContext ? (jobs.find((j) => j.context.length > 0)?.context ?? []) : [];
   if (failed.length === 0 && context.length === 0) return null;
   return (
     <div className="ws-run-outcome">

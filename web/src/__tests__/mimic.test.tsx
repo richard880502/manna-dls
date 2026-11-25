@@ -958,7 +958,7 @@ describe("the session page with the teacher's worksheet", () => {
     const line = await screen.findByText((_, el) => el?.classList.contains("prep-ws-template") ?? false);
     expect(line).toHaveTextContent("照「期中學習單」的樣式");
     expect(within(line).getByRole("link", { name: "期中學習單" })).toHaveAttribute("href", "/templates/12");
-    expect(await screen.findByText("Why did Mrs. Lin start the stand?")).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "學習單標題" })).toHaveValue("The Umbrella Stand");
   });
 
   it("a worksheet without a template says nothing about a style", async () => {
@@ -971,7 +971,7 @@ describe("the session page with the teacher's worksheet", () => {
       "GET /api/worksheets/11/sheet": sheet,
     });
     renderApp("/prep/7");
-    expect(await screen.findByText("Why did Mrs. Lin start the stand?")).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "學習單標題" })).toBeInTheDocument();
     expect(screen.queryByText(/的樣式$/)).not.toBeInTheDocument();
     expect(document.querySelector(".prep-ws-template")).toBeNull();
   });

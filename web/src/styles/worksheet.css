@@ -295,12 +295,6 @@
   font-weight: var(--weight-strong);
 }
 
-.ws-adjust {
-  margin-left: auto;
-  padding-bottom: var(--space-xs);
-  font-size: var(--text-sm);
-}
-
 .ws-tool-row {
   display: flex;
   flex-wrap: wrap;
@@ -347,10 +341,6 @@
 .ws-seg input:focus-visible + span {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
-}
-
-.ws-show-objectives {
-  margin: 0;
 }
 
 .ws-draft-note {
@@ -792,6 +782,14 @@
 
 @container (max-width: 40rem) {
   .ws-keyvocab-cols.is-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The editor's tables carry a POS select and a 級別 column: two side by side need more room, or
+ * words break mid-way (「importan / t」). */
+@container (max-width: 56rem) {
+  .ws-result .ws-keyvocab-cols.is-two {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1848,6 +1846,51 @@ button.bloom-seg:focus-visible {
   font-size: var(--text-xs);
 }
 
+.ws-history-side {
+  display: grid;
+  align-content: start;
+  gap: var(--space-xs);
+}
+
+.ws-history-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--text-sm);
+}
+
+.ws-history-snap {
+  display: block;
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+}
+
+.ws-history-group {
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) dashed var(--color-manna-rule);
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-history-sublist {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: var(--space-2xs) 0 0 var(--space-sm);
+  padding: 0;
+  list-style: none;
+}
+
+.ws-history-snapshot {
+  margin-bottom: var(--space-sm);
+}
+
 .ws-history-preview {
   min-width: 0;
   max-height: 60vh;
@@ -1925,24 +1968,8 @@ button.bloom-seg:focus-visible {
   background: var(--color-warn-wash);
 }
 
-.prep-sheet-block.is-targeted {
-  box-shadow: inset 3px 0 0 var(--color-accent);
-}
-
 .prep-sheet-wrap {
   position: relative;
-}
-
-/* 「加註記」 floats just under the selected text (placed by the card). */
-.prep-sheet-wrap .anno-bar.is-floating {
-  position: absolute;
-  bottom: auto;
-  max-width: min(28rem, 100%);
-  margin: 0;
-}
-
-.prep-sheet-hint {
-  margin-top: var(--space-xs);
 }
 
 .prep-target {

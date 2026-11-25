@@ -20,7 +20,7 @@ import { prepConfig } from "../lib/prep";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent, versionCode } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
-
+import { openBarPopover } from "../test/menus";
 const WS = "/api/worksheets/5";
 const LEVEL_NAMES = ["基礎", "一般版", "進階"];
 
@@ -206,7 +206,7 @@ describe("差異化學習單: neutral codes and per-version support", () => {
     });
   });
 
-  it("the session page's student preview prints Version A／B／C and never a level name", async () => {
+  it("the print preview of the session page prints Version A／B／C and never a level name", async () => {
     const t: PrepTurn = {
       id: 401,
       seq: 1,
@@ -291,23 +291,28 @@ describe("差異化學習單: neutral codes and per-version support", () => {
     const user = userEvent.setup();
     renderApp("/prep/7");
     const result = within(await screen.findByRole("complementary", { name: "目前的學習單" }));
-    const a = await result.findByRole("article", { name: "A 版 學生版" });
+    // The editor beside the conversation names the version by its neutral code too.
+    await result.findByRole("article", { name: "A 版 學生版" });
+    // The print preview is the server's projection: what the exports print.
+    await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "列印樣式預覽" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "列印樣式預覽" }));
+    const a = await dialog.findByRole("article", { name: "A 版 學生版" });
     expect(within(a).getByText("Version A")).toBeInTheDocument();
     expect(within(a).getByText("Sentence frame:")).toBeInTheDocument();
     expect(within(a).getByText("gone / umbrellas")).toBeInTheDocument();
     for (const name of LEVEL_NAMES) expect(a.textContent).not.toContain(name);
     expect(a.textContent).not.toContain("片語即可給分");
 
-    const tabs = within(result.getByRole("tablist", { name: "版本程度" }));
+    const tabs = within(dialog.getByRole("tablist", { name: "版本程度" }));
     await user.click(tabs.getByRole("tab", { name: "一般版" }));
-    const b = await result.findByRole("article", { name: "B 版 學生版" });
+    const b = await dialog.findByRole("article", { name: "B 版 學生版" });
     expect(within(b).getByText("Version B")).toBeInTheDocument();
     expect(within(b).getByText("The neighbors thought that …")).toBeInTheDocument();
     for (const name of LEVEL_NAMES) expect(b.textContent).not.toContain(name);
 
     // The teacher keeps the level name, this version's answer and scoring note, and the 分層說明.
-    await user.click(result.getByRole("radio", { name: "教師版" }));
-    const teacher = await result.findByRole("article", { name: "一般版 教師版" });
+    await user.click(dialog.getByRole("radio", { name: "教師版" }));
+    const teacher = await dialog.findByRole("article", { name: "一般版 教師版" });
     expect(within(teacher).getByText("一個完整句")).toBeInTheDocument();
     expect(within(teacher).getByText(/^差異化學習單：三個版本/)).toBeInTheDocument();
   });

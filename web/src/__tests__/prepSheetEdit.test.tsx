@@ -1,28 +1,29 @@
-// 備課頁左邊的「預覽｜編輯」：同一個編輯器放進學習單窗格，對話在右邊不離開。
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+// 備課頁左邊永遠是可以直接改的學習單工作區（工具列、編輯器、彈出式功能），對話在右邊不離開。
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PrepSession, PrepTurn, SaveWorksheetRequest, WorksheetState, WsAudience, WsBlock, WsItem, WsSheet } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
+import { autosaveConfig } from "../lib/useAutosave";
 import { prepConfig } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
+import { openBarPopover } from "../test/menus";
 
 const S7 = "/api/prep-sessions/7";
 const WS = "/api/worksheets/11";
-const MODE_KEY = "manna.prepSheetMode";
 
 beforeEach(() => {
   signIn();
-  window.localStorage.removeItem(MODE_KEY);
   prepConfig.pollMs = 20;
   worksheetConfig.pollMs = 20;
 });
 afterEach(() => {
   prepConfig.pollMs = 2000;
   worksheetConfig.pollMs = 2000;
-  window.localStorage.removeItem(MODE_KEY);
+  autosaveConfig.delayMs = 1500;
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const item = (id: string, prompt: string): WsItem => ({
@@ -105,7 +106,7 @@ const sheet = (audience: WsAudience): WsSheet => ({
   ],
 });
 
-const chatTurn = (status: PrepTurn["status"]): PrepTurn => ({
+const chatTurn = (status: PrepTurn["status"], result: PrepTurn["result"] = null): PrepTurn => ({
   id: 202,
   seq: 2,
   kind: "chat",
@@ -113,7 +114,7 @@ const chatTurn = (status: PrepTurn["status"]): PrepTurn => ({
   status,
   error: null,
   worksheet: null,
-  result: null,
+  result,
   interaction_id: null,
   created_at: "2026-11-25T08:00:00Z",
   finished_at: null,
@@ -172,55 +173,46 @@ const routes = (extra: Record<string, unknown> = {}) => ({
 
 const PROMPT = "Why did she start it?";
 const editorBox = () => screen.findByRole("textbox", { name: "題目 1" });
-const modeRadio = (name: string) => screen.findByRole("radio", { name });
 
-describe("預覽｜編輯 in the worksheet pane", () => {
-  it("starts in 預覽, switches to the editor, and remembers the choice", async () => {
-    mockApi(routes());
-    const user = userEvent.setup();
-    renderApp("/prep/7");
-    expect(await modeRadio("預覽")).toBeChecked();
-    expect(screen.queryByRole("textbox", { name: "題目 1" })).not.toBeInTheDocument();
-
-    await user.click(await modeRadio("編輯"));
-    expect(await editorBox()).toHaveValue(PROMPT);
-    expect(window.localStorage.getItem(MODE_KEY)).toBe("edit");
-    // The link to the full editor page stays, in the preview that remains underneath.
-    expect(screen.getByText("在完整編輯頁開啟", { selector: "a" })).toHaveAttribute("href", "/worksheets/11");
-  });
-
-  it("opens in 編輯 when that was the last choice, and 預覽 brings the preview back", async () => {
-    window.localStorage.setItem(MODE_KEY, "edit");
+describe("the worksheet pane of the 備課對話", () => {
+  it("is the editor from the start: no 預覽｜編輯, the toolbar's tools are all there", async () => {
     mockApi(routes());
     const user = userEvent.setup();
     renderApp("/prep/7");
     expect(await editorBox()).toHaveValue(PROMPT);
-    expect(await modeRadio("編輯")).toBeChecked();
-    await user.click(await modeRadio("預覽"));
-    await waitFor(() => expect(screen.queryByRole("textbox", { name: "題目 1" })).not.toBeInTheDocument());
-    expect(window.localStorage.getItem(MODE_KEY)).toBe("preview");
+    expect(screen.queryByRole("radio", { name: "預覽" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "編輯" })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "學生版" })).toBeChecked();
+    const bar = within(screen.getByRole("group", { name: "學習單工具列" }));
+    expect(bar.getByLabelText("版本")).toHaveTextContent("第 3 版");
+    for (const name of ["版本紀錄", "顯示", "詞彙檢查", "關於這份學習單", "更多…"]) {
+      expect(bar.getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(bar.getByRole("button", { name: /匯出/ })).toBeEnabled();
+    // 在完整編輯頁開啟 is in 更多…; 調整設定 only exists on the full page.
+    const more = await openBarPopover(user, "更多…");
+    expect(more.getByRole("link", { name: "在完整編輯頁開啟" })).toHaveAttribute("href", "/worksheets/11");
+    expect(more.queryByRole("button", { name: "調整設定" })).not.toBeInTheDocument();
+    expect(window.localStorage.getItem("manna.prepSheetMode")).toBeNull();
   });
 
-  it("saves what is typed like the editor page does, and saves before leaving 編輯", async () => {
+  it("saves what is typed, and says so in the toolbar", async () => {
+    autosaveConfig.delayMs = 20;
     const api = mockApi(routes());
-    const user = userEvent.setup();
     renderApp("/prep/7");
-    await user.click(await modeRadio("編輯"));
-    const box = await editorBox();
-    fireEvent.change(box, { target: { value: "Why did Mrs. Lin start it?" } });
-    // Leaving 編輯 saves first.
-    await user.click(await modeRadio("預覽"));
+    fireEvent.change(await editorBox(), { target: { value: "Why did Mrs. Lin start it?" } });
+    expect(await screen.findByText("尚未儲存")).toBeInTheDocument();
     await waitFor(() => expect(api.callsTo("PUT", WS)).toHaveLength(1));
     const body = api.lastBody("PUT", WS) as SaveWorksheetRequest;
     expect(body.base_version_no).toBe(3);
     expect(body.content?.blocks[0]?.items[0]?.prompt).toBe("Why did Mrs. Lin start it?");
+    expect(await screen.findByText(/^已自動儲存/)).toBeInTheDocument();
   });
 
   it("sending a message saves the pending edit first", async () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     renderApp("/prep/7");
-    await user.click(await modeRadio("編輯"));
     fireEvent.change(await editorBox(), { target: { value: "Edited by hand" } });
     expect(api.callsTo("PUT", WS)).toHaveLength(0);
 
@@ -232,7 +224,6 @@ describe("預覽｜編輯 in the worksheet pane", () => {
   });
 
   it("is read-only with a notice while a chat turn runs, then reads the new version", async () => {
-    window.localStorage.setItem(MODE_KEY, "edit");
     let phase: "running" | "done" = "running";
     mockApi(
       routes({
@@ -251,5 +242,101 @@ describe("預覽｜編輯 in the worksheet pane", () => {
     await waitFor(() => expect(screen.getByRole("textbox", { name: "題目 1" })).toHaveValue("Rewritten by Manna"));
     expect(screen.getByRole("textbox", { name: "題目 1" })).toBeEnabled();
     expect(screen.queryByText("Manna 正在改這份學習單，完成後就能繼續編輯。")).not.toBeInTheDocument();
+  });
+
+  it("lights up the blocks the last chat turn changed, and 「這一輪改了」 scrolls to the block", async () => {
+    const scrolled: Array<string | undefined> = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.id);
+    };
+    const changed = {
+      answer: "好。",
+      follow_ups: [],
+      changes: [{ target: "block", block_id: "b2", label: "A 區", summary: "改了" }],
+      not_applied: [],
+      version_no: 4,
+      undoable: true,
+      tool_calls: 1,
+    } as unknown as PrepTurn["result"];
+    let reads = 0;
+    mockApi(
+      routes({
+        [`GET ${S7}`]: () => (++reads < 3 ? session([chatTurn("running")]) : session([chatTurn("done", changed)])),
+        [`GET ${WS}`]: () => (reads < 3 ? worksheet(PROMPT) : worksheet(PROMPT, 4)),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await editorBox();
+    await waitFor(() => expect(document.getElementById("sheet-block-b2")).toHaveClass("is-changed"));
+    await waitFor(() => expect(scrolled).toContain("sheet-block-b2"));
+
+    scrolled.length = 0;
+    await user.click(await screen.findByRole("button", { name: "A 區" }));
+    await waitFor(() => expect(scrolled).toContain("sheet-block-b2"));
+  });
+
+  it("opens popovers that close with Escape and give focus back to their button", async () => {
+    mockApi(routes());
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await editorBox();
+    const button = screen.getByRole("button", { name: "顯示" });
+    await user.click(button);
+    const panel = within(screen.getByRole("group", { name: "顯示設定" }));
+    for (const name of ["顯示學習目標", "字詞表放在學習單最後", "字詞表的字義用中文"]) {
+      expect(panel.getByRole("checkbox", { name })).toBeInTheDocument();
+    }
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("group", { name: "顯示設定" })).not.toBeInTheDocument();
+    expect(button).toHaveFocus();
+
+    const info = screen.getByRole("button", { name: "關於這份學習單" });
+    await user.click(info);
+    expect(within(screen.getByRole("group", { name: "關於這份學習單" })).getByText(/Manna 產生的草稿/)).toBeInTheDocument();
+    // Moving on with Tab closes it too.
+    await user.tab();
+    await waitFor(() => expect(screen.queryByRole("group", { name: "關於這份學習單" })).not.toBeInTheDocument());
+  });
+
+  it("列印樣式預覽 shows the printed sheet read-only; closing returns focus to 更多…", async () => {
+    const api = mockApi(routes());
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await editorBox();
+    const more = screen.getByRole("button", { name: "更多…" });
+    await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "列印樣式預覽" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "列印樣式預覽" }));
+    const article = await dialog.findByRole("article", { name: /學生版/ });
+    expect(within(article).getByText("Why?")).toBeInTheDocument();
+    // Read-only: no block tools.
+    expect(dialog.queryByRole("button", { name: /^改這一區/ })).not.toBeInTheDocument();
+    expect(dialog.queryByRole("textbox")).not.toBeInTheDocument();
+
+    await user.click(dialog.getByRole("radio", { name: "教師版" }));
+    await dialog.findByRole("article", { name: /教師版/ });
+    expect(api.callsTo("GET", `${WS}/sheet`).some((c) => c.url.includes("audience=teacher"))).toBe(true);
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "列印樣式預覽" })).not.toBeInTheDocument());
+    expect(more).toHaveFocus();
+  });
+
+  it("詞彙檢查 opens the check in a dialog; closing returns focus and leaves the worksheet alone", async () => {
+    const api = mockApi(routes({ [`GET ${WS}/checks`]: [] }));
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await editorBox();
+    const button = screen.getByRole("button", { name: "詞彙檢查" });
+    await user.click(button);
+    const dialog = within(await screen.findByRole("dialog", { name: "詞彙級別檢查" }));
+    expect(await dialog.findByRole("button", { name: "分析" })).toBeInTheDocument();
+    expect(dialog.queryByRole("link", { name: "回學習單" })).not.toBeInTheDocument();
+    const reads = api.callsTo("GET", WS).length;
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "詞彙級別檢查" })).not.toBeInTheDocument());
+    expect(button).toHaveFocus();
+    // Nothing was changed by the check: the worksheet is not read again.
+    expect(api.callsTo("GET", WS)).toHaveLength(reads);
   });
 });

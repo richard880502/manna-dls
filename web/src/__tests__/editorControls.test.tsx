@@ -30,6 +30,7 @@ import {
   withAnswerFormat,
 } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
+import { clickBlockMore } from "../test/menus";
 
 const WS = "/api/worksheets/5";
 
@@ -537,7 +538,7 @@ describe("the other controls", { timeout: 20_000 }, () => {
     // Blocks B and C are shown (A has no 分析 question): C's 上移 puts it before B.
     expect(screen.queryByRole("region", { name: "區塊 A" })).not.toBeInTheDocument();
     const c = within(screen.getByRole("region", { name: "區塊 C" }));
-    await user.click(c.getByRole("button", { name: "上移" }));
+    await clickBlockMore(user, c, "上移");
     await settle();
     expect(srv.now().content.blocks.map((b) => b.id)).toEqual(["b1", "b3", "b2"]);
     expect(screen.getByRole("textbox", { name: "區塊標題 B" })).toHaveValue("Think Further");
