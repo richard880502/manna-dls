@@ -357,10 +357,11 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "prep_revise",
         name_zh: "對話修改整份學習單",
         group: G_REVISE,
-        description: "在「建立」的對話裡，老師用文字要求修改已產生的整份學習單時使用。",
+        description: "在「建立」的對話裡，老師用文字要求修改已產生的整份學習單時使用（可以改題目與「表格整理」的表格；看得到先前的對話，老師說「把剛才討論的放進來」時用）。",
         uses_user_template: true,
         vars: vars![
             auto("instruction", "老師的修改指示"),
+            opt("recent_turns", "先前的對話"),
             opt("worksheet_title", "學習單標題"),
             auto("blocks_json", "學習單目前的區塊"),
             req("picture_rules", "圖片的規則（沒開圖片時是「不要畫圖」）"),

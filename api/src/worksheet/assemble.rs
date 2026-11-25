@@ -3026,6 +3026,7 @@ mod item_ref_tests {
             auto: true,
             origin: Origin::Ai,
             heading: None,
+            bank: None,
         }
     }
 

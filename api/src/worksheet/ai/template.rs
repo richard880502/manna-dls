@@ -262,6 +262,7 @@ async fn section_call(
         item_count: r.section.item_count.clamp(1, 12) as usize,
         needs_external: r.section.needs_external_material,
         tables_asked: tables,
+        english_tables: false,
     };
     let mut schema = section_out_schema(ctx.item_count, (organizers, tables), &r.section.supports);
     let legacy = legacy_kind(r.section);

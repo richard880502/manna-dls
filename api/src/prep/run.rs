@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 
 use super::images;
 use super::store::{self, SessionRow, TurnRow};
+use super::RawChange;
 use super::{
     activity_schema, ask_schema, chip_label, clean_answer, clean_plan, clean_text, is_bare_label,
     is_worksheet_kind, output_of, revise_schema, warmup_ideas, ActivityPlan, Answer, CurriculumRef,
@@ -44,16 +45,18 @@ use crate::worksheet::ai::template::marked_passage;
 use crate::worksheet::ai::{self as ws_ai};
 use crate::worksheet::assemble::project;
 use crate::worksheet::bloom::Output;
-use crate::worksheet::checks::{evaluate_section, CleanSection, SectionCtx};
+use crate::worksheet::checks::{evaluate_section, CleanSection, CleanSectionItem, SectionCtx};
 use crate::worksheet::images::actions::{self, PictureAction};
 use crate::worksheet::material::SOURCE_LIBRARY;
 use crate::worksheet::store::{self as ws_store, Worksheet};
+use crate::worksheet::table::{self, RawTable};
 use crate::worksheet::template::extract as tpl_extract;
 use crate::worksheet::template::store as tpl_store;
-use crate::worksheet::template::RawSectionOut;
+use crate::worksheet::template::{RawOutItem, RawSectionOut};
 use crate::worksheet::{
-    Audience, Block, Content, Item, Level, Material, Origin, Settings, ANSWER_FORMATS, FMT_BLANK,
-    FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TRUE_FALSE, GEN_OBJECTIVES, MAX_ID_CHARS,
+    Audience, Block, Content, Item, ItemTable, Level, Material, Origin, Settings, ANSWER_FORMATS,
+    FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE, GEN_OBJECTIVES,
+    MAX_ID_CHARS,
 };
 use crate::AppState;
 
@@ -830,6 +833,46 @@ async fn turn_summary(db: &sqlx::PgPool, t: &TurnRow) -> AppResult<String> {
     Ok(clip_chars(text.trim(), 300))
 }
 
+/// The last three turns before `seq` as the model reads them (what the teacher asked and a line
+/// of what came back), as values for the trace and as text for the prompt. `prep_ask` and
+/// `prep_revise` send the same, so a result worked out in one can be used in the other.
+async fn recent_turns(
+    db: &sqlx::PgPool,
+    session_id: i64,
+    seq: i32,
+) -> AppResult<(Vec<Value>, String)> {
+    let earlier: Vec<TurnRow> = store::turns(db, session_id)
+        .await?
+        .into_iter()
+        .filter(|t| t.seq < seq)
+        .collect();
+    let mut recent = Vec::new();
+    for t in earlier.iter().rev().take(3).rev() {
+        recent.push(json!({
+            "kind": t.kind,
+            "request": clip_chars(&t.request, 300),
+            "summary": turn_summary(db, t).await?,
+        }));
+    }
+    let text = if recent.is_empty() {
+        "（這是這段對話的第一個問題）".to_string()
+    } else {
+        recent
+            .iter()
+            .map(|r| {
+                format!(
+                    "- {}｜教師：{}｜結果：{}",
+                    chip_label(r["kind"].as_str().unwrap_or_default()),
+                    r["request"].as_str().unwrap_or_default(),
+                    r["summary"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    Ok((recent, text))
+}
+
 async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     let db = &state.db;
     let session = &input.session;
@@ -847,35 +890,7 @@ async fn ask(state: &AppState, input: &TurnInput) -> AppResult<Outcome> {
     .await?;
     let items: Vec<CurriculumItem> = found.items.iter().map(|s| s.item.clone()).collect();
     let codes: Vec<String> = items.iter().map(|i| i.item_code.clone()).collect();
-    let earlier: Vec<TurnRow> = store::turns(db, session.id)
-        .await?
-        .into_iter()
-        .filter(|t| t.seq < input.turn.seq)
-        .collect();
-    let mut recent = Vec::new();
-    for t in earlier.iter().rev().take(3).rev() {
-        recent.push(json!({
-            "kind": t.kind,
-            "request": clip_chars(&t.request, 300),
-            "summary": turn_summary(db, t).await?,
-        }));
-    }
-    let recent_text = if recent.is_empty() {
-        "（這是這段對話的第一個問題）".to_string()
-    } else {
-        recent
-            .iter()
-            .map(|r| {
-                format!(
-                    "- {}｜教師：{}｜結果：{}",
-                    chip_label(r["kind"].as_str().unwrap_or_default()),
-                    r["request"].as_str().unwrap_or_default(),
-                    r["summary"].as_str().unwrap_or_default()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    let (recent, recent_text) = recent_turns(db, session.id, input.turn.seq).await?;
     let passage_text = match &m {
         Some(m) => format!(
             "{}（共 {} 段）\n\n{}",
@@ -997,6 +1012,57 @@ struct RevisePlan {
     pictures_off: bool,
 }
 
+/// One block change of a revision, checked like a template block: fixed answer-format labels,
+/// well-formed closed items, no answer in the stem, dictionary syllables, at most 12 items, and
+/// a 表格整理 item's table like a generated one (real English headings, row labels; a placeholder
+/// heading is repaired from the headings the question names, else the change fails). A 表格整理
+/// question copied back without a table keeps the one `block` has while the question is the same.
+/// `passage` is the material's text.
+/// Returns the cleaned change, or why it cannot be applied (one line per failed check; nothing is
+/// written anywhere).
+pub(crate) fn check_block_change(
+    change: &RawChange,
+    block: &Block,
+    passage: &str,
+) -> Result<CleanSection, Vec<String>> {
+    let ctx = SectionCtx {
+        passage,
+        item_count: CHANGE_ITEMS_MAX,
+        needs_external: false,
+        // A revision may write a 表格整理 table; students read English only.
+        tables_asked: true,
+        english_tables: true,
+    };
+    let mut items = change.items.clone();
+    for (k, it) in items.iter_mut().enumerate() {
+        keep_table_when_left_out(it, block.items.get(k));
+    }
+    let section = RawSectionOut {
+        title: change.title.clone(),
+        instructions: change.instructions.clone(),
+        scaffold: String::new(),
+        supports: Vec::new(),
+        items,
+    };
+    let e = evaluate_section(&section, &ctx);
+    match e.output {
+        Some(out) if !e.needs_repair() => Ok(out),
+        _ => {
+            let failed: Vec<String> = e
+                .results
+                .iter()
+                .filter(|r| !r.passed)
+                .map(|r| r.detail.clone().unwrap_or_else(|| r.name.to_string()))
+                .collect();
+            Err(if failed.is_empty() {
+                vec!["沒有通過檢查。".to_string()]
+            } else {
+                failed
+            })
+        }
+    }
+}
+
 /// Checks every change like a template block (fixed labels, well-formed closed items, no
 /// answer in the stem, dictionary syllables, at most 12 items), and the picture actions
 /// ([`actions::check`]; a dropped action is not a reason for a second call).
@@ -1039,12 +1105,6 @@ fn check_revision(
     }
     let mut problems = Vec::new();
     let mut seen = HashSet::new();
-    let ctx = SectionCtx {
-        passage,
-        item_count: CHANGE_ITEMS_MAX,
-        needs_external: false,
-        tables_asked: false,
-    };
     for change in raw.changes.iter().take(CHANGES_MAX) {
         let id = change.block_id.trim();
         if !seen.insert(id.to_string()) {
@@ -1059,34 +1119,13 @@ fn check_revision(
         };
         let label = labels.get(id).cloned().unwrap_or_default();
         let name = block_name(&label, &block.title);
-        let section = RawSectionOut {
-            title: change.title.clone(),
-            instructions: change.instructions.clone(),
-            scaffold: String::new(),
-            supports: Vec::new(),
-            items: change.items.clone(),
-        };
-        let e = evaluate_section(&section, &ctx);
-        match e.output {
-            Some(out) if !e.needs_repair() => plan.accepted.push(Accepted {
+        match check_block_change(change, block, passage) {
+            Ok(out) => plan.accepted.push(Accepted {
                 block_id: id.to_string(),
                 section: out,
             }),
-            _ => {
-                let failed: Vec<String> = e
-                    .results
-                    .iter()
-                    .filter(|r| !r.passed)
-                    .map(|r| r.detail.clone().unwrap_or_else(|| r.name.to_string()))
-                    .collect();
-                problems.push(format!(
-                    "{name}（block_id {id}）：{}",
-                    if failed.is_empty() {
-                        "沒有通過檢查。".to_string()
-                    } else {
-                        failed.join("；")
-                    }
-                ));
+            Err(reasons) => {
+                problems.push(format!("{name}（block_id {id}）：{}", reasons.join("；")));
                 plan.dropped.push(name);
             }
         }
@@ -1094,6 +1133,27 @@ fn check_revision(
     Checked {
         output: Some(plan),
         problems,
+    }
+}
+
+/// A 表格整理 question the model copies back without a table (it is only changing something
+/// else) keeps the table it has, as long as the question is the same and the table is fit to
+/// print. Otherwise the table is checked like a generated one: a new question names its own
+/// columns, or the model is asked for them.
+fn keep_table_when_left_out(it: &mut RawOutItem, old: Option<&Item>) {
+    if it.answer_format.trim() != FMT_TABLE || it.table.is_some() {
+        return;
+    }
+    let Some(old) = old.filter(|o| {
+        o.answer_format.as_deref() == Some(FMT_TABLE) && o.prompt.trim() == it.prompt.trim()
+    }) else {
+        return;
+    };
+    let Some(table) = old.table.as_ref() else {
+        return;
+    };
+    if table.columns.len() >= 2 && !table.columns.iter().any(|c| table::is_placeholder(c)) {
+        it.table = Some(RawTable::from(table));
     }
 }
 
@@ -1121,6 +1181,8 @@ fn blocks_for_model(
                     "prompt": i.prompt,
                     "options": i.options,
                     "answer": i.answer,
+                    // 表格整理: the headings and row labels (null for other formats).
+                    "table": i.table.as_ref().map(RawTable::from),
                 })).collect::<Vec<_>>(),
             })
         })
@@ -1153,6 +1215,23 @@ fn revised_levels(replaced: Option<&Item>, levels: &[Level]) -> Vec<Level> {
         levels.to_vec()
     } else {
         kept
+    }
+}
+
+/// The table of a revised question: the one the model wrote (a table it copied back unchanged
+/// stays as stored, with its row count); without one, the table of the question it replaces while
+/// the question is the same. Only a 表格整理 question has one.
+fn revised_table(replaced: Option<&Item>, it: &CleanSectionItem) -> Option<ItemTable> {
+    if it.answer_format != FMT_TABLE {
+        return None;
+    }
+    let old = replaced.and_then(|i| i.table.as_ref());
+    match &it.table {
+        Some(t) if old.is_some_and(|o| RawTable::from(o) == *t) => old.cloned(),
+        Some(t) => Some(t.to_item_table()),
+        None => replaced
+            .filter(|i| i.prompt.trim() == it.prompt.trim())
+            .and_then(|i| i.table.clone()),
     }
 }
 
@@ -1205,9 +1284,7 @@ fn revised_block(
                     .map(|i| i.tiers.clone())
                     .unwrap_or_default(),
                 // The same for the teacher's table: a new prompt names its own columns.
-                table: replaced
-                    .filter(|i| i.prompt.trim() == it.prompt.trim())
-                    .and_then(|i| i.table.clone()),
+                table: revised_table(replaced, it),
                 kept_options: Vec::new(),
                 // The revision's schema has no organizer: a question that stays 圖像組織 keeps
                 // the one it had.
@@ -1284,9 +1361,11 @@ async fn revise(
     let m = &ws.material;
     let text = m.text();
     let instruction = input.turn.request.trim().to_string();
+    let (recent, recent_text) = recent_turns(db, session.id, input.turn.seq).await?;
     let blocks_json = serde_json::to_string_pretty(&blocks).map_err(anyhow::Error::from)?;
     let vars: HashMap<&'static str, String> = HashMap::from([
         ("instruction", instruction.clone()),
+        ("recent_turns", recent_text),
         ("worksheet_title", ws.title.clone()),
         ("blocks_json", blocks_json),
         ("picture_rules", actions::rules(state).await?),
@@ -1318,10 +1397,12 @@ async fn revise(
         redact: vec![
             ("passage_numbered", "學習單教材"),
             ("blocks_json", "由教材衍生的內容"),
+            ("recent_turns", "先前的對話"),
         ],
         fake_context: json!({
             "task": KEY_REVISE,
             "instruction": instruction,
+            "recent": recent,
             "blocks": blocks,
         }),
         max_tokens: REVISE_MAX_TOKENS,
@@ -1624,7 +1705,6 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worksheet::template::RawOutItem;
     use crate::worksheet::Bloom;
 
     fn content() -> Content {
@@ -1695,6 +1775,97 @@ mod tests {
         assert_eq!(b.items[0].origin, Origin::Ai);
         assert!(!same_content(&c.blocks[0], &b));
         assert_eq!(item_id(&"x".repeat(40), 7, 2, 3), "v7b2i3");
+    }
+
+    fn table_change(prompt: &str, columns: &[&str], rows: &[&str]) -> RawChange {
+        RawChange {
+            block_id: "b1".into(),
+            title: String::new(),
+            instructions: "Compare.".into(),
+            items: vec![RawOutItem {
+                answer_format: FMT_TABLE.into(),
+                prompt: prompt.into(),
+                options: Vec::new(),
+                answer: "Answers vary.".into(),
+                bloom: None,
+                organizer: None,
+                table: Some(RawTable {
+                    columns: columns.iter().map(|c| c.to_string()).collect(),
+                    row_labels: rows.iter().map(|c| c.to_string()).collect(),
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_block_change_may_carry_a_checked_table() {
+        let c = content();
+        let block = &c.blocks[0];
+        let named = "Complete a T-chart with two columns: Reading One and Reading Two.";
+        let ok = check_block_change(
+            &table_change(
+                named,
+                &["Reading One", "Reading Two"],
+                &["Claim", "Evidence"],
+            ),
+            block,
+            "text",
+        )
+        .unwrap();
+        let t = ok.items[0].table.clone().unwrap();
+        assert_eq!(t.columns, ["Reading One", "Reading Two"]);
+        assert_eq!(t.row_labels, ["Claim", "Evidence"]);
+        let stored = revised_table(None, &ok.items[0]).unwrap();
+        assert_eq!((stored.rows, stored.row_labels.len()), (2, 2));
+        // 「Column 1」 over a question that names its columns: repaired.
+        let fixed = check_block_change(
+            &table_change(named, &["Column 1", "Column 2"], &["Claim"]),
+            block,
+            "text",
+        )
+        .unwrap();
+        assert_eq!(
+            fixed.items[0].table.as_ref().unwrap().columns,
+            ["Reading One", "Reading Two"]
+        );
+        // Placeholders and nothing to repair them from: refused with the reasons.
+        let bad = check_block_change(
+            &table_change("Complete the table.", &["Column 1", "Column 2"], &[]),
+            block,
+            "text",
+        );
+        assert!(!bad.unwrap_err().is_empty());
+        // Chinese headings are not for students.
+        assert!(check_block_change(
+            &table_change(named, &["優點", "Cons"], &["Claim"]),
+            block,
+            "text"
+        )
+        .is_err());
+        // A table on another format is dropped, not stored.
+        let mut other = table_change(named, &["A", "B"], &["Claim"]);
+        other.items[0].answer_format = FMT_SHORT.into();
+        let out = check_block_change(&other, block, "text").unwrap();
+        assert!(revised_table(None, &out.items[0]).is_none());
+    }
+
+    #[test]
+    fn a_table_copied_back_without_changes_is_kept_as_stored() {
+        let mut c = content();
+        let stored = ItemTable {
+            columns: vec!["Reading One".into(), "Reading Two".into()],
+            rows: 2,
+            row_labels: vec!["Claim".into(), "Evidence".into()],
+        };
+        let prompt = "Complete a T-chart with two columns: Reading One and Reading Two.";
+        c.blocks[0].items[0].answer_format = Some(FMT_TABLE.into());
+        c.blocks[0].items[0].prompt = prompt.into();
+        c.blocks[0].items[0].table = Some(stored.clone());
+        let mut change = table_change(prompt, &[], &[]);
+        change.items[0].table = None;
+        let out = check_block_change(&change, &c.blocks[0], "text").unwrap();
+        let b = revised_block(&c.blocks[0], &out, &[Level::Standard], 9, 1);
+        assert_eq!(b.items[0].table, Some(stored), "rows and headings stay");
     }
 
     #[test]

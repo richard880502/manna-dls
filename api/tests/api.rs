@@ -1303,8 +1303,9 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_block_revise v8, worksheet_tasks v10 and worksheet_warmup v2 since
         // 0053_block_intros.sql. sop_scaffolds v3, sop_warmup v3, worksheet_block_revise v9,
         // worksheet_scaffolds v4 and worksheet_warmup v3 since 0054_key_vocabulary.sql.
+        // prep_revise v5 since 0055_prep_apply_discussion.sql.
         vec![
-            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 4, 1, 1, 1, 2, 1, 4, 1, 3, 3, 2, 3, 9, 1, 6, 5, 2, 4, 10,
+            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 5, 1, 1, 1, 2, 1, 4, 1, 3, 3, 2, 3, 9, 1, 6, 5, 2, 4, 10,
             3, 2, 6, 4, 1, 1, 2
         ]
     );
