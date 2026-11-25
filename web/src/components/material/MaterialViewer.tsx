@@ -1,3 +1,4 @@
+import { Icon } from "../Icon";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { MaterialAnnotation, MaterialDetail, SopMaterial } from "../../api/types";
@@ -785,7 +786,8 @@ export function MaterialViewer({
     return (
       <aside className="material-pane is-collapsed" aria-label="教材">
         <button type="button" className="material-pane-open" aria-expanded={false} onClick={() => setCollapsed(false)}>
-          對照教材
+          <Icon name="library" />
+          <span className="rail-label">對照教材</span>
         </button>
       </aside>
     );

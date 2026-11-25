@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import {
   createContext,
   useCallback,
@@ -189,7 +190,10 @@ export function Dialog({
   }, [requestClose, keepEditing]);
 
   const large = size === "large";
-  return (
+  // Drawn on <body>: a dialog opened inside a sticky pane (the prep page's worksheet and
+  // conversation columns are each their own stacking context) would otherwise sit under the other
+  // pane whatever its z-index.
+  return createPortal(
     <div className={`scrim${large ? " has-large-dialog" : ""}`}>
       <div
         className={`dialog attach-dialog${large ? " is-large" : ""}${className ? ` ${className}` : ""}`}
@@ -221,6 +225,7 @@ export function Dialog({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

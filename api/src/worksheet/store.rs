@@ -347,6 +347,30 @@ pub async fn list_versions(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<V
     .await
 }
 
+/// One version of a worksheet with the pictures it showed (`{slot_id: worksheet_images.id}`;
+/// `None` for a version made before they were kept).
+pub async fn version_at(
+    db: impl sqlx::PgExecutor<'_>,
+    worksheet_id: i64,
+    version_no: i32,
+) -> AppResult<Option<(Version, Option<serde_json::Value>)>> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[sqlx(flatten)]
+        v: VersionRow,
+        pictures: Option<serde_json::Value>,
+    }
+    let row: Option<Row> = sqlx::query_as(&format!(
+        "SELECT {VERSION_COLS}, pictures FROM worksheet_versions
+          WHERE worksheet_id = $1 AND version_no = $2"
+    ))
+    .bind(worksheet_id)
+    .bind(version_no)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|r| (Version::from(r.v), r.pictures)))
+}
+
 pub(crate) async fn insert_version(
     tx: &mut Transaction<'_, Postgres>,
     worksheet_id: i64,

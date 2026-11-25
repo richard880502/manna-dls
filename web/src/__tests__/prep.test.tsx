@@ -764,7 +764,7 @@ describe("備課對話 (session page)", () => {
     await user.keyboard("{Escape}");
     expect(more).toHaveAttribute("aria-expanded", "false");
     expect(more).toHaveFocus();
-    expect(screen.getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
+    expect(screen.getByRole("link", { name: "在完整編輯頁開啟" })).toHaveAttribute("href", "/worksheets/11");
     expect(screen.queryByRole("link", { name: "開啟編輯器" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "詞彙檢查" })).toHaveAttribute("href", "/worksheets/11/check");
     // One 匯出 menu, not two look-alike links; the file is named in the menu, whichever version is shown.

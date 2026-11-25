@@ -158,6 +158,11 @@ export function RunOutcome({ jobs }: { jobs: WsJob[] }) {
 interface OptionsViewProps {
   ws: WorksheetController;
   onGenerated: () => void;
+  /**
+   * 回到學習單 without generating again (the worksheet already has blocks): at the top of the form
+   * and beside the generate button, so 調整設定 is never a dead end.
+   */
+  onBack?: () => void;
   /** 修改課文 / 只選要用的段落: the page's dialogs for the library material. */
   onEditText?: () => void;
   onPickParagraphs?: () => void;
@@ -167,7 +172,7 @@ interface OptionsViewProps {
  * The four option blocks of the spec (§5): all multi-select, all optional, labels verbatim. The
  * one filled button generates, whatever is or is not selected.
  */
-export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: OptionsViewProps) {
+export function OptionsView({ ws, onGenerated, onBack, onEditText, onPickParagraphs }: OptionsViewProps) {
   const ids = useId();
   const navigate = useNavigate();
   const [longSeen, setLongSeen] = useState(false);
@@ -262,6 +267,14 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
 
   return (
     <div className="ws-options" ref={topRef}>
+      {onBack && !running && (
+        <p className="ws-options-back">
+          <button type="button" className="secondary-button small-button" onClick={onBack}>
+            ← 回到學習單
+          </button>
+          <span className="quiet-note">不重新產生，學習單維持現在的樣子。</span>
+        </p>
+      )}
       {/* 進度 comes first, so it is the first thing seen once a run starts. */}
       {running && <WorksheetRunProgress state={state} onCancelled={() => void ws.refresh()} />}
       <section className="ws-opt" aria-labelledby={`${ids}-what`}>
@@ -606,6 +619,11 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
             不填也可以
           </span>
           <span className="ws-grow" />
+          {onBack && !running && (
+            <button type="button" className="ghost-button" onClick={onBack}>
+              不改了，回到學習單
+            </button>
+          )}
           <button type="button" className="primary-button big-button" disabled={ws.busy} onClick={() => void generate()}>
             {ws.busy ? "送出中…" : GENERATE_LABEL.worksheet}
           </button>
@@ -616,6 +634,11 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
             {planSummary(plan.counts)}
           </p>
           <span className="ws-grow" />
+          {onBack && !running && (
+            <button type="button" className="ghost-button" onClick={onBack}>
+              不改了，回到學習單
+            </button>
+          )}
           <button type="button" className="primary-button big-button" disabled={ws.busy} onClick={() => void generate()}>
             {ws.busy ? "送出中…" : GENERATE_LABEL[output]}
           </button>

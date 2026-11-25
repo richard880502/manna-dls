@@ -304,6 +304,7 @@ describe("a chat turn", () => {
     mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
     const user = userEvent.setup();
     renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: /對話設定/ }));
     await user.click(await screen.findByRole("button", { name: "刪除" }));
     expect(screen.getByRole("button", { name: "不刪" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "不刪" }));
@@ -687,5 +688,104 @@ describe("the divider between the worksheet and the conversation", () => {
     renderApp("/prep/7");
     await screen.findByRole("tablist", { name: "對話或學習單" });
     expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------- folding the conversation
+
+describe("folding the conversation and its header settings (wide layout)", () => {
+  const SPLIT = "manna.prepSplitSheetShare";
+  const FOLD = "manna.prepChatCollapsed";
+  const HEAD = "manna.prepHeadOpen";
+  const page = () => document.querySelector<HTMLElement>(".prep-session")!;
+  const wide = () => mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
+  const narrow = () =>
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+
+  it("收起對話 folds to a strip, moves focus to 展開對話 and back, and is remembered", async () => {
+    const user = userEvent.setup();
+    wide();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "收起對話" }));
+    const open = screen.getByRole("button", { name: "展開對話" });
+    expect(open).toHaveFocus();
+    expect(screen.queryByRole("region", { name: "對話" })).not.toBeInTheDocument(); // the pane is hidden
+    expect(page().style.gridTemplateColumns).toBe("minmax(0px, 1fr) 0px 2.75rem");
+    expect(window.localStorage.getItem(FOLD)).toBe("1");
+    await user.click(open);
+    expect(screen.getByRole("button", { name: "收起對話" })).toHaveFocus();
+    expect(window.localStorage.getItem(FOLD)).toBe("0");
+  });
+
+  it("starts folded when it was left folded, with no divider; expanding restores the share", async () => {
+    window.localStorage.setItem(FOLD, "1");
+    window.localStorage.setItem(SPLIT, "55");
+    const user = userEvent.setup();
+    wide();
+    renderApp("/prep/7");
+    await screen.findByRole("button", { name: "展開對話" });
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "展開對話" }));
+    expect(await screen.findByRole("separator", { name: "調整對話與學習單的寬度" })).toBeInTheDocument();
+    expect(page().style.gridTemplateColumns).toContain("minmax(0px, 55%)");
+    expect(window.localStorage.getItem(SPLIT)).toBe("55");
+  });
+
+  it("marks the strip 有新回覆 when a turn finishes while folded, and clears it on expanding", async () => {
+    window.localStorage.setItem(FOLD, "1");
+    const running = session([sheetTurn(101, "學習單一"), turn("chat", { status: "running", finished_at: null })]);
+    const done = session([sheetTurn(101, "學習單一"), turn("chat", { result: chat({}) })]);
+    let reads = 0;
+    mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: () => (++reads < 3 ? running : done) });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const open = await screen.findByRole("button", { name: "展開對話" });
+    expect(open).not.toHaveAccessibleName(/有新回覆/);
+    await waitFor(() => expect(screen.getByRole("button", { name: "展開對話有新回覆" })).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /展開對話/ }));
+    expect(screen.queryByRole("status", { name: "有新回覆" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the header settings in a 對話設定 disclosure that starts folded and is remembered", async () => {
+    const user = userEvent.setup();
+    wide();
+    renderApp("/prep/7");
+    const toggle = await screen.findByRole("button", { name: /對話設定/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent("教材：The Umbrella Stand");
+    expect(screen.queryByRole("button", { name: "刪除" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "改名" })).toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(window.localStorage.getItem(HEAD)).toBe("1");
+    const group = screen.getByRole("group", { name: "備課情境" });
+    expect(within(group).getByRole("button", { name: "The Umbrella Stand" })).toBeInTheDocument();
+    await user.click(within(group).getByRole("button", { name: "刪除" }));
+    expect(screen.getByRole("button", { name: "不刪" })).toHaveFocus();
+  });
+
+  it("opens the disclosure straight away when it was left open", async () => {
+    window.localStorage.setItem(HEAD, "1");
+    wide();
+    renderApp("/prep/7");
+    expect(await screen.findByRole("button", { name: "刪除" })).toBeInTheDocument();
+  });
+
+  it("has neither the fold control nor the disclosure in the narrow tab layout", async () => {
+    window.localStorage.setItem(FOLD, "1");
+    narrow();
+    wide();
+    renderApp("/prep/7");
+    await screen.findByRole("tablist", { name: "對話或學習單" });
+    expect(screen.queryByRole("button", { name: "收起對話" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展開對話" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /對話設定/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刪除" })).toBeInTheDocument();
+    expect(page().style.gridTemplateColumns).toBe("");
   });
 });

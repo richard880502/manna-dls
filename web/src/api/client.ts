@@ -133,6 +133,7 @@ import type {
   WsTemplateList,
   WsSheet,
   WsVersionRow,
+  WsVersionRestored,
   WsAudience,
   WorksheetComment,
   CreateWorksheetCommentRequest,
@@ -587,6 +588,14 @@ export const api = {
   removeWorksheetImage: (id: number, slotId: string) =>
     del<WorksheetImages>(`/worksheets/${id}/image-slots/${encodeURIComponent(slotId)}`),
   worksheetVersions: (id: number) => get<WsVersionRow[]>(`/worksheets/${id}/versions`),
+  /** 某一版的學習單（唯讀預覽用；圖片是當時的圖） */
+  worksheetVersionSheet: (id: number, versionNo: number, audience: WsAudience, level?: WsLevel) =>
+    get<WsSheet>(`/worksheets/${id}/versions/${versionNo}/sheet`, { level, audience }),
+  /** 還原成這一版（寫成新的一版）；base_version_no＝畫面上看到的最新版，不是的話 409 */
+  restoreWorksheetVersion: (id: number, versionNo: number, baseVersionNo: number) =>
+    post<WsVersionRestored>(`/worksheets/${id}/versions/${versionNo}/restore`, {
+      base_version_no: baseVersionNo,
+    }),
   exportWorksheet: (id: number, query: WsExportQuery) =>
     download(`/worksheets/${id}/export`, { ...query }, `worksheet.${query.format}`),
   /** 設定或拿掉版型；伺服器依版型重設 settings（拿掉時 settings 不動） */
