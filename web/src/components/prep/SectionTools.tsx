@@ -33,9 +33,10 @@ export function SectionTools({
   more?: ReactNode;
   /**
    * Which part of a shared AI call the rating is about. Sections of one worksheet step all rate the
-   * same call, so the position (1-based, in `item_index`) and a note say which section it was.
+   * same call, so `item_index` carries the section's 1-based position on the sheet when it was rated.
+   * (`reason_note` stays empty, so it is not mistaken for something the teacher wrote.)
    */
-  ratingTarget?: { itemIndex: number; note: string };
+  ratingTarget?: { itemIndex: number };
 }) {
   const ids = useId();
   const menu = usePopover();
@@ -58,7 +59,7 @@ export function SectionTools({
       await api.sendDecision(interactionId, {
         decision: "skip",
         thumbs: next,
-        ...(ratingTarget ? { item_index: ratingTarget.itemIndex, reason_note: ratingTarget.note } : {}),
+        ...(ratingTarget ? { item_index: ratingTarget.itemIndex } : {}),
       });
     } catch (err) {
       setThumbs(before);

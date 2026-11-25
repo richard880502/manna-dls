@@ -756,8 +756,7 @@ describe("備課對話 (session page)", () => {
       expect(api.lastBody("POST", "/api/ai/62/decision")).toEqual({
         decision: "skip",
         thumbs: "up",
-        item_index: expect.any(Number),
-        reason_note: expect.stringMatching(/^學習單區塊 /),
+        item_index: 2,
       }),
     );
     expect(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" })).toHaveAttribute("aria-pressed", "true");

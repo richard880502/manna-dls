@@ -423,7 +423,7 @@ export function SheetPreview({
                   text={sheetBlockText(b)}
                   interactionId={interactionFor(b)}
                   more={extra.more}
-                  ratingTarget={{ itemIndex: sheet.blocks.indexOf(b) + 1, note: `學習單區塊 ${b.id}` }}
+                  ratingTarget={{ itemIndex: sheet.blocks.indexOf(b) + 1 }}
                 >
                   {extra.tools}
                 </SectionTools>

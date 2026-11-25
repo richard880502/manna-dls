@@ -349,12 +349,12 @@ describe("備課對話: one block of the worksheet", () => {
     await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(1));
     expect(await prepBlock().findByText("Did the neighbors think the umbrellas would stay?")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Manna 的修改建議" })).not.toBeInTheDocument();
-    await user.click(prepBlock().getByRole("button", { name: /^更多/ }));
-    expect(prepBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
     // Right after 採用: the notice with 復原 under the block.
     expect(prepBlock().getByText("已採用 Manna 的修改。")).toBeInTheDocument();
     // The panel (and its 採用 button) is gone: focus is on the block's heading, not <body>.
     expect(document.activeElement).toHaveClass("ws-block-head");
+    await user.click(prepBlock().getByRole("button", { name: /^更多/ }));
+    expect(prepBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
     await user.click(prepBlock().getByRole("button", { name: "復原" }));
     await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/undo`)).toHaveLength(1));
     await waitFor(() => expect(prepBlock().queryByText("已採用 Manna 的修改。")).not.toBeInTheDocument());
