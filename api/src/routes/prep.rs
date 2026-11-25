@@ -24,7 +24,7 @@ use crate::prep::selfcheck::{self, SiopCheck};
 use crate::prep::store::{self, Session, SessionRow, Summary};
 use crate::prep::{
     chip_label, is_worksheet_kind, ActivityPlan, SessionOptions, AUTO_TITLE_CHARS, KINDS,
-    KIND_ACTIVITY, KIND_ASK, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
+    KIND_ACTIVITY, KIND_ASK, KIND_CHAT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
     MAX_REQUEST_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_RUNNING,
 };
 use crate::serde_support::double_option;
@@ -42,7 +42,9 @@ use crate::worksheet::template::store as tpl_store;
 use crate::worksheet::thumbnail as ws_thumbnail;
 use crate::AppState;
 
-const MSG_KIND: &str = "kind 需為 worksheet、assessment、comprehension、tiered、kit、activity、resources、ask 或 revise。";
+const MSG_KIND: &str =
+    "kind 需為 worksheet、assessment、comprehension、tiered、kit、activity、resources 或 chat。";
+const MSG_LEGACY_KIND: &str = "「直接問」和「修改學習單」已經合併成對話：請用 kind = chat。";
 const MSG_TURN_NOT_FOUND: &str = "找不到這一輪。";
 const MSG_NOT_KIT: &str = "這一輪不是教學套件，沒有教學套件可以下載。";
 const MSG_KIT_RUNNING: &str = "教學套件還在產生，好了之後再下載。";
@@ -71,12 +73,17 @@ pub async fn list(
     }))
 }
 
-fn check_kind(kind: &str) -> AppResult<()> {
-    if KINDS.contains(&kind) {
-        Ok(())
-    } else {
-        Err(AppError::bad_request(MSG_KIND))
+/// A kind the server makes turns of. `ask` and `revise` were replaced by `chat`: earlier turns
+/// still load, but no new ones are made (unless `PREP_LEGACY_TURNS` is on, which the tests of the
+/// old paths use).
+fn check_kind(state: &AppState, kind: &str) -> AppResult<()> {
+    if !KINDS.contains(&kind) {
+        return Err(AppError::bad_request(MSG_KIND));
     }
+    if matches!(kind, KIND_ASK | KIND_REVISE) && !state.config.prep_legacy_turns {
+        return Err(AppError::bad_request(MSG_LEGACY_KIND));
+    }
+    Ok(())
 }
 
 fn check_request(request: &str) -> AppResult<String> {
@@ -248,7 +255,7 @@ pub async fn create(
 ) -> AppResult<(StatusCode, Json<Session>)> {
     let db = &state.db;
     let kind = req.kind.trim();
-    check_kind(kind)?;
+    check_kind(&state, kind)?;
     if kind == KIND_REVISE {
         return Err(AppError::bad_request(
             "新的備課對話不能從「修改」開始；請先做學習單或設計評量。",
@@ -283,13 +290,13 @@ pub async fn create(
         .filter(|m| !m.text.trim().is_empty() || m.title.is_some());
     let has_material = req.material_id.is_some() || pasted.is_some();
     match kind {
-        KIND_ASK if request.is_empty() => {
+        KIND_ASK | KIND_CHAT if request.is_empty() => {
             return Err(AppError::bad_request("請寫下你想問 Manna 的問題。"))
         }
         KIND_RESOURCES if !has_material && topic.is_none() => {
             return Err(AppError::bad_request(MSG_NEEDS_MATERIAL_OR_TOPIC))
         }
-        KIND_ASK | KIND_RESOURCES => {}
+        KIND_ASK | KIND_CHAT | KIND_RESOURCES => {}
         _ if !has_material => return Err(AppError::bad_request(MSG_NEEDS_MATERIAL)),
         _ => {}
     }
@@ -708,6 +715,10 @@ pub struct CreateTurn {
     /// (at most 2; only a revise takes them).
     #[serde(default)]
     pub image_ids: Vec<i64>,
+    /// `chat`: the worksheet the turn works on, when it is not the session's latest one. A
+    /// worksheet of another session or teacher is a 404.
+    #[serde(default)]
+    pub worksheet_id: Option<i64>,
 }
 
 pub async fn create_turn(
@@ -723,17 +734,19 @@ pub async fn create_turn(
     let turns = store::turns(db, id).await?;
     let kind = match req.kind.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         Some(k) => {
-            check_kind(k)?;
+            check_kind(&state, k)?;
             k.to_string()
         }
         // The bottom bar: a revision once there is a worksheet, otherwise a question.
-        None if store::has_worksheet_turn(&turns) => KIND_REVISE.to_string(),
-        None => KIND_ASK.to_string(),
+        None => KIND_CHAT.to_string(),
     };
     let kind = kind.as_str();
     // Pictures go with a revision only (the other turns do not read them).
-    if !req.image_ids.is_empty() && kind != KIND_REVISE {
-        return Err(AppError::bad_request("只有修改學習單的訊息可以附上圖片。"));
+    if !req.image_ids.is_empty() && kind != KIND_REVISE && kind != KIND_CHAT {
+        return Err(AppError::bad_request("只有對話的訊息可以附上圖片。"));
+    }
+    if req.worksheet_id.is_some() && kind != KIND_CHAT {
+        return Err(AppError::bad_request("只有對話可以指定要處理的學習單。"));
     }
     let image_ids = prep_images::check_ids(db, teacher.id(), id, &req.image_ids).await?;
     let has_material = session.material_id.is_some();
@@ -743,7 +756,7 @@ pub async fn create_turn(
         .is_some_and(|t| !t.trim().is_empty());
     let mut worksheet_id = None;
     match kind {
-        KIND_ASK | KIND_REVISE if request.is_empty() => {
+        KIND_ASK | KIND_REVISE | KIND_CHAT if request.is_empty() => {
             return Err(AppError::bad_request(MSG_NEEDS_REQUEST))
         }
         KIND_RESOURCES if !has_material && !has_topic => {
@@ -752,12 +765,31 @@ pub async fn create_turn(
         k if (is_worksheet_kind(k) || k == KIND_ACTIVITY) && !has_material => {
             let had = turns
                 .iter()
-                .any(|t| t.kind != KIND_ASK && t.kind != KIND_RESOURCES);
+                .any(|t| !matches!(t.kind.as_str(), KIND_ASK | KIND_RESOURCES | KIND_CHAT));
             return Err(AppError::bad_request(if had {
                 MSG_MATERIAL_DELETED
             } else {
                 MSG_NEEDS_MATERIAL
             }));
+        }
+        KIND_CHAT => {
+            // The worksheet asked for, which must be one of this session's; else the latest.
+            worksheet_id = match req.worksheet_id {
+                Some(wid) => {
+                    let own: Option<i64> = sqlx::query_scalar(
+                        "SELECT id FROM worksheets
+                          WHERE id = $1 AND teacher_id = $2 AND prep_session_id = $3
+                            AND deleted_at IS NULL",
+                    )
+                    .bind(wid)
+                    .bind(teacher.id())
+                    .bind(id)
+                    .fetch_optional(db)
+                    .await?;
+                    Some(own.ok_or_else(|| AppError::not_found("找不到這份學習單。"))?)
+                }
+                None => store::revise_target(db, id).await?,
+            };
         }
         KIND_REVISE => {
             let Some(target) = store::revise_target(db, id).await? else {
@@ -973,4 +1005,25 @@ pub async fn rerun_siop_check(
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(check)))
+}
+
+/// `POST /api/prep-sessions/:id/turns/:turn_id/undo`: takes back everything a chat turn changed
+/// in the worksheet, as one new version (`cause = "undo"`). Owner only (404 for anyone else's
+/// session). 409 with a reason when a changed block was edited since, or the turn changed
+/// nothing / was already undone. Answers with the updated turn.
+pub async fn undo_turn(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
+) -> AppResult<Json<crate::prep::store::Turn>> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    store::refresh(&state, id).await?;
+    crate::prep::chat::undo(&state, teacher.id(), id, turn_id).await?;
+    let session = store::session(&state, id).await?;
+    session
+        .turns
+        .into_iter()
+        .find(|t| t.id == turn_id)
+        .map(Json)
+        .ok_or_else(|| AppError::not_found(MSG_TURN_NOT_FOUND))
 }

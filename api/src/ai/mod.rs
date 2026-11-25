@@ -6,6 +6,7 @@
 
 pub mod admin;
 pub mod anthropic;
+pub mod chat;
 pub(crate) mod execution;
 pub mod fake;
 pub mod openai;
@@ -536,6 +537,39 @@ impl ActiveAi {
                     )
                     .await
                 }
+            }
+        };
+        match tokio::time::timeout(self.timeout, call).await {
+            Ok(r) => r,
+            Err(_) => Err(ProviderError::Timeout),
+        }
+    }
+}
+
+impl ActiveAi {
+    /// One call with tools (the prep chat), bounded by the snapshot's timeout. Only OpenAI's own
+    /// API and the fake provider support it; the others answer with an error.
+    pub async fn complete_chat(
+        &self,
+        req: &chat::ChatRequest,
+    ) -> Result<chat::ChatResponse, ProviderError> {
+        let call = async {
+            match self.kind {
+                AiProviderKind::None => Err(ProviderError::Disabled),
+                AiProviderKind::Fake => crate::prep::fake::chat(req, &self.model),
+                AiProviderKind::OpenAi => {
+                    chat::call(
+                        &self.http,
+                        self.endpoints.openai_platform_key.as_deref(),
+                        &self.model,
+                        &self.effort,
+                        req,
+                    )
+                    .await
+                }
+                _ => Err(ProviderError::InvalidOutput(
+                    "tool calling is only supported with the OpenAI provider".into(),
+                )),
             }
         };
         match tokio::time::timeout(self.timeout, call).await {

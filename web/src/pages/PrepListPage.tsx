@@ -45,6 +45,7 @@ const KIND_TAG: Record<PrepKind, string> = {
   resources: NEXT_LABEL.resources,
   ask: "問 Manna",
   revise: "學習單",
+  chat: "問 Manna",
 };
 
 /** 卡片 (the default) or 清單; the choice is kept on this browser. */

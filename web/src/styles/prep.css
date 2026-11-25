@@ -1243,3 +1243,123 @@
 .prep-bar-mode {
   margin-bottom: 0.5rem;
 }
+
+/* Tool chat: the worksheet the bar works on, what a turn changed, what it could not change. */
+.prep-current-sheet {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--color-ink-2);
+}
+.prep-chat-changes,
+.prep-not-applied,
+.prep-undo {
+  margin-top: var(--space-sm);
+}
+.prep-changed-list,
+.prep-not-applied {
+  padding-left: var(--space-md);
+  font-size: var(--text-sm);
+}
+
+/* ================= conversation and worksheet side by side ================= */
+/* Wide screens (1100px and up): the conversation on the left, the worksheet on the right, each with
+ * its own scroll, filling the screen below the banner. Narrower: one column; the page shows one of
+ * them at a time (the tabs 對話｜學習單), the other is `hidden`. 68.75rem matches NARROW_QUERY. */
+.prep-split-chat[hidden],
+.prep-split-sheet[hidden] {
+  display: none;
+}
+
+.prep-sheet-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+.prep-sheet-summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+  margin: 0;
+}
+
+.prep-sheet-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-sm);
+}
+
+.prep-sheet-picker select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prep-split-tabs {
+  position: sticky;
+  top: calc(var(--banner-h) + var(--top-h, 0rem));
+  z-index: var(--z-sticky);
+  display: flex;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  padding: var(--space-2xs) 0;
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  background: var(--color-paper);
+}
+
+.prep-split-tabs button {
+  flex: 1 1 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-ink-2);
+  font: inherit;
+  font-weight: var(--weight-strong);
+  cursor: pointer;
+}
+
+.prep-split-tabs button.is-current {
+  border-bottom-color: var(--color-focus);
+  color: var(--color-ink);
+}
+
+@media (min-width: 68.75rem) {
+  .workspace.is-prep:has(.prep-session.is-split),
+  .workspace.is-prep:has(.prep-session.is-split.with-viewer),
+  :root:has(.shell.is-collapsed) .workspace.is-prep:has(.prep-session.is-split.with-viewer) {
+    max-width: none;
+    padding: 0;
+  }
+
+  .prep-session.is-split,
+  .prep-session.is-split.with-viewer,
+  :root:has(.shell.is-collapsed) .prep-session.is-split.with-viewer {
+    display: grid;
+    grid-template-columns: minmax(22rem, 2fr) minmax(0, 3fr);
+    max-width: none;
+    margin-left: 0;
+  }
+
+  .prep-split-chat,
+  .prep-split-sheet {
+    position: sticky;
+    top: var(--banner-h);
+    height: calc(100dvh - var(--banner-h));
+    overflow-y: auto;
+    min-width: 0;
+    padding: var(--space-xl) var(--gutter) var(--space-lg);
+  }
+
+  .prep-split-chat {
+    padding-bottom: 0;
+    border-right: var(--rule-hair) solid var(--color-rule);
+  }
+
+  .prep-split-sheet {
+    background: var(--color-paper-2);
+  }
+}

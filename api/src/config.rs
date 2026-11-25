@@ -108,6 +108,10 @@ pub struct Config {
     /// `INTERNAL_PORT` (default 8081): the listener for the memory index's model forwarder,
     /// opened only when the index is configured. Never routed by the reverse proxy.
     pub internal_port: u16,
+    /// `PREP_LEGACY_TURNS` (default off): still make new `ask` and `revise` turns in the prep
+    /// chat. They were replaced by `chat` (docs/PREP_CHAT.md); the tests of the old paths turn
+    /// this on, and it is the way back if the chat has to be switched off.
+    pub prep_legacy_turns: bool,
 }
 
 // Hand-written so API keys and the bootstrap code never reach logs.
@@ -130,6 +134,7 @@ impl std::fmt::Debug for Config {
             .field("images", &self.images)
             .field("memory", &self.memory)
             .field("internal_port", &self.internal_port)
+            .field("prep_legacy_turns", &self.prep_legacy_turns)
             .finish_non_exhaustive()
     }
 }
@@ -289,6 +294,7 @@ impl Config {
             images: ImageConfig::from_lookup(get, ai_provider == AiProviderKind::Fake),
             memory: crate::memory::graph::MemoryConfig::from_lookup(get),
             internal_port,
+            prep_legacy_turns: parse_bool("PREP_LEGACY_TURNS", get("PREP_LEGACY_TURNS"))?,
         })
     }
 
@@ -319,6 +325,8 @@ impl Config {
             images: ImageConfig::disabled(),
             memory: crate::memory::graph::MemoryConfig::default(),
             internal_port: 0,
+            // The tests of the earlier ask and revise turns still make them.
+            prep_legacy_turns: true,
         }
     }
 

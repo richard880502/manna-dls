@@ -2311,6 +2311,9 @@ pub struct SectionCtx<'a> {
     pub needs_external: bool,
     /// The section's schema asked for a table (表格整理 may be among its formats).
     pub tables_asked: bool,
+    /// Headings and row labels of those tables are student-facing English (a revision of a
+    /// worksheet), so a Chinese one is refused.
+    pub english_tables: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3028,7 +3031,7 @@ fn section_item(
         it.table.as_ref(),
         &item.prompt,
         iname,
-        (false, ctx.tables_asked),
+        (ctx.english_tables, ctx.tables_asked),
         t,
     );
     if ctx.needs_external {
@@ -4033,6 +4036,7 @@ mod tests {
             item_count: 5,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         let e = evaluate_section(&raw, &ctx);
         let out = e.output.unwrap();
@@ -4094,6 +4098,7 @@ mod tests {
                 item_count: 1,
                 needs_external: false,
                 tables_asked: false,
+                english_tables: false,
             },
         );
         assert!(e.needs_repair());
@@ -4131,6 +4136,7 @@ mod tests {
                 item_count: 3,
                 needs_external: true,
                 tables_asked: false,
+                english_tables: false,
             },
         );
         let out = e.output.unwrap();
@@ -4148,6 +4154,7 @@ mod tests {
                 item_count: 3,
                 needs_external: true,
                 tables_asked: false,
+                english_tables: false,
             },
         );
         assert!(e.output.is_none() && e.needs_repair());
@@ -4646,6 +4653,7 @@ mod tests {
             item_count: 5,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         let e = evaluate_section(&raw, &ctx);
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -5786,6 +5794,7 @@ mod tests {
             item_count: 3,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         let e = evaluate_section(&raw, &ctx);
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -5905,6 +5914,7 @@ mod tests {
             item_count: 3,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         // Written well: each box under its heading, in the sample's order (matched by heading).
         let raw = crate::worksheet::template::RawSectionOut {
@@ -6022,6 +6032,7 @@ mod tests {
             item_count: 4,
             needs_external: false,
             tables_asked: false,
+            english_tables: false,
         };
         let raw = crate::worksheet::template::RawSectionOut {
             title: "Paragraph 1".into(),
