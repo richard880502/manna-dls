@@ -140,6 +140,48 @@ fn user_content(text: &str, images: &[LlmImage]) -> Value {
     Value::Array(parts)
 }
 
+/// One returned output item as it goes back in the next request of the turn. With `store: false`
+/// OpenAI keeps nothing, so an item must not point at a stored one by its `id`: a function call
+/// goes back as its call (`call_id`, `name`, `arguments`), a message as its role and text. A
+/// reasoning item goes back whole: its `encrypted_content` is what lets the model continue.
+/// Anything else is dropped.
+fn replay_item(item: &Value) -> Option<Value> {
+    match item["type"].as_str() {
+        Some("reasoning") => {
+            let mut r = json!({ "type": "reasoning", "summary": item["summary"].clone() });
+            if r["summary"].is_null() {
+                r["summary"] = json!([]);
+            }
+            for key in ["id", "encrypted_content"] {
+                if let Some(v) = item.get(key).filter(|v| !v.is_null()) {
+                    r[key] = v.clone();
+                }
+            }
+            Some(r)
+        }
+        Some("function_call") => Some(json!({
+            "type": "function_call",
+            "call_id": item["call_id"],
+            "name": item["name"],
+            "arguments": item["arguments"],
+        })),
+        Some("message") => Some(json!({
+            "role": "assistant",
+            "content": item["content"]
+                .as_array()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter(|p| p["type"] == "output_text")
+                        .map(|p| json!({ "type": "output_text", "text": p["text"] }))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        })),
+        _ => None,
+    }
+}
+
 /// The input items one message becomes. An assistant message that carries the items the model
 /// returned (`replay`) sends them back unchanged (reasoning items included: the request is
 /// stateless); one without (built by hand) is spelled out from its text and tool calls.
@@ -155,7 +197,7 @@ fn message_items(m: &ChatMessage) -> Vec<Value> {
             replay,
         } => {
             if !replay.is_empty() {
-                return replay.clone();
+                return replay.iter().filter_map(replay_item).collect();
             }
             let mut items = Vec::new();
             if let Some(text) = content {
@@ -470,8 +512,14 @@ mod tests {
         let b = build_body("gpt", "high", &second_request());
         let input = b["input"].as_array().unwrap();
         assert_eq!(input.len(), 6);
+        // The reasoning item goes back whole (its encrypted content); the call without the ids
+        // of stored items (`store: false`).
         assert_eq!(input[3], reasoning_item());
-        assert_eq!(input[4], call_item());
+        assert_eq!(
+            input[4],
+            json!({"type": "function_call", "call_id": "c1", "name": "read_block",
+                   "arguments": "{\"block_id\":\"b1\"}"})
+        );
         assert_eq!(
             input[5],
             json!({"type": "function_call_output", "call_id": "c1", "output": "ok"})
@@ -481,6 +529,25 @@ mod tests {
         assert_eq!(
             first["input"].as_array().unwrap()[..],
             b["input"].as_array().unwrap()[..3]
+        );
+    }
+
+    #[test]
+    fn replayed_messages_lose_stored_ids_and_unknown_items_are_dropped() {
+        let msg = json!({"type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
+                         "content": [{"type": "output_text", "text": "hi", "annotations": []}]});
+        assert_eq!(
+            replay_item(&msg),
+            Some(json!({"role": "assistant", "content": [{"type": "output_text", "text": "hi"}]}))
+        );
+        assert_eq!(
+            replay_item(&json!({"type": "web_search_call", "id": "ws_1"})),
+            None
+        );
+        let bare = json!({"type": "reasoning", "id": "rs_2"});
+        assert_eq!(
+            replay_item(&bare),
+            Some(json!({"type": "reasoning", "id": "rs_2", "summary": []}))
         );
     }
 
