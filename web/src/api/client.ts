@@ -132,6 +132,7 @@ import type {
   TemplateBrowseQuery,
   WsTemplateList,
   WsSheet,
+  WsSnapshot,
   WsVersionRow,
   WsVersionRestored,
   WsAudience,
@@ -591,6 +592,14 @@ export const api = {
   /** 某一版的學習單（唯讀預覽用；圖片是當時的圖） */
   worksheetVersionSheet: (id: number, versionNo: number, audience: WsAudience, level?: WsLevel) =>
     get<WsSheet>(`/worksheets/${id}/versions/${versionNo}/sheet`, { level, audience }),
+  /** 存成快照：把最新一版標上名字（name 不給＝預設「快照 11/25 17:30」）；base_version_no 不是最新 → 409 */
+  createWorksheetSnapshot: (id: number, body: { name?: string; base_version_no: number }) =>
+    post<WsSnapshot>(`/worksheets/${id}/snapshots`, body),
+  renameWorksheetSnapshot: (id: number, snapshotId: number, name: string) =>
+    request<WsSnapshot>("PATCH", `/worksheets/${id}/snapshots/${snapshotId}`, { json: { name } }),
+  /** 只拿掉名稱，版本不刪 */
+  removeWorksheetSnapshot: (id: number, snapshotId: number) =>
+    del<OkResponse>(`/worksheets/${id}/snapshots/${snapshotId}`),
   /** 還原成這一版（寫成新的一版）；base_version_no＝畫面上看到的最新版，不是的話 409 */
   restoreWorksheetVersion: (id: number, versionNo: number, baseVersionNo: number) =>
     post<WsVersionRestored>(`/worksheets/${id}/versions/${versionNo}/restore`, {

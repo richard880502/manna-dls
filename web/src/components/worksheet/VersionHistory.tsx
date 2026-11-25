@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { WsAudience, WsLevel, WsSheet, WsVersionRestored, WsVersionRow } from "../../api/types";
 import { formatDateTime } from "../../lib/labels";
@@ -61,6 +61,7 @@ export function VersionHistoryButton({
   beforeOpen,
   onRestored,
   levels = [],
+  initialVersionNo,
   className = "text-link is-plain",
 }: {
   worksheetId: number;
@@ -72,6 +73,7 @@ export function VersionHistoryButton({
   onRestored: (done: WsVersionRestored) => void;
   /** The levels of the worksheet (the preview can switch between them when there are several). */
   levels?: WsLevel[];
+  initialVersionNo?: number;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -98,6 +100,7 @@ export function VersionHistoryButton({
           worksheetId={worksheetId}
           beforeOpen={beforeOpen}
           levels={levels}
+          initialVersionNo={initialVersionNo}
           onClose={() => setOpen(false)}
           onRestored={(done) => {
             setOpen(false);
@@ -109,16 +112,49 @@ export function VersionHistoryButton({
   );
 }
 
-function VersionHistoryDialog({
+/** One line of the list: a version, or several consecutive 手動編輯 versions folded together. */
+type Entry = { kind: "row"; row: WsVersionRow } | { kind: "group"; key: number; rows: WsVersionRow[] };
+
+const clock = (iso: string) => formatDateTime(iso).slice(-5);
+
+/**
+ * Consecutive manual edits (`cause = "edit"`, no snapshot) become one group, so autosave does not
+ * bury the versions that matter. The newest version always stays a row of its own (it says 目前),
+ * and a lone edit stays a row. `rows` are newest first.
+ */
+export function groupVersions(rows: WsVersionRow[]): Entry[] {
+  const plain = (r: WsVersionRow, i: number) => i > 0 && r.cause === "edit" && !r.snapshot;
+  const out: Entry[] = [];
+  let run: WsVersionRow[] = [];
+  const flushRun = () => {
+    if (run.length === 1) out.push({ kind: "row", row: run[0]! });
+    else if (run.length > 1) out.push({ kind: "group", key: run[0]!.version_no, rows: run });
+    run = [];
+  };
+  rows.forEach((r, i) => {
+    if (plain(r, i)) run.push(r);
+    else {
+      flushRun();
+      out.push({ kind: "row", row: r });
+    }
+  });
+  flushRun();
+  return out;
+}
+
+export function VersionHistoryDialog({
   worksheetId,
   beforeOpen,
-  levels,
+  levels = [],
+  initialVersionNo,
   onClose,
   onRestored,
 }: {
   worksheetId: number;
   beforeOpen?: () => Promise<string | null>;
-  levels: WsLevel[];
+  levels?: WsLevel[];
+  /** Open with this version selected (a chat card's 「產生了第 N 版」); ignored when it does not exist. */
+  initialVersionNo?: number;
   onClose: () => void;
   onRestored: (done: WsVersionRestored) => void;
 }) {
@@ -132,7 +168,13 @@ function VersionHistoryDialog({
   const [sheetError, setSheetError] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [onlySnapshots, setOnlySnapshots] = useState(false);
+  const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const safe = useRef<HTMLButtonElement>(null);
+  const renameInput = useRef<HTMLInputElement>(null);
+  const initialRef = useRef(initialVersionNo);
   const beforeRef = useRef(beforeOpen);
   useEffect(() => {
     beforeRef.current = beforeOpen;
@@ -146,7 +188,15 @@ function VersionHistoryDialog({
       const list = await api.worksheetVersions(worksheetId);
       if (!alive) return;
       setRows(list);
-      setPicked(list[1]?.version_no ?? list[0]?.version_no ?? null);
+      const want = initialRef.current;
+      const start =
+        want !== undefined && list.some((r) => r.version_no === want)
+          ? want
+          : (list[1]?.version_no ?? list[0]?.version_no ?? null);
+      setPicked(start);
+      // The folded group the picked version is in starts open.
+      const holder = groupVersions(list).find((e) => e.kind === "group" && e.rows.some((r) => r.version_no === start));
+      if (holder?.kind === "group") setOpen(new Set([holder.key]));
     })().catch((err: unknown) => {
       if (alive) setError(errorMessage(err));
     });
@@ -179,6 +229,10 @@ function VersionHistoryDialog({
   useEffect(() => {
     if (asking) safe.current?.focus();
   }, [asking]);
+  const renamingNow = renaming !== null;
+  useEffect(() => {
+    if (renamingNow) renameInput.current?.focus();
+  }, [renamingNow]);
 
   // Stable: the preview reads the pictures of the version through it.
   const loadImage = useCallback((imageId: number) => api.worksheetImage(worksheetId, imageId), [worksheetId]);
@@ -187,6 +241,79 @@ function VersionHistoryDialog({
   const oldest = rows ? rows[rows.length - 1]?.version_no : null;
   const row = rows?.find((r) => r.version_no === picked) ?? null;
   const isLatest = picked !== null && picked === latest;
+  const entries = useMemo<Entry[]>(
+    () =>
+      !rows
+        ? []
+        : onlySnapshots
+          ? rows.filter((r) => r.snapshot).map((r) => ({ kind: "row", row: r }))
+          : groupVersions(rows),
+    [rows, onlySnapshots],
+  );
+
+  function changeSnapshot(versionNo: number, snapshot: WsVersionRow["snapshot"]) {
+    setRows((prev) => prev?.map((r) => (r.version_no === versionNo ? { ...r, snapshot } : r)) ?? prev);
+  }
+
+  async function renameSnapshot() {
+    const snap = row?.snapshot;
+    if (!snap || renaming === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const done = await api.renameWorksheetSnapshot(worksheetId, snap.id, renaming);
+      changeSnapshot(done.version_no, { id: done.id, name: done.name });
+      setRenaming(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeSnapshot() {
+    const snap = row?.snapshot;
+    if (!snap || !row) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.removeWorksheetSnapshot(worksheetId, snap.id);
+      changeSnapshot(row.version_no, null);
+      setRemoving(false);
+    } catch (err) {
+      setError(errorMessage(err));
+      setRemoving(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function pick(no: number) {
+    setPicked(no);
+    setAsking(false);
+    setRenaming(null);
+    setRemoving(false);
+  }
+
+  function renderRow(r: WsVersionRow) {
+    return (
+      <li key={r.version_no}>
+        <button
+          type="button"
+          className={`ws-history-step${r.version_no === picked ? " is-selected" : ""}`}
+          aria-current={r.version_no === picked ? "true" : undefined}
+          onClick={() => pick(r.version_no)}
+        >
+          <span className="ws-history-label">
+            第 {r.version_no} 版・{versionLabel(r, r.version_no === oldest)}
+          </span>
+          {r.snapshot && <span className="ws-history-snap">快照：{r.snapshot.name}</span>}
+          <span className="ws-history-time">{formatDateTime(r.created_at)}</span>
+          {r.version_no === latest && <span className="ws-history-now">目前</span>}
+        </button>
+      </li>
+    );
+  }
 
   async function restore() {
     if (picked === null || latest === null) return;
@@ -213,28 +340,93 @@ function VersionHistoryDialog({
               整份學習單每一次的樣子都留著，新的在前。選一版看內容，按「還原成這一版」會把學習單換成那個樣子，並存成新的一版；現在這一版和其他版本都還在，隨時可以換回來。
             </p>
             <div className="ws-history-body">
-              <ol className="ws-history-list" aria-label="學習單的版本">
-                {rows.map((r) => (
-                  <li key={r.version_no}>
-                    <button
-                      type="button"
-                      className={`ws-history-step${r.version_no === picked ? " is-selected" : ""}`}
-                      aria-current={r.version_no === picked ? "true" : undefined}
-                      onClick={() => {
-                        setPicked(r.version_no);
-                        setAsking(false);
-                      }}
-                    >
-                      <span className="ws-history-label">
-                        第 {r.version_no} 版・{versionLabel(r, r.version_no === oldest)}
-                      </span>
-                      <span className="ws-history-time">{formatDateTime(r.created_at)}</span>
-                      {r.version_no === latest && <span className="ws-history-now">目前</span>}
-                    </button>
-                  </li>
-                ))}
-              </ol>
+              <div className="ws-history-side">
+                <label className="ws-history-filter">
+                  <input type="checkbox" checked={onlySnapshots} onChange={(e) => setOnlySnapshots(e.target.checked)} />
+                  <span>只看快照</span>
+                </label>
+                {onlySnapshots && entries.length === 0 && (
+                  <p className="quiet-note">還沒有快照。按工具列的「存成快照」，把現在這一版標上名字。</p>
+                )}
+                <ol className="ws-history-list" aria-label="學習單的版本">
+                  {entries.map((e) => {
+                    if (e.kind === "row") return renderRow(e.row);
+                    const expanded = open.has(e.key);
+                    const first = e.rows[e.rows.length - 1]!;
+                    return (
+                      <li key={`g${e.key}`}>
+                        <button
+                          type="button"
+                          className="ws-history-group"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setOpen((prev) => {
+                              const next = new Set(prev);
+                              if (!next.delete(e.key)) next.add(e.key);
+                              return next;
+                            })
+                          }
+                        >
+                          手動編輯 ×{e.rows.length}・{clock(first.created_at)}–{clock(e.rows[0]!.created_at)}
+                        </button>
+                        {expanded && <ol className="ws-history-sublist">{e.rows.map(renderRow)}</ol>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
               <section className="ws-history-preview" aria-label={`第 ${row.version_no} 版的內容`}>
+                {row.snapshot && (
+                  <div className="ws-history-snapshot">
+                    {renaming !== null ? (
+                      <form
+                        className="button-row"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!busy) void renameSnapshot();
+                        }}
+                      >
+                        <label className="sr-only" htmlFor={`${ids}-snap`}>
+                          快照名稱
+                        </label>
+                        <input
+                          id={`${ids}-snap`}
+                          type="text"
+                          value={renaming}
+                          maxLength={60}
+                          ref={renameInput}
+                          onChange={(e) => setRenaming(e.target.value)}
+                        />
+                        <button type="submit" className="secondary-button" disabled={busy}>
+                          儲存名稱
+                        </button>
+                        <button type="button" className="text-link is-plain" disabled={busy} onClick={() => setRenaming(null)}>
+                          取消
+                        </button>
+                      </form>
+                    ) : removing ? (
+                      <div className="button-row" role="group" aria-label="確認移除快照">
+                        <span>只拿掉「{row.snapshot.name}」這個名稱，這一版仍留在版本紀錄裡。</span>
+                        <button type="button" className="text-link is-danger" disabled={busy} onClick={() => void removeSnapshot()}>
+                          確定移除
+                        </button>
+                        <button type="button" className="text-link is-plain" disabled={busy} onClick={() => setRemoving(false)}>
+                          不移除
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="button-row">
+                        <strong>快照：{row.snapshot.name}</strong>
+                        <button type="button" className="text-link is-plain" onClick={() => setRenaming(row.snapshot!.name)}>
+                          改名
+                        </button>
+                        <button type="button" className="text-link is-plain" onClick={() => setRemoving(true)}>
+                          移除快照
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="ws-tool-row">
                   <div className="ws-seg" role="radiogroup" aria-label="學生版或教師版">
                     {AUDIENCES.map(([a, label]) => (

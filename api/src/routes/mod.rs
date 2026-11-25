@@ -24,6 +24,7 @@ pub mod templates;
 pub mod units;
 pub mod worksheet_history;
 pub mod worksheet_revise;
+pub mod worksheet_snapshots;
 pub mod worksheet_vocab;
 pub mod worksheets;
 
@@ -245,6 +246,14 @@ pub fn api_router() -> Router<AppState> {
         .route(
             "/worksheets/{id}/versions/{version_no}/restore",
             post(worksheet_history::restore_version),
+        )
+        .route(
+            "/worksheets/{id}/snapshots",
+            post(worksheet_snapshots::create),
+        )
+        .route(
+            "/worksheets/{id}/snapshots/{snapshot_id}",
+            patch(worksheet_snapshots::rename).delete(worksheet_snapshots::remove),
         )
         .route(
             "/worksheets/{id}/sop-sync",

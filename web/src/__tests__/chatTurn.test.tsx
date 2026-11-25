@@ -460,6 +460,35 @@ describe("the conversation and the worksheet side by side", () => {
     expect(await screen.findByRole("tabpanel", { name: "學習單" })).toBeInTheDocument();
     expect(screen.queryByRole("tabpanel", { name: "對話" })).not.toBeInTheDocument();
   });
+
+  it("「產生了第 N 版」 opens 版本紀錄 at that version; restoring there reads the session again", async () => {
+    const t = turn("chat", { result: chat({ changes: [{ target: "block", block_id: "b2", label: "C 區", summary: "改了" }], version_no: 3, undoable: true }) });
+    const row = (no: number, cause: string) => ({ version_no: no, cause, source: { cause }, created_at: `2026-11-25T0${no}:00:00Z`, snapshot: null });
+    const api = mockApi({
+      ...baseRoutes(),
+      ...sheetRoutes(),
+      [`GET ${S7}`]: session([sheetTurn(101, "學習單一"), t]),
+      "GET /api/worksheets/11/versions": [row(4, "edit"), row(3, "prep_turn"), row(2, "edit"), row(1, "generate")],
+      "GET /api/worksheets/11/versions/3/sheet": sheet("第3版", "student"),
+      "GET /api/worksheets/11/versions/2/sheet": sheet("第2版", "student"),
+      "POST /api/worksheets/11/versions/3/restore": { version_no: 5, from_version_no: 3, worksheet: worksheet(11, "學習單一", 5) },
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "產生了第 3 版" }));
+    const dialog = await screen.findByRole("dialog", { name: "版本紀錄" });
+    // Opens on version 3, not on the one before the current.
+    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/versions/3/sheet")).toHaveLength(1));
+    expect(api.callsTo("GET", "/api/worksheets/11/versions/2/sheet")).toHaveLength(0);
+    expect(within(dialog).getByRole("button", { name: /第 3 版/ })).toHaveAttribute("aria-current", "true");
+    const before = api.callsTo("GET", S7).length;
+    await user.click(await within(dialog).findByRole("button", { name: "還原成這一版" }));
+    await user.click(within(dialog).getByRole("button", { name: "還原" }));
+    await waitFor(() => expect(api.callsTo("POST", "/api/worksheets/11/versions/3/restore")).toHaveLength(1));
+    expect(api.lastBody("POST", "/api/worksheets/11/versions/3/restore")).toEqual({ base_version_no: 4 });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "版本紀錄" })).not.toBeInTheDocument());
+    await waitFor(() => expect(api.callsTo("GET", S7).length).toBeGreaterThan(before));
+  });
 });
 
 // ---------------------------------------------------------------- the draggable divider

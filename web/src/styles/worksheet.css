@@ -1848,6 +1848,51 @@ button.bloom-seg:focus-visible {
   font-size: var(--text-xs);
 }
 
+.ws-history-side {
+  display: grid;
+  align-content: start;
+  gap: var(--space-xs);
+}
+
+.ws-history-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--text-sm);
+}
+
+.ws-history-snap {
+  display: block;
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-strong);
+}
+
+.ws-history-group {
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) dashed var(--color-manna-rule);
+  border-radius: var(--radius-control);
+  background: none;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ws-history-sublist {
+  display: grid;
+  gap: var(--space-2xs);
+  margin: var(--space-2xs) 0 0 var(--space-sm);
+  padding: 0;
+  list-style: none;
+}
+
+.ws-history-snapshot {
+  margin-bottom: var(--space-sm);
+}
+
 .ws-history-preview {
   min-width: 0;
   max-height: 60vh;
