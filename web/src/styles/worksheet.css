@@ -1077,6 +1077,53 @@
   line-height: var(--leading-body);
 }
 
+/* ================= the library viewer as the material column ================= */
+/* Wide screens: the viewer's own width (its resizer) sets the column, so dragging it changes the
+ * split; the text scrolls inside the viewer and the notes and tools stay below it. (The viewer
+ * used to be sticky inside the sticky, scrolling column: the notes slid under it and the two
+ * texts overlapped, and its resizer widened only itself inside a fixed 5fr column.) */
+@media (min-width: 75.0625rem) {
+  .ws-split:has(> .ws-pane-material > .ws-material-library) {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .ws-pane-material:has(> .ws-material-library) {
+    display: flex;
+    flex-direction: column;
+    padding-right: 0;
+    overflow: visible;
+    border-right: 0;
+  }
+
+  .ws-material-library {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .ws-material-library > .material-pane:not(.is-full):not(.is-collapsed) {
+    position: relative;
+    top: auto;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    /* Leave the worksheet at least ~36rem beside it (the page gutters and the gap included). */
+    max-width: max(20rem, calc(100vw - var(--shell-left) - 36rem));
+  }
+
+  /* The notes and tools take the viewer's width; they do not widen the column. */
+  .ws-material-library > :not(.material-pane) {
+    flex: none;
+    contain: inline-size;
+  }
+
+  /* Folded away: the column is the 展開教材 strip only. */
+  .ws-material-library:has(> .material-pane.is-collapsed) > :not(.material-pane) {
+    display: none;
+  }
+}
+
 /* ================= narrow screens ================= */
 @media (max-width: 75rem) {
   .ws-split {
