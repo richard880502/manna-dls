@@ -66,6 +66,15 @@ export interface WorksheetController {
   conflict: boolean;
 }
 
+/** Whatever is still pending is saved when the editor goes (the page is left, another worksheet is opened). */
+export function useFlushOnUnmount(flush: () => Promise<string | null>) {
+  const last = useRef(flush);
+  useEffect(() => {
+    last.current = flush;
+  }, [flush]);
+  useEffect(() => () => void last.current(), []);
+}
+
 /**
  * One worksheet: loading, quiet saving, and the generation steps as background work that is
  * polled. While steps run the teacher cannot edit (the server replaces the blocks when they end),

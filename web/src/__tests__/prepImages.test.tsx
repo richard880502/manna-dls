@@ -408,7 +408,7 @@ describe("the composer: attaching pictures", () => {
     const api = mockApi(pageRoutes({ [`POST ${WS}/blocks/b2/revise`]: proposal("running", { comment_ids: [] }) }));
     const user = userEvent.setup();
     renderApp("/prep/7");
-    await user.click(await screen.findByRole("button", { name: "改這一區（B 活動）" }));
+    await user.click(await screen.findByRole("button", { name: "改這一區（區塊 B）" }));
     await user.upload(fileInput(), png());
     await waitFor(() => expect(screen.queryByText("上傳中")).not.toBeInTheDocument());
     await user.type(await bar(), "照圖畫{Enter}");

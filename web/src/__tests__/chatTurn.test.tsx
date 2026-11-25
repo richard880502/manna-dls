@@ -410,7 +410,7 @@ describe("the conversation and the worksheet side by side", () => {
     await user.selectOptions(pick, screen.getByRole("option", { name: /學習單一/ }));
     expect(pick).toHaveValue("101");
     expect(screen.queryByText(/目前的學習單：/)).not.toBeInTheDocument();
-    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/sheet").length).toBeGreaterThan(0));
+    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11").length).toBeGreaterThan(0));
     await user.type(await box(), "改簡單{Enter}");
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "chat", request: "改簡單", worksheet_id: 11 });
@@ -433,9 +433,9 @@ describe("the conversation and the worksheet side by side", () => {
     });
     renderApp("/prep/7");
     await screen.findByRole("article", { name: /學生版/ });
-    const reads0 = api.callsTo("GET", "/api/worksheets/11/sheet").length;
+    const reads0 = api.callsTo("GET", "/api/worksheets/11").length;
     expect(await screen.findByRole("button", { name: "復原這一輪" })).toBeInTheDocument();
-    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/sheet").length).toBeGreaterThan(reads0));
+    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11").length).toBeGreaterThan(reads0));
   });
 
   it("on a narrow screen the two are tabs, and a change offers 學習單已更新，去看", async () => {

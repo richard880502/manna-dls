@@ -42,15 +42,8 @@ import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { scrollToEl, scrollToIdWhenReady, whenVisible } from "../lib/scroll";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ChatCard, ResourcesCard, ReviseCard, WorksheetTurnCard } from "../components/prep/TurnCards";
-import {
-  SheetEditor,
-  SheetModeToggle,
-  loadSheetMode,
-  saveSheetMode,
-  type SheetFlush,
-  type SheetMode,
-} from "../components/prep/SheetEditPane";
-import { WorksheetCard } from "../components/prep/WorksheetCard";
+import { PrepSheetPane, type SheetFlush } from "../components/prep/PrepSheetPane";
+import { WorksheetProgress } from "../components/prep/WorksheetProgress";
 import { MemorySuggestionCards, habitWordsSent, useMemorySuggestions } from "../components/memory/MemorySuggestions";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
 import {
@@ -96,7 +89,7 @@ function useNarrow(): boolean {
   return narrow;
 }
 
-/** The worksheet preview's block, scrolled into view (the preview's blocks carry `sheet-block-<id>`). */
+/** The worksheet's block, scrolled into view (the editor's blocks carry `sheet-block-<id>`). */
 function scrollToBlock(blockId: string) {
   scrollToEl(document.getElementById(`sheet-block-${blockId}`), "center");
 }
@@ -165,13 +158,9 @@ function PrepSessionView({ id }: { id: number }) {
   const narrow = useNarrow();
   const { containerRef, share, dragging, canResize, columns, edge, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
-  // 預覽｜編輯 in the worksheet pane. The editor registers how to save its pending edits, so a
-  // message is sent from the saved version; `editRev` makes the preview read the sheet again after edits.
-  const [sheetMode, setSheetMode] = useState<SheetMode>(loadSheetMode);
-  // Where the embedded editor says 已自動儲存: on the right of the 預覽｜編輯 row.
-  const [savedSlot, setSavedSlot] = useState<HTMLDivElement | null>(null);
+  // The worksheet pane registers how to save its pending edits, so a message is sent from the
+  // saved version.
   const editFlush = useRef<SheetFlush | null>(null);
-  const [editRev, setEditRev] = useState(0);
   // Wide layout: the conversation can fold to a strip on the right edge; its header settings fold too.
   const [chatCollapsed, setChatCollapsed] = useStoredFlag(CHAT_COLLAPSED_KEY, false);
   const [headOpenWide, setHeadOpenWide] = useStoredFlag(HEAD_OPEN_KEY, false);
@@ -384,17 +373,6 @@ function PrepSessionView({ id }: { id: number }) {
     }
   }
 
-  /** 預覽｜編輯: leaving 編輯 saves first (and stays when that fails, the editor says why). */
-  async function chooseSheetMode(next: SheetMode) {
-    if (next === sheetMode) return;
-    if (sheetMode === "edit") {
-      if (await editFlush.current?.()) return;
-      setEditRev((n) => n + 1);
-    }
-    setSheetMode(next);
-    saveSheetMode(next);
-  }
-
   /** 回上一步: the home box, filled in as it was when this conversation began. Nothing is lost. */
   function goBack() {
     if (!session) return;
@@ -563,41 +541,41 @@ function PrepSessionView({ id }: { id: number }) {
     return isWorksheetKind(turn.kind) && turn.kind !== "kit" && turn.id === sheetTurn?.id;
   }
 
-  function worksheetCard(turn: PrepTurn) {
+  /**
+   * The worksheet beside the conversation: Manna's progress while the turn runs, then the workspace
+   * (always editable). The swap happens in one frame (`onReady`), after the worksheet has loaded.
+   */
+  function worksheetPane(turn: PrepTurn) {
     const wsId = turn.worksheet?.id;
+    if (!wsId || turn.status === "running") return <WorksheetProgress turn={turn} stepsShown={stepsShown(turn)} />;
     const lastRevise = [...session!.turns]
       .reverse()
       .find((t) => (t.kind === "revise" || t.kind === "chat") && targets.get(t.id) === wsId);
     const lastVersion = lastRevise ? (chatResult(lastRevise)?.version_no ?? "") : "";
     const versionKey = `${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}-${lastVersion}-${undone}`;
-    const editing = sheetMode === "edit" && !!wsId && turn.id === sheetTurn?.id;
     return (
-      <>
-        {editing && wsId && (
-          <SheetEditor worksheetId={wsId} chatBusy={locked} versionKey={versionKey} flushRef={editFlush} savedSlot={savedSlot} />
-        )}
-        <div hidden={editing}>{previewCard(turn, wsId, `${versionKey}-${editRev}`)}</div>
-      </>
-    );
-  }
-
-  function previewCard(turn: PrepTurn, wsId: number | undefined, refreshKey: string) {
-    return (
-      <WorksheetCard
-        turn={turn}
-        stepsShown={stepsShown(turn)}
+      <PrepSheetPane
+        worksheetId={wsId}
+        versionKey={versionKey}
+        flushRef={editFlush}
+        waiting={stepsShown(turn)}
         onReady={() => setSheetReadyTurn(turn.id)}
-        refreshKey={refreshKey}
-        chatBusy={locked}
-        highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
-        onLabels={onLabels}
-        target={target && target.worksheetId === wsId ? target.blockId : null}
-        onTarget={(worksheetId, blockId, name) => {
-          setTarget({ worksheetId, blockId, name });
-          setTab("chat");
-          setTimeout(() => draftRef.current?.focus(), 0);
+        chat={{
+          busy: locked,
+          highlight: flash && flash.worksheetId === wsId ? flash.ids : EMPTY,
+          interactionId: turn.interaction_id,
+          template: turn.template ?? null,
+          onLabels,
+          proposalsKey: proposalsKey[wsId],
+          blockTarget: {
+            blockId: target && target.worksheetId === wsId ? target.blockId : null,
+            onTarget: (blockId, name) => {
+              setTarget({ worksheetId: wsId, blockId, name });
+              setTab("chat");
+              setTimeout(() => draftRef.current?.focus(), 0);
+            },
+          },
         }}
-        proposalsKey={wsId ? proposalsKey[wsId] : undefined}
       />
     );
   }
@@ -799,13 +777,7 @@ function PrepSessionView({ id }: { id: number }) {
               className="prep-turn-progress"
             />
           )}
-          {currentSheet && (
-            <div className="prep-sheet-modebar">
-              <SheetModeToggle mode={sheetMode} onChange={(m) => void chooseSheetMode(m)} />
-              <div className="prep-sheet-modebar-status" ref={setSavedSlot} />
-            </div>
-          )}
-          <div key={sheetTurn.id}>{worksheetCard(sheetTurn)}</div>
+          <div key={sheetTurn.id}>{worksheetPane(sheetTurn)}</div>
         </aside>
       )}
 

@@ -17,6 +17,7 @@ import "./styles/worksheet.css";
 import "./styles/materials.css";
 import "./styles/templates.css";
 import "./styles/prep.css";
+import "./styles/workspace.css";
 import "./styles/home.css";
 import "./styles/library.css";
 

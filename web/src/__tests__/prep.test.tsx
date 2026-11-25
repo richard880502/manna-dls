@@ -17,6 +17,8 @@ import type {
   SiopCheckItem,
   WorksheetState,
   WsAudience,
+  WsBlock,
+  WsItem,
   WsJob,
   WsSheet,
 } from "../api/types";
@@ -34,6 +36,7 @@ import {
   signIn,
   type MockCall,
 } from "../test/mockApi";
+import { openBarPopover } from "../test/menus";
 
 const HOME = "今天想準備什麼？";
 const SESSIONS = "/api/prep-sessions";
@@ -267,6 +270,52 @@ const job = (id: number, step: WsJob["step"], extra: Partial<WsJob> = {}): WsJob
   ...extra,
 });
 
+const wsItem = (id: string, prompt: string, answer = ""): WsItem => ({
+  id,
+  answer_format: "簡答題",
+  prompt,
+  options: [],
+  answer,
+  evidence: answer ? "A stranger" : "",
+  purpose: null,
+  levels: ["standard"],
+  origin: "ai",
+});
+
+const wsBlock = (id: string, kind: WsBlock["kind"], title: string, items: WsItem[], extra: Partial<WsBlock> = {}): WsBlock => ({
+  id,
+  kind,
+  enabled: true,
+  title,
+  instructions: "",
+  paragraph_ids: [],
+  info_function: null,
+  student_tasks: [],
+  objective_ids: [],
+  vocabulary: [],
+  items,
+  scaffolds: [],
+  teacher_notes: "",
+  origin: "ai",
+  message: null,
+  sop_block_id: null,
+  ...extra,
+});
+
+/** A warm-up (A) and an activity block (B), as the sheet fixture below prints them. */
+const worksheetContent = () => ({
+  ...emptyWorksheetContent(),
+  levels: ["standard" as const],
+  blocks: [
+    wsBlock("w", "warmup", "Warm-up", [wsItem("w-1", "Have you ever borrowed an umbrella?")], {
+      instructions: "Talk with a partner.",
+    }),
+    wsBlock("b2", "activity", "Paragraph 1: Find", [wsItem("b2-1", "Why did Mrs. Lin start the stand?", "A stranger once helped her.")], {
+      teacher_notes: "先確認大意。",
+    }),
+  ],
+});
+
 const worksheet = (overrides: Partial<WorksheetState> = {}): WorksheetState => ({
   id: 11,
   title: "The Umbrella Stand",
@@ -288,7 +337,7 @@ const worksheet = (overrides: Partial<WorksheetState> = {}): WorksheetState => (
   brief: emptyBrief(),
   versions_count: 3,
   saved_at: "2026-11-15T08:00:00Z",
-  content: { ...emptyWorksheetContent(), levels: ["standard"] },
+  content: worksheetContent(),
   jobs: [job(1, "warmup", { interaction_id: 61 }), job(2, "tasks", { interaction_id: 62 })],
   running: false,
   undoable: [],
@@ -738,19 +787,21 @@ describe("備課對話 (session page)", () => {
     // The teacher's words are bubbles.
     expect(await screen.findByText("B 區改簡單一點")).toHaveClass("prep-bubble");
 
-    // worksheet: the student version, read-only, a section per block with copy and ratings.
+    // worksheet: the student version, editable, a section per block with its tools.
     const preview = await screen.findByRole("article", { name: "一般版 學生版" });
-    const blockB = within(preview).getByRole("region", { name: "區塊 B 活動" });
-    expect(within(blockB).getByText("Why did Mrs. Lin start the stand?")).toBeInTheDocument();
-    expect(within(blockB).queryByText("A stranger once helped her.")).not.toBeInTheDocument();
+    const blockB = within(preview).getByRole("region", { name: "區塊 B" });
+    expect(within(blockB).getByDisplayValue("Why did Mrs. Lin start the stand?")).toBeInTheDocument();
+    expect(within(blockB).queryByDisplayValue("A stranger once helped her.")).not.toBeInTheDocument();
     // The block shows its main tools; copy and the rating are in 「更多…」.
-    expect(within(blockB).queryByRole("button", { name: "複製區塊 B 活動" })).not.toBeInTheDocument();
-    const more = within(blockB).getByRole("button", { name: "更多（區塊 B 活動）" });
+    expect(within(blockB).getByRole("button", { name: "改這一區（區塊 B）" })).toBeInTheDocument();
+    expect(within(blockB).getByRole("button", { name: "加註記（區塊 B）" })).toBeInTheDocument();
+    expect(within(blockB).queryByRole("button", { name: "複製區塊 B" })).not.toBeInTheDocument();
+    const more = within(blockB).getByRole("button", { name: "更多（區塊 B）" });
     expect(more).toHaveAttribute("aria-expanded", "false");
     await user.click(more);
     expect(more).toHaveAttribute("aria-expanded", "true");
-    expect(within(blockB).getByRole("button", { name: "複製區塊 B 活動" })).toBeInTheDocument();
-    await user.click(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" }));
+    expect(within(blockB).getByRole("button", { name: "複製區塊 B" })).toBeInTheDocument();
+    await user.click(within(blockB).getByRole("button", { name: "區塊 B有幫助" }));
     // The rating says which block it is about (blocks of one step share an AI call).
     await waitFor(() =>
       expect(api.lastBody("POST", "/api/ai/62/decision")).toEqual({
@@ -759,14 +810,17 @@ describe("備課對話 (session page)", () => {
         item_index: 2,
       }),
     );
-    expect(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(blockB).getByRole("button", { name: "區塊 B有幫助" })).toHaveAttribute("aria-pressed", "true");
     // Escape closes the menu and focus goes back to 「更多…」.
     await user.keyboard("{Escape}");
     expect(more).toHaveAttribute("aria-expanded", "false");
     expect(more).toHaveFocus();
-    expect(screen.getByRole("link", { name: "在完整編輯頁開啟" })).toHaveAttribute("href", "/worksheets/11");
+    const moreBar = await openBarPopover(user, "更多…");
+    expect(moreBar.getByRole("link", { name: "在完整編輯頁開啟" })).toHaveAttribute("href", "/worksheets/11");
+    expect(moreBar.queryByRole("button", { name: "調整設定" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "開啟編輯器" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "詞彙檢查" })).toHaveAttribute("href", "/worksheets/11/check");
+    expect(screen.getByRole("button", { name: "詞彙檢查" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     // One 匯出 menu, not two look-alike links; the file is named in the menu, whichever version is shown.
     expect(screen.queryByRole("button", { name: "匯出 DOCX" })).not.toBeInTheDocument();
     const exportButton = screen.getByRole("button", { name: /匯出/ });
@@ -786,11 +840,10 @@ describe("備課對話 (session page)", () => {
     expect(new URLSearchParams(exportUrl.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");
     // (The mock has no file to give: the failure is said.)
     expect(await screen.findByText("測試未定義：GET /api/worksheets/11/export")).toBeInTheDocument();
-    expect(screen.getByLabelText("版本")).toHaveTextContent("第 3 版，共 3 版");
-    // 教師版 asks for the teacher projection.
+    expect(screen.getByLabelText("版本")).toHaveTextContent("第 3 版");
+    // 教師版 shows the answers.
     await user.click(screen.getByRole("radio", { name: "教師版" }));
-    expect(await screen.findByText("A stranger once helped her.")).toBeInTheDocument();
-    expect(api.callsTo("GET", "/api/worksheets/11/sheet").some((c) => c.url.includes("audience=teacher"))).toBe(true);
+    expect(await screen.findByDisplayValue("A stranger once helped her.")).toBeInTheDocument();
 
     // revise: the reply and which blocks changed, by their printed letters.
     expect(screen.getByText("已把 B 區的題目改短。")).toBeInTheDocument();

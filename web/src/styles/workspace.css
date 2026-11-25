@@ -1,0 +1,118 @@
+/* ================= the worksheet workspace: one toolbar above an always-editable sheet ================= */
+.ws-workspace {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.ws-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-md);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+}
+
+.ws-bar .ws-seg {
+  margin-bottom: 0;
+}
+
+.ws-bar-version {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+}
+
+.ws-bar .saved,
+.ws-bar-saved {
+  margin: 0 0 0 auto;
+  text-align: right;
+}
+
+.ws-bar-popover .popover {
+  min-width: 14rem;
+}
+
+.ws-bar-info {
+  min-width: var(--control-h);
+  padding-inline: var(--space-xs);
+  border-radius: var(--radius-pill);
+}
+
+/* The popovers hold settings and explanations, so they open wider than a menu of single items. */
+.ws-display-panel {
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.ws-display-panel .check-row {
+  margin: 0;
+}
+
+.ws-info-panel {
+  right: 0;
+  left: auto;
+  width: min(26rem, calc(100vw - 2 * var(--gutter)));
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  font-size: var(--text-sm);
+}
+
+.ws-info-panel p {
+  margin: 0;
+}
+
+.ws-more-panel {
+  right: 0;
+  left: auto;
+}
+
+.ws-bar-popover .popover-item {
+  text-decoration: none;
+}
+
+.ws-bar-popover .popover-item:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+  .ws-bar-popover .popover-item {
+    min-height: var(--hit);
+  }
+}
+
+/* A block's tools: 改這一區 and 加註記 in the row, the rest behind 「更多…」. */
+.ws-tools .prep-tools {
+  margin-top: 0;
+}
+
+/* Manna changed this block in the last chat turn (and the one the bottom bar will revise). */
+.ws-block.is-changed {
+  background: var(--color-manna-wash);
+  box-shadow: inset 3px 0 0 var(--color-manna-rule);
+}
+
+.ws-block.is-targeted {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ws-block {
+    transition:
+      background-color var(--dur-short) var(--ease-out),
+      box-shadow var(--dur-short) var(--ease-out);
+  }
+}
+
+/* While Manna works on the worksheet beside the conversation. */
+.prep-sheet-frozen {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.ws-print-preview .prep-sheet,
+.ws-check-dialog .section {
+  max-width: none;
+}

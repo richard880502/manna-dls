@@ -295,12 +295,6 @@
   font-weight: var(--weight-strong);
 }
 
-.ws-adjust {
-  margin-left: auto;
-  padding-bottom: var(--space-xs);
-  font-size: var(--text-sm);
-}
-
 .ws-tool-row {
   display: flex;
   flex-wrap: wrap;
@@ -347,10 +341,6 @@
 .ws-seg input:focus-visible + span {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
-}
-
-.ws-show-objectives {
-  margin: 0;
 }
 
 .ws-draft-note {
@@ -1925,24 +1915,8 @@ button.bloom-seg:focus-visible {
   background: var(--color-warn-wash);
 }
 
-.prep-sheet-block.is-targeted {
-  box-shadow: inset 3px 0 0 var(--color-accent);
-}
-
 .prep-sheet-wrap {
   position: relative;
-}
-
-/* 「加註記」 floats just under the selected text (placed by the card). */
-.prep-sheet-wrap .anno-bar.is-floating {
-  position: absolute;
-  bottom: auto;
-  max-width: min(28rem, 100%);
-  margin: 0;
-}
-
-.prep-sheet-hint {
-  margin-top: var(--space-xs);
 }
 
 .prep-target {

@@ -11,9 +11,7 @@ import type {
   WorksheetContent,
   WorksheetImages,
   WorksheetState,
-  WsAudience,
   WsBlock,
-  WsSheet,
   WsSlotImage,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
@@ -388,110 +386,48 @@ const prepSession: PrepSession = {
   next: [],
 };
 
-function prepSheet(audience: WsAudience, slotStatus: "done" | "queued" = "done"): WsSheet {
-  const teacher = audience === "teacher";
-  return {
-    title: "The Umbrella Stand",
-    level: "standard",
-    audience,
-    objectives: [],
-    blocks: [
-      {
-        id: "b1",
-        kind: "activity",
-        label: "A",
-        title: "Paragraph 1: Find",
-        instructions: "Read paragraph 1.",
-        steps: [],
-        vocabulary: [],
-        supports: [],
-        items: [{ no: 1, answer_format: "簡答題", prompt: "Why?", options: [], lines: 2 }],
-        images: [
-          {
-            slot_id: "b1-p1",
-            status: slotStatus,
-            image_id: slotStatus === "done" ? 31 : null,
-            width: 48,
-            height: 32,
-            alt: "A girl with an umbrella",
-            caption: "Look at the umbrella stand.",
-            ai_generated: slotStatus === "done",
-            ...(teacher ? { purpose: "幫助學生想像下雨的店門口", message: null } : {}),
-          },
-          {
-            slot_id: "b1-p2",
-            status: "failed",
-            image_id: null,
-            width: null,
-            height: null,
-            alt: "A map",
-            caption: "",
-            ai_generated: false,
-            ...(teacher ? { purpose: "讓學生看出故事發生的城市", message: "產圖逾時" } : {}),
-          },
-        ],
-      },
-    ],
-  };
-}
-
 const prepWorksheet = (pictures: WorksheetImages): WorksheetState => ({
   ...wsState({ id: 11, images: pictures }),
 });
 
-describe("the 備課對話 preview", () => {
-  it("prints the pictures; the boxes say what they are for only in the teacher version", async () => {
-    const pictures = images([
-      slotImage("b1-p1", "b1", { image_id: 31 }),
-      slotImage("b1-p2", "b1", { status: "failed", message: "產圖逾時" }),
-    ]);
+describe("the 備課對話 worksheet pane", () => {
+  it("shows the pictures in the editor beside the conversation", async () => {
     const api = mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: prepSession,
-      "GET /api/worksheets/11": prepWorksheet(pictures),
-      "GET /api/worksheets/11/sheet": (call: MockCall) =>
-        prepSheet(new URL(call.url, "http://x").searchParams.get("audience") as WsAudience),
+      "GET /api/worksheets/11": prepWorksheet(initialImages()),
+      "GET /api/worksheets/11/comments": [],
+      "GET /api/worksheets/11/proposals": [],
     });
     stubPictures();
-    const user = userEvent.setup();
     renderApp("/prep/7");
     const preview = await screen.findByRole("article", { name: "一般版 學生版" });
     await waitFor(() =>
-      expect(within(preview).getByRole("img", { name: "A girl with an umbrella" })).toHaveAttribute(
+      expect(within(preview).getByRole("img", { name: "A girl with an umbrella outside a shop" })).toHaveAttribute(
         "src",
         "blob:img-31",
       ),
     );
     expect(api.callsTo("GET", "/api/worksheets/11/images/31")).not.toHaveLength(0);
     expect(within(preview).getByText("Look at the umbrella stand.")).toBeInTheDocument();
-    // Student version: an empty box, no purpose, no 「AI 生成」; the teacher looking at it still
-    // sees why the box is empty (the printed student sheet never does).
-    expect(within(preview).getByRole("img", { name: "A map" })).toBeInTheDocument();
-    expect(within(preview).queryByText(/請放一張圖/)).not.toBeInTheDocument();
-    expect(within(preview).getByText("產圖逾時")).toBeInTheDocument();
-    expect(within(preview).queryByText("AI 生成")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("radio", { name: "教師版" }));
-    const teacher = await screen.findByRole("article", { name: "一般版 教師版" });
-    expect(await within(teacher).findByText("請放一張圖：讓學生看出故事發生的城市")).toBeInTheDocument();
-    expect(within(teacher).getByText("產圖逾時")).toBeInTheDocument();
-    expect(within(teacher).getByText("AI 生成")).toBeInTheDocument();
+    // A slot a picture failed for says why, and can be drawn again.
+    expect(within(preview).getByText(/HTTP 503/)).toBeInTheDocument();
   });
 
   it("asks for pictures still being made, then shows them; 重畫 works here too", async () => {
     let polls = 0;
-    const queued = images([slotImage("b1-p1", "b1", { status: "queued" }), slotImage("b1-p2", "b1", { status: "failed" })]);
-    const done = images([slotImage("b1-p1", "b1", { image_id: 31 }), slotImage("b1-p2", "b1", { status: "failed" })]);
+    const queued = images(initialImages().slots.map((s) => (s.slot_id === "b1-p1" ? { ...s, status: "queued", image_id: null } : s)));
+    const done = initialImages();
     const api = mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: prepSession,
       "GET /api/worksheets/11": prepWorksheet(queued),
-      "GET /api/worksheets/11/sheet": () => prepSheet("student", polls < 2 ? "queued" : "done"),
+      "GET /api/worksheets/11/comments": [],
+      "GET /api/worksheets/11/proposals": [],
       "GET /api/worksheets/11/images": () => (++polls < 2 ? queued : done),
-      "POST /api/worksheets/11/image-slots/b1-p2/regenerate": images([
-        slotImage("b1-p1", "b1", { image_id: 31 }),
-        slotImage("b1-p2", "b1", { status: "queued" }),
-      ]),
+      "POST /api/worksheets/11/image-slots/b2-p2/regenerate": images(
+        initialImages().slots.map((s) => (s.slot_id === "b2-p2" ? { ...s, status: "queued", message: null } : s)),
+      ),
     });
     stubPictures();
     const user = userEvent.setup();
@@ -499,19 +435,17 @@ describe("the 備課對話 preview", () => {
     const preview = await screen.findByRole("article", { name: "一般版 學生版" });
     expect(await within(preview).findByText("Manna 正在畫這張圖…")).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(preview).getByRole("img", { name: "A girl with an umbrella" })).toHaveAttribute(
+      expect(within(preview).getByRole("img", { name: "A girl with an umbrella outside a shop" })).toHaveAttribute(
         "src",
         "blob:img-31",
       ),
     );
-    // The sheet is read again once the pictures are done.
-    await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/sheet").length).toBeGreaterThanOrEqual(2));
 
-    const box = within(within(preview).getAllByRole("figure")[1]!);
-    await user.click(box.getByRole("button", { name: "重畫" }));
-    await user.click(box.getByRole("button", { name: "送出重畫" }));
+    const failed = within(within(preview).getAllByRole("figure", { name: "圖片 B" })[1]!);
+    await user.click(failed.getByRole("button", { name: "重畫" }));
+    await user.click(failed.getByRole("button", { name: "送出重畫" }));
     await waitFor(() =>
-      expect(api.callsTo("POST", "/api/worksheets/11/image-slots/b1-p2/regenerate")).toHaveLength(1),
+      expect(api.callsTo("POST", "/api/worksheets/11/image-slots/b2-p2/regenerate")).toHaveLength(1),
     );
   });
 });

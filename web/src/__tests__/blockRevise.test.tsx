@@ -3,7 +3,7 @@
 // are listed under their block, and Manna's proposal waits for 採用／放棄／再改一次; in the editor
 // the same with 改這一區, 加註記 and 註記 on a question, the block held while a proposal waits, and
 // a save over a newer version offering 重新載入.
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
@@ -28,6 +28,7 @@ import { prepConfig } from "../lib/prep";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
+import { clickBlockMore, openBarPopover, openBlockMore } from "../test/menus";
 
 beforeEach(() => {
   signIn();
@@ -257,19 +258,6 @@ const session = (): PrepSession => ({
 const sheetRoute = (items?: WsItem[]) => (call: MockCall) =>
   sheet(new URL(call.url, "http://x").searchParams.get("audience") as WsAudience, items);
 
-/** Selects `quote` inside the element `holder` as a teacher would with the mouse. */
-function selectText(holder: Element, quote: string) {
-  const walker = document.createTreeWalker(holder, NodeFilter.SHOW_TEXT);
-  let node = walker.nextNode();
-  while (node && !(node.textContent ?? "").includes(quote)) node = walker.nextNode();
-  if (!node) throw new Error(`${quote} not found`);
-  const at = (node.textContent ?? "").indexOf(quote);
-  act(() => {
-    window.getSelection()?.setBaseAndExtent(node, at, node, at + quote.length);
-    document.dispatchEvent(new Event("selectionchange"));
-  });
-}
-
 const prepBlock = () => within(screen.getByRole("region", { name: /^區塊 B/ }));
 
 // ---------------------------------------------------------------- 備課對話
@@ -328,7 +316,7 @@ describe("備課對話: one block of the worksheet", () => {
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
-    await user.click(await screen.findByRole("button", { name: "改這一區（B 活動）" }));
+    await user.click(await screen.findByRole("button", { name: "改這一區（區塊 B）" }));
     expect(screen.getByText("針對 B 區")).toBeInTheDocument();
     const bar = screen.getByRole("textbox", { name: "給 Manna 的話" });
     expect(bar).toHaveAttribute("placeholder", "想怎麼改 B 區？例如：第 2 題太難，改簡單一點");
@@ -359,46 +347,6 @@ describe("備課對話: one block of the worksheet", () => {
     await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/undo`)).toHaveLength(1));
     await waitFor(() => expect(prepBlock().queryByText("已採用 Manna 的修改。")).not.toBeInTheDocument());
     expect(await prepBlock().findByText("What did the neighbors expect would happen?")).toBeInTheDocument();
-  });
-
-  it("selected text becomes a note, and 儲存並請 Manna 改 sends it to Manna", async () => {
-    const created = note({ id: 42 });
-    const api = mockApi({
-      ...baseRoutes(),
-      "GET /api/prep-sessions/7": session(),
-      [`GET ${WS}`]: worksheet(),
-      [`GET ${WS}/sheet`]: sheetRoute(),
-      [`GET ${WS}/comments`]: [],
-      [`GET ${WS}/proposals`]: [],
-      [`POST ${WS}/comments`]: created,
-      [`POST ${WS}/blocks/b2/revise`]: proposal("running", { comment_ids: [42] }),
-    });
-    const user = userEvent.setup();
-    renderApp("/prep/7");
-    const prompt = await screen.findByText("What did the neighbors expect would happen?");
-    selectText(prompt, "neighb");
-    expect(await screen.findByText(/已選取第 3 題的「/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "加註記" }));
-    const draft = within(screen.getByRole("form", { name: "新增註記" }));
-    expect(draft.getByText("第 3 題")).toBeInTheDocument();
-    expect(draft.getByRole("checkbox", { name: "提供給 AI" })).toBeChecked();
-    await user.type(draft.getByRole("textbox", { name: "註記內容" }), "這題太難，改簡單一點");
-    await user.click(draft.getByRole("button", { name: "儲存並請 Manna 改" }));
-    await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/revise`)).toHaveLength(1));
-    // The selection snapped to the whole word.
-    expect(api.lastBody("POST", `${WS}/comments`)).toEqual({
-      block_id: "b2",
-      field: "item",
-      item_id: "b2-2",
-      start: 13,
-      end: 22,
-      quote: "neighbors",
-      note: "這題太難，改簡單一點",
-      share_with_ai: true,
-    });
-    expect(api.lastBody("POST", `${WS}/blocks/b2/revise`)).toEqual({ comment_ids: [42] });
-    expect(await prepBlock().findByRole("group", { name: "我的註記：第 3 題" })).toBeInTheDocument();
-    expect(screen.queryByRole("form", { name: "新增註記" })).not.toBeInTheDocument();
   });
 
   it("lists the notes under their block: 提供給 AI, 略過, 刪除, and 依註記修改", async () => {
@@ -519,7 +467,7 @@ describe("編輯器: 改這一區, notes and saving", () => {
       expect(editorBlock().getByRole("textbox", { name: "題目 3" })).toHaveValue("Did the neighbors think the umbrellas would stay?"),
     );
     expect(editorBlock().getByRole("textbox", { name: "題目 3" })).toBeEnabled();
-    expect(editorBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
+    expect((await openBlockMore(user, editorBlock())).getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
   });
 
   it("註記 on a question saves a note on it; 加註記 on the block", async () => {
@@ -624,7 +572,7 @@ describe("編輯器: 採用之後的復原與同一輪的各次建議", () => {
     const notice = await editorBlock().findByText("已採用 Manna 的修改。");
     expect(notice.closest("[role=status]")).not.toBeNull();
     // The existing 復原上一版 stays among the block tools.
-    expect(editorBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
+    expect((await openBlockMore(user, editorBlock())).getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
     await user.click(editorBlock().getByRole("button", { name: "復原" }));
     await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/undo`)).toHaveLength(1));
     await waitFor(() => expect(editorBlock().queryByText("已採用 Manna 的修改。")).toBeNull());
@@ -771,7 +719,7 @@ describe("編輯器: 修改歷程", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/11");
     await screen.findByRole("region", { name: "區塊 B" });
-    await user.click(await editorBlock().findByRole("button", { name: "修改歷程（區塊 B）" }));
+    await clickBlockMore(user, editorBlock(), "修改歷程（區塊 B）");
     const dialog = within(await screen.findByRole("dialog", { name: "修改歷程" }));
     const list = within(await dialog.findByRole("list", { name: "這一區的修改歷程" }));
     expect(list.getAllByRole("button").map((b) => b.textContent)).toEqual([
@@ -813,7 +761,7 @@ describe("編輯器: 修改歷程", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/11");
     await screen.findByRole("region", { name: "區塊 B" });
-    await user.click(await editorBlock().findByRole("button", { name: "修改歷程（區塊 B）" }));
+    await clickBlockMore(user, editorBlock(), "修改歷程（區塊 B）");
     const dialog = within(await screen.findByRole("dialog", { name: "修改歷程" }));
     await user.click(await dialog.findByRole("button", { name: /Manna 的提案（沒採用）/ }));
     await user.click(dialog.getByRole("button", { name: "採用這個版本" }));
@@ -975,7 +923,7 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     expect(editorBlock().getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
     expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
 
-    await user.click(screen.getByRole("checkbox", { name: "字詞表放在學習單最後" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表放在學習單最後" }));
     const end = await screen.findByRole("region", { name: "字詞表（學習單最後）" });
     expect(within(end).getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
     expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0);
@@ -987,7 +935,7 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     expect(saved.blocks[1]!.vocabulary).toEqual(before.vocabulary);
 
     // And back.
-    await user.click(screen.getByRole("checkbox", { name: "字詞表放在學習單最後" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表放在學習單最後" }));
     await waitFor(() => expect(editorBlock().getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2));
     expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
   });
@@ -1086,7 +1034,7 @@ describe("習慣建議: 改這一區之後", () => {
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
-    await user.click(await screen.findByRole("button", { name: "改這一區（B 活動）" }));
+    await user.click(await screen.findByRole("button", { name: "改這一區（區塊 B）" }));
     await user.type(screen.getByRole("textbox", { name: "給 Manna 的話" }), `${SAID}{Enter}`);
     const ask = await screen.findByText(/要記住這個習慣嗎？/);
     expect(ask.closest("form")).toHaveClass("prep-bottom");

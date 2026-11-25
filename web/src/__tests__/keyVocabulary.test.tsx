@@ -10,7 +10,7 @@ import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { autosaveConfig } from "../lib/useAutosave";
 import { bankWithText, emptyBrief, emptySettings, keyVocabularyText, parseWordList, vocabMeaning } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
-
+import { openBarPopover } from "../test/menus";
 beforeEach(() => {
   signIn();
   worksheetConfig.pollMs = 20;
@@ -225,14 +225,14 @@ describe("Key Vocabulary in the editor: the language switch", () => {
     expect(english).toHaveValue("a thing that keeps rain off you");
     expect(screen.getByRole("heading", { name: "Key Vocabulary" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("checkbox", { name: "字詞表的字義用中文" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表的字義用中文" }));
     expect(await screen.findByRole("textbox", { name: "umbrella 的中文解釋" })).toHaveValue("雨傘");
     await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
     expect(savedContent(api).vocabulary_language).toBe("zh");
     // Nothing was missing: Manna was not asked.
     expect(api.callsTo("POST", `${WS}/vocabulary-meanings`)).toHaveLength(0);
 
-    await user.click(screen.getByRole("checkbox", { name: "字詞表的字義用中文" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表的字義用中文" }));
     expect(await screen.findByRole("textbox", { name: "umbrella 的解釋" })).toHaveValue("a thing that keeps rain off you");
     await waitFor(() => expect(savedContent(api).vocabulary_language).toBe("en"));
     const row = savedContent(api).blocks[0]!.vocabulary[0]!;
@@ -253,7 +253,7 @@ describe("Key Vocabulary in the editor: the language switch", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/11");
     await screen.findByRole("textbox", { name: "umbrella 的解釋" });
-    await user.click(screen.getByRole("checkbox", { name: "字詞表的字義用中文" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表的字義用中文" }));
     await waitFor(() => expect(api.callsTo("POST", `${WS}/vocabulary-meanings`)).toHaveLength(1));
     // The switch was saved first, and the request asks for the tables.
     expect(savedContent(api).vocabulary_language).toBe("zh");
@@ -261,8 +261,9 @@ describe("Key Vocabulary in the editor: the language switch", () => {
     expect(await screen.findByText(/沒有中文字義的字會先印英文字義/)).toBeInTheDocument();
     // The word without Chinese keeps its English meaning in the field's hint; the switch stays on.
     expect(screen.getByRole("textbox", { name: "trust 的中文解釋" })).toHaveAttribute("placeholder", expect.stringContaining("to believe someone is honest"));
-    expect(screen.getByRole("checkbox", { name: "字詞表的字義用中文" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "補上中文字義" })).toBeInTheDocument();
+    const display = await openBarPopover(user, "顯示");
+    expect(display.getByRole("checkbox", { name: "字詞表的字義用中文" })).toBeChecked();
+    expect(display.getByRole("button", { name: "補上中文字義" })).toBeInTheDocument();
   });
 
   it("shows Content and Academic side by side with an editable part of speech", async () => {

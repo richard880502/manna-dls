@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import type { WsSheet, WsSheetBlock, WsSheetWord } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import {
@@ -18,7 +18,7 @@ import { GlossaryBox, glossText } from "../worksheet/Glossary";
 import { OrganizerView } from "../worksheet/Organizer";
 import { organizerText } from "../../lib/organizer";
 import { printedObjective } from "../../lib/objectives";
-import { SlotPicture, viewOfSheetImage, type PictureActions } from "../worksheet/SlotPicture";
+import { SlotPicture, viewOfSheetImage } from "../worksheet/SlotPicture";
 import { SectionTools } from "./SectionTools";
 
 /** A block's name in the teacher's words: 「A 暖身」, 「Exit ticket」. */
@@ -134,17 +134,6 @@ function RevealButton({
   );
 }
 
-/** What a page adds to a block of the preview: more tools, and what goes under the block. */
-export interface SheetBlockExtras {
-  /** Shown with the block: the main tools (改這一區, 加註記). */
-  tools?: ReactNode;
-  /** The secondary tools, inside the block's 「更多…」 menu (`popover-item` buttons). */
-  more?: ReactNode;
-  below?: ReactNode;
-  /** The block is the one the bottom bar will revise. */
-  targeted?: boolean;
-}
-
 /**
  * The printed sheet, read-only, as the server assembles it (the same projection the exports use).
  * Each block is a section with 複製 and 有幫助／不合用; changed blocks can be highlighted. Blocks,
@@ -155,17 +144,12 @@ export function SheetPreview({
   sheet,
   highlight,
   interactionFor,
-  extras,
-  pictures = null,
   readOnly,
   answers = null,
 }: {
   sheet: WsSheet;
   highlight: ReadonlySet<string>;
   interactionFor: (block: WsSheetBlock) => number | null;
-  extras?: (block: WsSheetBlock) => SheetBlockExtras;
-  /** The worksheet's pictures and what the teacher can do with them; null: none shown. */
-  pictures?: PictureActions | null;
   /**
    * Somebody else's worksheet (社群): no copy or rating tools, and its pictures are read through
    * `load` (the sheet's own worksheet id and how to fetch one picture; stable between renders).
@@ -217,7 +201,6 @@ export function SheetPreview({
       {sheet.blocks.map((b) => {
         const name = sheetBlockName(b);
         const bloomLine = teacher ? blockBloomLine(b.items) : "";
-        const extra = extras?.(b) ?? {};
         const keyBlock = !teacher ? answers?.blocks.find((x) => x.id === b.id) : undefined;
         const canReveal = blockHasAnswers(keyBlock);
         const showKey = canReveal && revealed.has(b.id);
@@ -227,7 +210,7 @@ export function SheetPreview({
             key={b.id}
             id={`sheet-block-${b.id}`}
             data-block={b.id}
-            className={`ws-block prep-sheet-block${highlight.has(b.id) ? " is-changed" : ""}${extra.targeted ? " is-targeted" : ""}`}
+            className={`ws-block prep-sheet-block${highlight.has(b.id) ? " is-changed" : ""}`}
             aria-label={`區塊 ${name}`}
           >
             <h3 className="ws-block-head" tabIndex={-1}>
@@ -262,20 +245,6 @@ export function SheetPreview({
                   view={viewOfSheetImage(img, undefined)}
                   actions={null}
                   load={readOnly.load}
-                />
-              ))}
-            {pictures &&
-              (b.images ?? []).map((img) => (
-                <SlotPicture
-                  key={img.slot_id}
-                  worksheetId={pictures.worksheetId}
-                  name={name}
-                  teacher={teacher}
-                  view={viewOfSheetImage(
-                    img,
-                    pictures.images?.slots.find((s) => s.slot_id === img.slot_id),
-                  )}
-                  actions={pictures}
                 />
               ))}
             {b.steps.length > 0 && (
@@ -415,18 +384,14 @@ export function SheetPreview({
                 </div>
               </div>
             )}
-            {extra.below}
             {!readOnly && (
               <div lang="zh-Hant">
                 <SectionTools
                   name={`區塊 ${name}`}
                   text={sheetBlockText(b)}
                   interactionId={interactionFor(b)}
-                  more={extra.more}
                   ratingTarget={{ itemIndex: sheet.blocks.indexOf(b) + 1 }}
-                >
-                  {extra.tools}
-                </SectionTools>
+                />
               </div>
             )}
           </section>

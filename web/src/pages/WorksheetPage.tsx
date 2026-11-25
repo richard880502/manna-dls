@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { MaterialTextDialog, ParagraphPickerDialog } from "../components/material/LongMaterial";
 import { Link, useParams } from "react-router";
 import { ErrorText, Loading } from "../components/common";
 import { MemorySuggestions } from "../components/memory/MemorySuggestions";
 import { WorksheetMaterialPane, type MaterialPaneSlot } from "../components/worksheet/MaterialPane";
 import { OptionsView } from "../components/worksheet/OptionsView";
-import { ResultView } from "../components/worksheet/ResultView";
-import { useWorksheet } from "../components/worksheet/useWorksheet";
-import { formatClock } from "../lib/worksheet";
+import { SaveStatus } from "../components/worksheet/workspace/SaveStatus";
+import { WorksheetWorkspace } from "../components/worksheet/workspace/WorksheetWorkspace";
+import { useFlushOnUnmount, useWorksheet } from "../components/worksheet/useWorksheet";
 
 const defaultMaterialPane: MaterialPaneSlot = (props) => <WorksheetMaterialPane {...props} />;
 
@@ -24,10 +24,10 @@ export function WorksheetPage({ materialPane = defaultMaterialPane }: WorksheetP
   const { worksheetId } = useParams();
   const id = Number(worksheetId);
   if (!Number.isInteger(id) || id <= 0) return <ErrorText message="找不到這份學習單。" />;
-  return <WorksheetWorkspace key={id} id={id} materialPane={materialPane} />;
+  return <WorksheetPageBody key={id} id={id} materialPane={materialPane} />;
 }
 
-function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: MaterialPaneSlot }) {
+function WorksheetPageBody({ id, materialPane }: { id: number; materialPane: MaterialPaneSlot }) {
   const ws = useWorksheet(id);
   const state = ws.state;
   /** null: follow the worksheet (options until it was generated, then the result). */
@@ -36,11 +36,7 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
   const [fix, setFix] = useState<"edit" | "pick" | null>(null);
 
   // Whatever is still pending is saved when the page is left.
-  const flushRef = useRef(ws.flush);
-  useEffect(() => {
-    flushRef.current = ws.flush;
-  }, [ws.flush]);
-  useEffect(() => () => void flushRef.current(), []);
+  useFlushOnUnmount(ws.flush);
 
   if (ws.status === "loading") return <Loading />;
   if (ws.status === "error" || !state) {
@@ -60,15 +56,6 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
   const shown = view ?? (state.generated ? "result" : "options");
   /** The library entry the material came from: its text can be edited and paragraphs chosen. */
   const libraryId = state.material.source.material_id ?? null;
-  const savedLine = ws.saveError
-    ? `沒有存到：${ws.saveError}`
-    : ws.saving
-      ? "儲存中…"
-      : ws.savedAt
-        ? `已自動儲存 ${formatClock(ws.savedAt)}`
-        : ws.dirty
-          ? "尚未儲存"
-          : `已自動儲存 ${formatClock(state.saved_at)}`;
 
   return (
     <>
@@ -102,24 +89,8 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
             </p>
           )}
         </div>
-        <p className={`saved${ws.saveError ? " is-failed" : ""}`} role="status">
-          {savedLine}
-          {ws.conflict ? (
-            <>
-              {" "}
-              <button type="button" className="text-link is-plain" onClick={ws.reload}>
-                重新載入
-              </button>
-            </>
-          ) : ws.saveError && (
-            <>
-              {" "}
-              <button type="button" className="text-link is-plain" onClick={() => void ws.flush()}>
-                再試一次
-              </button>
-            </>
-          )}
-        </p>
+        {/* The workspace shows it in its toolbar; the options have none. */}
+        {shown === "options" && <SaveStatus ws={ws} />}
       </div>
 
       <MemorySuggestions floating filter={{ worksheetId: id }} watch={`${state.versions_count}:${state.running}`} />
@@ -142,7 +113,7 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
               {...(libraryId ? { onEditText: () => setFix("edit"), onPickParagraphs: () => setFix("pick") } : {})}
             />
           ) : (
-            <ResultView ws={ws} onAdjust={() => setView("options")} />
+            <WorksheetWorkspace ws={ws} onAdjust={() => setView("options")} />
           )}
         </div>
       </div>
