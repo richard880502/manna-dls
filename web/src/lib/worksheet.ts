@@ -770,6 +770,41 @@ export function projectSheet(content: WorksheetContent, level: WsLevel, audience
   };
 }
 
+/** Printed above a block's numbered steps (mirrors `assemble::STEPS_LEAD`). */
+export const STEPS_LEAD = "Follow the steps below.";
+
+/** A block's own number of a question: the `n` of its id `<block>-i<n>` (mirrors `assemble::own_number`). */
+export function ownNumber(itemId: string): number | null {
+  const at = itemId.lastIndexOf("-i");
+  if (at < 0) return null;
+  const n = Number(itemId.slice(at + 2));
+  return Number.isInteger(n) && n > 0 && /^\d+$/.test(itemId.slice(at + 2)) ? n : null;
+}
+
+/** A block's own question numbers and the numbers one version prints for them. */
+export function printedNumbers(items: ReadonlyArray<{ item: { id: string }; no: number }>): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const { item, no } of items) {
+    const own = ownNumber(item.id);
+    if (own !== null) map.set(own, no);
+  }
+  return map;
+}
+
+const ITEM_REF =
+  /\b(items?|questions?|q)(\s*#?\s*)(\d{1,2}(?:\s*(?:,\s*(?:and\s+|or\s+)?|and|or|&|–|—|-|to)\s*\d{1,2})*)\b/gi;
+
+/**
+ * The text as the sheet prints it: 「item 2」 of a block is the question its version numbers 5
+ * (mirrors `assemble::renumber_refs`). A number with no question of the block stays.
+ */
+export function renumberRefs(text: string, printed: ReadonlyMap<number, number>): string {
+  if (printed.size === 0 || [...printed].every(([own, no]) => own === no)) return text;
+  return text.replace(ITEM_REF, (_m, word: string, gap: string, numbers: string) =>
+    `${word}${gap}${numbers.replace(/\d{1,2}/g, (d) => String(printed.get(Number(d)) ?? d))}`,
+  );
+}
+
 /** The name of a block in the teacher's words, e.g. 「A 暖身」. */
 export function blockName(block: WsBlock, label: string): string {
   const kind = BLOCK_KIND_LABEL[block.kind];

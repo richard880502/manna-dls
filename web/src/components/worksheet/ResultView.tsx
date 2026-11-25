@@ -21,6 +21,7 @@ import {
   SUPPORT_KINDS_FOR,
   SUPPORT_KIND_LABEL,
   POS_OPTIONS,
+  STEPS_LEAD,
   TIERED_FORMATS,
   bankNeedsFill,
   buildSupport,
@@ -31,7 +32,9 @@ import {
   newId,
   frameShown,
   newItem,
+  printedNumbers,
   projectSheet,
+  renumberRefs,
   studentVersionName,
   toggleIn,
   versionCode,
@@ -485,6 +488,12 @@ function BlockSection({
   const [reviseOpen, setReviseOpen] = useState(false);
   const [draft, setDraft] = useState<SheetSelection | null>(null);
   const numbers = new Map(view.items.map(({ item, no }) => [item.id, no]));
+  const printed = printedNumbers(view.items);
+  /** What prints for a text that names questions by number, when it differs from the stored text. */
+  const printedAs = (text: string) => {
+    const out = renumberRefs(text, printed);
+    return out !== text ? out : null;
+  };
   const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
   const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -713,6 +722,7 @@ function BlockSection({
         disabled={locked}
         onChange={(instructions) => patch((b) => ({ ...b, instructions }))}
       />
+      <PrintedAs text={printedAs(block.instructions)} />
 
       {(block.image_slots ?? []).map((slot) => {
         const live = ws.state?.images?.slots.find((s) => s.slot_id === slot.id);
@@ -770,6 +780,7 @@ function BlockSection({
               刪除
             </button>
           </p>
+          {!s.heading?.trim() && <p className="ws-steps-lead">{STEPS_LEAD}</p>}
           <ol>
             {s.steps.map((stepText, i) => (
               // oxlint-disable-next-line react/no-array-index-key -- plain strings, edited in place
@@ -782,6 +793,7 @@ function BlockSection({
                     patchScaffold(s.id, (x) => ({ ...x, steps: x.steps.map((v, j) => (j === i ? text : v)) }))
                   }
                 />
+                <PrintedAs text={printedAs(stepText)} />
               </li>
             ))}
           </ol>
@@ -856,6 +868,7 @@ function BlockSection({
                 disabled={locked}
                 onChange={(prompt) => changeItem((it) => ({ ...it, prompt }))}
               />
+              <PrintedAs text={printedAs(item.prompt)} />
               <ChoicesArea item={item} no={no} disabled={locked} onChange={changeItem} />
               {tier ? (
                 <TierEditor
@@ -1443,5 +1456,19 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
       <ExportArea ws={ws} level={current} />
       <LessonLinkControls ws={ws} />
     </div>
+  );
+}
+
+/**
+ * The sheet numbers questions through the whole worksheet, but steps and instructions name them by
+ * their number in the block (「item 2」). The print shows the sheet's number; the editor keeps the
+ * stored text and says what will print.
+ */
+function PrintedAs({ text }: { text: string | null }) {
+  if (!text) return null;
+  return (
+    <p className="ws-printed-as quiet-note" lang="zh-Hant">
+      印出時：<span lang="en">{text}</span>
+    </p>
   );
 }

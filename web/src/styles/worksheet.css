@@ -525,6 +525,11 @@
   margin: 0;
 }
 
+.ws-printed-as {
+  margin: var(--space-3xs) 0 0;
+  font-size: var(--text-xs);
+}
+
 .ws-procedure ol,
 .ws-items,
 .ws-objectives ol {

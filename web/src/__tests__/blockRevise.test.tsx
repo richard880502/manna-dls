@@ -826,6 +826,23 @@ const withExtras = (extra: Partial<WsBlock> = {}): WsBlock => ({
 const contentWith = (b2: WsBlock): WorksheetContent => ({ ...content(), blocks: [content().blocks[0]!, b2] });
 
 describe("編輯器: 鷹架與字詞表", () => {
+  it("shows Follow the steps below. and what a step that names a question by number prints", async () => {
+    // The warm-up prints question 1, so block B's own questions 1–2 print as 2–3.
+    const b2 = withExtras({
+      items: [item("b2-i1", "Who started the stand?"), item("b2-i2", "Use your answer to item 1. Why?")],
+    });
+    b2.scaffolds[0] = { ...b2.scaffolds[0]!, steps: ["Read paragraph 1.", "Answer item 2 in plain English."] };
+    mockApi(editorRoutes(worksheet({ content: contentWith(b2) })));
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    const block = editorBlock();
+    expect(await block.findByText("Follow the steps below.")).toBeInTheDocument();
+    expect(block.getByText("Answer item 3 in plain English.")).toBeInTheDocument();
+    expect(block.getByText("Use your answer to item 2. Why?")).toBeInTheDocument();
+    // A step without a question number gets no note.
+    expect(block.queryByText("Read paragraph 1.", { selector: ".ws-printed-as span" })).toBeNull();
+  });
+
   it("the proposal lists what happens to the scaffolds and the word table, and 採用 applies it", async () => {
     const before = withExtras();
     const after = {
