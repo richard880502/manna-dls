@@ -2720,7 +2720,16 @@ export interface WsSheetBlock {
 export interface WsVersionRow {
   version_no: number;
   cause: string;
+  /** 這一版是怎麼來的（docs/API.md「版本紀錄」）；更早的版本是 null */
+  source?: Record<string, unknown> | null;
   created_at: string;
+}
+
+/** 還原成這一版：寫成新的一版，舊的版本都還在 */
+export interface WsVersionRestored {
+  version_no: number;
+  from_version_no: number;
+  worksheet: WorksheetState;
 }
 
 // ---- 備課對話（prep sessions）----

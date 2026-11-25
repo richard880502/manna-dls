@@ -20,6 +20,7 @@ pub mod images;
 pub mod key_vocab;
 pub mod material;
 pub mod organizer;
+pub mod restore;
 pub mod revise;
 pub mod schemas;
 pub mod store;

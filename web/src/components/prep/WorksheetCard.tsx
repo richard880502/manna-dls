@@ -25,6 +25,7 @@ import { OcrProgress } from "../material/Ocr";
 import { BloomDistribution } from "../worksheet/Bloom";
 import { ExportMenu } from "../worksheet/ExportMenu";
 import { BlockHistoryButton } from "../worksheet/BlockHistory";
+import { VersionHistoryButton } from "../worksheet/VersionHistory";
 import { BlockReviseArea, LostNotes, ReviseByNotesButton, useBlockRevise } from "../worksheet/BlockRevise";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { anyOpen } from "../worksheet/SlotPicture";
@@ -74,6 +75,7 @@ export function WorksheetCard({
   proposalsKey,
   stepsShown = false,
   onReady,
+  chatBusy = false,
 }: {
   turn: PrepTurn;
   /** Changes when the worksheet got a new version (a revise turn finished). */
@@ -94,6 +96,8 @@ export function WorksheetCard({
    * swaps its 「進度」 panel for the one-line summary. The sheet fades in when it arrived late.
    */
   onReady?: () => void;
+  /** A chat turn of this conversation is running (or being sent): 版本紀錄 waits. */
+  chatBusy?: boolean;
 }) {
   const ids = useId();
   const ref = turn.worksheet;
@@ -432,6 +436,19 @@ export function WorksheetCard({
           <span className="prep-version" aria-label="版本">
             第 {state.version_no} 版，共 {Math.max(state.versions_count, state.version_no)} 版
           </span>
+        )}
+        {state && wsId !== null && (
+          <VersionHistoryButton
+            worksheetId={wsId}
+            levels={levels}
+            blockedReason={chatBusy ? "備課對話正在處理，等這一輪結束後再看版本紀錄。" : null}
+            onRestored={(done) => {
+              setState(done.worksheet);
+              setImages(done.worksheet.images ?? null);
+              setLocalKey((n) => n + 1);
+              setFlash(new Set());
+            }}
+          />
         )}
         <div className="prep-ws-actions">
           <Link className="text-link is-plain" to={`/worksheets/${wsId}`}>

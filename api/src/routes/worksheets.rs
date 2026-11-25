@@ -373,6 +373,24 @@ async fn sheet_with_images(
     Ok(sheet)
 }
 
+/// The sheet of an earlier version: its pictures are the rows it recorded (the current ones for
+/// a version from before pictures were kept).
+pub(crate) async fn sheet_of_version(
+    state: &AppState,
+    ws: &Worksheet,
+    content: &Content,
+    pictures: Option<&serde_json::Value>,
+    q: &SheetQuery,
+) -> AppResult<Sheet> {
+    let mut sheet = sheet_for(ws, content, q)?;
+    let slots = match pictures {
+        Some(p) => images::of_version(&state.db, ws.id, p).await?,
+        None => images::states(state, ws.id).await?.slots,
+    };
+    images::decorate(&mut sheet, content, &slots);
+    Ok(sheet)
+}
+
 pub async fn sheet(
     State(state): State<AppState>,
     teacher: AuthTeacher,

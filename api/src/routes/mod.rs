@@ -239,6 +239,14 @@ pub fn api_router() -> Router<AppState> {
         .route("/worksheets/{id}/sheet", get(worksheets::sheet))
         .route("/worksheets/{id}/versions", get(worksheets::versions))
         .route(
+            "/worksheets/{id}/versions/{version_no}/sheet",
+            get(worksheet_history::version_sheet),
+        )
+        .route(
+            "/worksheets/{id}/versions/{version_no}/restore",
+            post(worksheet_history::restore_version),
+        )
+        .route(
             "/worksheets/{id}/sop-sync",
             get(worksheets::sync_preview).post(worksheets::sync_apply),
         )

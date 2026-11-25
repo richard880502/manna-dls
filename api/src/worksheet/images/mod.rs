@@ -584,6 +584,28 @@ pub async fn current(db: &PgPool, worksheet_id: i64) -> sqlx::Result<Vec<SlotSta
     Ok(rows.into_iter().map(SlotState::from).collect())
 }
 
+/// The pictures a version of the worksheet showed: the rows `pictures` (`{slot_id: image row}`)
+/// names, as slot states. Nothing is changed; rows that no longer exist are left out.
+pub async fn of_version(
+    db: &PgPool,
+    worksheet_id: i64,
+    pictures: &serde_json::Value,
+) -> sqlx::Result<Vec<SlotState>> {
+    let ids: Vec<i64> = pictures
+        .as_object()
+        .map(|o| o.values().filter_map(|v| v.as_i64()).collect())
+        .unwrap_or_default();
+    let rows: Vec<SlotRow> = sqlx::query_as(&format!(
+        "SELECT {SLOT_COLS} FROM worksheet_images
+          WHERE worksheet_id = $1 AND id = ANY($2) ORDER BY id"
+    ))
+    .bind(worksheet_id)
+    .bind(&ids)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().map(SlotState::from).collect())
+}
+
 async fn slot_state(
     db: &PgPool,
     worksheet_id: i64,
