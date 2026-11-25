@@ -32,9 +32,10 @@ import {
   selectedLine,
   type HomeRestore,
 } from "../lib/longMaterial";
-import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
+import { ClassChip, NO_CLASS_LABEL, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
-import { useSplitResize } from "../components/prep/useSplitResize";
+import { FOLDED_COLUMNS, useSplitResize } from "../components/prep/useSplitResize";
+import { CHAT_COLLAPSED_KEY, HEAD_OPEN_KEY, useStoredFlag } from "../components/prep/useStoredFlag";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
 import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { scrollToEl, scrollToIdWhenReady, whenVisible } from "../lib/scroll";
@@ -155,6 +156,14 @@ function PrepSessionView({ id }: { id: number }) {
   const narrow = useNarrow();
   const { containerRef, share, dragging, canResize, columns, edge, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
+  // Wide layout: the conversation can fold to a strip on the right edge; its header settings fold too.
+  const [chatCollapsed, setChatCollapsed] = useStoredFlag(CHAT_COLLAPSED_KEY, false);
+  const [headOpenWide, setHeadOpenWide] = useStoredFlag(HEAD_OPEN_KEY, false);
+  const [newReply, setNewReply] = useState(false);
+  const collapseRef = useRef<HTMLButtonElement | null>(null);
+  const expandRef = useRef<HTMLButtonElement | null>(null);
+  const focusAfter = useRef<"collapse" | "expand" | null>(null);
+  const wasRunning = useRef(false);
   // Narrow screens share one page scroll between the two tabs: each tab keeps its own position.
   const tabScrolls = useRef<Partial<Record<"chat" | "sheet", number>>>({});
   const shownTab = useRef(tab);
@@ -303,6 +312,20 @@ function PrepSessionView({ id }: { id: number }) {
       </>
     );
   }
+  const turnRunning = !!session?.running;
+  const foldedWide = chatCollapsed && !narrow;
+  useEffect(() => {
+    // A turn that finishes while the conversation is folded leaves a dot on the strip.
+    if (wasRunning.current && !turnRunning && foldedWide) setNewReply(true);
+    wasRunning.current = turnRunning;
+  }, [turnRunning, foldedWide]);
+  useEffect(() => {
+    const to = focusAfter.current;
+    if (!to) return;
+    focusAfter.current = null;
+    (to === "expand" ? expandRef : collapseRef).current?.focus();
+  }, [chatCollapsed]);
+
   if (!session) return <Loading />;
 
   const running = session.running;
@@ -315,6 +338,9 @@ function PrepSessionView({ id }: { id: number }) {
   const latestSheet = sheetTurns[sheetTurns.length - 1] ?? null;
   const sheetTurn = sheetTurns.find((t) => t.id === pickedTurn) ?? latestSheet;
   const split = sheetTurn !== null;
+  const folded = split && !narrow && chatCollapsed; // conversation folded to the strip
+  const compactHead = split && !narrow; // the header's settings sit in a disclosure beside the worksheet
+  const headOpen = !compactHead || headOpenWide;
   const currentSheet = sheetTurn?.worksheet ?? null;
   const reviseSuggestions = memory.items.filter(
     (c) => c.source === "block_revise" && c.worksheet_id !== null && sheetIds.has(c.worksheet_id),
@@ -459,6 +485,13 @@ function PrepSessionView({ id }: { id: number }) {
     ...(classes ?? []),
     ...(session.class && !(classes ?? []).some((c) => c.id === session.class?.id) ? [session.class] : []),
   ];
+  const contextSummary = [
+    session.material ? `教材：${session.material.title.trim() || "未命名教材"}` : session.topic ? `主題：${session.topic}` : null,
+    classOptions.length > 0 ? `班級：${classOptions.find((c) => c.id === session.class?.id)?.name ?? NO_CLASS_LABEL}` : null,
+    session.template ? `版型：${session.template.title}` : null,
+  ]
+    .filter(Boolean)
+    .join("・");
   const templateOptions: WsTemplateSummary[] =
     templates && templates.length > 0 && session.template && !templates.some((t) => t.id === session.template?.id)
       ? [
@@ -650,8 +683,8 @@ function PrepSessionView({ id }: { id: number }) {
   return (
     <div
       ref={containerRef}
-      className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}${dragging ? " is-resizing" : ""}`}
-      style={split && !narrow ? { gridTemplateColumns: columns } : undefined}
+      className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}${dragging ? " is-resizing" : ""}${folded ? " is-chat-folded" : ""}`}
+      style={split && !narrow ? { gridTemplateColumns: folded ? FOLDED_COLUMNS : columns } : undefined}
     >
       {split && narrow && (
         <div className="prep-split-tabs" role="tablist" aria-label="對話或學習單">
@@ -723,7 +756,7 @@ function PrepSessionView({ id }: { id: number }) {
         </aside>
       )}
 
-      {split && !narrow && (
+      {split && !narrow && !folded && (
         <div
           className="prep-split-divider"
           role="separator"
@@ -742,20 +775,63 @@ function PrepSessionView({ id }: { id: number }) {
         />
       )}
 
+      {folded && (
+        <aside className="prep-chat-strip" aria-label="對話">
+          <button
+            type="button"
+            className="material-pane-open prep-chat-open"
+            ref={expandRef}
+            aria-expanded={false}
+            aria-controls={`${ids}-pane-chat`}
+            onClick={() => {
+              focusAfter.current = "collapse";
+              setNewReply(false);
+              setChatCollapsed(false);
+            }}
+          >
+            展開對話
+            {newReply && (
+              <span className="prep-chat-new" role="status" aria-label="有新回覆">
+                <span className="prep-chat-dot" aria-hidden="true" />
+              </span>
+            )}
+          </button>
+        </aside>
+      )}
+
       <section
         id={`${ids}-pane-chat`}
         className="prep-split-chat"
         aria-label="對話"
         {...(split && narrow ? { role: "tabpanel", "aria-labelledby": `${ids}-tab-chat` } : {})}
-        hidden={split && narrow && tab !== "chat"}
+        hidden={(split && narrow && tab !== "chat") || folded}
       >
       <div className="page-head prep-head">
-        <p className="crumbs">
-          <Link to="/prep">我的作品</Link>
-        </p>
+        <div className="prep-head-top">
+          <p className="crumbs">
+            <Link to="/prep">我的作品</Link>
+          </p>
+          {compactHead && (
+            <button
+              type="button"
+              className="text-link is-plain prep-chat-fold"
+              ref={collapseRef}
+              aria-expanded={true}
+              aria-controls={`${ids}-pane-chat`}
+              onClick={() => {
+                focusAfter.current = "expand";
+                setChatCollapsed(true);
+              }}
+            >
+              收起對話
+            </button>
+          )}
+        </div>
         {renaming === null ? (
           <div className="prep-title-row">
-            <h1>{sessionTitle(session)}</h1>
+            <h1 className={compactHead ? "is-clamped" : undefined} title={compactHead ? sessionTitle(session) : undefined}>
+              {sessionTitle(session)}
+            </h1>
             <button type="button" className="text-link is-plain" onClick={() => setRenaming(session.title)}>
               改名
             </button>
@@ -792,7 +868,25 @@ function PrepSessionView({ id }: { id: number }) {
           </form>
         )}
 
-        <div className="prep-context" role="group" aria-label="備課情境">
+        {compactHead && (
+          <button
+            type="button"
+            className="prep-head-toggle"
+            aria-expanded={headOpen}
+            aria-controls={`${ids}-head-settings`}
+            onClick={() => setHeadOpenWide(!headOpen)}
+          >
+            <span className="prep-head-toggle-label">對話設定</span>
+            {!headOpen && <span className="prep-head-summary">{contextSummary}</span>}
+          </button>
+        )}
+        <div
+          id={`${ids}-head-settings`}
+          className="prep-context"
+          role="group"
+          aria-label="備課情境"
+          hidden={!headOpen}
+        >
           {session.material ? (
             <span className="prep-context-item">
               教材：
