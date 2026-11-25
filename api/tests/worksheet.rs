@@ -289,9 +289,14 @@ async fn nothing_selected_still_generates_and_says_what_was_chosen() {
         paragraph_ids,
         [json!("p1"), json!("p2"), json!("p3"), json!("p4")]
     );
-    // Every block has a procedural scaffold the teacher never asked for.
+    // Every block but the exit ticket has a procedural scaffold the teacher never asked for
+    // (the PI: the exit ticket needs no steps).
     for b in blocks(&state) {
         let scaffolds = b["scaffolds"].as_array().unwrap();
+        if b["kind"] == "exit_ticket" {
+            assert!(scaffolds.iter().all(|s| s["type"] != "procedural"), "{b}");
+            continue;
+        }
         assert!(
             scaffolds.iter().any(|s| s["type"] == "procedural"
                 && s["auto"] == true
