@@ -6,7 +6,9 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use super::pipeline::{self, Finish, InteractionMeta};
-use super::{ActiveAi, LlmRequest, LlmResponse, ProviderError, Runaway, RUNAWAY_EXCERPT_KEY};
+use super::{
+    ActiveAi, ErrorKind, LlmRequest, LlmResponse, ProviderError, Runaway, RUNAWAY_EXCERPT_KEY,
+};
 use crate::checks::{self, CheckResult};
 use crate::config::AiProviderKind;
 use crate::error::AppResult;
@@ -21,7 +23,7 @@ pub(crate) struct Attempt {
 
 pub(crate) enum Failure {
     Timeout,
-    Error,
+    Error(ErrorKind),
     /// Refusal, unreadable output or a runaway to `max_tokens`: worth one changed retry.
     Retryable,
 }
@@ -52,8 +54,12 @@ pub(crate) async fn attempt(
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     let start = Instant::now();
-    let response = ai.complete(req).await;
+    let (response, retries) = ai.complete_counted(req).await;
     let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
+    match &response {
+        Ok(resp) => pipeline::record_usage_counted(db, id, resp.usage, retries).await?,
+        Err(_) => pipeline::record_usage_counted(db, id, None, retries).await?,
+    }
     Ok(Attempt {
         id,
         latency_ms,
@@ -131,9 +137,14 @@ pub(crate) async fn finish_failure(
                 Failure::Retryable,
             )
         }
-        e => ("error", None, Some(e.to_string()), Failure::Error),
+        e => (
+            "error",
+            None,
+            Some(e.to_string()),
+            Failure::Error(ErrorKind::of(e)),
+        ),
     };
-    if matches!(kind, Failure::Error) {
+    if matches!(kind, Failure::Error(_)) {
         tracing::warn!(interaction_id = a.id, error = %error, "AI provider error");
     }
     pipeline::finish_interaction(

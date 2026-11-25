@@ -104,8 +104,102 @@ pub fn stale_after(state: &AppState) -> f64 {
     (state.ai.longest_timeout_secs() * 6 + 60) as f64
 }
 
-/// Starts the background job for `row` (already `extracting`) on `text`.
-pub fn spawn(state: &AppState, row: &TemplateRow, text: String) {
+/// Starts the extraction of `row` (already `extracting`) on `text`: as a `template_extract` job
+/// of the AI queue when the queue is on (the job re-reads the sample, so `text` is not
+/// kept), otherwise in a background task of its own. A queue that refuses the job (the teacher
+/// has too many waiting) fails the template with why, so the page offers 「重試」.
+pub async fn start(state: &AppState, row: &TemplateRow, text: String) {
+    if state.config.ai_queue_enabled {
+        enqueue(state, row.id, row.teacher_id, row.extract_run).await;
+    } else {
+        spawn(state, row, text);
+    }
+}
+
+/// Queues the extraction of run `run` of template `id`; a refusal fails the template.
+async fn enqueue(state: &AppState, id: i64, teacher_id: i64, run: i32) {
+    let queued = crate::queue::enqueue(
+        &state.db,
+        crate::queue::NewJob {
+            kind: crate::queue::handlers::KIND_TEMPLATE_EXTRACT,
+            teacher_id,
+            priority: 1,
+            params: json!({ "template_id": id, "run": run }),
+            ref_kind: "worksheet_template",
+            ref_id: id,
+        },
+        state.config.ai_max_queued_per_teacher,
+    )
+    .await;
+    match queued {
+        Ok(_) => state.queue.wake(),
+        Err(e) => {
+            let message = match e {
+                AppError::Conflict(m) | AppError::BadRequest(m) => m,
+                _ => MSG_INTERNAL.to_string(),
+            };
+            if let Err(e) = finish(state, id, teacher_id, run, Err(message)).await {
+                tracing::error!(template_id = id, error = %e, "could not close the template extraction");
+            }
+        }
+    }
+}
+
+/// Runs the extraction the AI queue holds (the `template_extract` job) to its end: what
+/// [`spawn`] runs, with the sample's text read again from its material. A template that is no
+/// longer extracting this run (deleted, given up, restarted) is left alone.
+pub async fn run_queued(state: &AppState, id: i64, run: i32) -> AppResult<()> {
+    let db = &state.db;
+    let row: Option<(i64, Option<i64>)> = sqlx::query_as(&format!(
+        "UPDATE worksheet_templates SET extract_started_at = now()
+          WHERE id = $1 AND status = '{STATUS_EXTRACTING}' AND extract_run = $2
+        RETURNING teacher_id, source_material_id"
+    ))
+    .bind(id)
+    .bind(run)
+    .fetch_optional(db)
+    .await?;
+    let Some((teacher_id, material_id)) = row else {
+        return Ok(());
+    };
+    let outcome = match material_id {
+        None => Err(MSG_MATERIAL_NOT_FOUND.to_string()),
+        Some(material_id) => match source(db, teacher_id, material_id).await {
+            Ok(material) => state
+                .ai
+                .pinned(extract(state, id, teacher_id, run, &material.text))
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!(template_id = id, error = %e, "template extraction failed");
+                    Err(MSG_INTERNAL.to_string())
+                }),
+            Err(
+                AppError::BadRequest(m)
+                | AppError::Conflict(m)
+                | AppError::NotFound(m)
+                | AppError::Unavailable(m)
+                | AppError::Forbidden(m)
+                | AppError::Unauthorized(m),
+            ) => Err(m),
+            Err(e) => return Err(e),
+        },
+    };
+    finish(state, id, teacher_id, run, outcome).await
+}
+
+/// Closes a queued extraction that will not run (cancelled, lost with its server) as failed.
+pub async fn close_failed(
+    state: &AppState,
+    id: i64,
+    teacher_id: i64,
+    run: i32,
+    message: &str,
+) -> AppResult<()> {
+    finish(state, id, teacher_id, run, Err(message.to_string())).await
+}
+
+/// Starts the background task for `row` (already `extracting`) on `text` (the queue is off).
+fn spawn(state: &AppState, row: &TemplateRow, text: String) {
     let state = state.clone();
     let (id, teacher_id, run) = (row.id, row.teacher_id, row.extract_run);
     let pin = state.ai.active();
@@ -131,7 +225,7 @@ const OCR_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Starts the job for `row` (already `extracting`) whose sample is still being read by OCR
 /// (照我的學習單做 with a scanned worksheet, docs/API.md「Phase 2.10」): it waits for the OCR,
-/// then extracts from the recognised text as [`spawn`] does. A failed OCR fails the template.
+/// then extracts from the recognised text as [`start`] does. A failed OCR fails the template.
 pub fn spawn_after_ocr(state: &AppState, row: &TemplateRow) {
     let state = state.clone();
     let (id, teacher_id, run) = (row.id, row.teacher_id, row.extract_run);
@@ -214,6 +308,11 @@ async fn after_ocr(
         ) => return Ok(Some(Err(m))),
         Err(e) => return Err(e),
     };
+    if state.config.ai_queue_enabled {
+        // The extraction proper waits in the queue; the job closes the template.
+        enqueue(state, id, teacher_id, run).await;
+        return Ok(None);
+    }
     extract(state, id, teacher_id, run, &material.text)
         .await
         .map(Some)
@@ -471,11 +570,11 @@ impl CallCtx<'_> {
                 }
                 Err(e) => match finish_failure(db, &a, e).await? {
                     Failure::Timeout => return Ok(Err(MSG_TIMEOUT.to_string())),
-                    Failure::Error => {
+                    Failure::Error(kind) => {
                         let message = if matches!(e, crate::ai::ProviderError::Disabled) {
                             MSG_DISABLED
                         } else {
-                            MSG_ERROR
+                            kind.message(MSG_ERROR)
                         };
                         return Ok(Err(message.to_string()));
                     }

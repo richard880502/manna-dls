@@ -1,6 +1,7 @@
 //! HTTP routes (contract: docs/API.md).
 
 pub mod admin;
+pub mod admin_ai_traffic;
 pub mod browse;
 pub mod classes;
 pub mod community;
@@ -365,6 +366,7 @@ pub fn api_router() -> Router<AppState> {
             put(library::link_lesson).delete(library::unlink_lesson),
         )
         .route("/ai/{interaction_id}/decision", post(feedback::decision))
+        .route("/ai-jobs/{id}", delete(crate::queue::routes::cancel))
         // 內容目標與語言目標的草擬（SIOP G2、G3）
         .route("/objective-drafts", post(objectives::draft))
         .route(
@@ -461,6 +463,7 @@ pub fn api_router() -> Router<AppState> {
             "/admin/settings",
             get(admin::get_settings).put(admin::put_settings),
         )
+        .route("/admin/ai-traffic", get(admin_ai_traffic::get))
         .route(
             "/admin/ai-model",
             get(crate::ai::admin::get)

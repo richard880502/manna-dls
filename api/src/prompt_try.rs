@@ -403,6 +403,8 @@ pub async fn run(
                     ("error", "模型的輸出不是指定的 JSON 格式，沒辦法讀取。")
                 }
                 ProviderError::Disabled => ("disabled", "這個環境沒有開啟 AI，所以不能試產生。"),
+                ProviderError::QuotaExceeded { .. } => ("error", crate::ai::pipeline::MSG_QUOTA),
+                ProviderError::RateLimited { .. } => ("error", crate::ai::pipeline::MSG_BUSY),
                 _ => ("error", "AI 暫時無法使用。"),
             };
             result.status = status;

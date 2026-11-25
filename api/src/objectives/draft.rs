@@ -148,6 +148,8 @@ impl DraftResult {
         let message = match status {
             "timeout" => MSG_TIMEOUT,
             "error" => MSG_ERROR,
+            "quota" => crate::ai::pipeline::MSG_QUOTA,
+            "busy" => crate::ai::pipeline::MSG_BUSY,
             "disabled" => MSG_DISABLED,
             _ => MSG_NONE,
         };
@@ -295,18 +297,18 @@ where
                 }
             },
             Err(e) => match finish_failure(db, &a, e).await? {
-                Failure::Timeout | Failure::Error if first.is_some() => break,
+                Failure::Timeout | Failure::Error(_) if first.is_some() => break,
                 Failure::Timeout => {
                     return Ok(Called::Failed {
                         status: "timeout",
                         id: Some(a.id),
                     })
                 }
-                Failure::Error => {
+                Failure::Error(kind) => {
                     let status = if matches!(e, crate::ai::ProviderError::Disabled) {
                         "disabled"
                     } else {
-                        "error"
+                        kind.status()
                     };
                     return Ok(Called::Failed {
                         status,
@@ -544,6 +546,8 @@ fn failed_message(status: &str) -> &'static str {
     match status {
         "timeout" => MSG_TIMEOUT,
         "error" => MSG_ERROR,
+        "quota" => crate::ai::pipeline::MSG_QUOTA,
+        "busy" => crate::ai::pipeline::MSG_BUSY,
         "disabled" => MSG_DISABLED,
         _ => MSG_NONE,
     }
@@ -913,6 +917,8 @@ pub async fn run(
     let message = if chosen.shown.is_empty() {
         match chosen.judge_status {
             Some("timeout") => Some(MSG_TIMEOUT),
+            Some("quota") => Some(crate::ai::pipeline::MSG_QUOTA),
+            Some("busy") => Some(crate::ai::pipeline::MSG_BUSY),
             Some("error") | Some("disabled") => Some(MSG_ERROR),
             _ => Some(MSG_NONE),
         }

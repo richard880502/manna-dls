@@ -3,6 +3,7 @@ import { api, errorMessage } from "../../api/client";
 import type { PrepTurn, SiopCheck, SiopCheckItem } from "../../api/types";
 import { RATING_LABEL, SIOP_WORDS, checkGroups, checkIsStale, prepConfig } from "../../lib/prep";
 import { ErrorText } from "../common";
+import { QueueLine } from "../RunProgress";
 
 /** The newer of two looks at a turn's check: a later run, or the same run once it finished. */
 function newer(a: SiopCheck | null, b: SiopCheck | null): SiopCheck | null {
@@ -80,6 +81,15 @@ export function SiopCheckPanel({
 
   if (turn.siop_check === undefined || turn.status !== "done") return null;
 
+  /** After a queued check was cancelled: ask for it at once (it is closed as failed). */
+  async function refresh() {
+    try {
+      setLocal(await api.getSiopCheck(sessionId, turn.id));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   async function rerun() {
     setBusy(true);
     setError(null);
@@ -109,7 +119,9 @@ export function SiopCheckPanel({
       </div>
     );
   } else if (check.status === "running") {
-    body = (
+    body = check.queue ? (
+      <QueueLine queue={check.queue} onCancelled={() => void refresh()} />
+    ) : (
       <p className="manna-label prep-working" role="status">
         <span className="star is-working" aria-hidden="true" />
         {SIOP_WORDS.running}

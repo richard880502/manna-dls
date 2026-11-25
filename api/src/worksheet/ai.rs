@@ -183,11 +183,15 @@ async fn expire_stale(state: &AppState, worksheet_id: i64) -> sqlx::Result<()> {
         "UPDATE worksheet_jobs
             SET status = 'done', outcome = 'error', message = $2, finished_at = now()
           WHERE worksheet_id = $1 AND status <> 'done'
-            AND created_at < now() - make_interval(secs => $3)",
+            AND created_at < now() - make_interval(secs => $3)
+            AND NOT ($4 AND EXISTS (SELECT 1 FROM ai_jobs j
+                             WHERE j.ref_kind = 'worksheet' AND j.ref_id = $1
+                               AND j.status IN ('queued', 'running')))",
     )
     .bind(worksheet_id)
     .bind(MSG_STALE)
     .bind(stale_after)
+    .bind(state.config.ai_queue_enabled)
     .execute(&state.db)
     .await?;
     Ok(())
@@ -375,9 +379,13 @@ pub async fn progress(
     let Some(run_no) = jobs.first().map(|j| j.run_no) else {
         return Ok(None);
     };
-    Ok(run_steps(state, worksheet_id, run_no, running)
+    let mut progress = run_steps(state, worksheet_id, run_no, running)
         .await?
-        .and_then(|(steps, open)| Progress::of(steps, open)))
+        .and_then(|(steps, open)| Progress::of(steps, open));
+    if let Some(p) = progress.as_mut().filter(|_| running) {
+        p.queue = crate::queue::info_for_ref(state, "worksheet", worksheet_id).await?;
+    }
+    Ok(progress)
 }
 
 /// Opens a run: one queued job per step. `None` when a run is already in progress (the caller
@@ -388,6 +396,7 @@ async fn open_run(
     teacher_id: i64,
     steps: &[&'static str],
     block_id: Option<&str>,
+    queue: Option<&QueueRun<'_>>,
 ) -> AppResult<Option<(i32, HashMap<&'static str, i64>)>> {
     let mut tx = db.begin().await?;
     sqlx::query("SELECT id FROM worksheets WHERE id = $1 FOR UPDATE")
@@ -424,8 +433,81 @@ async fn open_run(
         .await?;
         ids.insert(*step, id);
     }
+    // The run and its queue entry are one commit.
+    if let Some(q) = queue {
+        crate::queue::enqueue_tx(
+            &mut tx,
+            crate::queue::NewJob {
+                kind: q.kind,
+                teacher_id,
+                priority: q.priority,
+                params: json!({ "worksheet_id": worksheet_id, "run_no": run_no, "track": q.track }),
+                ref_kind: "worksheet",
+                ref_id: worksheet_id,
+            },
+            q.max_queued,
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(Some((run_no, ids)))
+}
+
+/// Makes a generation a `worksheet_run` job of the AI queue.
+pub(crate) struct QueueRun<'a> {
+    kind: &'static str,
+    priority: u8,
+    max_queued: usize,
+    track: &'a str,
+}
+
+/// The queue entry of a generation, when the AI queue is on.
+fn queue_run<'a>(state: &AppState, input: &'a RunInput) -> Option<QueueRun<'a>> {
+    state.config.ai_queue_enabled.then_some(QueueRun {
+        kind: crate::queue::handlers::KIND_WORKSHEET_RUN,
+        priority: 1,
+        max_queued: state.config.ai_max_queued_per_teacher,
+        track: &input.track,
+    })
+}
+
+/// The queue entry of a single block's regeneration, when the AI queue is on (a teacher is
+/// waiting on one block, so it goes before whole worksheets).
+pub(super) fn queue_block<'a>(state: &AppState, input: &'a RunInput) -> Option<QueueRun<'a>> {
+    queue_run(state, input).map(|q| QueueRun {
+        kind: crate::queue::handlers::KIND_BLOCK_REGENERATE,
+        priority: 0,
+        ..q
+    })
+}
+
+/// How a generation's work is started.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Start {
+    /// In a task of its own (the AI queue is off, and block regenerations).
+    Spawn,
+    /// Not at all: a queue job holds it, only its steps are shown (as waiting).
+    Queued,
+    /// Here, to its end (the queue's `worksheet_run` handler).
+    Await,
+}
+
+/// Starts (or not, or awaits) the work of a run as `how` says.
+pub(crate) async fn drive<F>(
+    how: Start,
+    state: &AppState,
+    worksheet_id: i64,
+    run_no: i32,
+    tracker: Arc<Tracker>,
+    work: F,
+) where
+    F: std::future::Future<Output = AppResult<()>> + Send + 'static,
+{
+    match how {
+        Start::Queued => state.queue.wake(),
+        Start::Spawn => spawn_run(state, worksheet_id, run_no, tracker, work),
+        Start::Await => finish_run(state, worksheet_id, run_no, tracker, work).await,
+    }
 }
 
 async fn mark_running(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
@@ -501,10 +583,24 @@ fn spawn_run<F>(state: &AppState, worksheet_id: i64, run_no: i32, tracker: Arc<T
 where
     F: std::future::Future<Output = AppResult<()>> + Send + 'static,
 {
+    let state = state.clone();
+    tokio::spawn(async move { finish_run(&state, worksheet_id, run_no, tracker, work).await });
+}
+
+/// [`spawn_run`]'s task: the work, then closing what it left open.
+async fn finish_run<F>(
+    state: &AppState,
+    worksheet_id: i64,
+    run_no: i32,
+    tracker: Arc<Tracker>,
+    work: F,
+) where
+    F: std::future::Future<Output = AppResult<()>> + Send + 'static,
+{
     let db = state.db.clone();
     // Pinned now: the whole run keeps the model it starts with.
     let work = state.ai.pinned(work);
-    tokio::spawn(async move {
+    {
         let failure = crate::jobs::run("worksheet", worksheet_id, work)
             .await
             .err()
@@ -535,7 +631,7 @@ where
         if let Err(e) = closed {
             tracing::error!(worksheet_id, error = %e, "could not close the worksheet run");
         }
-    });
+    }
 }
 
 // ---------------------------------------------------------------- what a run works with
@@ -1010,7 +1106,18 @@ enum StepResult<T> {
 }
 
 fn failed<T>(outcome: &'static str, interaction_id: Option<i64>) -> StepResult<T> {
+    failed_with(outcome, interaction_id, crate::ai::ErrorKind::Other)
+}
+
+/// [`failed`], saying the quota or the rate limit when that was the reason (a whole sentence,
+/// which [`close`] does not extend).
+fn failed_with<T>(
+    outcome: &'static str,
+    interaction_id: Option<i64>,
+    kind: crate::ai::ErrorKind,
+) -> StepResult<T> {
     let reason = match outcome {
+        "error" if kind != crate::ai::ErrorKind::Other => kind.message(""),
         "timeout" => "AI 目前沒有回應",
         "error" => "AI 暫時無法使用",
         "disabled" => "這個環境沒有開啟 AI 協助",
@@ -1158,7 +1265,7 @@ where
         },
         Err(e) => match finish_failure(db, &a1, e).await? {
             Failure::Timeout => return Ok(failed("timeout", Some(a1.id))),
-            Failure::Error => return Ok(failed("error", Some(a1.id))),
+            Failure::Error(kind) => return Ok(failed_with("error", Some(a1.id), kind)),
             Failure::Retryable => {
                 problems = vec!["上一次沒有交出可用的輸出。".to_string()];
             }
@@ -1191,6 +1298,7 @@ where
     snapshot2["request"]["temperature"] = json!(repair_temperature);
     let a2 = attempt(state, &meta, &snapshot2, &req, Some(a1.id)).await?;
     let mut outcome = "blocked";
+    let mut kind = crate::ai::ErrorKind::Other;
     match &a2.response {
         Ok(resp) => match serde_json::from_value::<R>(resp.json.clone()) {
             Ok(raw) => {
@@ -1217,7 +1325,10 @@ where
         },
         Err(e) => match finish_failure(db, &a2, e).await? {
             Failure::Timeout => outcome = "timeout",
-            Failure::Error => outcome = "error",
+            Failure::Error(k) => {
+                outcome = "error";
+                kind = k;
+            }
             Failure::Retryable => {}
         },
     }
@@ -1229,7 +1340,7 @@ where
             output,
         });
     }
-    Ok(failed(outcome, Some(a2.id)))
+    Ok(failed_with(outcome, Some(a2.id), kind))
 }
 
 /// Closes the job of a step and its step of the progress (`key`), and hands back its output
@@ -1256,7 +1367,11 @@ async fn close<T>(
             interaction_id,
             reason,
         } => {
-            let message = format!("{reason}，這一步沒有產生成功；你可以繼續手動完成。");
+            let message = if reason.ends_with('。') {
+                reason.clone()
+            } else {
+                format!("{reason}，這一步沒有產生成功；你可以繼續手動完成。")
+            };
             run.progress.fail(key, &message).await;
             run.record_outcome(job_id, outcome, Some(&message), interaction_id, context)
                 .await?;
@@ -1842,17 +1957,37 @@ pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
     let steps = [STEP_TASKS, STEP_WARMUP, STEP_SCAFFOLDS, STEP_EXIT];
+    let queue = queue_run(state, &input);
+    let how = if queue.is_some() {
+        Start::Queued
+    } else {
+        Start::Spawn
+    };
     let Some((run_no, ids)) = open_run(
         &state.db,
         worksheet_id,
         input.worksheet.teacher_id,
         &steps,
         None,
+        queue.as_ref(),
     )
     .await?
     else {
         return Ok(());
     };
+    begin_generation(state, input, run_no, ids, how).await;
+    Ok(())
+}
+
+/// The progress and the work of the four-step generation of run `run_no`.
+async fn begin_generation(
+    state: &AppState,
+    input: RunInput,
+    run_no: i32,
+    ids: HashMap<&'static str, i64>,
+    how: Start,
+) {
+    let worksheet_id = input.worksheet.id;
     // The warm-up is written when it is ticked, or when nothing is (the usual set has it).
     let settings = &input.worksheet.settings;
     let warmup = settings.generation.is_empty() || settings.wants(GEN_WARMUP);
@@ -1873,11 +2008,112 @@ pub async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()
     .await;
     let state2 = state.clone();
     let progress = tracker.clone();
-    spawn_run(state, worksheet_id, run_no, tracker, async move {
+    let work = async move {
         let hold = ids.get(STEP_EXIT).copied();
         let run = Run::new(&state2, input, run_no, hold, progress).await?;
         generate(&run, &ids).await
-    });
+    };
+    drive(how, state, worksheet_id, run_no, tracker, work).await;
+}
+
+/// Runs the generation of run `run_no` that the AI queue holds (the `worksheet_run` job), to
+/// its end. The run's jobs were made when the generation was requested; the work is rebuilt
+/// from them and from the worksheet as it is now.
+///
+/// A replayed job (`replay`: the first attempt died with its server) starts over: the run's
+/// jobs are set back to queued and every step runs again. The one window this repeats a side
+/// effect in is a crash between saving the new version and closing the run's last job, which
+/// leaves a second, equal version behind.
+pub async fn run_queued(
+    state: &AppState,
+    worksheet_id: i64,
+    run_no: i32,
+    track: &str,
+    replay: bool,
+) -> AppResult<()> {
+    let db = &state.db;
+    let rows: Vec<(String, i64, Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT step, id, block_id, status, teacher_id FROM worksheet_jobs
+          WHERE worksheet_id = $1 AND run_no = $2 ORDER BY id",
+    )
+    .bind(worksheet_id)
+    .bind(run_no)
+    .fetch_all(db)
+    .await?;
+    // Nothing to do: the run was closed meanwhile (cancelled, failed) or is not a generation.
+    if rows.is_empty() || rows.iter().all(|r| r.3 == "done") || rows.iter().any(|r| r.2.is_some()) {
+        return Ok(());
+    }
+    let teacher_id = rows[0].4;
+    let mut ids: HashMap<&'static str, i64> = HashMap::new();
+    for (step, id, ..) in &rows {
+        let known = [
+            STEP_TASKS,
+            STEP_WARMUP,
+            STEP_SCAFFOLDS,
+            STEP_EXIT,
+            STEP_TEMPLATE,
+            STEP_BLOOM,
+            STEP_BLOOM_CHECK,
+        ];
+        if let Some(name) = known.into_iter().find(|k| k == step) {
+            ids.insert(name, *id);
+        }
+    }
+    if replay {
+        reset_run(db, worksheet_id, run_no).await?;
+    }
+    let input = crate::application::worksheets::WorksheetService::new(db)
+        .prepare_generation(teacher_id, track, worksheet_id)
+        .await?;
+    let how = Start::Await;
+    if ids.contains_key(STEP_TEMPLATE) {
+        let Some(tpl) = template::for_generation(db, &input.worksheet).await? else {
+            return Err(AppError::bad_request("這份學習單用的版型已經不能用了。"));
+        };
+        template::begin_generation(state, input, tpl, run_no, ids, how).await;
+    } else if ids.contains_key(STEP_BLOOM) {
+        bloom::begin_generation(state, input, run_no, ids, how).await;
+    } else {
+        begin_generation(state, input, run_no, ids, how).await;
+    }
+    Ok(())
+}
+
+/// Closes the open jobs of run `run_no` as failed with `message` (and settles its stored
+/// progress the same way), so the page shows the run as over with 「再試一次」. For a run that
+/// will not be worked on: cancelled in the queue, or lost with its server.
+pub async fn close_run_failed(
+    db: &PgPool,
+    worksheet_id: i64,
+    run_no: i32,
+    message: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_jobs
+            SET status = 'done', outcome = 'error', message = $3, phase = '', finished_at = now()
+          WHERE worksheet_id = $1 AND run_no = $2 AND status <> 'done'",
+    )
+    .bind(worksheet_id)
+    .bind(run_no)
+    .bind(message)
+    .execute(db)
+    .await?;
+    let raw: Option<Value> = sqlx::query_scalar("SELECT progress FROM worksheets WHERE id = $1")
+        .bind(worksheet_id)
+        .fetch_optional(db)
+        .await?
+        .flatten();
+    if let Some(mut stored) = raw.and_then(|v| serde_json::from_value::<Stored>(v).ok()) {
+        if stored.run_no == run_no && !stored.finished {
+            stored.settle(Some(message));
+            sqlx::query("UPDATE worksheets SET progress = $2 WHERE id = $1")
+                .bind(worksheet_id)
+                .bind(sqlx::types::Json(&stored))
+                .execute(db)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -2187,10 +2423,12 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
     }
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
-    let steps: &[&'static str] = match block.kind {
-        BlockKind::Activity => &[STEP_TASKS, STEP_SCAFFOLDS],
-        BlockKind::Warmup => &[STEP_WARMUP, STEP_SCAFFOLDS],
-        BlockKind::ExitTicket => &[STEP_EXIT],
+    let steps = block_steps(&block);
+    let queue = queue_block(state, &input);
+    let how = if queue.is_some() {
+        Start::Queued
+    } else {
+        Start::Spawn
     };
     let Some((run_no, ids)) = open_run(
         &state.db,
@@ -2198,11 +2436,36 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
         input.worksheet.teacher_id,
         steps,
         Some(block_id),
+        queue.as_ref(),
     )
     .await?
     else {
         return Ok(());
     };
+    begin_block(state, input, block, run_no, ids, how).await;
+    Ok(())
+}
+
+/// The steps of regenerating `block` by the four-step generation.
+fn block_steps(block: &Block) -> &'static [&'static str] {
+    match block.kind {
+        BlockKind::Activity => &[STEP_TASKS, STEP_SCAFFOLDS],
+        BlockKind::Warmup => &[STEP_WARMUP, STEP_SCAFFOLDS],
+        BlockKind::ExitTicket => &[STEP_EXIT],
+    }
+}
+
+/// The progress and the work of regenerating one block of run `run_no`.
+async fn begin_block(
+    state: &AppState,
+    input: RunInput,
+    block: Block,
+    run_no: i32,
+    ids: HashMap<&'static str, i64>,
+    how: Start,
+) {
+    let worksheet_id = input.worksheet.id;
+    let steps = block_steps(&block);
     // Only an activity block asks for picture slots.
     let plan: Vec<Step> = match block.kind {
         BlockKind::Activity => [
@@ -2223,11 +2486,87 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
     let last_step = steps.last().copied();
     let state2 = state.clone();
     let progress = tracker.clone();
-    spawn_run(state, worksheet_id, run_no, tracker, async move {
+    let work = async move {
         let hold = last_step.and_then(|s| ids.get(s)).copied();
         let run = Run::new(&state2, input, run_no, hold, progress).await?;
         regenerate(&run, &ids, block).await
-    });
+    };
+    drive(how, state, worksheet_id, run_no, tracker, work).await;
+}
+
+/// Runs the block regeneration of run `run_no` that the AI queue holds (the `block_regenerate`
+/// job), to its end. Like [`run_queued`]: the run's jobs were made with the request, the block
+/// is found by the id they carry, and a replayed job starts over.
+pub async fn run_block_queued(
+    state: &AppState,
+    worksheet_id: i64,
+    run_no: i32,
+    track: &str,
+    replay: bool,
+) -> AppResult<()> {
+    let db = state.db.clone();
+    let rows: Vec<(String, i64, Option<String>, String, i64)> = sqlx::query_as(
+        "SELECT step, id, block_id, status, teacher_id FROM worksheet_jobs
+          WHERE worksheet_id = $1 AND run_no = $2 ORDER BY id",
+    )
+    .bind(worksheet_id)
+    .bind(run_no)
+    .fetch_all(&db)
+    .await?;
+    let Some(block_id) = rows.iter().find_map(|r| r.2.clone()) else {
+        return Ok(());
+    };
+    if rows.is_empty() || rows.iter().all(|r| r.3 == "done") {
+        return Ok(());
+    }
+    let teacher_id = rows[0].4;
+    let mut ids: HashMap<&'static str, i64> = HashMap::new();
+    for (step, id, ..) in &rows {
+        let known = [
+            STEP_TASKS,
+            STEP_WARMUP,
+            STEP_SCAFFOLDS,
+            STEP_EXIT,
+            STEP_TEMPLATE,
+            STEP_BLOOM,
+            STEP_BLOOM_CHECK,
+        ];
+        if let Some(name) = known.into_iter().find(|k| k == step) {
+            ids.insert(name, *id);
+        }
+    }
+    if replay {
+        reset_run(&db, worksheet_id, run_no).await?;
+    }
+    let input = crate::application::worksheets::WorksheetService::new(&db)
+        .prepare_generation(teacher_id, track, worksheet_id)
+        .await?;
+    let Some(block) = input.content.block(&block_id).cloned() else {
+        return Err(AppError::not_found("找不到這個區塊。"));
+    };
+    let how = Start::Await;
+    if let Some((tpl, section)) = template::for_block(&db, &input.worksheet, &block).await? {
+        template::begin_block(state, input, block, tpl, section, run_no, ids, how).await;
+    } else if let Some(level) = bloom::level_of_block(&input, &block) {
+        bloom::begin_block(state, input, block, level, run_no, ids, how).await;
+    } else {
+        begin_block(state, input, block, run_no, ids, how).await;
+    }
+    Ok(())
+}
+
+/// Puts the jobs of a run back to queued (a replay starts over).
+async fn reset_run(db: &PgPool, worksheet_id: i64, run_no: i32) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE worksheet_jobs SET status = 'queued', outcome = NULL, message = NULL,
+                interaction_id = NULL, context = '[]', phase = '排隊中',
+                started_at = NULL, finished_at = NULL
+          WHERE worksheet_id = $1 AND run_no = $2",
+    )
+    .bind(worksheet_id)
+    .bind(run_no)
+    .execute(db)
+    .await?;
     Ok(())
 }
 

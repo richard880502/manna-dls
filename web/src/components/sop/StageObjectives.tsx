@@ -639,6 +639,9 @@ export function StageObjectives({ sop, todayObjective, lessonId }: StageObjectiv
                     key={slot.home}
                     label={objectiveTypeLabel(slot.kind)}
                     job={slot.pending}
+                    onCancelled={() => {
+                      if (slot.pending) void sop.refreshJob(slot.pending.id);
+                    }}
                     onAgain={() => {
                       const failed = slot.pending;
                       if (failed?.parent_job_id != null) {

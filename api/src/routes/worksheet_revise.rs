@@ -199,7 +199,18 @@ pub async fn revise_block(
         &typed,
     )
     .await;
+    let mut proposal = proposal;
+    with_queue(&state, &mut proposal).await?;
     Ok((StatusCode::ACCEPTED, Json(proposal)))
+}
+
+/// Where a revision that waits in the AI queue stands.
+async fn with_queue(state: &AppState, proposal: &mut Proposal) -> AppResult<()> {
+    if proposal.status == rv::STATUS_RUNNING {
+        proposal.queue =
+            crate::queue::info_for_ref(state, "worksheet_proposal", proposal.id).await?;
+    }
+    Ok(())
 }
 
 pub async fn list_proposals(
@@ -209,8 +220,18 @@ pub async fn list_proposals(
 ) -> AppResult<Json<Vec<Proposal>>> {
     let db = &state.db;
     store::owned(db, id, teacher.id()).await?;
-    rv::expire_stale(db, id, block_revise::stale_after(&state)).await?;
-    Ok(Json(rv::open(db, id).await?))
+    rv::expire_stale(
+        db,
+        id,
+        block_revise::stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
+    let mut proposals = rv::open(db, id).await?;
+    for p in &mut proposals {
+        with_queue(&state, p).await?;
+    }
+    Ok(Json(proposals))
 }
 
 pub async fn get_proposal(
@@ -220,8 +241,16 @@ pub async fn get_proposal(
 ) -> AppResult<Json<Proposal>> {
     let db = &state.db;
     store::owned(db, id, teacher.id()).await?;
-    rv::expire_stale(db, id, block_revise::stale_after(&state)).await?;
-    Ok(Json(rv::get(db, id, proposal_id).await?))
+    rv::expire_stale(
+        db,
+        id,
+        block_revise::stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
+    let mut proposal = rv::get(db, id, proposal_id).await?;
+    with_queue(&state, &mut proposal).await?;
+    Ok(Json(proposal))
 }
 
 /// 採用: the proposal and the worksheet as it is now.

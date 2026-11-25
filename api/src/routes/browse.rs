@@ -32,6 +32,12 @@ pub async fn templates(
 ) -> AppResult<Json<Page<TemplateCard, TemplateFacets>>> {
     let query = TemplateQuery::teacher(&Params(pairs), teacher.id())?;
     // An extraction that died with the server shows as failed, not as extracting forever.
-    tpl_store::expire_stale(&state.db, teacher.id(), stale_after(&state)).await?;
+    tpl_store::expire_stale(
+        &state.db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     Ok(Json(browse::templates(&state.db, &query).await?))
 }

@@ -397,16 +397,27 @@ pub async fn made_from(
 
 /// Extractions still open long after their calls must have timed out died with the server: the
 /// teacher's own, and the platform's (every teacher reads those).
-pub async fn expire_stale(db: &PgPool, teacher_id: i64, stale_secs: f64) -> sqlx::Result<()> {
+/// One whose job waits in the AI queue (or runs from it) is not stale while `queued` says the
+/// queue is on: the queue's leases tell whether its server is alive.
+pub async fn expire_stale(
+    db: &PgPool,
+    teacher_id: i64,
+    stale_secs: f64,
+    queued: bool,
+) -> sqlx::Result<()> {
     sqlx::query(&format!(
-        "UPDATE worksheet_templates
+        "UPDATE worksheet_templates t
             SET status = '{STATUS_FAILED}', error = $2, updated_at = now()
-          WHERE (teacher_id = $1 OR scope = '{SCOPE_PLATFORM}') AND status = '{STATUS_EXTRACTING}'
-            AND extract_started_at < now() - make_interval(secs => $3)"
+          WHERE (t.teacher_id = $1 OR t.scope = '{SCOPE_PLATFORM}') AND t.status = '{STATUS_EXTRACTING}'
+            AND t.extract_started_at < now() - make_interval(secs => $3)
+            AND NOT ($4 AND EXISTS (SELECT 1 FROM ai_jobs j
+                             WHERE j.ref_kind = 'worksheet_template' AND j.ref_id = t.id
+                               AND j.status IN ('queued', 'running')))"
     ))
     .bind(teacher_id)
     .bind(super::extract::MSG_STALE)
     .bind(stale_secs)
+    .bind(queued)
     .execute(db)
     .await?;
     Ok(())
@@ -445,6 +456,9 @@ pub struct Detail {
     /// Deleting the template also deletes `source_material` for good ([`SAMPLE_GOES_SQL`]), so
     /// the confirmation can say so.
     pub deletes_source_material: bool,
+    /// While the extraction waits in the AI queue: where it stands (docs/API.md「AI 工作佇列」).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::progress::QueueInfo>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -488,6 +502,7 @@ impl From<DetailRow> for Detail {
             error: r.error,
             content,
             deletes_source_material: r.deletes_source_material,
+            queue: None,
         }
     }
 }

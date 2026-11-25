@@ -54,7 +54,13 @@ pub async fn list(
         }
         Some("templates") => {
             let query = TemplateQuery::admin(&params)?;
-            tpl_store::expire_stale(&state.db, teacher.id(), stale_after(&state)).await?;
+            tpl_store::expire_stale(
+                &state.db,
+                teacher.id(),
+                stale_after(&state),
+                state.config.ai_queue_enabled,
+            )
+            .await?;
             Ok(Json(browse::templates(&state.db, &query).await?).into_response())
         }
         Some(_) => Err(AppError::bad_request("kind 需為 materials 或 templates。")),
@@ -213,7 +219,7 @@ pub async fn upload_template(
     // Read the answer before the job starts: a fast extraction could otherwise finish first and
     // the 202 would say "ready" (or "failed") instead of "extracting".
     let card = browse::template_card(db, row.id, true).await?;
-    tpl_extract::spawn(&state, &row, material.text);
+    tpl_extract::start(&state, &row, material.text).await;
     log_usage(
         db,
         teacher.id(),
@@ -376,7 +382,13 @@ pub async fn retry_template(
 ) -> AppResult<(StatusCode, Json<TemplateCard>)> {
     teacher.require(Capability::ManageKnowledge)?;
     let db = &state.db;
-    tpl_store::expire_stale(db, teacher.id(), stale_after(&state)).await?;
+    tpl_store::expire_stale(
+        db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     let row = tpl_store::platform(db, id).await?;
     let (row, text) = templates::begin_retry(&state, &row).await?;
     // Read the answer before the job starts.

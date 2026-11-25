@@ -779,6 +779,9 @@ pub struct SiopCheck {
     pub interaction_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// While the check waits in the AI queue: where it stands (docs/API.md「AI 工作佇列」).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::progress::QueueInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -830,8 +833,17 @@ impl From<CheckRow> for SiopCheck {
             interaction_id: r.interaction_id,
             created_at: r.created_at,
             finished_at: r.finished_at,
+            queue: None,
         }
     }
+}
+
+/// Says where a running check stands when it waits in the AI queue.
+pub async fn with_queue(state: &AppState, check: &mut SiopCheck) -> sqlx::Result<()> {
+    if check.status == STATUS_RUNNING && state.config.ai_queue_enabled {
+        check.queue = crate::queue::info_for_ref(state, "siop_check", check.id).await?;
+    }
+    Ok(())
 }
 
 /// Opens the next run of a turn's check (`running`), inside the caller's transaction; `None`
@@ -861,11 +873,17 @@ pub async fn expire_stale(state: &AppState, session_id: i64) -> sqlx::Result<()>
         "UPDATE siop_checks c SET status = '{STATUS_FAILED}', error = $2, finished_at = now()
           FROM prep_turns t
          WHERE t.id = c.turn_id AND t.session_id = $1 AND c.status = '{STATUS_RUNNING}'
-           AND c.created_at < now() - make_interval(secs => $3)"
+           AND c.created_at < now() - make_interval(secs => $3)
+           -- A check that waits in the AI queue (or runs from it) is not stale: the queue's
+           -- leases tell whether its server is alive. (Only while the queue is on.)
+           AND NOT ($4 AND EXISTS (SELECT 1 FROM ai_jobs j
+                            WHERE j.ref_kind = 'siop_check' AND j.ref_id = c.id
+                              AND j.status IN ('queued', 'running')))"
     ))
     .bind(session_id)
     .bind(MSG_STALE)
     .bind(stale_after(state))
+    .bind(state.config.ai_queue_enabled)
     .execute(&state.db)
     .await?;
     Ok(())
@@ -972,8 +990,17 @@ pub async fn restart(state: &AppState, turn: &TurnRow) -> AppResult<SiopCheck> {
 
 /// Runs a check opened with [`open`] in the background; a failure or a panic closes it as
 /// `failed` with a message the teacher can read.
+///
+/// With the AI queue on, the check is a `siop_check` job instead (priority 2: the teacher is
+/// not waiting on it). It is queued from a task of its own, because the callers close a turn
+/// and cannot wait; a queue that refuses it (too many jobs waiting) closes the check as
+/// `failed` with why, and 再試一次 asks again.
 pub fn spawn(state: &AppState, check_id: i64) {
     let state = state.clone();
+    if state.config.ai_queue_enabled {
+        tokio::spawn(async move { enqueue(&state, check_id).await });
+        return;
+    }
     let pin = state.ai.active();
     tokio::spawn(async move {
         let work = {
@@ -987,6 +1014,83 @@ pub fn spawn(state: &AppState, check_id: i64) {
             tracing::error!(check_id, error = %e, "could not close the siop self-check");
         }
     });
+}
+
+async fn enqueue(state: &AppState, check_id: i64) {
+    let db = &state.db;
+    let teacher: sqlx::Result<Option<i64>> = sqlx::query_scalar(
+        "SELECT s.teacher_id FROM siop_checks c
+           JOIN prep_turns t ON t.id = c.turn_id
+           JOIN prep_sessions s ON s.id = t.session_id
+          WHERE c.id = $1 AND c.status = 'running'",
+    )
+    .bind(check_id)
+    .fetch_optional(db)
+    .await;
+    let teacher_id = match teacher {
+        Ok(Some(id)) => id,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(check_id, error = %e, "could not queue the siop self-check");
+            return;
+        }
+    };
+    let queued = crate::queue::enqueue(
+        db,
+        crate::queue::NewJob {
+            kind: crate::queue::handlers::KIND_SIOP_CHECK,
+            teacher_id,
+            priority: 2,
+            params: json!({ "check_id": check_id }),
+            ref_kind: "siop_check",
+            ref_id: check_id,
+        },
+        state.config.ai_max_queued_per_teacher,
+    )
+    .await;
+    match queued {
+        Ok(_) => state.queue.wake(),
+        Err(e) => {
+            let message = match e {
+                AppError::Conflict(m) | AppError::BadRequest(m) => m,
+                _ => MSG_INTERNAL.to_string(),
+            };
+            if let Err(e) = finish(db, check_id, Err(message)).await {
+                tracing::error!(check_id, error = %e, "could not close the siop self-check");
+            }
+        }
+    }
+}
+
+/// Runs the check the AI queue holds (the `siop_check` job) to its end, as [`spawn`]'s task
+/// does, with the settings its turn started with when this process remembers them. A check
+/// that is no longer running (cancelled, failed meanwhile) is left alone.
+pub async fn run_queued(state: &AppState, check_id: i64) -> AppResult<()> {
+    let db = &state.db;
+    let turn_id: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT turn_id FROM siop_checks WHERE id = $1 AND status = '{STATUS_RUNNING}'"
+    ))
+    .bind(check_id)
+    .fetch_optional(db)
+    .await?;
+    let Some(turn_id) = turn_id else {
+        return Ok(());
+    };
+    let outcome = state
+        .ai
+        .pinned_turn(turn_id, run(state, check_id))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(check_id, error = %e, "siop self-check failed");
+            Err(MSG_INTERNAL.to_string())
+        });
+    finish(db, check_id, outcome).await?;
+    Ok(())
+}
+
+/// Closes a queued check that will not run (cancelled, lost with its server) as failed.
+pub async fn close_failed(db: &PgPool, check_id: i64, message: &str) -> sqlx::Result<()> {
+    finish(db, check_id, Err(message.to_string())).await
 }
 
 /// What the check reads: the output as text, the passage it was made from, and the worksheet

@@ -194,6 +194,20 @@ pub struct Progress {
     /// `running` while a step runs or is still to come; then `failed` when a step failed,
     /// otherwise `done`.
     pub status: RunStatus,
+    /// While the run's job waits in the AI queue: where it stands (docs/API.md「AI 工作佇列」).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<QueueInfo>,
+}
+
+/// A run that waits in the AI queue.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct QueueInfo {
+    /// The job to cancel with `DELETE /api/ai-jobs/{job_id}`.
+    pub job_id: i64,
+    /// Queued jobs that will start before this one (an estimate).
+    pub ahead: i64,
+    /// About how long until it starts, from the last hour's runs; `null` without data.
+    pub eta_secs: Option<i64>,
 }
 
 impl Progress {
@@ -220,6 +234,7 @@ impl Progress {
             steps,
             current,
             status,
+            queue: None,
         })
     }
 
@@ -252,6 +267,7 @@ impl Progress {
             steps,
             current: None,
             status: RunStatus::Failed,
+            queue: None,
         })
     }
 }

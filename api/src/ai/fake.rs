@@ -178,6 +178,7 @@ pub fn complete(req: &LlmRequest, model: &str) -> Result<LlmResponse, ProviderEr
     Ok(LlmResponse {
         json,
         model_version: format!("{model}-fake-1"),
+        usage: None,
     })
 }
 

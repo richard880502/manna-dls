@@ -4,6 +4,7 @@ import type {
   MemoryState, MemoryCandidate, MemorySuggestion, MemorySettings, MemoryIndexStatus,
   AdminSettings,
   AiModelSettings,
+  AiTraffic,
   AiModelRequest,
   AiResult,
   ApiErrorBody,
@@ -498,6 +499,8 @@ export const api = {
   /** 只選要用的段落：`null` 或空陣列＝全部。教材庫那份不變 */
   putWorksheetMaterialSelection: (id: number, paragraphIds: string[] | null) =>
     put<WorksheetState>(`/worksheets/${id}/material-selection`, { paragraph_ids: paragraphIds }),
+  /** 取消還在排隊的 AI 工作；已經開始或不存在 → 409 */
+  cancelAiJob: (jobId: number) => del<void>(`/ai-jobs/${jobId}`),
   deleteWorksheet: (id: number) => del<OkResponse>(`/worksheets/${id}`),
   /** 建立背景工作並立刻回來；之後用 worksheetJobs 輪詢 */
   generateWorksheet: (id: number) => post<WorksheetState>(`/worksheets/${id}/generate`),
@@ -755,6 +758,8 @@ export const api = {
     updateSettings: (body: AdminSettings) => put<AdminSettings>("/admin/settings", body),
     /** 文字模型：目前設定、來源、可選項目 */
     getAiModel: () => get<AiModelSettings>("/admin/ai-model"),
+    /** AI 請求：佇列現況、近一小時、近七天（只有彙總，沒有老師內容） */
+    getAiTraffic: () => get<AiTraffic>("/admin/ai-traffic"),
     /** 先用新設定試呼叫一次，成功才儲存並立刻生效；失敗回 400，什麼都不存 */
     saveAiModel: (body: AiModelRequest) => put<AiModelSettings>("/admin/ai-model", body),
     /** 刪除後台設定，回到環境變數預設 */

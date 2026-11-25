@@ -4,6 +4,7 @@ import { useApp } from "../../context/AppContext";
 import { SCAFFOLD_FIELDS, paragraphMark } from "../../lib/sop";
 import { AiContextPanel } from "../AiContextPanel";
 import { AiStatusMessage, AiUnavailableNote, ErrorText } from "../common";
+import { QueueLine } from "../RunProgress";
 import type { SopController } from "./useSop";
 
 /** The source text quoted above what was designed for it: print face, paragraph number in the margin. */
@@ -153,10 +154,16 @@ export function AskManna({ sop, kind, label, againLabel, shownNote, options }: A
             <span className="star is-working" aria-hidden="true" />
             Manna 正在處理
           </p>
-          <p>{job?.phase || "正在處理"}…</p>
-          <p className="why">
-            已經 {elapsed} 秒。通常要 15 到 50 秒，偶爾更久。你可以先做別的步驟，好了會出現在這裡。
-          </p>
+          {job?.queue ? (
+            <QueueLine queue={job.queue} onCancelled={() => void sop.refreshJob(job.id)} />
+          ) : (
+            <>
+              <p>{job?.phase || "正在處理"}…</p>
+              <p className="why">
+                已經 {elapsed} 秒。通常要 15 到 50 秒，偶爾更久。你可以先做別的步驟，好了會出現在這裡。
+              </p>
+            </>
+          )}
         </div>
       )}
       <ErrorText message={sop.jobError[kind]} />
@@ -231,10 +238,13 @@ export function RedoPending({
   label,
   job,
   onAgain,
+  onCancelled,
 }: {
   label: string;
   job: SopJob | null;
   onAgain: () => void;
+  /** Called after the queued job was cancelled, so the page asks for the job again at once. */
+  onCancelled?: () => void;
 }) {
   const elapsed = useElapsedSeconds(job?.started_at, job?.status === "running");
   if (!job) return null;
@@ -245,7 +255,11 @@ export function RedoPending({
           <span className="star is-working" aria-hidden="true" />
           Manna 正在重新建議 · {label}
         </p>
-        <p>{job.phase || "正在處理"}…（已經 {elapsed} 秒）</p>
+        {job.queue ? (
+          <QueueLine queue={job.queue} onCancelled={onCancelled} />
+        ) : (
+          <p>{job.phase || "正在處理"}…（已經 {elapsed} 秒）</p>
+        )}
       </div>
     );
   }

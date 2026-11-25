@@ -75,6 +75,8 @@ export interface SopController {
   status: "loading" | "ready" | "error";
   loadError: string | null;
   reload: () => void;
+  /** Asks for one job again at once (after its queued run was cancelled) and puts the answer in `jobs`. */
+  refreshJob: (id: number) => Promise<void>;
   /** The material as the server stored and split it (null: none yet). */
   material: SopMaterial | null;
   /** The lesson had a material and the teacher deleted it from the library (「教材已刪除」). */
@@ -377,6 +379,25 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     [updateJobs],
   );
 
+  const refreshJob = useCallback(
+    async (id: number) => {
+      try {
+        const job = await api.getSopJob(id);
+        if (!mounted.current) return;
+        updateJobs((prev) =>
+          job.slot
+            ? { ...prev, redo: prev.redo.map((candidate) => (candidate.id === id ? job : candidate)) }
+            : prev[job.kind]?.id === id
+              ? { ...prev, [job.kind]: job }
+              : prev,
+        );
+      } catch {
+        // The next poll tries again.
+      }
+    },
+    [updateJobs],
+  );
+
   const reload = useCallback(() => {
     setStatus("loading");
     setLoadSeq((n) => n + 1);
@@ -391,6 +412,7 @@ export function useSop(lessonId: number, classId: number | null): SopController 
     status,
     loadError,
     reload,
+    refreshJob,
     material,
     materialDeleted,
     pickMaterial,

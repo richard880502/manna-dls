@@ -31,7 +31,13 @@ pub async fn list(
     State(state): State<AppState>,
     teacher: AuthTeacher,
 ) -> AppResult<Json<TemplateList>> {
-    store::expire_stale(&state.db, teacher.id(), stale_after(&state)).await?;
+    store::expire_stale(
+        &state.db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     Ok(Json(TemplateList {
         templates: store::list(&state.db, teacher.id()).await?,
     }))
@@ -112,7 +118,7 @@ pub async fn create(
     // Read the answer before the job starts: a fast extraction could otherwise finish first and
     // the 202 would say "ready" (or "failed") instead of "extracting".
     let detail = store::detail(db, row.id).await?;
-    extract::spawn(&state, &row, material.text);
+    extract::start(&state, &row, material.text).await;
     log_usage(
         db,
         teacher.id(),
@@ -128,9 +134,19 @@ pub async fn get(
     teacher: AuthTeacher,
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<Json<Detail>> {
-    store::expire_stale(&state.db, teacher.id(), stale_after(&state)).await?;
+    store::expire_stale(
+        &state.db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     store::readable(&state.db, id, teacher.id()).await?;
-    Ok(Json(store::detail(&state.db, id).await?))
+    let mut detail = store::detail(&state.db, id).await?;
+    if detail.summary.status == STATUS_EXTRACTING {
+        detail.queue = crate::queue::info_for_ref(&state, "worksheet_template", id).await?;
+    }
+    Ok(Json(detail))
 }
 
 #[derive(Debug, Deserialize)]
@@ -153,7 +169,13 @@ pub async fn save(
     ApiJson(req): ApiJson<SaveTemplate>,
 ) -> AppResult<Json<Detail>> {
     let db = &state.db;
-    store::expire_stale(db, teacher.id(), stale_after(&state)).await?;
+    store::expire_stale(
+        db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     let row = store::writable(db, id, &teacher).await?;
     let category = req
         .category
@@ -216,7 +238,13 @@ pub async fn retry(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<(StatusCode, Json<Detail>)> {
     let db = &state.db;
-    store::expire_stale(db, teacher.id(), stale_after(&state)).await?;
+    store::expire_stale(
+        db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     let row = store::writable(db, id, &teacher).await?;
     let (row, text) = begin_retry(&state, &row).await?;
     // Read the answer before the job starts: a fast extraction could otherwise finish first.
@@ -258,7 +286,7 @@ pub async fn spawn_retry(
     row: &TemplateRow,
     text: String,
 ) -> AppResult<()> {
-    extract::spawn(state, row, text);
+    extract::start(state, row, text).await;
     log_usage(
         &state.db,
         actor_id,
@@ -320,7 +348,13 @@ pub async fn copy(
     ApiPath(id): ApiPath<i64>,
 ) -> AppResult<(StatusCode, Json<Detail>)> {
     let db = &state.db;
-    store::expire_stale(db, teacher.id(), stale_after(&state)).await?;
+    store::expire_stale(
+        db,
+        teacher.id(),
+        stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     let source = store::readable(db, id, teacher.id()).await?;
     let content = match store::latest_version(db, id).await? {
         Some((_, content)) if source.status == STATUS_READY => content,

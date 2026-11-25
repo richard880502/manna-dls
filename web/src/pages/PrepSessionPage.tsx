@@ -194,6 +194,12 @@ function PrepSessionView({ id }: { id: number }) {
   // 「進度」 sits in the conversation, in the last turn's place, instead of its working line, and
   // folds away once the run is done.
   const lastPanel = useRunPanel(lastTurn?.progress, lastTurn ? String(lastTurn.id) : null);
+  const refreshSession = useCallback(() => {
+    api
+      .getPrepSession(id)
+      .then(apply)
+      .catch((err: unknown) => setSendError(errorMessage(err)));
+  }, [id, apply]);
   useEffect(() => {
     if (!following) return undefined;
     let alive = true;
@@ -724,6 +730,7 @@ function PrepSessionView({ id }: { id: number }) {
                   progress={turn.progress}
                   error={turn.error}
                   onClose={lastPanel.close}
+                  onCancelled={refreshSession}
                   className="prep-turn-progress"
                 />
               )}
@@ -915,6 +922,7 @@ function PrepSessionView({ id }: { id: number }) {
               progress={sheetTurn.progress}
               error={sheetTurn.error}
               onClose={lastPanel.close}
+              onCancelled={refreshSession}
               className="prep-turn-progress"
             />
           )}

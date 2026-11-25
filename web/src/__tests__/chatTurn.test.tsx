@@ -299,6 +299,30 @@ describe("a chat turn", () => {
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "chat", request: "改 C 區" });
   });
 
+  it("failed on the daily quota: the message shows with 再試一次", async () => {
+    const msg = "今天的 AI 用量已達上限，請通知計畫主持人。";
+    const t = turn("chat", { request: "改 C 區", status: "failed", error: msg });
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([t]) });
+    renderApp("/prep/7");
+    expect(await screen.findByText(msg)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "再試一次" })).toBeInTheDocument();
+  });
+
+  it("shows the 409 when sending is refused because too much is queued", async () => {
+    const msg = "你排隊中的工作太多了，等前面的完成再送。";
+    const base = session([turn("chat", { request: "舊的", result: chat({ version_no: 4 }) })]);
+    mockApi({
+      ...baseRoutes(),
+      [`GET ${S7}`]: base,
+      [`POST ${S7}/turns`]: () => respond(409, { error: { code: "conflict", message: msg } }),
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.type(await screen.findByPlaceholderText(PLACEHOLDER), "再改一次");
+    await user.click(screen.getByRole("button", { name: "送出" }));
+    expect(await screen.findByText(msg)).toBeInTheDocument();
+  });
+
   it("old ask and revise turns still render as before", async () => {
     mockApi({
       ...baseRoutes(),

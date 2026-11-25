@@ -43,9 +43,11 @@ use crate::application::ai::{
 use crate::audit::scaffold_id;
 use crate::checks::{self, CheckResult};
 use crate::curriculum::{self, CurriculumItem};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::prompts::{self, latest_required as prompt};
-use crate::teaching_context::{track_label, LessonRef, ResolvedProfile};
+use crate::teaching_context::{
+    owned_lesson, resolved_profile, track_label, LessonRef, ResolvedProfile,
+};
 use crate::text::{clip_chars, or_blank};
 use crate::AppState;
 
@@ -77,6 +79,8 @@ const REPAIR_TEMPERATURE_STEP: f32 = 0.4;
 
 pub const MSG_STALE: &str = "這次請求中斷了（可能是系統剛更新）。請再按一次。";
 
+/// What a job that waits in the AI queue is doing.
+const PHASE_QUEUED: &str = "排隊中";
 const PHASE_ANALYSIS: &str = "正在讀教材，逐段分析寫作特色";
 const PHASE_ANALYSIS_REPAIR: &str = "有幾段沒有分析好，正在補上";
 const PHASE_OBJECTIVES: &str = "正在依教材與班級特性想目標，並對照課綱";
@@ -204,6 +208,9 @@ pub struct Job {
     pub slot: String,
     /// The job whose suggestion this one redoes.
     pub parent_job_id: Option<i64>,
+    /// While the job waits in the AI queue: where it stands (docs/API.md「AI 工作佇列」).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::progress::QueueInfo>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -227,7 +234,13 @@ const JOB_SELECT: &str = "SELECT j.id, j.lesson_id, j.kind, j.status, j.phase, j
         j.slot, j.parent_job_id
    FROM lesson_sop_jobs j LEFT JOIN lesson_sop_versions v ON v.id = j.sop_version_id";
 
-async fn into_job(db: &PgPool, row: JobRow) -> sqlx::Result<Job> {
+async fn into_job(state: &AppState, row: JobRow) -> sqlx::Result<Job> {
+    let db = &state.db;
+    let queue = if row.status == "running" {
+        crate::queue::info_for_ref(state, "sop_job", row.id).await?
+    } else {
+        None
+    };
     let decided = match row.interaction_id {
         Some(id) => {
             sqlx::query_scalar(
@@ -259,6 +272,7 @@ async fn into_job(db: &PgPool, row: JobRow) -> sqlx::Result<Job> {
         decided,
         slot: row.slot,
         parent_job_id: row.parent_job_id,
+        queue,
     })
 }
 
@@ -280,13 +294,19 @@ fn stale_after(state: &AppState) -> f64 {
 
 async fn expire_stale(state: &AppState, lesson_id: i64) -> sqlx::Result<()> {
     sqlx::query(
-        "UPDATE lesson_sop_jobs SET status = 'done', phase = '', finished_at = now(), result = $2
-          WHERE lesson_id = $1 AND status = 'running'
-            AND created_at < now() - make_interval(secs => $3)",
+        "UPDATE lesson_sop_jobs s SET status = 'done', phase = '', finished_at = now(), result = $2
+          WHERE s.lesson_id = $1 AND s.status = 'running'
+            AND s.created_at < now() - make_interval(secs => $3)
+            -- A job that waits in the AI queue (or runs from it) is not stale: the queue's
+            -- leases tell whether its server is alive. (Only while the queue is on.)
+            AND NOT ($4 AND EXISTS (SELECT 1 FROM ai_jobs j
+                             WHERE j.ref_kind = 'sop_job' AND j.ref_id = s.id
+                               AND j.status IN ('queued', 'running')))",
     )
     .bind(lesson_id)
     .bind(error_result(MSG_STALE))
     .bind(stale_after(state))
+    .bind(state.config.ai_queue_enabled)
     .execute(&state.db)
     .await?;
     Ok(())
@@ -309,7 +329,7 @@ pub async fn job(state: &AppState, id: i64, teacher_id: i64) -> sqlx::Result<Opt
         .bind(id)
         .fetch_one(&state.db)
         .await?;
-    Ok(Some(into_job(&state.db, row).await?))
+    Ok(Some(into_job(state, row).await?))
 }
 
 /// The most recent job of a kind for a lesson.
@@ -327,7 +347,7 @@ pub async fn latest_job(
     .fetch_optional(&state.db)
     .await?;
     match row {
-        Some(row) => Ok(Some(into_job(&state.db, row).await?)),
+        Some(row) => Ok(Some(into_job(state, row).await?)),
         None => Ok(None),
     }
 }
@@ -348,7 +368,7 @@ pub async fn redo_jobs(state: &AppState, lesson_id: i64) -> sqlx::Result<Vec<Job
     .await?;
     let mut jobs = Vec::with_capacity(rows.len());
     for row in rows.into_iter().rev() {
-        jobs.push(into_job(&state.db, row).await?);
+        jobs.push(into_job(state, row).await?);
     }
     Ok(jobs)
 }
@@ -401,6 +421,8 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     .bind(kind.as_str())
     .fetch_one(&state.db)
     .await?;
+    let queued = state.config.ai_queue_enabled;
+    let mut tx = state.db.begin().await?;
     let created: Option<i64> = sqlx::query_scalar(
         "INSERT INTO lesson_sop_jobs
            (lesson_id, teacher_id, kind, status, phase, sop_version_id, material_id,
@@ -412,15 +434,20 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
     .bind(lesson_id)
     .bind(input.teacher_id)
     .bind(kind.as_str())
-    .bind(kind.first_phase(&input.scope))
+    .bind(if queued {
+        PHASE_QUEUED
+    } else {
+        kind.first_phase(&input.scope)
+    })
     .bind(input.version.id)
     .bind(input.material.id)
     .bind(input.scope.slot())
     .bind(input.scope.parent())
     .bind(input.scope.params())
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
     let Some(job_id) = created else {
+        drop(tx);
         let running: i64 = sqlx::query_scalar(
             "SELECT id FROM lesson_sop_jobs
               WHERE lesson_id = $1 AND kind = $2 AND slot = $3 AND status = 'running'",
@@ -432,53 +459,287 @@ pub async fn start(state: &AppState, input: JobInput) -> AppResult<i64> {
         .await?;
         return Ok(running);
     };
+    if queued {
+        // The job row and its queue entry are one commit.
+        crate::queue::enqueue_tx(
+            &mut tx,
+            crate::queue::NewJob {
+                kind: crate::queue::handlers::KIND_SOP_STEP,
+                teacher_id: input.teacher_id,
+                priority: 1,
+                params: json!({
+                    "sop_job_id": job_id, "class_id": input.profile.class.as_ref().map(|c| c.id),
+                    "track": input.track,
+                }),
+                ref_kind: "sop_job",
+                ref_id: job_id,
+            },
+            state.config.ai_max_queued_per_teacher,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    if queued {
+        state.queue.wake();
+        return Ok(job_id);
+    }
 
     let state = state.clone();
     let temperature = BASE_TEMPERATURE + 0.1 * earlier.min(4) as f32;
     let pin = state.ai.active();
     tokio::spawn(async move {
-        let db = state.db.clone();
         // The work runs in its own task so that a panic there still ends the job.
-        let work = pin.scope(async move {
-            match kind {
-                JobKind::Analysis => run_analysis(&state, job_id, &input, temperature).await,
-                JobKind::Objectives => {
-                    let swap = match &input.scope {
-                        Scope::Swap(s) => Some(s),
-                        _ => None,
-                    };
-                    let kind = match &input.scope {
-                        Scope::Kind(k) => Some(*k),
-                        _ => None,
-                    };
-                    run_objectives(&state, job_id, &input, temperature, swap, kind).await
-                }
-                JobKind::Goals => stages::run_goals(&state, job_id, &input, temperature).await,
-                JobKind::Tasks => stages::run_tasks(&state, job_id, &input, temperature).await,
-                JobKind::Warmup => stages::run_warmup(&state, job_id, &input, temperature).await,
-                JobKind::ExitTicket => stages::run_exit(&state, job_id, &input, temperature).await,
-            }
+        let work = pin.scope({
+            let state = state.clone();
+            async move { execute(&state, job_id, &input, temperature).await }
         });
         let (result, interaction_id) = match crate::jobs::run("sop", job_id, work).await {
             Ok(done) => done,
             Err(_) => (error_result(pipeline::MSG_ERROR), None),
         };
-        let saved = sqlx::query(
-            "UPDATE lesson_sop_jobs
-                SET status = 'done', phase = '', finished_at = now(), result = $2,
-                    interaction_id = $3
-              WHERE id = $1 AND status = 'running'",
-        )
-        .bind(job_id)
-        .bind(result)
-        .bind(interaction_id)
-        .execute(&db)
-        .await;
-        if let Err(e) = saved {
-            tracing::error!(job_id, error = %e, "could not store the SOP job result");
-        }
+        store_result(&state.db, job_id, result, interaction_id).await;
     });
     Ok(job_id)
+}
+
+/// The work of a job: the stage `input.kind` names.
+async fn execute(
+    state: &AppState,
+    job_id: i64,
+    input: &JobInput,
+    temperature: f32,
+) -> AppResult<Done> {
+    match input.kind {
+        JobKind::Analysis => run_analysis(state, job_id, input, temperature).await,
+        JobKind::Objectives => {
+            let swap = match &input.scope {
+                Scope::Swap(s) => Some(s),
+                _ => None,
+            };
+            let kind = match &input.scope {
+                Scope::Kind(k) => Some(*k),
+                _ => None,
+            };
+            run_objectives(state, job_id, input, temperature, swap, kind).await
+        }
+        JobKind::Goals => stages::run_goals(state, job_id, input, temperature).await,
+        JobKind::Tasks => stages::run_tasks(state, job_id, input, temperature).await,
+        JobKind::Warmup => stages::run_warmup(state, job_id, input, temperature).await,
+        JobKind::ExitTicket => stages::run_exit(state, job_id, input, temperature).await,
+    }
+}
+
+async fn store_result(db: &PgPool, job_id: i64, result: Value, interaction_id: Option<i64>) {
+    let saved = sqlx::query(
+        "UPDATE lesson_sop_jobs
+            SET status = 'done', phase = '', finished_at = now(), result = $2,
+                interaction_id = $3
+          WHERE id = $1 AND status = 'running'",
+    )
+    .bind(job_id)
+    .bind(result)
+    .bind(interaction_id)
+    .execute(db)
+    .await;
+    if let Err(e) = saved {
+        tracing::error!(job_id, error = %e, "could not store the SOP job result");
+    }
+}
+
+/// Closes a job that will not run (cancelled in the queue, lost with its server) as one that
+/// ended with `message`: the page shows it with 「再試一次」.
+pub async fn close_failed(db: &PgPool, job_id: i64, message: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE lesson_sop_jobs SET status = 'done', phase = '', finished_at = now(), result = $2
+          WHERE id = $1 AND status = 'running'",
+    )
+    .bind(job_id)
+    .bind(error_result(message))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Runs the job the AI queue holds (the `sop_step` job) to its end: what [`start`] spawns,
+/// rebuilt from the job row, its version and material (as they were when it was asked for)
+/// and the lesson as it is now. `class_id` and `track` are the request's. A job that is no
+/// longer running (cancelled, failed meanwhile) is left alone; one that fails stores an error
+/// result, as the spawned task does.
+pub async fn run_queued(
+    state: &AppState,
+    job_id: i64,
+    teacher_id: i64,
+    class_id: Option<i64>,
+    track: &str,
+) -> AppResult<()> {
+    let db = &state.db;
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        lesson_id: i64,
+        kind: String,
+        slot: String,
+        parent_job_id: Option<i64>,
+        params: Option<Value>,
+        sop_version_id: Option<i64>,
+        material_id: Option<i64>,
+    }
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT lesson_id, kind, slot, parent_job_id, params, sop_version_id, material_id
+           FROM lesson_sop_jobs WHERE id = $1 AND status = 'running'",
+    )
+    .bind(job_id)
+    .fetch_optional(db)
+    .await?;
+    let Some(row) = row else { return Ok(()) };
+    let kind = [
+        JobKind::Analysis,
+        JobKind::Objectives,
+        JobKind::Goals,
+        JobKind::Tasks,
+        JobKind::Warmup,
+        JobKind::ExitTicket,
+    ]
+    .into_iter()
+    .find(|k| k.as_str() == row.kind)
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("SOP job {job_id} has kind {}", row.kind)))?;
+    let lesson = owned_lesson(db, row.lesson_id, teacher_id).await?;
+    let profile = resolved_profile(
+        db,
+        teacher_id,
+        class_id,
+        &lesson.class_description,
+        &lesson.unit_class_profile,
+    )
+    .await?;
+    let version_id = row
+        .sop_version_id
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("SOP job {job_id} has no version")))?;
+    let version = super::store::version_by_id(db, version_id)
+        .await?
+        .ok_or_else(|| AppError::not_found("找不到這個版本。"))?;
+    let material = super::store::material(db, row.material_id.or(version.material_id))
+        .await?
+        .ok_or_else(|| AppError::not_found("教材已經刪除。"))?;
+    let params = row.params.unwrap_or(Value::Null);
+    let scope = match (kind, row.parent_job_id, row.slot.as_str()) {
+        (JobKind::Objectives, Some(parent_id), _) => {
+            let index = params["index"]
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok())
+                .ok_or_else(|| AppError::bad_request("找不到要換掉的那一項建議。"))?;
+            Scope::Swap(swap_of(state, teacher_id, lesson.id, parent_id, index, &version).await?)
+        }
+        (JobKind::Goals, parent, slot) if slot.starts_with("p:") => Scope::Paragraph {
+            parent_job_id: parent,
+            paragraph_id: params["paragraph_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+        },
+        (JobKind::Objectives, None, _) => Scope::Kind(
+            if params["only_type"].as_str() == Some(ObjectiveType::Language.label()) {
+                ObjectiveType::Language
+            } else {
+                ObjectiveType::Content
+            },
+        ),
+        _ => Scope::Whole,
+    };
+    let today_objective: String = sqlx::query_scalar(
+        "SELECT objective FROM lesson_versions WHERE lesson_id = $1
+          ORDER BY version_no DESC LIMIT 1",
+    )
+    .bind(lesson.id)
+    .fetch_optional(db)
+    .await?
+    .unwrap_or_default();
+    // How often this was asked before: a retry must not be the request the gateway cached.
+    let earlier: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM lesson_sop_jobs WHERE lesson_id = $1 AND kind = $2 AND id < $3",
+    )
+    .bind(lesson.id)
+    .bind(kind.as_str())
+    .bind(job_id)
+    .fetch_one(db)
+    .await?;
+    let temperature = BASE_TEMPERATURE + 0.1 * earlier.min(4) as f32;
+    let input = JobInput {
+        kind,
+        scope,
+        teacher_id,
+        track: track.to_string(),
+        lesson,
+        profile,
+        version,
+        material,
+        today_objective,
+    };
+    set_phase(db, job_id, kind.first_phase(&input.scope)).await?;
+    let (result, interaction_id) = match state
+        .ai
+        .pinned(execute(state, job_id, &input, temperature))
+        .await
+    {
+        Ok(done) => done,
+        Err(e) => {
+            tracing::error!(job_id, error = %e, "SOP job failed");
+            (error_result(pipeline::MSG_ERROR), None)
+        }
+    };
+    store_result(db, job_id, result, interaction_id).await;
+    Ok(())
+}
+
+/// The suggestion of an objectives job that 換一個 replaces (read from the stored result, never
+/// from the request), and the objectives the new one must not repeat.
+pub async fn swap_of(
+    state: &AppState,
+    teacher_id: i64,
+    lesson_id: i64,
+    parent_id: i64,
+    index: i32,
+    version: &Version,
+) -> AppResult<Swap> {
+    let parent = job(state, parent_id, teacher_id)
+        .await?
+        .filter(|j| j.lesson_id == lesson_id && j.kind == "objectives" && j.status == "done")
+        .ok_or_else(|| AppError::not_found("找不到這一批建議。"))?;
+    let list = parent
+        .result
+        .as_ref()
+        .and_then(|r| r["output"]["objectives"].as_array())
+        .ok_or_else(|| AppError::bad_request("這一批沒有可以換的建議。"))?;
+    let chosen = usize::try_from(index)
+        .ok()
+        .and_then(|i| list.get(i))
+        .ok_or_else(|| AppError::bad_request("找不到要換掉的那一項建議。"))?;
+    let kind = match chosen["type"].as_str() {
+        Some("language") => ObjectiveType::Language,
+        Some("content") => ObjectiveType::Content,
+        _ => return Err(AppError::bad_request("這一項建議沒有目標類型。")),
+    };
+    let text_of = |o: &Value| o["text"].as_str().unwrap_or_default().trim().to_string();
+    let mut avoid: Vec<String> = version
+        .content
+        .objectives
+        .iter()
+        .filter(|o| !o.text.trim().is_empty())
+        .map(|o| o.text.trim().to_string())
+        .collect();
+    avoid.extend(
+        list.iter()
+            .enumerate()
+            .filter(|(i, _)| *i != index as usize)
+            .map(|(_, o)| text_of(o))
+            .filter(|t| !t.is_empty()),
+    );
+    Ok(Swap {
+        parent_job_id: parent_id,
+        index,
+        kind,
+        declined: text_of(chosen),
+        avoid,
+    })
 }
 
 pub(super) async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
@@ -630,10 +891,11 @@ async fn run_analysis(
                     context,
                 ))
             }
-            Failure::Error => {
+            Failure::Error(kind) => {
                 return Ok(not_shown::<AnalysisSuggestion>(
                     Outcome::Error {
                         interaction_id: a1.id,
+                        kind,
                     },
                     context,
                 ))
@@ -763,7 +1025,10 @@ async fn run_analysis(
     if !usable {
         let outcome = match last_failure {
             Some((id, Failure::Timeout)) => Outcome::Timeout { interaction_id: id },
-            Some((id, Failure::Error)) => Outcome::Error { interaction_id: id },
+            Some((id, Failure::Error(kind))) => Outcome::Error {
+                interaction_id: id,
+                kind,
+            },
             Some((id, Failure::Retryable)) => Outcome::Blocked { interaction_id: id },
             None => Outcome::Blocked {
                 interaction_id: final_id,
@@ -1122,10 +1387,11 @@ async fn run_objectives(
                     context,
                 ))
             }
-            Failure::Error => {
+            Failure::Error(kind) => {
                 return Ok(not_shown::<ObjectivesSuggestion>(
                     Outcome::Error {
                         interaction_id: a1.id,
+                        kind,
                     },
                     context,
                 ))
@@ -1246,7 +1512,10 @@ async fn run_objectives(
     }
     let outcome = match last_failure {
         Some((id, Failure::Timeout)) => Outcome::Timeout { interaction_id: id },
-        Some((id, Failure::Error)) => Outcome::Error { interaction_id: id },
+        Some((id, Failure::Error(kind))) => Outcome::Error {
+            interaction_id: id,
+            kind,
+        },
         Some((id, Failure::Retryable)) => Outcome::Blocked { interaction_id: id },
         None => Outcome::Blocked {
             interaction_id: a1.id,

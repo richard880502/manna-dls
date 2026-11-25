@@ -156,6 +156,9 @@ pub async fn load_override(ai: &AiClient, db: &PgPool) -> sqlx::Result<()> {
 /// Why a test call failed, in words for the PI.
 fn explain(e: &ProviderError) -> String {
     match e {
+        ProviderError::RateLimited { .. } => "用量太高，稍後再試。".into(),
+        ProviderError::QuotaExceeded { .. } => "額度用完，請到 OpenAI 帳戶提高上限或加值。".into(),
+        ProviderError::Overloaded { .. } => "模型服務忙碌，稍後再試。".into(),
         ProviderError::Timeout => {
             "模型沒有在時間內回應（可能模型名稱不對，或服務太忙）。".to_string()
         }
@@ -231,6 +234,9 @@ async fn test_call(
     .await?;
     let start = Instant::now();
     let result = ai.complete(&req).await;
+    if let Ok(resp) = &result {
+        pipeline::record_usage(&state.db, id, resp.usage).await?;
+    }
     let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
     let (outcome, finish) = match result {
         Ok(resp) => (
@@ -344,6 +350,7 @@ pub async fn put(
             )))
         }
     };
+    state.ai.clear_quota_cooldown();
     let value = candidate.to_json();
     let mut tx = state.db.begin().await?;
     let previous = settings::set(&mut tx, settings::AI_TEXT_MODEL, &value, teacher.id()).await?;

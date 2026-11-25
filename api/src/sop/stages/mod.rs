@@ -121,7 +121,10 @@ fn nos_label(nos: &[i64]) -> String {
 fn status_of(message: &str) -> &'static str {
     if message == MSG_TIMEOUT {
         "timeout"
-    } else if message == MSG_ERROR {
+    } else if message == MSG_ERROR
+        || message == crate::ai::pipeline::MSG_QUOTA
+        || message == crate::ai::pipeline::MSG_BUSY
+    {
         "error"
     } else if message == MSG_DISABLED {
         "disabled"

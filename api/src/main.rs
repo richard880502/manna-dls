@@ -111,6 +111,21 @@ async fn run() -> anyhow::Result<()> {
     } else {
         None
     };
+    // The AI queue: jobs the last process left behind are recovered first, then the
+    // dispatcher claims work until shutdown. Off (the default) = work starts directly.
+    let queue_state = state.config.ai_queue_enabled.then(|| state.clone());
+    let dispatcher = match &queue_state {
+        Some(state) => {
+            match manna_api::queue::dispatcher::recover(state).await {
+                Ok((requeued, failed)) => tracing::info!(requeued, failed, "AI queue recovered"),
+                Err(e) => tracing::error!(error = %e, "could not recover AI jobs"),
+            }
+            Some(tokio::spawn(manna_api::queue::dispatcher::run(
+                state.clone(),
+            )))
+        }
+        None => None,
+    };
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -125,6 +140,13 @@ async fn run() -> anyhow::Result<()> {
             public?;
             internal?;
         }
+    }
+    // The server no longer takes requests: stop claiming, give running jobs a grace period,
+    // and leave the rest to the next start.
+    if let (Some(state), Some(dispatcher)) = (queue_state, dispatcher) {
+        let grace = std::time::Duration::from_secs(state.config.ai_shutdown_grace_secs);
+        manna_api::queue::dispatcher::drain(&state, grace).await;
+        let _ = dispatcher.await;
     }
     Ok(())
 }

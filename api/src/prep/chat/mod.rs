@@ -241,7 +241,7 @@ impl Calls<'_> {
                     (Failure::Timeout, _) => MSG_TIMEOUT.to_string(),
                     (_, ProviderError::Disabled) => MSG_DISABLED.to_string(),
                     (Failure::Retryable, _) => MSG_UNREADABLE.to_string(),
-                    _ => MSG_ERROR.to_string(),
+                    (Failure::Error(kind), _) => kind.message(MSG_ERROR).to_string(),
                 }))
             }
         }

@@ -24,7 +24,13 @@ pub async fn block_history(
 ) -> AppResult<Json<History>> {
     let db = &state.db;
     store::owned(db, id, teacher.id()).await?;
-    rv::expire_stale(db, id, crate::worksheet::ai::revise::stale_after(&state)).await?;
+    rv::expire_stale(
+        db,
+        id,
+        crate::worksheet::ai::revise::stale_after(&state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     let latest = store::latest(db, id).await?;
     let current = latest
         .content

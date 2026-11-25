@@ -18,6 +18,26 @@ export const PROGRESS_WORDS = {
   failedFallback: "這一步沒有成功。",
 };
 
+export const QUEUE_WORDS = {
+  next: "排隊中，下一個就輪到你",
+  cancel: "取消排隊",
+  confirm: "要取消這個排隊中的工作嗎？",
+  yes: "確定取消",
+  no: "不取消",
+};
+
+/** 「排隊中，前面還有 3 個（約 2 分鐘）」: minutes are rounded up; under a minute is 「不到 1 分鐘」. */
+export function queueText(queue: NonNullable<RunProgress["queue"]>): string {
+  if (queue.ahead <= 0) return QUEUE_WORDS.next;
+  const eta =
+    queue.eta_secs === null || queue.eta_secs === undefined
+      ? ""
+      : queue.eta_secs < 60
+        ? "（不到 1 分鐘）"
+        : `（約 ${Math.ceil(queue.eta_secs / 60)} 分鐘）`;
+  return `排隊中，前面還有 ${queue.ahead} 個${eta}`;
+}
+
 /** How long the panel stays, all done, before it folds away. Tests shorten it. */
 export const progressConfig = { doneMs: 4000 };
 

@@ -23,6 +23,10 @@ use crate::AppState;
 pub const MSG_BLOCKED: &str = "目前暫無建議，你可以繼續手動完成。";
 pub const MSG_TIMEOUT: &str = "AI 目前沒有回應，這項協助先暫停；你可以繼續手動完成。";
 pub const MSG_ERROR: &str = "AI 暫時無法使用，這項協助先暫停；你可以繼續手動完成。";
+/// A failed call because the account's quota is used up.
+pub const MSG_QUOTA: &str = "今天的 AI 用量已達上限，請通知計畫主持人。";
+/// Rate limits that stayed after the automatic waits.
+pub const MSG_BUSY: &str = "現在使用的人很多，請稍後再試一次。";
 pub const MSG_DISABLED: &str = "這個環境沒有開啟 AI 協助，你可以繼續手動完成。";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -137,10 +141,20 @@ pub struct InteractionMeta {
 }
 
 pub enum Outcome<T> {
-    Shown { interaction_id: i64, output: T },
-    Blocked { interaction_id: i64 },
-    Timeout { interaction_id: i64 },
-    Error { interaction_id: i64 },
+    Shown {
+        interaction_id: i64,
+        output: T,
+    },
+    Blocked {
+        interaction_id: i64,
+    },
+    Timeout {
+        interaction_id: i64,
+    },
+    Error {
+        interaction_id: i64,
+        kind: super::ErrorKind,
+    },
 }
 
 impl<T: Serialize> Outcome<T> {
@@ -160,9 +174,10 @@ impl<T: Serialize> Outcome<T> {
             Outcome::Timeout { interaction_id } => {
                 AiResult::not_shown(Some(interaction_id), "timeout", MSG_TIMEOUT)
             }
-            Outcome::Error { interaction_id } => {
-                AiResult::not_shown(Some(interaction_id), "error", MSG_ERROR)
-            }
+            Outcome::Error {
+                interaction_id,
+                kind,
+            } => AiResult::not_shown(Some(interaction_id), "error", kind.message(MSG_ERROR)),
         }
     }
 
@@ -171,7 +186,7 @@ impl<T: Serialize> Outcome<T> {
             Outcome::Shown { interaction_id, .. }
             | Outcome::Blocked { interaction_id }
             | Outcome::Timeout { interaction_id }
-            | Outcome::Error { interaction_id } => *interaction_id,
+            | Outcome::Error { interaction_id, .. } => *interaction_id,
         }
     }
 }
@@ -268,6 +283,43 @@ pub async fn finish_interaction(db: &PgPool, id: i64, f: Finish<'_>) -> sqlx::Re
     Ok(())
 }
 
+pub(crate) async fn record_usage(
+    db: &PgPool,
+    id: i64,
+    usage: Option<super::chat::Usage>,
+) -> sqlx::Result<()> {
+    record_usage_counted(db, id, usage, 0).await
+}
+
+/// [`record_usage`] for a call whose repeats were counted separately (a failed call has no
+/// token usage, but its retries are still worth keeping).
+pub(crate) async fn record_usage_counted(
+    db: &PgPool,
+    id: i64,
+    usage: Option<super::chat::Usage>,
+    retries: u32,
+) -> sqlx::Result<()> {
+    let usage = match (usage, retries) {
+        (None, 0) => None,
+        (None, n) => Some(super::chat::Usage {
+            transport_retries: u64::from(n),
+            ..Default::default()
+        }),
+        (Some(mut u), n) => {
+            u.transport_retries = u.transport_retries.max(u64::from(n));
+            Some(u)
+        }
+    };
+    if let Some(usage) = usage {
+        sqlx::query("UPDATE ai_interactions SET usage = $2 WHERE id = $1")
+            .bind(id)
+            .bind(usage.to_json())
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}
+
 fn elapsed_ms(start: Instant) -> i32 {
     i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX)
 }
@@ -306,11 +358,15 @@ where
         }
         req.attempt = attempt;
         let start = Instant::now();
-        let result = ai.complete(&req).await;
+        let (result, retries) = ai.complete_counted(&req).await;
         let latency_ms = elapsed_ms(start);
+        if result.is_err() && retries > 0 {
+            record_usage_counted(&state.db, interaction_id, None, retries).await?;
+        }
 
         let (failure_results, raw_output, model_version) = match result {
             Ok(resp) => {
+                record_usage(&state.db, interaction_id, resp.usage).await?;
                 let checked = check(&resp.json);
                 let passed = checks::all_passed(&checked.results);
                 let report = checks::report(&checked.results);
@@ -383,7 +439,10 @@ where
                     },
                 )
                 .await?;
-                return Ok(Outcome::Error { interaction_id });
+                return Ok(Outcome::Error {
+                    interaction_id,
+                    kind: super::ErrorKind::of(&e),
+                });
             }
         };
         // Refusal or unparseable output: recorded as a failed check, then regenerate once.

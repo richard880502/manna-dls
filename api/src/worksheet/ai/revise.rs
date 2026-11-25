@@ -140,7 +140,7 @@ pub async fn start(
         };
         crate::prep::images::check_ids(db, ws.teacher_id, session_id, &req.image_ids).await?
     };
-    rv::expire_stale(db, ws.id, stale_after(state)).await?;
+    rv::expire_stale(db, ws.id, stale_after(state), state.config.ai_queue_enabled).await?;
     // Checked before the block's open proposal is set aside (the insert checks again).
     if rv::any_running(db, ws.id).await? {
         return Err(AppError::Conflict(rv::MSG_ANOTHER_RUNNING.to_string()));
@@ -159,6 +159,10 @@ pub async fn start(
             comment_ids: &comment_ids,
             whole_block: req.whole_block,
             round: round as i32,
+            queue: state.config.ai_queue_enabled.then_some(rv::ProposalQueue {
+                max_queued: state.config.ai_max_queued_per_teacher,
+                track: &input.track,
+            }),
         },
     )
     .await?;
@@ -181,19 +185,92 @@ pub async fn start(
         }),
     )
     .await?;
+    if state.config.ai_queue_enabled {
+        // Its job was made with the proposal; the dispatcher runs it ([`run_queued`]).
+        state.queue.wake();
+    } else {
+        let job = Job {
+            proposal_id: proposal.id,
+            round: round as i32,
+            previous_reply: if round > 1 { previous_reply } else { None },
+            scope: Scope::from(&instruction, &notes, req.whole_block),
+            instruction,
+            notes,
+            content: latest.content,
+            block,
+            input,
+        };
+        spawn(state, job);
+    }
+    Ok(proposal)
+}
+
+/// Runs the revision the AI queue holds (the `block_revise` job) to its end: what [`spawn`]
+/// runs, rebuilt from the proposal row (its instruction, notes and the block as it was sent),
+/// the worksheet and the notes as they are now. A proposal that is no longer `running`
+/// (cancelled, failed meanwhile) is left alone.
+pub async fn run_queued(
+    state: &AppState,
+    teacher_id: i64,
+    proposal_id: i64,
+    track: &str,
+) -> AppResult<()> {
+    let db = &state.db;
+    let worksheet_id: Option<i64> =
+        sqlx::query_scalar("SELECT worksheet_id FROM worksheet_block_proposals WHERE id = $1")
+            .bind(proposal_id)
+            .fetch_optional(db)
+            .await?;
+    let Some(worksheet_id) = worksheet_id else {
+        return Ok(());
+    };
+    let proposal = rv::get(db, worksheet_id, proposal_id).await?;
+    if proposal.status != rv::STATUS_RUNNING {
+        return Ok(());
+    }
+    let input = crate::application::worksheets::WorksheetService::new(db)
+        .prepare_generation(teacher_id, track, worksheet_id)
+        .await?;
+    let latest = store::latest(db, worksheet_id).await?;
+    let notes = if proposal.comment_ids.is_empty() {
+        Vec::new()
+    } else {
+        comments::by_ids(
+            db,
+            worksheet_id,
+            teacher_id,
+            &proposal.comment_ids,
+            &latest.content,
+        )
+        .await?
+    };
+    // What Manna said the last time, when the teacher asked again.
+    let previous_reply: Option<String> = if proposal.round > 1 {
+        sqlx::query_scalar(
+            "SELECT reply FROM worksheet_block_proposals
+              WHERE worksheet_id = $1 AND block_id = $2 AND id < $3 AND btrim(reply) <> ''
+              ORDER BY id DESC LIMIT 1",
+        )
+        .bind(worksheet_id)
+        .bind(&proposal.block_id)
+        .bind(proposal_id)
+        .fetch_optional(db)
+        .await?
+    } else {
+        None
+    };
     let job = Job {
-        proposal_id: proposal.id,
-        round: round as i32,
-        previous_reply: if round > 1 { previous_reply } else { None },
-        scope: Scope::from(&instruction, &notes, req.whole_block),
-        instruction,
+        proposal_id,
+        round: proposal.round,
+        previous_reply,
+        scope: Scope::from(&proposal.instruction, &notes, proposal.whole_block),
+        instruction: proposal.instruction,
         notes,
         content: latest.content,
-        block,
+        block: proposal.before,
         input,
     };
-    spawn(state, job);
-    Ok(proposal)
+    state.ai.pinned(run(state, job)).await
 }
 
 /// Everything the background call works with.
