@@ -930,6 +930,9 @@ pub fn key_word_candidates(
                     }
                 }
                 found.push(Candidate {
+                    pos: lexicon
+                        .map(|lex| super::key_vocab::listed_pos_of(lex, &word))
+                        .unwrap_or_default(),
                     word,
                     level,
                     paragraph_no: pi as i64 + 1,
@@ -960,6 +963,9 @@ pub fn key_word_candidates(
         });
         if let Some((paragraph_no, sentence)) = place {
             out.push(Candidate {
+                pos: lexicon
+                    .map(|lex| super::key_vocab::listed_pos_of(lex, word))
+                    .unwrap_or_default(),
                 word: word.to_string(),
                 level,
                 paragraph_no,
@@ -1505,19 +1511,7 @@ async fn step_warmup(
         (
             "vocab_candidates",
             lines_or(
-                run.candidates
-                    .iter()
-                    .map(|c| {
-                        format!(
-                            "{}｜{}｜P{}",
-                            c.word,
-                            c.level
-                                .map(|l| format!("第 {l} 級"))
-                                .unwrap_or_else(|| "未對應到詞彙表".to_string()),
-                            c.paragraph_no
-                        )
-                    })
-                    .collect(),
+                run.candidates.iter().map(candidate_line).collect(),
                 "（沒有候選字彙；key_vocabulary 請給空陣列）",
             ),
         ),
@@ -1527,7 +1521,7 @@ async fn step_warmup(
         "title": run.input.worksheet.material.title,
         "vocab_count": count,
         "candidates": run.candidates.iter()
-            .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence }))
+            .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence, "pos": c.pos }))
             .collect::<Vec<_>>(),
     });
     let context = run.context(&[(
@@ -1561,6 +1555,23 @@ async fn step_warmup(
     )
     .await?;
     close(run, job_id, WARMUP.progress, result, &context).await
+}
+
+/// One candidate key word as the warm-up prompts list it: word｜level｜paragraph, and the parts
+/// of speech the word list gives for it (the model's `pos` must be one of them).
+pub fn candidate_line(c: &Candidate) -> String {
+    let mut line = format!(
+        "{}｜{}｜P{}",
+        c.word,
+        c.level
+            .map(|l| format!("第 {l} 級"))
+            .unwrap_or_else(|| "未對應到詞彙表".to_string()),
+        c.paragraph_no
+    );
+    if !c.pos.trim().is_empty() {
+        line.push_str(&format!("｜詞彙表詞性：{}", c.pos.trim()));
+    }
+    line
 }
 
 /// One block as the scaffolds step sees it.
@@ -2095,6 +2106,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         levels,
         // 字詞表的位置是老師選的，重新產生也留著。
         vocabulary_at_end: latest.content.vocabulary_at_end,
+        vocabulary_language: latest.content.vocabulary_language,
         chosen: Some(chosen),
         notices,
     };
@@ -2105,6 +2117,12 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
             "assembled worksheet failed validation: {e}"
         ))
     })?;
+    // 字詞表鷹架: the part of speech (the word list's, else one model call for all the words
+    // of the worksheet) and the meanings of each word, so the sheet can print them.
+    fill_word_banks(run, ws.teacher_id, ws.id, ws.lesson_id, &mut content).await;
+    content
+        .normalise()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("word banks failed validation: {e}")))?;
     let saved = store::save_content(db, ws.id, &content, "generate").await?;
     store::set_generated(db, ws.id).await?;
     // The blocks passed their checks and are saved: their pictures are made in the background.
@@ -2211,6 +2229,36 @@ pub async fn start_block(state: &AppState, input: RunInput, block_id: &str) -> A
         regenerate(&run, &ids, block).await
     });
     Ok(())
+}
+
+/// The word banks of a generated worksheet get their parts of speech and meanings (one model
+/// call for the whole worksheet). A failure never fails the generation: the words print
+/// without a part of speech and the notice says so.
+async fn fill_word_banks(
+    run: &Run,
+    teacher_id: i64,
+    worksheet_id: i64,
+    lesson_id: Option<i64>,
+    content: &mut Content,
+) {
+    let scope = super::key_vocab::Scope {
+        tables: false,
+        banks: true,
+    };
+    match super::key_vocab::fill(
+        &run.state,
+        teacher_id,
+        worksheet_id,
+        lesson_id,
+        content,
+        run.lexicon.as_ref(),
+        scope,
+    )
+    .await
+    {
+        Ok(done) => content.notices.extend(done.notice),
+        Err(e) => tracing::warn!("word bank meanings: {e}"),
+    }
 }
 
 async fn skip(run: &Run, job_id: Option<&i64>, message: &str) -> sqlx::Result<()> {
@@ -2410,6 +2458,11 @@ async fn replace_block(
     next.normalise().map_err(|e| {
         AppError::Internal(anyhow::anyhow!("regenerated block failed validation: {e}"))
     })?;
+    // 字詞表鷹架: the part of speech (the word list's, else one model call for all the words
+    // of the worksheet) and the meanings of each word, so the sheet can print them.
+    fill_word_banks(run, ws.teacher_id, ws.id, ws.lesson_id, &mut next).await;
+    next.normalise()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("word banks failed validation: {e}")))?;
     store::push_history(db, ws.id, &previous, Some(interaction_id)).await?;
     let saved = store::save_content_from(
         db,

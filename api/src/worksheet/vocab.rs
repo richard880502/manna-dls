@@ -37,8 +37,20 @@ pub fn relookup_levels(content: &mut Content, lexicon: Option<&Lexicon>) {
     for block in &mut content.blocks {
         for v in &mut block.vocabulary {
             v.level = lexicon.and_then(|lex| vocabulary::word_level(lex, v.word.trim()).level);
+            // A word added by hand gets its part of speech from the list when the list gives
+            // exactly one; one already written stays (it is checked when the content is saved).
+            if v.pos.trim().is_empty() && !v.task_word {
+                if let Some(lex) = lexicon {
+                    v.pos = super::key_vocab::resolve_pos(
+                        "",
+                        &super::key_vocab::listed_pos_of(lex, &v.word),
+                    );
+                }
+            }
         }
     }
+    // The words of the word banks get their part of speech from the list too (when it gives one).
+    super::key_vocab::bank_pos_from_list(content, lexicon);
 }
 
 pub async fn lexicon(db: &PgPool) -> sqlx::Result<Option<Lexicon>> {

@@ -437,14 +437,16 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
     // that a sentence frame is not a question, version 7 (0036_template_supports.sql) the 是非題
     // statement and wrapped frames, version 8 (0050_per_question_frames.sql) the block's
     // instructions as a passage introduction, version 9 (0051_table_organizer_headers.sql) the
-    // table's headings and row labels.
-    assert_eq!(tasks[0].3["prompt"]["version_no"], 9);
+    // table's headings and row labels, version 10 (0053_block_intros.sql) an introduction only,
+    // the how-to left to the steps.
+    assert_eq!(tasks[0].3["prompt"]["version_no"], 10);
     assert!(tasks[0].3["prompt"]["system"]
         .as_str()
         .unwrap()
         .contains("示範 → 共同練習 → 同儕練習 → 獨立應用"));
 
-    // V2: the words of the instructions, with Chinese hints, after the warm-up's key words.
+    // V2: the words of the instructions, with a fixed English definition, a part of speech and
+    // the Chinese hint, after the warm-up's key words.
     let warmup = blocks.iter().find(|b| b["kind"] == "warmup").unwrap();
     let task_words: Vec<(&str, &str)> = warmup["vocabulary"]
         .as_array()
@@ -454,10 +456,21 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
         .map(|v| {
             (
                 v["word"].as_str().unwrap(),
-                v["definition"].as_str().unwrap(),
+                v["meaning_zh"].as_str().unwrap(),
             )
         })
         .collect();
+    assert!(warmup["vocabulary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["task_word"] == true)
+        .all(|v| !v["definition"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+            && v["pos"].as_str().is_some_and(|p| !p.is_empty())));
     assert!(
         task_words.contains(&("in your own words", "用你自己的話說")),
         "{task_words:?}"

@@ -212,6 +212,21 @@ export function WorksheetCard({
     };
   }, [running, wsId, refreshKey, localKey, level, audience, onLabels, sheetKey]);
 
+  // A student sheet: the teacher projection of the same version, for the per-block 看答案. It is
+  // only for reading; a failure leaves the sheet without the buttons.
+  const [answers, setAnswers] = useState<WsSheet | null>(null);
+  useEffect(() => {
+    if (running || wsId === null || audience !== "student") return undefined;
+    let alive = true;
+    api
+      .worksheetSheet(wsId, "teacher", level ?? undefined)
+      .then((s) => alive && setAnswers(s))
+      .catch(() => alive && setAnswers(null));
+    return () => {
+      alive = false;
+    };
+  }, [running, wsId, refreshKey, localKey, level, audience, sheetKey]);
+
   // While pictures are being made: ask for them; when the last one is done, reload the sheet.
   useEffect(() => {
     if (!picturesOpen || wsId === null) return undefined;
@@ -446,6 +461,7 @@ export function WorksheetCard({
             highlight={flash.size > 0 ? new Set([...highlight, ...flash]) : highlight}
             interactionFor={(b) => interactionFor(state?.jobs ?? [], b, turn.interaction_id)}
             extras={extras}
+            answers={audience === "student" ? answers : null}
             pictures={{
               worksheetId: wsId,
               images,

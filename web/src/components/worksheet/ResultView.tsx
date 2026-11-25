@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
 import type {
   WorksheetContent,
@@ -20,7 +20,10 @@ import {
   SCAFFOLD_TYPE_LABEL,
   SUPPORT_KINDS_FOR,
   SUPPORT_KIND_LABEL,
+  POS_OPTIONS,
+  STEPS_LEAD,
   TIERED_FORMATS,
+  bankNeedsFill,
   buildSupport,
   editedOrigin,
   isFromManna,
@@ -29,7 +32,10 @@ import {
   newId,
   frameShown,
   newItem,
+  itemHasAnswer,
+  printedNumbers,
   projectSheet,
+  renumberRefs,
   studentVersionName,
   toggleIn,
   versionCode,
@@ -53,6 +59,8 @@ import { BloomDistribution, BloomSelect } from "./Bloom";
 import { ChoicesArea, WritingArea, promptPlaceholder } from "./ItemAnswer";
 import { BlockHistoryButton } from "./BlockHistory";
 import { SheetText } from "./SheetText";
+import { KeyVocabulary } from "./KeyVocabulary";
+import { WordBankEditor } from "./WordBankEditor";
 import {
   BlockReviseArea,
   LostNotes,
@@ -323,6 +331,8 @@ function WordTable({
   locked: boolean;
 }) {
   if (block.vocabulary.length === 0) return null;
+  // The table's language is the worksheet's (one switch, next to 字詞表放在學習單最後).
+  const zh = ws.state?.content.vocabulary_language === "zh";
   const patch = (change: (b: WsBlock) => WsBlock) =>
     ws.setContent((c) => ({
       ...c,
@@ -343,40 +353,58 @@ function WordTable({
           刪除
         </button>
       </p>
-      <table className="ws-vocab" aria-label={`字詞表 ${name}`}>
-        <thead>
-          <tr>
-            <th scope="col">Word</th>
-            <th scope="col">Meaning</th>
-            <th scope="col" lang="zh-Hant">
-              級別
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {block.vocabulary.map((v, i) => (
-            <tr key={`${v.word}-${i}`}>
-              <td>{v.word}</td>
-              <td>
-                <SheetText
-                  label={`${v.word} 的解釋`}
-                  value={v.definition}
-                  disabled={locked}
-                  onChange={(definition) =>
-                    patch((b) => ({
-                      ...b,
-                      vocabulary: b.vocabulary.map((x, j) => (j === i ? { ...x, definition } : x)),
-                    }))
-                  }
-                />
-              </td>
-              <td lang="zh-Hant" className="ws-vocab-level">
-                {v.task_word ? "指示用語" : v.level === null ? "級別未知" : `第 ${v.level} 級`}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <KeyVocabulary
+        label={`字詞表 ${name}`}
+        extraHead={<span lang="zh-Hant">級別</span>}
+        rows={block.vocabulary.map((v, i) => ({
+          id: `${v.word}-${i}`,
+          task: v.task_word === true,
+          word: v.word,
+          pos: (
+            <select
+              className="ws-pos"
+              aria-label={`${v.word} 的詞性`}
+              value={v.pos ?? ""}
+              disabled={locked}
+              onChange={(e) =>
+                patch((b) => ({
+                  ...b,
+                  vocabulary: b.vocabulary.map((x, j) => (j === i ? { ...x, pos: e.target.value } : x)),
+                }))
+              }
+            >
+              <option value="">（未填）</option>
+              {POS_OPTIONS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          ),
+          meaning: (
+            <SheetText
+              label={zh ? `${v.word} 的中文解釋` : `${v.word} 的解釋`}
+              value={zh ? (v.meaning_zh ?? "") : v.definition}
+              placeholder={zh ? `還沒有中文字義，先印英文：${v.definition}` : undefined}
+              lang={zh ? "zh-Hant" : "en"}
+              disabled={locked}
+              onChange={(text) =>
+                patch((b) => ({
+                  ...b,
+                  vocabulary: b.vocabulary.map((x, j) =>
+                    j === i ? (zh ? { ...x, meaning_zh: text } : { ...x, definition: text }) : x,
+                  ),
+                }))
+              }
+            />
+          ),
+          extra: (
+            <span lang="zh-Hant" className="ws-vocab-level">
+              {v.task_word ? "指示用語" : v.level === null ? "級別未知" : `第 ${v.level} 級`}
+            </span>
+          ),
+        }))}
+      />
     </>
   );
 }
@@ -461,12 +489,24 @@ function BlockSection({
   const [reviseOpen, setReviseOpen] = useState(false);
   const [draft, setDraft] = useState<SheetSelection | null>(null);
   const numbers = new Map(view.items.map(({ item, no }) => [item.id, no]));
+  const printed = printedNumbers(view.items);
+  /** What prints for a text that names questions by number, when it differs from the stored text. */
+  const printedAs = (text: string) => {
+    const out = renumberRefs(text, printed);
+    return out !== text ? out : null;
+  };
   const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
   const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [over, setOver] = useState(false);
   const levels = ws.state?.content.levels ?? [];
   const teacher = audience === "teacher";
+  // 看答案: the student view can open one block's answers; they are drawn as the teacher view draws them.
+  const [revealed, setRevealed] = useState(false);
+  const answersId = useId();
+  const hasAnswers = view.items.some(({ item }) => itemHasAnswer(item));
+  const canReveal = !teacher && hasAnswers;
+  const showAnswers = teacher || (revealed && hasAnswers);
   const name = label || BLOCK_KIND_LABEL[block.kind];
   const undoable = ws.state?.undoable.includes(block.id) ?? false;
   const toggleName = block.kind === "warmup" ? "暖身" : block.kind === "exit_ticket" ? "Exit ticket" : null;
@@ -651,6 +691,19 @@ function BlockSection({
           disabled={locked}
           onChange={(title) => patch((b) => ({ ...b, title }))}
         />
+        {canReveal && (
+          <button
+            type="button"
+            className="text-link is-plain ws-reveal"
+            lang="zh-Hant"
+            aria-expanded={showAnswers}
+            aria-controls={answersId}
+            aria-label={`${showAnswers ? "收起答案" : "看答案"} ${name}`}
+            onClick={() => setRevealed((r) => !r)}
+          >
+            {showAnswers ? "收起答案" : "看答案"}
+          </button>
+        )}
       </h3>
       {teacher && bloomLine && (
         <p className="ws-bloom-line" lang="zh-Hant">
@@ -689,6 +742,7 @@ function BlockSection({
         disabled={locked}
         onChange={(instructions) => patch((b) => ({ ...b, instructions }))}
       />
+      <PrintedAs text={printedAs(block.instructions)} />
 
       {(block.image_slots ?? []).map((slot) => {
         const live = ws.state?.images?.slots.find((s) => s.slot_id === slot.id);
@@ -746,6 +800,7 @@ function BlockSection({
               刪除
             </button>
           </p>
+          {!s.heading?.trim() && <p className="ws-steps-lead">{STEPS_LEAD}</p>}
           <ol>
             {s.steps.map((stepText, i) => (
               // oxlint-disable-next-line react/no-array-index-key -- plain strings, edited in place
@@ -758,6 +813,7 @@ function BlockSection({
                     patchScaffold(s.id, (x) => ({ ...x, steps: x.steps.map((v, j) => (j === i ? text : v)) }))
                   }
                 />
+                <PrintedAs text={printedAs(stepText)} />
               </li>
             ))}
           </ol>
@@ -790,16 +846,25 @@ function BlockSection({
               刪除
             </button>
           </p>
-          <SheetText
-            label={`${s.kind}（${name}）`}
-            value={s.content}
-            disabled={locked}
-            onChange={(text) => patchScaffold(s.id, (x) => ({ ...x, content: text }))}
-          />
+          {s.bank ? (
+            <WordBankEditor ws={ws} scaffold={s} bank={s.bank} name={name} locked={locked} onChange={(change) => patchScaffold(s.id, change)} />
+          ) : (
+            <SheetText
+              label={`${s.kind}（${name}）`}
+              value={s.content}
+              disabled={locked}
+              onChange={(text) => patchScaffold(s.id, (x) => ({ ...x, content: text }))}
+            />
+          )}
         </div>
       ))}
 
-      <ol className="ws-items">
+      {showAnswers && !teacher && (
+        <p className="ws-answer-note" lang="zh-Hant" role="note">
+          參考答案（只有你看得到）：印出與匯出的學生版不含這些答案。
+        </p>
+      )}
+      <ol className="ws-items" id={answersId}>
         {shownItems.map(({ item, no, lines }) => {
           const tier = item.tiers?.find((t) => t.level === level);
           const differentiated = (item.tiers ?? []).length > 0;
@@ -828,6 +893,7 @@ function BlockSection({
                 disabled={locked}
                 onChange={(prompt) => changeItem((it) => ({ ...it, prompt }))}
               />
+              <PrintedAs text={printedAs(item.prompt)} />
               <ChoicesArea item={item} no={no} disabled={locked} onChange={changeItem} />
               {tier ? (
                 <TierEditor
@@ -835,7 +901,7 @@ function BlockSection({
                   tier={tier}
                   no={no}
                   level={level}
-                  teacher={teacher}
+                  teacher={showAnswers}
                   disabled={locked}
                   memory={supportMemory}
                   onChange={(change) => patchTier(item.id, change)}
@@ -886,14 +952,14 @@ function BlockSection({
                   level={level}
                   levels={levels}
                   perVersion={differentiated}
-                  teacher={teacher}
+                  teacher={showAnswers}
                   disabled={locked}
                   onChange={(org) => changeItem((it) => ({ ...it, organizer: org }))}
                 />
               ) : (
                 <WritingArea item={item} no={no} lines={lines} disabled={locked} onChange={changeItem} />
               )}
-              {teacher && (
+              {showAnswers && (
                 <div className="ws-answer" lang="zh-Hant">
                   {/* A 差異化學習單 question has its answer per version (in TierEditor). */}
                   {!tier && (
@@ -1090,6 +1156,25 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
     onUndone: (next) => ws.adopt(next),
   });
   const [supportMemory] = useState<SupportMemory>(() => new Map());
+  // Key Vocabulary in Chinese and the word banks' parts of speech: Manna writes what is missing
+  // (one call); what it could not write is said plainly and prints as it is.
+  const [fillNotice, setFillNotice] = useState<string | null>(null);
+  const [filling, setFilling] = useState(false);
+  const fill = async (scope: { tables?: boolean; banks?: boolean }) => {
+    setFilling(true);
+    setFillNotice(await ws.fillMeanings(scope));
+    setFilling(false);
+  };
+  const banksTried = useRef(false);
+  const banksMissing =
+    state !== null && !state.running && state.content.blocks.some((b) => b.scaffolds.some((s) => bankNeedsFill(s.bank)));
+  useEffect(() => {
+    // A worksheet made before the word banks had parts of speech: the first time it is open.
+    if (!banksMissing || banksTried.current) return;
+    banksTried.current = true;
+    void fill({ banks: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per opened worksheet
+  }, [banksMissing]);
 
   // The selected tab must be one of this worksheet's versions (they can change after a new run).
   const current: WsLevel = levels.includes(level) ? level : (levels[0] ?? "standard");
@@ -1100,6 +1185,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
   const sheet = projectSheet(content, current, audience);
   const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
   const chosen = chosenLine(content);
+  const missingZh = content.blocks.some((b) => b.vocabulary.some((v) => !(v.meaning_zh ?? "").trim()));
   const needsCount = content.blocks.filter((b) => b.enabled && needsMaterial(b.message)).length;
   // The distribution of what this version prints. A filter on a level with nothing left is off.
   const bloomTally = tally(sheet.blocks.flatMap((b) => b.items.map(({ item }) => item)));
@@ -1172,11 +1258,34 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
           />
           <span>字詞表放在學習單最後</span>
         </label>
+        <label className="check-row ws-vocab-zh">
+          <input
+            type="checkbox"
+            checked={content.vocabulary_language === "zh"}
+            disabled={locked}
+            onChange={(e) => {
+              const zhOn = e.target.checked;
+              ws.setContent((c) => ({ ...c, vocabulary_language: zhOn ? "zh" : "en" }));
+              if (zhOn && missingZh) void fill({ tables: true });
+            }}
+          />
+          <span>字詞表的字義用中文</span>
+        </label>
+        {content.vocabulary_language === "zh" && missingZh && !filling && (
+          <button type="button" className="text-link is-plain" disabled={locked} onClick={() => void fill({ tables: true })}>
+            補上中文字義
+          </button>
+        )}
         <Link className="text-link" to={`/worksheets/${state.id}/check`}>
           詞彙級別檢查
         </Link>
       </div>
 
+      {fillNotice && (
+        <p className="field-hint ws-fill-notice" role="status" lang="zh-Hant">
+          {fillNotice}
+        </p>
+      )}
       <WorksheetRunProgress state={state} />
       {!state.running && <RunOutcome jobs={state.jobs} />}
       <ErrorText message={ws.actionError} />
@@ -1372,5 +1481,19 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
       <ExportArea ws={ws} level={current} />
       <LessonLinkControls ws={ws} />
     </div>
+  );
+}
+
+/**
+ * The sheet numbers questions through the whole worksheet, but steps and instructions name them by
+ * their number in the block (「item 2」). The print shows the sheet's number; the editor keeps the
+ * stored text and says what will print.
+ */
+function PrintedAs({ text }: { text: string | null }) {
+  if (!text) return null;
+  return (
+    <p className="ws-printed-as quiet-note" lang="zh-Hant">
+      印出時：<span lang="en">{text}</span>
+    </p>
   );
 }

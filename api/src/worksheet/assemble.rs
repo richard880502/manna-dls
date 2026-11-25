@@ -15,11 +15,11 @@ use super::schemas::{
 };
 use super::tiered::{self, SupportKind};
 use super::{
-    info_function_from_label, uses_choices, Audience, Block, BlockKind, Bloom, Content, Item,
-    Level, Material, Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES,
-    FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE,
-    GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING,
-    KIND_STEPS, KIND_WORD_LIST,
+    info_function_from_label, uses_choices, Audience, BankWord, Block, BlockKind, Bloom, Content,
+    Item, Level, Material, Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, VocabLang,
+    WordBank, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
+    FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE,
+    KIND_FRAMES, KIND_GUIDING, KIND_STEPS, KIND_WORD_LIST,
 };
 use crate::sop::ExitKind;
 
@@ -149,10 +149,8 @@ pub fn auto_steps(block: &Block) -> Vec<String> {
                 steps.push("Look at the key words. Circle the ones you already know.".to_string());
             }
         }
-        BlockKind::ExitTicket => {
-            steps.push("Answer on your own. Do not look back at your notes.".to_string());
-            steps.push("Hand in your answers before you leave.".to_string());
-        }
+        // The PI: the exit ticket needs no steps (its instruction says it all).
+        BlockKind::ExitTicket => {}
         BlockKind::Activity => {
             steps.push(if block.paragraph_ids.is_empty() {
                 "Read the questions first.".to_string()
@@ -203,6 +201,7 @@ fn auto_procedural(block: &Block, levels: &[Level]) -> Scaffold {
         auto: true,
         origin: Origin::Ai,
         heading: None,
+        bank: None,
     }
 }
 
@@ -227,6 +226,7 @@ pub fn attach_scaffolds(
                 auto: true,
                 origin: Origin::Ai,
                 heading: None,
+                bank: None,
             });
         }
         // (A question's number is the one in its id: questions that are not in every version
@@ -281,6 +281,7 @@ pub fn attach_scaffolds(
                     auto: false,
                     origin: Origin::Ai,
                     heading: None,
+                    bank: None,
                 });
             }
         }
@@ -291,7 +292,14 @@ pub fn attach_scaffolds(
         .any(|s| s.kind_type == ScaffoldType::Procedural)
     {
         let auto = auto_procedural(block, levels);
-        block.scaffolds.insert(0, auto);
+        if !auto.steps.is_empty() {
+            block.scaffolds.insert(0, auto);
+        }
+    }
+    // A word bank of plain words gets its entries (part of speech and meanings are filled in
+    // by `key_vocab::fill`).
+    for s in &mut block.scaffolds {
+        s.sync_bank();
     }
 }
 
@@ -365,6 +373,7 @@ pub fn lift_frames(block: &mut Block, passage: &str) -> usize {
             auto: false,
             origin: Origin::Ai,
             heading: None,
+            bank: None,
         }),
     }
     frames.len()
@@ -606,6 +615,8 @@ fn vocab_of(w: &CleanWord, material: &Material) -> Vocab {
         word: w.word.clone(),
         level: w.level,
         definition: w.definition.clone(),
+        pos: w.pos.clone(),
+        meaning_zh: w.meaning_zh.clone(),
         context: w.context.clone(),
         paragraph_id: w
             .paragraph_no
@@ -747,8 +758,13 @@ pub fn target_of(block: &Block) -> String {
 pub struct SheetWord {
     pub word: String,
     pub level: Option<u8>,
+    /// Part of speech (`n.`, `v.` …); absent when unknown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pos: String,
+    /// The meaning to print, in the worksheet's `vocabulary_language` (the Chinese one falls
+    /// back to the English one for a word that has none).
     pub definition: String,
-    /// A word of the instructions whose `definition` is a Chinese hint (SIOP V2).
+    /// A word of the instructions (the Academic column of Key Vocabulary), SIOP V2.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub task_word: bool,
 }
@@ -758,6 +774,10 @@ pub struct SheetSupport {
     #[serde(rename = "type")]
     pub kind_type: ScaffoldType,
     pub kind: String,
+    /// The words of a word bank made of plain words (not printed as such: `content` is what
+    /// prints; this is what the Key Vocabulary comparison reads).
+    #[serde(skip)]
+    pub words: Vec<String>,
     /// English heading printed on the sheet (the kind labels themselves are Chinese): the
     /// scaffold's own heading when it has one (a template block prints the sample's, e.g.
     /// "Directions", "Sentence Frame for Sharing"), otherwise the kind's ([`support_heading`]).
@@ -877,6 +897,9 @@ pub struct SheetBlock {
     pub title: String,
     pub instructions: String,
     pub steps: Vec<String>,
+    /// 「Follow the steps below.」 printed right above the numbered steps ([`STEPS_LEAD`]);
+    /// empty when the block prints no steps.
+    pub steps_lead: String,
     pub vocabulary: Vec<SheetWord>,
     pub supports: Vec<SheetSupport>,
     pub items: Vec<SheetItem>,
@@ -1161,9 +1184,97 @@ fn has_content(b: &SheetBlock) -> bool {
         && b.teacher_notes.is_none())
 }
 
+/// A block's own number of a question: the `n` of its id `<block>-i<n>`, which is the number
+/// the model saw (and wrote in steps and instructions: 「Restate the phrase in item 2」).
+fn own_number(item_id: &str) -> Option<usize> {
+    item_id.rsplit_once("-i")?.1.parse().ok()
+}
+
+/// 「item 2」「question 1」「items 2 and 3」「questions 1–3」「Q2」: a reference by number.
+static ITEM_REF: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)\b(items?|questions?|q)(\s*#?\s*)(\d{1,2}(?:\s*(?:,\s*(?:and\s+|or\s+)?|and|or|&|–|—|-|to)\s*\d{1,2})*)\b",
+    )
+    .expect("valid regex")
+});
+
+static DIGITS: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\d{1,2}").expect("valid regex"));
+
+/// The sheet numbers its questions through the whole sheet (A: 1–3, B: 4–6 …), but the model
+/// numbers them inside their block, so 「item 2」 in block B is question 5 on paper. Rewrites every
+/// such reference to the number this version prints; a number with no question of the block in
+/// this version stays as it was.
+fn renumber_refs(text: &str, printed: &HashMap<usize, usize>) -> String {
+    if printed.is_empty() || printed.iter().all(|(own, no)| own == no) {
+        return text.to_string();
+    }
+    ITEM_REF
+        .replace_all(text, |c: &regex::Captures<'_>| {
+            let numbers = DIGITS.replace_all(&c[3], |d: &regex::Captures<'_>| {
+                d[0].parse::<usize>()
+                    .ok()
+                    .and_then(|n| printed.get(&n))
+                    .map_or_else(|| d[0].to_string(), |n| n.to_string())
+            });
+            format!("{}{}{}", &c[1], &c[2], numbers)
+        })
+        .into_owned()
+}
+
+/// Steps Manna put on an exit ticket (older sheets have 「Answer on your own…」「Hand in your
+/// answers…」): the PI does not want them, so they do not print. Steps a teacher wrote herself do.
+fn exit_ticket_default_steps(block: &Block, s: &Scaffold) -> bool {
+    block.kind == BlockKind::ExitTicket
+        && s.kind_type == ScaffoldType::Procedural
+        && s.origin == Origin::Ai
+}
+
+/// The line printed above a block's numbered steps (the PI: the instruction introduces the
+/// paragraphs; how to work is the steps, introduced by this line).
+pub const STEPS_LEAD: &str = "Follow the steps below.";
+
+/// The instruction without a closing 「Follow the steps below.」 of its own: the sheet prints that
+/// line above the steps.
+fn without_steps_lead(instructions: &str) -> String {
+    let t = instructions.trim();
+    let lower = t.to_lowercase();
+    let lead = STEPS_LEAD.to_lowercase();
+    let lead = lead.trim_end_matches('.');
+    for end in [format!("{lead}."), format!("{lead}:"), lead.to_string()] {
+        let cut = t.len().saturating_sub(end.len());
+        if lower.ends_with(&end) && t.is_char_boundary(cut) && t[cut..].eq_ignore_ascii_case(&end) {
+            return t[..cut].trim_end().to_string();
+        }
+    }
+    t.to_string()
+}
+
+/// The choices of a question end the same way: when any of them is a phrase or a sentence
+/// (three words or more), each one that ends in a letter or a digit gets a full stop (the model
+/// wrote 「(B) Woodland walks with a friend who hesitated at forks」 under a question whose
+/// other choices ended with one). Choices of one or two words (a word, a name, a year) and
+/// choices that already end in punctuation, a quote or a bracket stay as they are.
+fn with_full_stops(options: Vec<String>) -> Vec<String> {
+    if !options.iter().any(|o| o.split_whitespace().count() >= 3) {
+        return options;
+    }
+    options
+        .into_iter()
+        .map(|o| {
+            if o.chars().last().is_some_and(char::is_alphanumeric) {
+                format!("{o}.")
+            } else {
+                o
+            }
+        })
+        .collect()
+}
+
 /// The sheet one audience gets for one version. Switched-off blocks and blocks with nothing to
 /// print in this version are left out, items and scaffolds follow their `levels`, items are
-/// numbered through the whole sheet. Answers, evidence and teacher notes exist only for
+/// numbered through the whole sheet (and references to a block's questions by number follow
+/// the printed numbers, [`renumber_refs`]). Answers, evidence and teacher notes exist only for
 /// [`Audience::Teacher`].
 pub fn project(title: &str, content: &Content, level: Level, audience: Audience) -> Sheet {
     let teacher = audience == Audience::Teacher;
@@ -1178,6 +1289,15 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         if b.bloom.is_some() && !b.items.is_empty() && !b.items.iter().any(|i| shown(&i.levels)) {
             continue;
         }
+        // The block's own question numbers and the numbers this version prints for them.
+        let printed: HashMap<usize, usize> = b
+            .items
+            .iter()
+            .filter(|i| shown(&i.levels))
+            .enumerate()
+            .filter_map(|(k, i)| own_number(&i.id).map(|own| (own, no + k + 1)))
+            .collect();
+        let refs = |text: &str| renumber_refs(text, &printed);
         let items = b
             .items
             .iter()
@@ -1192,29 +1312,31 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     id: i.id.clone(),
                     no,
                     answer_format: i.answer_format.clone(),
-                    prompt: i.prompt.trim().to_string(),
+                    prompt: refs(i.prompt.trim()),
                     options: if uses_choices(i.answer_format.as_deref()) {
-                        i.options
-                            .iter()
-                            .map(|o| o.trim().to_string())
-                            .filter(|o| !o.is_empty())
-                            .collect()
+                        with_full_stops(
+                            i.options
+                                .iter()
+                                .map(|o| refs(o.trim()))
+                                .filter(|o| !o.is_empty())
+                                .collect(),
+                        )
                     } else {
                         Vec::new()
                     },
                     lines: answer_lines(i.answer_format.as_deref(), level),
                     table: (i.answer_format.as_deref() == Some(FMT_TABLE))
                         .then(|| SheetTable::of(&i.table_or_default())),
-                    answer: (teacher && !answer.is_empty()).then(|| answer.to_string()),
+                    answer: (teacher && !answer.is_empty()).then(|| refs(answer)),
                     evidence: (teacher && !i.evidence.trim().is_empty())
-                        .then(|| i.evidence.trim().to_string()),
+                        .then(|| refs(i.evidence.trim())),
                     bloom: teacher.then_some(i.bloom),
                     hint: (tier.is_none() && level == Level::Basic && !i.hint.trim().is_empty())
-                        .then(|| i.hint.trim().to_string()),
+                        .then(|| refs(i.hint.trim())),
                     frame: (tier.is_none()
                         && frame_shown(level, &content.levels)
                         && !i.frame.trim().is_empty())
-                    .then(|| i.frame.trim().to_string()),
+                    .then(|| refs(i.frame.trim())),
                     support: tier.and_then(item_support),
                     scoring: tier
                         .filter(|t| teacher && !t.scoring.trim().is_empty())
@@ -1236,21 +1358,27 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 (!counts.is_empty()).then(|| super::bloom::summary(&counts))
             })
             .flatten();
-        let scaffolds: Vec<&Scaffold> = b.scaffolds.iter().filter(|s| shown(&s.levels)).collect();
+        let scaffolds: Vec<&Scaffold> = b
+            .scaffolds
+            .iter()
+            .filter(|s| shown(&s.levels) && !exit_ticket_default_steps(b, s))
+            .collect();
         blocks.push(SheetBlock {
             id: b.id.clone(),
             kind: b.kind,
             label,
             title: b.title.trim().to_string(),
-            instructions: b.instructions.trim().to_string(),
+            instructions: refs(&without_steps_lead(&b.instructions)),
             // A procedural scaffold with a heading of its own is a box (below).
             steps: scaffolds
                 .iter()
                 .filter(|s| s.kind_type == ScaffoldType::Procedural && s.own_heading().is_none())
                 .flat_map(|s| s.steps.iter())
-                .map(|s| s.trim().to_string())
+                .map(|s| refs(s.trim()))
                 .filter(|s| !s.is_empty())
                 .collect(),
+            // Set below, once the steps are known.
+            steps_lead: String::new(),
             vocabulary: b
                 .vocabulary
                 .iter()
@@ -1258,7 +1386,8 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 .map(|v| SheetWord {
                     word: v.word.trim().to_string(),
                     level: v.level,
-                    definition: v.definition.trim().to_string(),
+                    pos: v.pos.trim().to_string(),
+                    definition: v.meaning(content.vocabulary_language).to_string(),
                     task_word: v.task_word,
                 })
                 .collect(),
@@ -1269,7 +1398,9 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 .filter(|s| s.kind_type != ScaffoldType::Procedural || s.own_heading().is_some())
                 .filter_map(|s| {
                     let heading = s.own_heading().unwrap_or_else(|| support_heading(&s.kind));
-                    let text = if s.kind_type == ScaffoldType::Procedural {
+                    let text = if let Some(bank) = &s.bank {
+                        bank_text(bank)
+                    } else if s.kind_type == ScaffoldType::Procedural {
                         s.steps
                             .iter()
                             .map(|l| l.trim())
@@ -1283,8 +1414,13 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     (!content.is_empty()).then(|| SheetSupport {
                         kind_type: s.kind_type,
                         kind: s.kind.clone(),
+                        words: s
+                            .bank
+                            .iter()
+                            .flat_map(|b| b.words.iter().map(|w| w.word.clone()))
+                            .collect(),
                         heading: heading.to_string(),
-                        content: content.to_string(),
+                        content: refs(content),
                     })
                 })
                 .collect(),
@@ -1308,6 +1444,11 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         });
     }
     blocks.retain(has_content);
+    for b in &mut blocks {
+        if !b.steps.is_empty() {
+            b.steps_lead = STEPS_LEAD.to_string();
+        }
+    }
     let mut lettered = 0;
     for b in &mut blocks {
         if b.kind != BlockKind::ExitTicket {
@@ -1336,6 +1477,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             }
         }
     }
+    drop_repeated_word_list(&mut blocks, &end_words);
     Sheet {
         title: title.trim().to_string(),
         level,
@@ -1354,6 +1496,80 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         },
         blocks,
         end_words,
+    }
+}
+
+/// A word bank as it prints: every word with its part of speech (「plain (adj.)」, no 「(…)」
+/// when it is not known yet). Without a ticked word it is one line, words separated by commas;
+/// with ticked words each word is a line of its own and a ticked one is followed by its meaning
+/// in the bank's language (the Chinese one falls back to the English one; nothing to show:
+/// the word alone).
+pub fn bank_text(bank: &WordBank) -> String {
+    let label = |w: &BankWord| match w.pos.trim() {
+        "" => w.word.trim().to_string(),
+        pos => format!("{} ({pos})", w.word.trim()),
+    };
+    let meaning = |w: &BankWord| {
+        let (en, zh) = (w.definition.trim(), w.meaning_zh.trim());
+        let shown = match bank.lang {
+            VocabLang::Zh if !zh.is_empty() => zh,
+            _ if !en.is_empty() => en,
+            _ => zh,
+        };
+        shown.to_string()
+    };
+    if !bank.words.iter().any(|w| w.show_meaning) {
+        return bank.words.iter().map(label).collect::<Vec<_>>().join(", ");
+    }
+    bank.words
+        .iter()
+        .map(|w| match (w.show_meaning, meaning(w)) {
+            (true, m) if !m.is_empty() => format!("{}: {m}", label(w)),
+            _ => label(w),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The words of a 字詞表 scaffold's text (`reason, evidence, …`), lower-cased.
+fn word_list_words(text: &str) -> Vec<String> {
+    let text = text.trim();
+    let text = text
+        .get(..10)
+        .filter(|head| head.eq_ignore_ascii_case("word bank:"))
+        .map_or(text, |_| text[10..].trim());
+    text.split([',', '，', '、', ';', '；', '\n'])
+        .map(|w| w.trim().trim_end_matches('.').trim().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Key Vocabulary already lists the key words, so a 字詞表 scaffold (「Word bank: …」) whose words
+/// are all in the table (wherever the table is printed) is left out of what is printed; a list
+/// with a word the table does not have, and every other scaffold, stays. The stored content is
+/// not changed, so worksheets made before this show no repeated list either.
+fn drop_repeated_word_list(blocks: &mut [SheetBlock], end_words: &[SheetWord]) {
+    let table: std::collections::HashSet<String> = blocks
+        .iter()
+        .flat_map(|b| b.vocabulary.iter())
+        .chain(end_words)
+        .map(|w| w.word.trim().to_lowercase())
+        .collect();
+    if table.is_empty() {
+        return;
+    }
+    for b in blocks {
+        b.supports.retain(|s| {
+            if s.kind != KIND_WORD_LIST {
+                return true;
+            }
+            let words = if s.words.is_empty() {
+                word_list_words(&s.content)
+            } else {
+                s.words.iter().map(|w| w.trim().to_lowercase()).collect()
+            };
+            words.is_empty() || !words.iter().all(|w| table.contains(w))
+        });
     }
 }
 
@@ -2793,5 +3009,311 @@ mod item_frame_tests {
                 .frame
                 .is_some()
         );
+    }
+}
+
+#[cfg(test)]
+mod item_ref_tests {
+    use super::*;
+
+    fn item(id: &str, levels: &[Level], prompt: &str) -> Item {
+        Item {
+            id: id.into(),
+            answer_format: Some("簡答題".into()),
+            prompt: prompt.into(),
+            levels: levels.to_vec(),
+            origin: Origin::Ai,
+            ..Item::default()
+        }
+    }
+
+    fn steps(block: &str, steps: &[&str], levels: &[Level]) -> Scaffold {
+        Scaffold {
+            id: format!("{block}-sp1"),
+            kind_type: ScaffoldType::Procedural,
+            kind: KIND_STEPS.into(),
+            content: String::new(),
+            steps: steps.iter().map(|s| s.to_string()).collect(),
+            levels: levels.to_vec(),
+            auto: true,
+            origin: Origin::Ai,
+            heading: None,
+            bank: None,
+        }
+    }
+
+    /// A warm-up of three questions (printed 1–3), then a block whose own questions 1–3 print
+    /// as 4–6 (its question 3 is in the advanced version only).
+    fn content() -> Content {
+        let all = Level::ALL.to_vec();
+        let warm = Block {
+            id: WARMUP_ID.into(),
+            kind: BlockKind::Warmup,
+            title: "Warm-up".into(),
+            instructions: "In this activity, you will answer question 1 first.".into(),
+            items: (1..=3)
+                .map(|n| item(&format!("{WARMUP_ID}-i{n}"), &all, "Warm-up question."))
+                .collect(),
+            ..Block::default()
+        };
+        let act = Block {
+            id: "b2".into(),
+            title: "Paragraphs 1–3".into(),
+            instructions:
+                "Paragraphs 1–3 introduce the poet. Watch your teacher answer question 1 first."
+                    .into(),
+            items: vec![
+                item("b2-i1", &all, "Who wrote the poem?"),
+                item(
+                    "b2-i2",
+                    &all,
+                    "Use your answer to item 1. What does the phrase mean?",
+                ),
+                item("b2-i3", &[Level::Advanced], "Why?"),
+            ],
+            scaffolds: vec![steps(
+                "b2",
+                &[
+                    "Reread paragraphs 1–3.",
+                    "Restate the phrase in item 2 in plain English.",
+                    "Compare your answers to items 1 and 2.",
+                    "Check Q2 against paragraph 2.",
+                ],
+                &all,
+            )],
+            ..Block::default()
+        };
+        Content {
+            blocks: vec![warm, act],
+            levels: all,
+            ..Content::default()
+        }
+    }
+
+    #[test]
+    fn references_by_number_follow_the_printed_numbers() {
+        let sheet = project("T", &content(), Level::Standard, Audience::Student);
+        // The first block's numbers are already the printed ones.
+        assert_eq!(
+            sheet.blocks[0].instructions,
+            "In this activity, you will answer question 1 first."
+        );
+        let b = &sheet.blocks[1];
+        assert_eq!(b.items.iter().map(|i| i.no).collect::<Vec<_>>(), vec![4, 5]);
+        assert_eq!(
+            b.instructions,
+            "Paragraphs 1–3 introduce the poet. Watch your teacher answer question 4 first."
+        );
+        assert_eq!(
+            b.steps,
+            vec![
+                "Reread paragraphs 1–3.",
+                "Restate the phrase in item 5 in plain English.",
+                "Compare your answers to items 4 and 5.",
+                "Check Q5 against paragraph 2.",
+            ]
+        );
+        assert_eq!(
+            b.items[1].prompt,
+            "Use your answer to item 4. What does the phrase mean?"
+        );
+    }
+
+    #[test]
+    fn a_question_missing_from_a_version_keeps_its_number() {
+        let mut c = content();
+        c.blocks[1].scaffolds[0].steps = vec!["Answer item 3 last.".into()];
+        let standard = project("T", &c, Level::Standard, Audience::Student);
+        assert_eq!(standard.blocks[1].steps, vec!["Answer item 3 last."]);
+        let advanced = project("T", &c, Level::Advanced, Audience::Student);
+        assert_eq!(advanced.blocks[1].steps, vec!["Answer item 6 last."]);
+    }
+
+    #[test]
+    fn only_question_references_change() {
+        let printed: HashMap<usize, usize> = [(1, 7), (2, 8)].into_iter().collect();
+        assert_eq!(
+            renumber_refs("Questions 1–2, then paragraph 2 and step 1.", &printed),
+            "Questions 7–8, then paragraph 2 and step 1."
+        );
+        assert_eq!(
+            renumber_refs("items 1, 2 and 3", &printed),
+            "items 7, 8 and 3"
+        );
+        assert_eq!(
+            renumber_refs("Ask an inquiry 2 times.", &printed),
+            "Ask an inquiry 2 times."
+        );
+        assert_eq!(
+            renumber_refs("Line 12 of item 1", &printed),
+            "Line 12 of item 7"
+        );
+    }
+}
+
+#[cfg(test)]
+mod full_stop_tests {
+    use super::with_full_stops;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn phrase_choices_end_with_a_full_stop() {
+        assert_eq!(
+            with_full_stops(v(&[
+                "A debate with readers about difficult language",
+                "Woodland walks with a friend who hesitated at forks",
+                "A journey to find an unexplored forest.",
+                "Edward Thomas",
+            ])),
+            v(&[
+                "A debate with readers about difficult language.",
+                "Woodland walks with a friend who hesitated at forks.",
+                "A journey to find an unexplored forest.",
+                "Edward Thomas.",
+            ])
+        );
+    }
+
+    #[test]
+    fn short_choices_and_closing_marks_stay() {
+        assert_eq!(
+            with_full_stops(v(&["1915", "1916", "True"])),
+            v(&["1915", "1916", "True"])
+        );
+        assert_eq!(
+            with_full_stops(v(&[
+                "Why did he choose it?",
+                "“readers from all walks of life”",
+                "the other road (the left one)"
+            ])),
+            v(&[
+                "Why did he choose it?",
+                "“readers from all walks of life”",
+                "the other road (the left one)"
+            ])
+        );
+    }
+}
+
+#[cfg(test)]
+mod steps_lead_tests {
+    use super::*;
+
+    #[test]
+    fn the_lead_is_printed_above_steps_and_not_twice() {
+        assert_eq!(
+            without_steps_lead("Paragraphs 4–6 show two roads. Follow the steps below."),
+            "Paragraphs 4–6 show two roads."
+        );
+        assert_eq!(
+            without_steps_lead("Paragraphs 4–6 show two roads. follow the steps below:"),
+            "Paragraphs 4–6 show two roads."
+        );
+        assert_eq!(without_steps_lead("Read and think."), "Read and think.");
+        let all = Level::ALL.to_vec();
+        let mut with_steps = Block {
+            id: "b1".into(),
+            title: "Paragraphs 4–6".into(),
+            instructions: "Paragraphs 4–6 show two roads. Follow the steps below.".into(),
+            items: vec![Item {
+                id: "b1-i1".into(),
+                prompt: "Why?".into(),
+                levels: all.clone(),
+                ..Item::default()
+            }],
+            ..Block::default()
+        };
+        attach_scaffolds(&mut with_steps, None, &all, &[]);
+        let without_steps = Block {
+            id: "b2".into(),
+            title: "Notes".into(),
+            instructions: "Read the notes.".into(),
+            ..Block::default()
+        };
+        let content = Content {
+            blocks: vec![with_steps, without_steps],
+            levels: all,
+            ..Content::default()
+        };
+        let sheet = project("T", &content, Level::Standard, Audience::Student);
+        assert!(!sheet.blocks[0].steps.is_empty());
+        assert_eq!(sheet.blocks[0].steps_lead, STEPS_LEAD);
+        assert_eq!(
+            sheet.blocks[0].instructions,
+            "Paragraphs 4–6 show two roads."
+        );
+        assert!(sheet.blocks[1].steps.is_empty());
+        assert!(sheet.blocks[1].steps_lead.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod exit_ticket_steps_tests {
+    use super::*;
+
+    fn exit(scaffolds: Vec<Scaffold>) -> Content {
+        let all = Level::ALL.to_vec();
+        Content {
+            blocks: vec![Block {
+                id: EXIT_ID.into(),
+                kind: BlockKind::ExitTicket,
+                title: "Exit ticket".into(),
+                instructions: "Answer these before you leave.".into(),
+                items: vec![Item {
+                    id: format!("{EXIT_ID}-i1"),
+                    prompt: "What did you learn?".into(),
+                    levels: all.clone(),
+                    ..Item::default()
+                }],
+                scaffolds,
+                ..Block::default()
+            }],
+            levels: all,
+            ..Content::default()
+        }
+    }
+
+    fn steps(origin: Origin, text: &str) -> Scaffold {
+        Scaffold {
+            id: "exit-sp".into(),
+            kind_type: ScaffoldType::Procedural,
+            kind: KIND_STEPS.into(),
+            content: String::new(),
+            steps: vec![text.into()],
+            levels: Level::ALL.to_vec(),
+            auto: origin == Origin::Ai,
+            origin,
+            heading: None,
+            bank: None,
+        }
+    }
+
+    #[test]
+    fn a_new_exit_ticket_gets_no_steps() {
+        let mut c = exit(Vec::new());
+        attach_scaffolds(&mut c.blocks[0], None, &Level::ALL, &[]);
+        assert!(c.blocks[0]
+            .scaffolds
+            .iter()
+            .all(|s| s.kind_type != ScaffoldType::Procedural));
+        let sheet = project("T", &c, Level::Standard, Audience::Student);
+        assert!(sheet.blocks[0].steps.is_empty());
+        assert!(sheet.blocks[0].steps_lead.is_empty());
+    }
+
+    #[test]
+    fn old_default_steps_do_not_print_but_the_teachers_own_do() {
+        let old = exit(vec![steps(
+            Origin::Ai,
+            "Answer on your own. Do not look back at your notes.",
+        )]);
+        let sheet = project("T", &old, Level::Standard, Audience::Student);
+        assert!(sheet.blocks[0].steps.is_empty());
+        let own = exit(vec![steps(Origin::Teacher, "Swap papers with a partner.")]);
+        let sheet = project("T", &own, Level::Standard, Audience::Student);
+        assert_eq!(sheet.blocks[0].steps, vec!["Swap papers with a partner."]);
     }
 }

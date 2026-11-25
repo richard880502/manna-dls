@@ -384,6 +384,64 @@ async fn set_material_snapshot(
     Ok(())
 }
 
+/// What 「補上中文字義」 did.
+pub struct FilledMeanings {
+    /// Said to the teacher when some words keep their English meaning.
+    pub notice: Option<String>,
+    /// How many rows got a Chinese meaning from the model.
+    pub filled: usize,
+}
+
+/// Writes what the tables and word banks still lack with ONE model call: the Chinese meanings of
+/// Key Vocabulary (after the switch to Chinese; the fixed hints of the task words need no call),
+/// and the part of speech and meanings of the word banks. Saved as a new version. Nothing
+/// missing: no call, no new version. It never fails the teacher: with AI off or a failed call
+/// the words keep what they had and the answer says so.
+pub async fn fill_vocabulary_meanings(
+    state: &AppState,
+    teacher_id: i64,
+    id: i64,
+    scope: crate::worksheet::key_vocab::Scope,
+) -> AppResult<FilledMeanings> {
+    let db = &state.db;
+    let ws = store::owned(db, id, teacher_id).await?;
+    let (_, running) = ws_ai::jobs(state, id).await?;
+    if running {
+        return Err(AppError::Conflict(
+            "Manna 正在產生這份學習單，好了之後再補上中文字義。".to_string(),
+        ));
+    }
+    let latest = store::latest(db, id).await?;
+    let mut content = latest.content.clone();
+    let lexicon = vocab::lexicon(db).await?;
+    let done = crate::worksheet::key_vocab::fill(
+        state,
+        teacher_id,
+        id,
+        ws.lesson_id,
+        &mut content,
+        lexicon.as_ref(),
+        scope,
+    )
+    .await?;
+    if done.changed {
+        content.normalise().map_err(AppError::bad_request)?;
+        store::save_content_source(
+            db,
+            id,
+            &content,
+            "edit",
+            Some(latest.version_no),
+            Some(json!({ "cause": "edit", "action": "fill_vocabulary_meanings" })),
+        )
+        .await?;
+    }
+    Ok(FilledMeanings {
+        notice: done.notice,
+        filled: done.filled,
+    })
+}
+
 /// Said when there is nothing to bring back.
 pub const MSG_NO_WORD_TABLE: &str = "這一區沒有刪掉的字詞表可以恢復。";
 

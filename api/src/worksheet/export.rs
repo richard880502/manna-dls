@@ -654,14 +654,78 @@ fn docx_image(out: &mut String, img: &SheetImage, teacher: bool, media: &mut Med
 
 /// The paragraphs of one sheet: title, the teacher banner (`banner` replaces the usual one),
 /// the name line, objectives and blocks.
-/// The 字詞表 (Key words): inside its block, or once after the last block (字詞表放在學習單最後).
+/// The word as the table prints it: the teacher version adds the word-list level.
+fn word_cell(v: &SheetWord, teacher: bool) -> String {
+    match (teacher, v.level) {
+        (true, Some(l)) if !v.task_word => format!("{} (Level {l})", v.word),
+        _ => v.word.clone(),
+    }
+}
+
+/// The two groups of Key Vocabulary: the key words of the text (Content) and the task words of
+/// the instructions (Academic); a group without words is left out.
+fn vocab_groups(words: &[SheetWord]) -> Vec<(&'static str, Vec<&SheetWord>)> {
+    [("Content", false), ("Academic", true)]
+        .into_iter()
+        .map(|(title, task)| {
+            (
+                title,
+                words
+                    .iter()
+                    .filter(|w| w.task_word == task)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .filter(|(_, g)| !g.is_empty())
+        .collect()
+}
+
+/// One group as a `Word | POS | Meaning` table of `width` twips.
+fn docx_vocab_table(group: &[&SheetWord], teacher: bool, width: u32) -> String {
+    let mut rows = vec![vec![
+        "Word".to_string(),
+        "POS".to_string(),
+        "Meaning".to_string(),
+    ]];
+    for v in group {
+        rows.push(vec![
+            word_cell(v, teacher),
+            v.pos.clone(),
+            v.definition.clone(),
+        ]);
+    }
+    let (word, pos) = (width * 28 / 100, width * 15 / 100);
+    table(&[word, pos, width - word - pos], &rows, None, true)
+}
+
+fn docx_group_title(title: &str) -> String {
+    para(
+        &[run(
+            title,
+            RunStyle {
+                bold: true,
+                ..RunStyle::default()
+            },
+        )],
+        &ParaStyle {
+            before: 40,
+            after: 40,
+            keep_next: true,
+            ..ParaStyle::default()
+        },
+    )
+}
+
+/// Key Vocabulary: inside its block, or once after the last block (字詞表放在學習單最後). Content
+/// and Academic sit side by side in a borderless two-cell layout table (each cell holds its own
+/// `Word | POS | Meaning` table); with only one group it is one table of the full width.
 fn docx_words(body: &mut String, words: &[SheetWord], teacher: bool) {
     if words.is_empty() {
         return;
     }
     body.push_str(&para(
         &[run(
-            "Key words",
+            "Key Vocabulary",
             RunStyle {
                 bold: true,
                 ..RunStyle::default()
@@ -673,15 +737,35 @@ fn docx_words(body: &mut String, words: &[SheetWord], teacher: bool) {
             ..ParaStyle::default()
         },
     ));
-    let mut rows = vec![vec!["Word".to_string(), "Meaning".to_string()]];
-    for v in words {
-        let word = match (teacher, v.level) {
-            (true, Some(l)) => format!("{} (Level {l})", v.word),
-            _ => v.word.clone(),
-        };
-        rows.push(vec![word, v.definition.clone()]);
+    let groups = vocab_groups(words);
+    if let [(title, group)] = groups.as_slice() {
+        body.push_str(&docx_group_title(title));
+        body.push_str(&docx_vocab_table(group, teacher, DOCX_WIDTH));
+        return;
     }
-    body.push_str(&table(&[2600, DOCX_WIDTH - 2600], &rows, None, true));
+    const GAP: u32 = 240;
+    let cell = DOCX_WIDTH / 2;
+    let mut out = format!(
+        "<w:tbl><w:tblPr><w:tblW w:w=\"{DOCX_WIDTH}\" w:type=\"dxa\"/><w:tblLayout w:type=\"fixed\"/>\
+         <w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar>\
+         </w:tblPr><w:tblGrid><w:gridCol w:w=\"{cell}\"/><w:gridCol w:w=\"{}\"/></w:tblGrid><w:tr>",
+        DOCX_WIDTH - cell
+    );
+    for (i, (title, group)) in groups.iter().enumerate() {
+        let w = if i == 0 { cell } else { DOCX_WIDTH - cell };
+        // The gap is taken from the cell's inner side, so the two tables never touch.
+        let (left, right) = if i == 0 { (0, GAP / 2) } else { (GAP / 2, 0) };
+        out.push_str(&format!(
+            "<w:tc><w:tcPr><w:tcW w:w=\"{w}\" w:type=\"dxa\"/><w:tcMar><w:left w:w=\"{left}\" w:type=\"dxa\"/>\
+             <w:right w:w=\"{right}\" w:type=\"dxa\"/></w:tcMar></w:tcPr>{}{}</w:tc>",
+            docx_group_title(title),
+            docx_vocab_table(group, teacher, w - GAP / 2),
+        ));
+    }
+    out.push_str("</w:tr></w:tbl>");
+    // Word needs a paragraph after a table.
+    out.push_str(&para(&[], &ParaStyle::default()));
+    body.push_str(&out);
 }
 
 fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> String {
@@ -807,6 +891,15 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
         }
         for img in &b.images {
             docx_image(&mut body, img, teacher, media);
+        }
+        if !b.steps_lead.is_empty() {
+            body.push_str(&para(
+                &[run(&b.steps_lead, RunStyle::default())],
+                &ParaStyle {
+                    after: 20,
+                    ..ParaStyle::default()
+                },
+            ));
         }
         for (i, s) in b.steps.iter().enumerate() {
             let text = if s.to_lowercase().starts_with("step") {
@@ -1782,6 +1875,137 @@ impl<'a> Layout<'a> {
         self.grid(indent, cols, t.rows.into(), row_h, &t.row_labels);
     }
 
+    /// The Key Vocabulary groups side by side (stacked widths when there is one: the full
+    /// width), each a `Word | POS | Meaning` table. Rows of both columns that fit the page are
+    /// drawn together; what does not fit goes on the next page under repeated headings.
+    fn vocab_columns(&mut self, groups: &[(&str, Vec<&SheetWord>)], teacher: bool) {
+        const GAP: f32 = 18.0;
+        const SIZE: f32 = 10.0;
+        const PAD: f32 = 3.0;
+        const PAD_V: f32 = 2.0;
+        struct Row {
+            cells: [Vec<String>; 3],
+            h: f32,
+        }
+        let n = groups.len();
+        if n == 0 {
+            return;
+        }
+        let cw = (CONTENT_W - GAP * (n - 1) as f32) / n as f32;
+        let widths = [cw * 0.29, cw * 0.15, cw * 0.56];
+        let lh = Self::line_height(SIZE);
+        let title_h = lh + 3.0;
+        let head_h = lh + 2.0 * PAD_V;
+        let layouts: Vec<Vec<Row>> = groups
+            .iter()
+            .map(|(_, group)| {
+                group
+                    .iter()
+                    .map(|w| {
+                        let cells = [
+                            self.wrap(
+                                &word_cell(w, teacher),
+                                Weight::Bold,
+                                SIZE,
+                                widths[0] - 2.0 * PAD,
+                            ),
+                            self.wrap(&w.pos, Weight::Regular, SIZE, widths[1] - 2.0 * PAD),
+                            self.wrap(&w.definition, Weight::Regular, SIZE, widths[2] - 2.0 * PAD),
+                        ];
+                        let lines = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
+                        Row {
+                            cells,
+                            h: lines as f32 * lh + 2.0 * PAD_V,
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        let mut next = vec![0usize; n];
+        while (0..n).any(|c| next[c] < layouts[c].len()) {
+            let first_h: f32 = layouts
+                .iter()
+                .filter_map(|rows| rows.first().map(|r| r.h))
+                .fold(0.0, f32::max);
+            // The headings stay with at least one row.
+            self.ensure(title_h + head_h + first_h + 8.0);
+            let avail = PAGE_H - MARGIN - 14.0 - self.y - 4.0;
+            let mut take = vec![0usize; n];
+            for c in 0..n {
+                let mut used = title_h + head_h;
+                while next[c] + take[c] < layouts[c].len() {
+                    let h = layouts[c][next[c] + take[c]].h;
+                    if used + h > avail && take[c] > 0 {
+                        break;
+                    }
+                    used += h;
+                    take[c] += 1;
+                }
+            }
+            let top = self.y + 4.0;
+            let mut bottom = top;
+            for c in 0..n {
+                if take[c] == 0 {
+                    continue;
+                }
+                let x = MARGIN + c as f32 * (cw + GAP);
+                let cell_x = [x, x + widths[0], x + widths[0] + widths[1]];
+                let bold = Style {
+                    weight: Weight::Bold,
+                    size: SIZE,
+                    ..Style::body()
+                };
+                let regular = Style {
+                    size: SIZE,
+                    ..Style::body()
+                };
+                self.y = top;
+                self.draw_line(
+                    groups[c].0,
+                    x,
+                    Style {
+                        size: SIZE + 0.5,
+                        ..bold
+                    },
+                );
+                let mut y = top + title_h;
+                self.y = y;
+                self.rule(x, x + cw, 0.8, INK);
+                for (ci, label) in ["Word", "POS", "Meaning"].into_iter().enumerate() {
+                    self.y = y + PAD_V;
+                    self.draw_line(label, cell_x[ci] + PAD, bold);
+                }
+                y += head_h;
+                self.y = y;
+                self.rule(x, x + cw, 0.8, INK);
+                for row in &layouts[c][next[c]..next[c] + take[c]] {
+                    for (ci, lines) in row.cells.iter().enumerate() {
+                        self.y = y + PAD_V;
+                        for line in lines {
+                            self.draw_line(
+                                line,
+                                cell_x[ci] + PAD,
+                                if ci == 0 { bold } else { regular },
+                            );
+                            self.y += lh;
+                        }
+                    }
+                    y += row.h;
+                    self.y = y;
+                    self.rule(x, x + cw, 0.4, RULE);
+                }
+                bottom = bottom.max(y);
+            }
+            for c in 0..n {
+                next[c] += take[c];
+            }
+            self.y = bottom + 8.0;
+            if (0..n).any(|c| next[c] < layouts[c].len()) {
+                self.new_page();
+            }
+        }
+    }
+
     /// An empty grid of `rows` rows; `labels` (one per row, or none) are written in its first
     /// column.
     fn grid(&mut self, indent: f32, cols: usize, rows: usize, row_h: f32, labels: &[String]) {
@@ -1969,13 +2193,14 @@ fn pdf_item(l: &mut Layout<'_>, it: &SheetItem, teacher: bool) {
     }
 }
 
-/// The 字詞表 (Key words): inside its block, or once after the last block (字詞表放在學習單最後).
+/// Key Vocabulary: inside its block, or once after the last block (字詞表放在學習單最後). Content and
+/// Academic side by side, each a `Word | POS | Meaning` table (one group: the full width).
 fn pdf_words(l: &mut Layout<'_>, words: &[SheetWord], teacher: bool, body: Style) {
     if words.is_empty() {
         return;
     }
     l.paragraph(
-        "Key words",
+        "Key Vocabulary",
         Style {
             weight: Weight::Bold,
             before: 6.0,
@@ -1983,23 +2208,7 @@ fn pdf_words(l: &mut Layout<'_>, words: &[SheetWord], teacher: bool, body: Style
             ..body
         },
     );
-    for v in words {
-        let word = match (teacher, v.level) {
-            (true, Some(level)) => format!("{} (Level {level})", v.word),
-            _ => v.word.clone(),
-        };
-        let label = format!("{word} — ");
-        l.labelled(
-            &label,
-            &v.definition,
-            Style {
-                indent: 8.0,
-                after: 1.0,
-                ..body
-            },
-            Weight::Bold,
-        );
-    }
+    l.vocab_columns(&vocab_groups(words), teacher);
 }
 
 fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
@@ -2097,6 +2306,9 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         }
         for img in &b.images {
             l.picture(img, teacher);
+        }
+        if !b.steps_lead.is_empty() {
+            l.paragraph(&b.steps_lead, Style { after: 1.0, ..body });
         }
         for (i, s) in b.steps.iter().enumerate() {
             let text = if s.to_lowercase().starts_with("step") {
@@ -2224,7 +2436,11 @@ fn printed_text(sheet: &Sheet) -> String {
             .flat_map(|v| [v.word.clone(), v.definition.clone()]),
     );
     for b in &sheet.blocks {
-        out.extend([b.title.clone(), b.instructions.clone()]);
+        out.extend([
+            b.title.clone(),
+            b.instructions.clone(),
+            b.steps_lead.clone(),
+        ]);
         out.extend(b.steps.iter().cloned());
         out.extend(
             b.vocabulary
@@ -2469,8 +2685,9 @@ mod tests {
                 title: "Paragraph 1: Find".into(),
                 instructions: "Read paragraph 1 again, then answer.".into(),
                 steps: vec!["Read on your own.".into(), "Check with a partner.".into()],
-                vocabulary: vec![SheetWord { word: "stand".into(), level: Some(1), definition: "a small table".into(), task_word: false }],
-                supports: vec![SheetSupport { kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames".into(), content: "She started it because ___.".into() }],
+                steps_lead: crate::worksheet::assemble::STEPS_LEAD.into(),
+                vocabulary: vec![SheetWord { word: "stand".into(), level: Some(1), pos: "n.".into(), definition: "a small table".into(), task_word: false }],
+                supports: vec![SheetSupport { words: Vec::new(), kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames".into(), content: "She started it because ___.".into() }],
                 items: (1..=30)
                     .map(|no| SheetItem {
                         id: format!("b1-i{no}"),
@@ -2563,6 +2780,7 @@ mod tests {
     fn a_box_prints_one_line_per_line_under_its_own_heading() {
         let mut s = sheet(Audience::Student);
         s.blocks[0].supports = vec![SheetSupport {
+            words: Vec::new(),
             kind_type: ScaffoldType::Procedural,
             kind: "清楚的分步指示及完成順序".into(),
             heading: "Directions".into(),
@@ -2878,6 +3096,7 @@ mod tests {
                     auto: false,
                     origin: Origin::Ai,
                     heading: None,
+                    bank: None,
                 }],
                 ..Block::default()
             }],
@@ -3059,5 +3278,295 @@ mod tests {
         let d = content_disposition("雨傘 學習單_一般版.pdf");
         assert!(d.starts_with("attachment; filename=\""));
         assert!(d.contains("filename*=UTF-8''%E9%9B%A8"));
+    }
+
+    // ------------------------------------------------------------ Key Vocabulary
+
+    fn vocab_content(
+        lang: crate::worksheet::VocabLang,
+        with_academic: bool,
+        with_content: bool,
+    ) -> crate::worksheet::Content {
+        use crate::worksheet::{Block, BlockKind, Content, Vocab};
+        let mut vocabulary = Vec::new();
+        if with_content {
+            vocabulary.push(Vocab {
+                word: "umbrella".into(),
+                level: Some(2),
+                pos: "n.".into(),
+                definition: "a thing that keeps rain off you".into(),
+                meaning_zh: "雨傘".into(),
+                ..Vocab::default()
+            });
+            vocabulary.push(Vocab {
+                word: "trust".into(),
+                level: Some(3),
+                pos: "v.".into(),
+                definition: "to believe someone is honest".into(),
+                // no Chinese yet: the English one is printed in its place
+                ..Vocab::default()
+            });
+        }
+        if with_academic {
+            let t = crate::worksheet::task_words::lookup("compare").unwrap();
+            vocabulary.push(Vocab {
+                word: t.word.into(),
+                pos: t.pos.into(),
+                definition: t.definition_en.into(),
+                meaning_zh: t.meaning_zh.into(),
+                task_word: true,
+                ..Vocab::default()
+            });
+        }
+        Content {
+            blocks: vec![Block {
+                id: "warmup".into(),
+                kind: BlockKind::Warmup,
+                title: "Warm-up".into(),
+                vocabulary,
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            vocabulary_language: lang,
+            ..Content::default()
+        }
+    }
+
+    fn vocab_sheet(content: &crate::worksheet::Content, audience: Audience) -> Sheet {
+        crate::worksheet::assemble::project("T", content, Level::Standard, audience)
+    }
+
+    /// Every drawn piece of text of the PDF layout: (page, x, y, text).
+    fn pdf_texts(sheet: &Sheet) -> Vec<(usize, f32, f32, String)> {
+        let fonts = Fonts {
+            regular: Face::new(LIBERTINUS_REGULAR).unwrap(),
+            bold: Face::new(LIBERTINUS_BOLD).unwrap(),
+            italic: Face::new(LIBERTINUS_ITALIC).unwrap(),
+            cjk: cjk_font_data().map(|d| Face::new(d).unwrap()),
+        };
+        let bank = ImageBank::new();
+        let mut layout = Layout::new(&fonts, &bank);
+        layout_sheet(&mut layout, sheet);
+        let mut out = Vec::new();
+        for (page, ops) in layout.pages.iter().enumerate() {
+            for op in ops {
+                if let Op::Text { x, y, text, .. } = op {
+                    out.push((page, *x, *y, text.clone()));
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn key_vocabulary_prints_two_columns_with_pos_in_english_by_default() {
+        use crate::worksheet::VocabLang;
+        for audience in [Audience::Student, Audience::Teacher] {
+            let s = vocab_sheet(&vocab_content(VocabLang::En, true, true), audience);
+            let xml = document(docx(&s).unwrap());
+            assert!(xml.contains(">Key Vocabulary<"));
+            assert!(!xml.contains("Key words"));
+            for heading in ["Content", "Academic", "Word", "POS", "Meaning"] {
+                assert!(xml.contains(&format!(">{heading}<")), "{heading}");
+            }
+            // side by side: one borderless layout table of two cells holding the two tables
+            let layout = xml
+                .find("<w:tblLayout w:type=\"fixed\"/>")
+                .expect("layout table");
+            let content = xml.find(">Content<").unwrap();
+            let academic = xml.find(">Academic<").unwrap();
+            assert!(layout < content && content < academic);
+            assert_eq!(
+                xml.matches("<w:tbl>").count(),
+                3,
+                "the layout table and the two tables in it"
+            );
+            // the part of speech and the English meaning of both groups
+            assert!(xml.contains(">n.<") && xml.contains(">v.<"));
+            assert!(xml.contains("a thing that keeps rain off you"));
+            assert!(xml.contains("to look at how things are the same and different"));
+            // no Chinese in the English default
+            assert!(!xml.contains("雨傘") && !xml.contains("比較"));
+            let teacher = audience == Audience::Teacher;
+            assert_eq!(xml.contains("umbrella (Level 2)"), teacher);
+            assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
+        }
+    }
+
+    #[test]
+    fn key_vocabulary_prints_the_chosen_language_and_keeps_english_for_a_word_without_chinese() {
+        use crate::worksheet::VocabLang;
+        let content = vocab_content(VocabLang::Zh, true, true);
+        let s = vocab_sheet(&content, Audience::Student);
+        let xml = document(docx(&s).unwrap());
+        assert!(xml.contains("雨傘") && xml.contains("比較（找出相同與不同）"));
+        assert!(!xml.contains("a thing that keeps rain off you"));
+        assert!(!xml.contains("to look at how things are the same"));
+        // "trust" has no Chinese meaning yet: its English one stays
+        assert!(xml.contains("to believe someone is honest"));
+        assert!(printed_text(&s).contains("雨傘"));
+        if pdf_supports_cjk() {
+            assert!(pdf(&s).unwrap().starts_with(b"%PDF-"));
+        } else {
+            assert!(matches!(pdf(&s), Err(ExportError::NoCjkFont)));
+        }
+        // switching back loses nothing: the same content, the other switch
+        let en = vocab_sheet(
+            &crate::worksheet::Content {
+                vocabulary_language: VocabLang::En,
+                ..content
+            },
+            Audience::Student,
+        );
+        assert!(document(docx(&en).unwrap()).contains("a thing that keeps rain off you"));
+    }
+
+    #[test]
+    fn key_vocabulary_is_one_column_when_one_group_is_empty() {
+        use crate::worksheet::VocabLang;
+        for (academic, content, shown, hidden) in [
+            (true, false, "Academic", "Content"),
+            (false, true, "Content", "Academic"),
+        ] {
+            let s = vocab_sheet(
+                &vocab_content(VocabLang::En, academic, content),
+                Audience::Student,
+            );
+            let xml = document(docx(&s).unwrap());
+            assert!(xml.contains(&format!(">{shown}<")));
+            assert!(!xml.contains(&format!(">{hidden}<")));
+            assert!(
+                !xml.contains("<w:tblLayout"),
+                "no layout table for one column"
+            );
+            let texts = pdf_texts(&s);
+            assert!(texts.iter().any(|(_, _, _, t)| t == shown));
+            assert!(!texts.iter().any(|(_, _, _, t)| t == hidden));
+            // the one column starts at the left margin
+            assert!(texts
+                .iter()
+                .any(|(_, x, _, t)| t == shown && (*x - MARGIN).abs() < 0.01));
+        }
+    }
+
+    #[test]
+    fn key_vocabulary_columns_are_side_by_side_in_the_pdf() {
+        use crate::worksheet::VocabLang;
+        let s = vocab_sheet(&vocab_content(VocabLang::En, true, true), Audience::Student);
+        let texts = pdf_texts(&s);
+        let find = |what: &str| {
+            texts
+                .iter()
+                .find(|(_, _, _, t)| t == what)
+                .unwrap_or_else(|| panic!("{what} not drawn"))
+        };
+        assert!(texts.iter().any(|(_, _, _, t)| t == "Key Vocabulary"));
+        let (_, content_x, content_y, _) = find("Content");
+        let (_, academic_x, academic_y, _) = find("Academic");
+        assert_eq!(content_y, academic_y, "the headings are on one line");
+        assert!(
+            academic_x > &(content_x + CONTENT_W / 2.0 - 1.0),
+            "Academic is the right column"
+        );
+        // every column has its own Word | POS | Meaning headings
+        assert_eq!(texts.iter().filter(|(_, _, _, t)| t == "POS").count(), 2);
+        assert_eq!(
+            texts.iter().filter(|(_, _, _, t)| t == "Meaning").count(),
+            2
+        );
+        // the rows: the word, its part of speech and its meaning on one line
+        let (_, wx, wy, _) = find("umbrella");
+        let (_, px, py, _) = find("n.");
+        assert_eq!(wy, py);
+        assert!(px > wx);
+        assert!(texts
+            .iter()
+            .any(|(_, x, y, t)| t == "a thing that keeps rain off you"
+                || (t.starts_with("a thing") && *y == *wy && *x > *px)));
+    }
+
+    #[test]
+    fn a_long_key_vocabulary_table_continues_on_the_next_page_with_its_headings() {
+        use crate::worksheet::{Block, BlockKind, Content, Vocab, VocabLang};
+        let vocabulary = (1..=80)
+            .map(|n| Vocab {
+                word: format!("word{n}"),
+                pos: "n.".into(),
+                definition: "a longer meaning that needs more than one line of the column to fit"
+                    .into(),
+                ..Vocab::default()
+            })
+            .collect();
+        let content = Content {
+            blocks: vec![Block {
+                id: "warmup".into(),
+                kind: BlockKind::Warmup,
+                vocabulary,
+                ..Block::default()
+            }],
+            levels: Level::ALL.to_vec(),
+            vocabulary_language: VocabLang::En,
+            ..Content::default()
+        };
+        let s = vocab_sheet(&content, Audience::Student);
+        let texts = pdf_texts(&s);
+        let pages: std::collections::BTreeSet<usize> = texts
+            .iter()
+            .filter(|(_, _, _, t)| t == "POS")
+            .map(|(p, ..)| *p)
+            .collect();
+        assert!(pages.len() >= 2, "headings repeat on each page: {pages:?}");
+        for n in 1..=80 {
+            assert!(
+                texts.iter().any(|(_, _, _, t)| *t == format!("word{n}")),
+                "word{n}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_word_list_that_repeats_the_key_vocabulary_is_not_printed() {
+        use crate::worksheet::{Scaffold, ScaffoldType, VocabLang, KIND_WORD_LIST};
+        let word_list = |content: &str| Scaffold {
+            id: "warmup-sv1".into(),
+            kind_type: ScaffoldType::Verbal,
+            kind: KIND_WORD_LIST.into(),
+            content: content.into(),
+            levels: Level::ALL.to_vec(),
+            ..Scaffold::default()
+        };
+        let mut c = vocab_content(VocabLang::En, true, true);
+        c.blocks[0].scaffolds = vec![word_list("Umbrella, trust, compare")];
+        for audience in [Audience::Student, Audience::Teacher] {
+            let s = vocab_sheet(&c, audience);
+            assert!(
+                s.blocks[0].supports.is_empty(),
+                "the repeated list is left out"
+            );
+            assert!(!document(docx(&s).unwrap()).contains("Word bank"));
+            assert!(!pdf_texts(&s)
+                .iter()
+                .any(|(_, _, _, t)| t.contains("Word bank")));
+        }
+        // a list with a word the table does not have still prints
+        c.blocks[0].scaffolds = vec![word_list("umbrella, trust, stand")];
+        let s = vocab_sheet(&c, Audience::Student);
+        assert_eq!(s.blocks[0].supports.len(), 1);
+        assert!(document(docx(&s).unwrap()).contains("Word bank"));
+        // other scaffolds stay
+        let mut frames = word_list("I think ___ because ___.");
+        frames.kind = "句型框架".into();
+        c.blocks[0].scaffolds = vec![word_list("umbrella"), frames];
+        let s = vocab_sheet(&c, Audience::Student);
+        assert_eq!(s.blocks[0].supports.len(), 1);
+        assert_eq!(s.blocks[0].supports[0].kind, "句型框架");
+        // at the end of the sheet the words of every block count
+        c.vocabulary_at_end = true;
+        c.blocks[0].scaffolds = vec![word_list("umbrella, compare")];
+        let s = vocab_sheet(&c, Audience::Student);
+        assert!(s.blocks[0].supports.is_empty());
+        assert_eq!(s.end_words.len(), 3);
+        let xml = document(docx(&s).unwrap());
+        assert!(xml.contains(">Key Vocabulary<") && !xml.contains("Word bank"));
     }
 }

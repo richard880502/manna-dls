@@ -37,6 +37,12 @@ export interface WorksheetController {
   undo: (blockId: string) => Promise<void>;
   /** 恢復字詞表: puts back the table that was deleted from the block (levels and hints are computed again). */
   restoreWordTable: (blockId: string) => Promise<void>;
+  /**
+   * Key Vocabulary in Chinese (`tables`) or the word banks' parts of speech and meanings (`banks`):
+   * saves first, then the server writes only what is missing, with one model call. Returns what the
+   * teacher should be told (null: nothing to say). Never fails the switch.
+   */
+  fillMeanings: (scope: { tables?: boolean; banks?: boolean }) => Promise<string | null>;
   saveMaterial: (body: SaveWorksheetMaterialRequest) => Promise<boolean>;
   /** 只選要用的段落 (ids of the library material); `null`: all of them. The library entry is not changed. */
   saveSelection: (paragraphIds: string[] | null) => Promise<boolean>;
@@ -221,6 +227,21 @@ export function useWorksheet(id: number): WorksheetController {
     },
     [act, id],
   );
+  const fillMeanings = useCallback(
+    async (scope: { tables?: boolean; banks?: boolean }): Promise<string | null> => {
+      try {
+        const failed = await flush();
+        if (failed) return `沒有儲存成功，所以還沒有補上字義：${failed}`;
+        const { notice, filled: _filled, ...next } = await api.fillVocabularyMeanings(id, scope);
+        void _filled;
+        if (alive.current) put(next as WorksheetState);
+        return notice;
+      } catch (err) {
+        return `這次沒有補上字義（${errorMessage(err)}），沒有字義的字會先照原樣印出。`;
+      }
+    },
+    [flush, id, put],
+  );
   const saveMaterial = useCallback(
     (body: SaveWorksheetMaterialRequest) => act(() => api.saveWorksheetMaterial(id, body)),
     [act, id],
@@ -326,6 +347,7 @@ export function useWorksheet(id: number): WorksheetController {
     regenerate,
     undo,
     restoreWordTable,
+    fillMeanings,
     saveMaterial,
     saveSelection,
     setTemplate,

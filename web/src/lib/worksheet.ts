@@ -18,6 +18,7 @@ import type {
   WsScaffold,
   WsScaffoldType,
   WsSupportKind,
+  WsWordBank,
 } from "../api/types";
 import { withOrganizerFor } from "./organizer";
 
@@ -754,7 +755,11 @@ export function projectSheet(content: WorksheetContent, level: WsLevel, audience
     const items = block.items
       .filter((it) => it.levels.includes(level))
       .map((item) => ({ item, no: ++no, lines: answerLines(item, level) }));
-    const scaffolds = block.scaffolds.filter((s) => s.levels.includes(level));
+    // Steps Manna put on an exit ticket do not print (mirrors `assemble::exit_ticket_default_steps`).
+    const scaffolds = block.scaffolds.filter(
+      (s) =>
+        s.levels.includes(level) && !(block.kind === "exit_ticket" && s.type === "procedural" && s.origin === "ai"),
+    );
     const printed = printable(block, items, scaffolds, audience);
     const label = block.kind === "exit_ticket" || !printed ? "" : letter(lettered++);
     blocks.push({ block, label, items, scaffolds, printed });
@@ -767,6 +772,50 @@ export function projectSheet(content: WorksheetContent, level: WsLevel, audience
       : [],
     blocks,
   };
+}
+
+/** Whether the teacher version draws an answer (or a scoring note) for this question. */
+export function itemHasAnswer(item: WsItem): boolean {
+  return (
+    item.answer.trim() !== "" ||
+    (item.tiers ?? []).some((t) => t.answer.trim() !== "" || t.scoring.trim() !== "") ||
+    (item.organizer?.sections.some((s) => s.cells.some((c) => c.answer.trim() !== "")) ?? false)
+  );
+}
+
+/** Printed above a block's numbered steps (mirrors `assemble::STEPS_LEAD`). */
+export const STEPS_LEAD = "Follow the steps below.";
+
+/** A block's own number of a question: the `n` of its id `<block>-i<n>` (mirrors `assemble::own_number`). */
+export function ownNumber(itemId: string): number | null {
+  const at = itemId.lastIndexOf("-i");
+  if (at < 0) return null;
+  const n = Number(itemId.slice(at + 2));
+  return Number.isInteger(n) && n > 0 && /^\d+$/.test(itemId.slice(at + 2)) ? n : null;
+}
+
+/** A block's own question numbers and the numbers one version prints for them. */
+export function printedNumbers(items: ReadonlyArray<{ item: { id: string }; no: number }>): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const { item, no } of items) {
+    const own = ownNumber(item.id);
+    if (own !== null) map.set(own, no);
+  }
+  return map;
+}
+
+const ITEM_REF =
+  /\b(items?|questions?|q)(\s*#?\s*)(\d{1,2}(?:\s*(?:,\s*(?:and\s+|or\s+)?|and|or|&|–|—|-|to)\s*\d{1,2})*)\b/gi;
+
+/**
+ * The text as the sheet prints it: 「item 2」 of a block is the question its version numbers 5
+ * (mirrors `assemble::renumber_refs`). A number with no question of the block stays.
+ */
+export function renumberRefs(text: string, printed: ReadonlyMap<number, number>): string {
+  if (printed.size === 0 || [...printed].every(([own, no]) => own === no)) return text;
+  return text.replace(ITEM_REF, (_m, word: string, gap: string, numbers: string) =>
+    `${word}${gap}${numbers.replace(/\d{1,2}/g, (d) => String(printed.get(Number(d)) ?? d))}`,
+  );
 }
 
 /** The name of a block in the teacher's words, e.g. 「A 暖身」. */
@@ -807,3 +856,80 @@ export const percent = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
 export function frameShown(level: WsLevel, levels: readonly WsLevel[]): boolean {
   return level !== "advanced" || !levels.some((l) => l !== "advanced");
 }
+
+// ---------------------------------------------------------------- Key Vocabulary
+
+/** The parts of speech a row may carry (the server keeps the same set). */
+export const POS_OPTIONS = ["n.", "v.", "adj.", "adv.", "prep.", "conj.", "pron.", "det.", "aux.", "interj.", "phr."] as const;
+
+/** One row of Key Vocabulary as every printed form shows it. */
+export interface KeyWordRow {
+  /** Unique within the table. */
+  id: string;
+  word: string;
+  pos: string;
+  /** Academic column (the task words of the instructions); otherwise Content. */
+  task: boolean;
+  meaning: string;
+}
+
+/** The two groups of Key Vocabulary, a group without rows left out. */
+export function keyVocabularyGroups<T extends { task: boolean }>(rows: readonly T[]): Array<{ title: "Content" | "Academic"; rows: T[] }> {
+  return [
+    { title: "Content" as const, rows: rows.filter((r) => !r.task) },
+    { title: "Academic" as const, rows: rows.filter((r) => r.task) },
+  ].filter((g) => g.rows.length > 0);
+}
+
+/** Key Vocabulary as plain text, for 複製. */
+export function keyVocabularyText(rows: readonly KeyWordRow[]): string[] {
+  if (rows.length === 0) return [];
+  const lines = ["Key Vocabulary"];
+  keyVocabularyGroups(rows).forEach((g) => {
+    lines.push(g.title);
+    g.rows.forEach((r) => lines.push(`  ${r.word}${r.pos ? ` (${r.pos})` : ""}: ${r.meaning}`));
+  });
+  return lines;
+}
+
+/** The meaning of a row in the worksheet's language: the Chinese one falls back to the English one. */
+export function vocabMeaning(v: { definition: string; meaning_zh?: string }, lang: "en" | "zh" | undefined): string {
+  const en = v.definition.trim();
+  const zh = (v.meaning_zh ?? "").trim();
+  return lang === "zh" && zh ? zh : en || zh;
+}
+
+/** The words of a word bank's text (comma separated), the way the server reads it; null for anything else. */
+export function parseWordList(text: string): string[] | null {
+  let t = text.trim();
+  if (/^word bank:/i.test(t)) t = t.slice(10).trim();
+  if (t === "" || /[:：]/.test(t)) return null;
+  const words: string[] = [];
+  for (const raw of t.split(/[,，、;；\n/]/)) {
+    const w = raw.trim().replace(/\.$/, "").trim();
+    if (w === "") continue;
+    if (!/^[A-Za-z' ’-]+$/.test(w) || w.split(/\s+/).length > 4 || w.length > 40) return null;
+    if (!words.some((x) => x.toLowerCase() === w.toLowerCase())) words.push(w);
+  }
+  // One long entry is a sentence, not a list.
+  if (words.length === 1 && words[0]!.split(/\s+/).length > 2) return null;
+  return words.length > 0 && words.length <= 40 ? words : null;
+}
+
+/** A word bank after its text was edited: the words still listed keep what is known about them. */
+export function bankWithText(bank: WsWordBank | undefined, text: string): WsWordBank | undefined {
+  const words = parseWordList(text);
+  if (!words) return undefined;
+  const old = bank?.words ?? [];
+  return {
+    ...(bank?.lang ? { lang: bank.lang } : {}),
+    words: words.map((word) => {
+      const known = old.find((o) => o.word.toLowerCase() === word.toLowerCase());
+      return known ? { ...known, word } : { word };
+    }),
+  };
+}
+
+/** Whether a word bank still lacks a part of speech or any meaning (the server fills them). */
+export const bankNeedsFill = (bank: WsWordBank | undefined): boolean =>
+  (bank?.words ?? []).some((w) => !(w.pos ?? "").trim() || !((w.definition ?? "").trim() || (w.meaning_zh ?? "").trim()));

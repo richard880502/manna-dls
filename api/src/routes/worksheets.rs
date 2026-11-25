@@ -302,6 +302,33 @@ pub async fn restore_word_table(
     Ok(Json(state_of(&state, id).await?))
 }
 
+#[derive(Debug, Serialize)]
+pub struct FilledMeaningsReply {
+    #[serde(flatten)]
+    pub worksheet: WorksheetState,
+    /// Said plainly to the teacher when some words keep their English meaning; `null` otherwise.
+    pub notice: Option<String>,
+    /// How many words got a Chinese meaning from the model in this call.
+    pub filled: usize,
+}
+
+/// `POST /api/worksheets/:id/vocabulary-meanings` `{ "tables": bool, "banks": bool }`
+/// (「補上中文字義」 after switching Key Vocabulary to Chinese; the word banks' part of speech
+/// and meanings)
+pub async fn fill_vocabulary_meanings(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    Json(scope): Json<crate::worksheet::key_vocab::Scope>,
+) -> AppResult<Json<FilledMeaningsReply>> {
+    let done = editing::fill_vocabulary_meanings(&state, teacher.id(), id, scope).await?;
+    Ok(Json(FilledMeaningsReply {
+        worksheet: state_of(&state, id).await?,
+        notice: done.notice,
+        filled: done.filled,
+    }))
+}
+
 // ---------------------------------------------------------------- sheets and versions
 
 #[derive(Debug, Default, Deserialize)]

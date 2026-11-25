@@ -849,7 +849,8 @@ async fn a_worksheet_run_uses_confirmed_habits_only_with_the_switch_on() {
     assert!(!off.to_string().contains("已確認的出題習慣"));
     let last_off: i64 = count(&app, "SELECT max(id) FROM ai_interactions").await;
     let off_rows: Vec<Value> = sqlx::query_scalar(
-        "SELECT input_snapshot->'teacher_memory' FROM ai_interactions WHERE module LIKE 'worksheet_%'",
+        "SELECT input_snapshot->'teacher_memory' FROM ai_interactions
+          WHERE module LIKE 'worksheet_%' AND module <> 'worksheet_vocab_gloss'",
     )
     .fetch_all(&app.db)
     .await
@@ -874,6 +875,10 @@ async fn a_worksheet_run_uses_confirmed_habits_only_with_the_switch_on() {
     assert!(rows.iter().any(|(m, _, _)| m == "worksheet_tasks"));
     for (module, attempt, snapshot) in &rows {
         assert_eq!(*attempt, 1, "{module}: no repair call was needed");
+        // The word bank's meanings are written by a reader step, which never gets habits.
+        if module == "worksheet_vocab_gloss" {
+            continue;
+        }
         let tm = &snapshot["teacher_memory"];
         assert_eq!(tm["enabled"], true, "{module}");
         assert!(tm["user_appended"]

@@ -1299,10 +1299,13 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_block_revise v7, worksheet_scaffolds v3 and worksheet_tasks v8 since
         // 0050_per_question_frames.sql. sop_paragraph_tasks v3, worksheet_bloom_level v6,
         // worksheet_tasks v9, worksheet_template_section v6 and worksheet_tiered_level v4 since
-        // 0051_table_organizer_headers.sql.
+        // 0051_table_organizer_headers.sql. sop_paragraph_tasks v4, sop_warmup v2,
+        // worksheet_block_revise v8, worksheet_tasks v10 and worksheet_warmup v2 since
+        // 0053_block_intros.sql. sop_scaffolds v3, sop_warmup v3, worksheet_block_revise v9,
+        // worksheet_scaffolds v4 and worksheet_warmup v3 since 0054_key_vocabulary.sql.
         vec![
-            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 4, 1, 1, 1, 2, 1, 3, 1, 2, 1, 2, 3, 7, 1, 6, 5, 2, 3, 9,
-            3, 2, 6, 4, 1, 1, 1
+            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 4, 1, 1, 1, 2, 1, 4, 1, 3, 3, 2, 3, 9, 1, 6, 5, 2, 4, 10,
+            3, 2, 6, 4, 1, 1, 3
         ]
     );
     let v1_kept: i64 = sqlx::query_scalar(

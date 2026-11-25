@@ -17,6 +17,7 @@ pub mod export;
 pub mod fake;
 pub mod history;
 pub mod images;
+pub mod key_vocab;
 pub mod material;
 pub mod organizer;
 pub mod revise;
@@ -587,20 +588,119 @@ pub struct Objective {
     pub sop_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
+/// Which language the Key Vocabulary table prints its meanings in (one switch per worksheet).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VocabLang {
+    /// English meanings (the default).
+    #[default]
+    En,
+    /// Chinese meanings (a word without one keeps its English meaning).
+    Zh,
+}
+
+impl VocabLang {
+    pub fn is_en(&self) -> bool {
+        *self == Self::En
+    }
+}
+
+/// A row of the Key Vocabulary table. Both meanings are kept, so switching the table's language
+/// loses neither: `definition` is the English one, `meaning_zh` the Traditional Chinese one.
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct Vocab {
     pub word: String,
     /// Always looked up in `vocabulary_items` by the server; never taken from the model or from
     /// the client. `None`: not in the list, or no list imported.
     pub level: Option<u8>,
+    /// The English meaning.
     pub definition: String,
     pub context: String,
     pub paragraph_id: Option<String>,
     /// A word of the instructions (compare, support your answer …) listed by the code with a
-    /// Chinese hint as its `definition` (SIOP V2, [`task_words`]); not a key word of the text.
+    /// fixed English definition and Chinese hint (SIOP V2, [`task_words`]); not a key word of
+    /// the text.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub task_word: bool,
+    /// Part of speech as the word is used here (`n.`, `v.`, `adj.` …, see [`key_vocab`]); empty
+    /// when unknown (a worksheet made before this existed).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pos: String,
+    /// The short Traditional Chinese meaning; empty when none was written yet (the English one
+    /// is printed instead).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub meaning_zh: String,
+}
+
+/// What is stored (and what the editor sends): [`Vocab`] before old content is read correctly.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct VocabWire {
+    word: String,
+    level: Option<u8>,
+    definition: String,
+    context: String,
+    paragraph_id: Option<String>,
+    task_word: bool,
+    pos: String,
+    meaning_zh: String,
+}
+
+impl From<VocabWire> for Vocab {
+    /// Old content: before the two languages were kept apart, a task word's `definition` was
+    /// its Chinese hint. It moves to `meaning_zh` and the fixed English definition takes its
+    /// place, so every reader sees the new shape.
+    fn from(w: VocabWire) -> Self {
+        let mut v = Vocab {
+            word: w.word,
+            level: w.level,
+            definition: w.definition,
+            context: w.context,
+            paragraph_id: w.paragraph_id,
+            task_word: w.task_word,
+            pos: w.pos,
+            meaning_zh: w.meaning_zh,
+        };
+        if v.task_word {
+            let fixed = task_words::lookup(&v.word);
+            if v.meaning_zh.trim().is_empty() && key_vocab::has_han(&v.definition) {
+                v.meaning_zh = std::mem::take(&mut v.definition);
+            }
+            if let Some(t) = fixed {
+                if v.definition.trim().is_empty() {
+                    v.definition = t.definition_en.to_string();
+                }
+                if v.pos.trim().is_empty() {
+                    v.pos = t.pos.to_string();
+                }
+            }
+        }
+        v
+    }
+}
+
+impl<'de> Deserialize<'de> for Vocab {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        VocabWire::deserialize(d).map(Vocab::from)
+    }
+}
+
+impl Vocab {
+    /// The meaning printed in `lang`: the Chinese one when asked for and written, else the
+    /// English one; and the other way round when the English one is empty.
+    pub fn meaning(&self, lang: VocabLang) -> &str {
+        let (en, zh) = (self.definition.trim(), self.meaning_zh.trim());
+        match lang {
+            VocabLang::Zh if !zh.is_empty() => zh,
+            _ if !en.is_empty() => en,
+            _ => zh,
+        }
+    }
+
+    /// Whether the Chinese meaning is still to be written.
+    pub fn lacks_zh(&self) -> bool {
+        self.meaning_zh.trim().is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -765,8 +865,7 @@ pub fn columns_from_prompt(prompt: &str) -> Option<Vec<String>> {
     fits.then_some(parts)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
+#[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct Scaffold {
     pub id: String,
     #[serde(rename = "type")]
@@ -785,12 +884,251 @@ pub struct Scaffold {
     /// from the JSON when there is none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heading: Option<String>,
+    /// A 字詞表 (「Word bank」) scaffold made of plain words: the words with their part of speech
+    /// and meanings, and which of them print their meaning. `content` is the same words as a
+    /// comma-separated list (kept in step with `bank`, so every reader of `content` still
+    /// works). `None`: not a word bank, or one with text that is not a plain list of words
+    /// (「Linking words for …: …」), which prints as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bank: Option<WordBank>,
+}
+
+/// One word of a word bank.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct BankWord {
+    pub word: String,
+    /// Part of speech (one of `key_vocab::POS_SET`); empty when not known yet.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pos: String,
+    /// The English meaning.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub definition: String,
+    /// The Traditional Chinese meaning.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub meaning_zh: String,
+    /// The teacher ticked it: the sheet prints this word's meaning (in the bank's language).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub show_meaning: bool,
+}
+
+/// The words of a word bank and the language of the meanings that print.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct WordBank {
+    #[serde(skip_serializing_if = "VocabLang::is_en")]
+    pub lang: VocabLang,
+    pub words: Vec<BankWord>,
+}
+
+/// Most words a word bank holds.
+pub const MAX_BANK_WORDS: usize = 40;
+
+/// The words of a word bank's text when it is a plain list (`reason, result, however`, with or
+/// without a leading 「Word bank:」); `None` for any other text (a lead sentence, a colon in the
+/// middle, long entries).
+pub fn parse_word_list(text: &str) -> Option<Vec<String>> {
+    let mut text = text.trim();
+    if let Some(head) = text.get(..10) {
+        if head.eq_ignore_ascii_case("word bank:") {
+            text = text[10..].trim();
+        }
+    }
+    if text.is_empty() || text.contains([':', '：']) {
+        return None;
+    }
+    let mut words: Vec<String> = Vec::new();
+    for raw in text.split([',', '，', '、', ';', '；', '\n', '/']) {
+        let w = raw.trim().trim_end_matches('.').trim();
+        if w.is_empty() {
+            continue;
+        }
+        let plain = w
+            .chars()
+            .all(|c| c.is_alphabetic() && c.is_ascii() || matches!(c, ' ' | '-' | '\'' | '’'));
+        if !plain || w.split_whitespace().count() > 4 || w.chars().count() > 40 {
+            return None;
+        }
+        if !words.iter().any(|x| x.eq_ignore_ascii_case(w)) {
+            words.push(w.to_string());
+        }
+    }
+    // One long entry is a sentence, not a list.
+    if words.len() == 1 && words[0].split_whitespace().count() > 2 {
+        return None;
+    }
+    (!words.is_empty() && words.len() <= MAX_BANK_WORDS).then_some(words)
+}
+
+/// What is stored (and what the editor sends): [`Scaffold`] before its word bank is read.
+#[derive(Deserialize)]
+#[serde(default)]
+struct ScaffoldWire {
+    id: String,
+    #[serde(rename = "type")]
+    kind_type: ScaffoldType,
+    kind: String,
+    content: String,
+    steps: Vec<String>,
+    levels: Vec<Level>,
+    auto: bool,
+    origin: Origin,
+    heading: Option<String>,
+    bank: Option<WordBank>,
+}
+
+impl Default for ScaffoldWire {
+    fn default() -> Self {
+        let s = Scaffold::default();
+        Self {
+            id: s.id,
+            kind_type: s.kind_type,
+            kind: s.kind,
+            content: s.content,
+            steps: s.steps,
+            levels: s.levels,
+            auto: s.auto,
+            origin: s.origin,
+            heading: s.heading,
+            bank: None,
+        }
+    }
+}
+
+impl From<ScaffoldWire> for Scaffold {
+    /// A word bank written before words had their own entries (plain text) is read as its words.
+    fn from(w: ScaffoldWire) -> Self {
+        let mut s = Scaffold {
+            id: w.id,
+            kind_type: w.kind_type,
+            kind: w.kind,
+            content: w.content,
+            steps: w.steps,
+            levels: w.levels,
+            auto: w.auto,
+            origin: w.origin,
+            heading: w.heading,
+            bank: w.bank,
+        };
+        s.sync_bank();
+        s
+    }
+}
+
+impl<'de> Deserialize<'de> for Scaffold {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        ScaffoldWire::deserialize(d).map(Scaffold::from)
+    }
 }
 
 /// Longest heading a scaffold may print over it.
 pub const MAX_SCAFFOLD_HEADING_CHARS: usize = 80;
 
 impl Scaffold {
+    /// Whether this is a 字詞表 (「Word bank」) scaffold.
+    pub fn is_word_bank(&self) -> bool {
+        self.kind_type == ScaffoldType::Verbal && self.kind == KIND_WORD_LIST
+    }
+
+    /// Keeps `bank` and `content` in step. A word bank with words: the words are the truth
+    /// (clean, no repeats, a valid part of speech) and `content` is their list. One without:
+    /// its text is read as a plain list of words when it is one. Not a word bank: no bank.
+    pub fn sync_bank(&mut self) {
+        if !self.is_word_bank() {
+            self.bank = None;
+            return;
+        }
+        match self.bank.take() {
+            Some(mut b) if !b.words.is_empty() => {
+                let mut seen: Vec<String> = Vec::new();
+                b.words.retain_mut(|w| {
+                    w.word = w.word.trim().to_string();
+                    w.pos = key_vocab::normalise_pos(&w.pos)
+                        .unwrap_or_default()
+                        .to_string();
+                    let key = w.word.to_lowercase();
+                    let keep = !key.is_empty() && !seen.contains(&key);
+                    seen.push(key);
+                    keep
+                });
+                self.content = b
+                    .words
+                    .iter()
+                    .map(|w| w.word.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.bank = Some(b);
+            }
+            _ => {
+                self.bank = parse_word_list(&self.content).map(|words| WordBank {
+                    lang: VocabLang::En,
+                    words: words
+                        .into_iter()
+                        .map(|word| BankWord {
+                            word,
+                            ..BankWord::default()
+                        })
+                        .collect(),
+                });
+                if let Some(b) = &self.bank {
+                    self.content = b
+                        .words
+                        .iter()
+                        .map(|w| w.word.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                }
+            }
+        }
+    }
+
+    /// A new text for the word bank (the teacher's or the model's edit): the words it lists
+    /// keep what is known about them (part of speech, meanings, ticks); new words start empty.
+    pub fn set_text(&mut self, text: &str) {
+        // The same words as now (whatever the writing): nothing changes.
+        if let (Some(b), Some(words)) = (&self.bank, parse_word_list(text)) {
+            let same = words.len() == b.words.len()
+                && words
+                    .iter()
+                    .zip(&b.words)
+                    .all(|(w, o)| w.eq_ignore_ascii_case(o.word.trim()));
+            if same {
+                return;
+            }
+        }
+        let old = self.bank.take();
+        self.content = text.to_string();
+        self.bank = None;
+        if !self.is_word_bank() {
+            return;
+        }
+        let Some(words) = parse_word_list(text) else {
+            return;
+        };
+        let (lang, old_words) = old.map_or((VocabLang::En, Vec::new()), |b| (b.lang, b.words));
+        self.bank = Some(WordBank {
+            lang,
+            words: words
+                .into_iter()
+                .map(|word| {
+                    old_words
+                        .iter()
+                        .find(|o| o.word.eq_ignore_ascii_case(&word))
+                        .cloned()
+                        .map(|o| BankWord {
+                            word: word.clone(),
+                            ..o
+                        })
+                        .unwrap_or(BankWord {
+                            word,
+                            ..BankWord::default()
+                        })
+                })
+                .collect(),
+        });
+        self.sync_bank();
+    }
+
     /// The heading of its own, trimmed; `None` when it has none (or only blanks).
     pub fn own_heading(&self) -> Option<&str> {
         self.heading
@@ -1009,6 +1347,10 @@ pub struct Content {
     /// instead of inside its block. Off (the tables stay in their blocks) when absent.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub vocabulary_at_end: bool,
+    /// The language of the Key Vocabulary meanings, one switch for the worksheet (English when
+    /// absent).
+    #[serde(skip_serializing_if = "VocabLang::is_en")]
+    pub vocabulary_language: VocabLang,
     pub chosen: Option<Chosen>,
     pub notices: Vec<String>,
 }
@@ -1022,6 +1364,7 @@ impl Default for Content {
             levels: Vec::new(),
             student_order: Vec::new(),
             vocabulary_at_end: false,
+            vocabulary_language: VocabLang::En,
             chosen: None,
             notices: Vec::new(),
         }
@@ -1199,6 +1542,17 @@ impl Content {
             }
             for s in &mut b.scaffolds {
                 check_text("鷹架", &s.content)?;
+                if let Some(bank) = &mut s.bank {
+                    bank.words.truncate(MAX_BANK_WORDS);
+                    for w in &bank.words {
+                        if w.word.chars().count() > 80 {
+                            return Err("字詞最多 80 個字元。".to_string());
+                        }
+                        check_text("字詞解釋", &w.definition)?;
+                        check_text("字詞中文解釋", &w.meaning_zh)?;
+                    }
+                }
+                s.sync_bank();
                 s.heading = s.own_heading().map(str::to_string);
                 if s.heading
                     .as_deref()
@@ -1222,11 +1576,16 @@ impl Content {
                 }
                 s.levels = normalise_levels(&s.levels);
             }
-            for v in b.vocabulary.iter().chain(&b.vocabulary_removed) {
+            for v in b.vocabulary.iter_mut().chain(&mut b.vocabulary_removed) {
                 if v.word.chars().count() > 80 {
                     return Err("字詞最多 80 個字元。".to_string());
                 }
                 check_text("字詞解釋", &v.definition)?;
+                check_text("字詞中文解釋", &v.meaning_zh)?;
+                // A part of speech is one of the fixed set (or empty), whatever the editor sent.
+                v.pos = key_vocab::normalise_pos(&v.pos)
+                    .unwrap_or_default()
+                    .to_string();
                 check_text("字詞例句", &v.context)?;
             }
             check_glosses(&mut b.glosses)?;
@@ -1886,5 +2245,109 @@ mod tests {
         assert!(!json.contains("table") && !json.contains("kept_options"));
         let t: ItemTable = serde_json::from_str(r#"{"columns":["A"]}"#).unwrap();
         assert_eq!(t.rows, TABLE_ROWS);
+    }
+
+    #[test]
+    fn old_vocabulary_content_reads_in_the_new_shape() {
+        use serde_json::json;
+        // A task word's Chinese hint was its `definition`: it moves to `meaning_zh`.
+        let v: Vocab = serde_json::from_value(json!({
+            "word": "compare", "definition": "比較（找出相同與不同）", "task_word": true
+        }))
+        .unwrap();
+        assert_eq!(v.meaning_zh, "比較（找出相同與不同）");
+        assert_eq!(
+            v.definition,
+            "to look at how things are the same and different"
+        );
+        assert_eq!(v.pos, "v.");
+        // New content is left as it is, and a key word of the text without a part of speech too.
+        let v: Vocab = serde_json::from_value(json!({
+            "word": "compare", "definition": "to check", "meaning_zh": "比較", "task_word": true, "pos": "v."
+        }))
+        .unwrap();
+        assert_eq!(
+            (v.definition.as_str(), v.meaning_zh.as_str()),
+            ("to check", "比較")
+        );
+        let v: Vocab =
+            serde_json::from_value(json!({ "word": "umbrella", "definition": "a thing for rain" }))
+                .unwrap();
+        assert!(v.pos.is_empty() && v.meaning_zh.is_empty());
+        // Nothing new is written when it is empty.
+        assert!(serde_json::to_value(&v).unwrap().get("pos").is_none());
+        // The meaning printed: the language asked for, else the other one.
+        let v = Vocab {
+            definition: "a thing for rain".into(),
+            meaning_zh: "雨傘".into(),
+            ..Vocab::default()
+        };
+        assert_eq!(v.meaning(VocabLang::En), "a thing for rain");
+        assert_eq!(v.meaning(VocabLang::Zh), "雨傘");
+        let v = Vocab {
+            meaning_zh: String::new(),
+            ..v
+        };
+        assert_eq!(v.meaning(VocabLang::Zh), "a thing for rain");
+    }
+
+    #[test]
+    fn a_plain_text_word_bank_is_read_as_its_words() {
+        use serde_json::json;
+        let s: Scaffold = serde_json::from_value(json!({
+            "id": "s1", "type": "verbal", "kind": "字詞表", "content": "Word bank: plain, profound, in the end"
+        }))
+        .unwrap();
+        let words: Vec<&str> = s
+            .bank
+            .as_ref()
+            .unwrap()
+            .words
+            .iter()
+            .map(|w| w.word.as_str())
+            .collect();
+        assert_eq!(words, ["plain", "profound", "in the end"]);
+        assert_eq!(s.content, "plain, profound, in the end");
+        // Not a list of words: kept as text, no bank.
+        for text in [
+            "Linking words for contrast: however, but",
+            "Write what you think.",
+            "",
+        ] {
+            let s: Scaffold = serde_json::from_value(json!({
+                "id": "s1", "type": "verbal", "kind": "字詞表", "content": text
+            }))
+            .unwrap();
+            assert!(s.bank.is_none(), "{text}");
+        }
+        // Another kind of scaffold never has one.
+        let s: Scaffold = serde_json::from_value(json!({
+            "id": "s1", "type": "verbal", "kind": "句型框架", "content": "plain, profound"
+        }))
+        .unwrap();
+        assert!(s.bank.is_none());
+        // With words stored, they are the truth: the text follows them; new text keeps what is known.
+        let mut s: Scaffold = serde_json::from_value(json!({
+            "id": "s1", "type": "verbal", "kind": "字詞表", "content": "old",
+            "bank": { "lang": "zh", "words": [
+                { "word": "plain", "pos": "adj", "meaning_zh": "明顯的", "show_meaning": true },
+                { "word": "fork", "pos": "n." }
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(s.content, "plain, fork");
+        assert_eq!(
+            s.bank.as_ref().unwrap().words[0].pos,
+            "adj.",
+            "the part of speech is normalised"
+        );
+        s.set_text("Plain, fork, hesitate");
+        let bank = s.bank.as_ref().unwrap();
+        assert_eq!(bank.lang, VocabLang::Zh);
+        assert!(bank.words[0].show_meaning && bank.words[0].meaning_zh == "明顯的");
+        assert_eq!(bank.words[2].word, "hesitate");
+        assert!(bank.words[2].pos.is_empty());
+        s.set_text("fork");
+        assert_eq!(s.bank.as_ref().unwrap().words.len(), 1);
     }
 }
