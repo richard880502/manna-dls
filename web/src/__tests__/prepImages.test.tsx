@@ -19,6 +19,7 @@ import type {
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { blockReviseConfig } from "../lib/blockRevise";
 import { prepConfig } from "../lib/prep";
+import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
@@ -276,14 +277,13 @@ describe("the composer: attaching pictures", () => {
     nextImage = 100;
   });
 
-  it("has 附上圖片 and the privacy note when there is a worksheet, and no mode toggle", async () => {
+  it("has 附上圖片 when there is a worksheet, and no mode toggle", async () => {
     mockApi(pageRoutes());
     renderApp("/prep/7");
     await bar();
     expect(screen.getByRole("button", { name: "附上圖片" })).toBeInTheDocument();
     expect(fileInput()).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
     expect(fileInput()).toHaveAttribute("multiple");
-    expect(screen.getByText("請不要上傳有學生臉孔或姓名的照片。")).toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: "問 Manna" })).not.toBeInTheDocument();
   });
 
@@ -308,6 +308,18 @@ describe("the composer: attaching pictures", () => {
       image_ids: [100],
     });
     await waitFor(() => expect(screen.queryByRole("img", { name: "bee.png" })).not.toBeInTheDocument());
+  });
+
+  it("shows the privacy note only once a picture is attached", async () => {
+    mockApi(pageRoutes());
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await bar();
+    expect(screen.queryByText(IMAGE_PRIVACY_NOTE)).not.toBeInTheDocument();
+    // It is still reachable before that, on the attach button.
+    expect(screen.getByRole("button", { name: "附上圖片" })).toHaveAttribute("title", expect.stringContaining(IMAGE_PRIVACY_NOTE));
+    await user.upload(fileInput(), png());
+    expect(await screen.findByText(IMAGE_PRIVACY_NOTE)).toBeInTheDocument();
   });
 
   it("disables send while an upload is in flight", async () => {

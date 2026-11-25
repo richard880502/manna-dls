@@ -41,6 +41,7 @@ import { RETRY, isLongMaterial } from "../../lib/longMaterial";
 import { ObjectiveFields } from "../objectives/ObjectiveFields";
 import { BloomSettings } from "./BloomSettings";
 import { Chip } from "./Chips";
+import { scrollToEl } from "../../lib/scroll";
 import { TemplateOption } from "./TemplateOption";
 import type { WorksheetController } from "./useWorksheet";
 
@@ -77,19 +78,22 @@ export function ProgressPanel({ jobs }: { jobs: WsJob[] }) {
   const elapsed = started ? Math.max(0, Math.round((now - started) / 1000)) : 0;
 
   return (
-    <div className="manna-well manna-progress ws-progress" role="status" aria-label="產生進度">
-      <p className="manna-label">
-        <span className="star is-working" aria-hidden="true" />
-        Manna 正在產生
-      </p>
-      <ol className="ws-steps">
-        {jobs.map((job) => (
-          <li key={job.id} className={`is-${job.status}`}>
-            <span className="ws-step-name">{STEP_LABEL[job.step]}</span>
-            <span className="ws-step-state">{jobStateText(job)}</span>
-          </li>
-        ))}
-      </ol>
+    <div className="manna-well manna-progress ws-progress">
+      {/* The live region is the step list (and its title); the ticking seconds below stay out of it. */}
+      <div role="status" aria-label="產生進度">
+        <p className="manna-label">
+          <span className="star is-working" aria-hidden="true" />
+          Manna 正在產生
+        </p>
+        <ol className="ws-steps">
+          {jobs.map((job) => (
+            <li key={job.id} className={`is-${job.status}`}>
+              <span className="ws-step-name">{STEP_LABEL[job.step]}</span>
+              <span className="ws-step-state">{jobStateText(job)}</span>
+            </li>
+          ))}
+        </ol>
+      </div>
       <p className="why">
         已經 {elapsed} 秒。每一步通常要 15 到 110 秒。你可以先離開這一頁，好了會留在這份學習單裡。
       </p>
@@ -176,8 +180,8 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
   // When a run starts, bring the top of the column into view only if it is scrolled out of sight.
   useEffect(() => {
     const el = topRef.current;
-    if (!running0 || !el || typeof el.scrollIntoView !== "function") return;
-    if (el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (!running0 || !el) return;
+    if (el.getBoundingClientRect().top < 0) scrollToEl(el, "start");
   }, [running0]);
   if (!state) return null;
   const { settings, suggested, brief, content } = state;

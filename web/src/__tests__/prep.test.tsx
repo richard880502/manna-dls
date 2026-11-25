@@ -21,7 +21,7 @@ import type {
   WsSheet,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
-import { goalGroups, goalsText, hasPrepare, prepConfig, prepareText, reviewText, stepText } from "../lib/prep";
+import { AI_DISCLAIMER, goalGroups, goalsText, hasPrepare, prepConfig, prepareText, reviewText, stepText } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import {
   baseRoutes,
@@ -908,7 +908,7 @@ describe("備課對話 (session page)", () => {
     const bar = await screen.findByRole("textbox", { name: "給 Manna 的話" });
     // One box for questions and changes, and the worksheet it works on.
     expect(bar).toHaveAttribute("placeholder", "問問題，或說要怎麼改學習單（例如：把 C 區第 2 題改成比較表）");
-    expect(screen.getByText("目前的學習單：U")).toBeInTheDocument();
+    expect(screen.queryByText(/目前的學習單：/)).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: "問 Manna" })).not.toBeInTheDocument();
     expect(screen.getByText("AI 產生的內容可能有錯，請核對重要資訊。")).toBeInTheDocument();
 
@@ -923,19 +923,56 @@ describe("備課對話 (session page)", () => {
     await waitFor(() => expect(bar).toHaveValue(""));
   });
 
-  it("the bar is disabled while a turn runs", async () => {
+  it("while a turn runs the box stays typeable; only sending waits", async () => {
     signIn();
-    mockApi({
+    const api = mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: session([turn("activity", { status: "running" })], { next: ["worksheet"] }),
     });
+    const user = userEvent.setup();
     renderApp("/prep/7");
     const bar = await screen.findByRole("textbox", { name: "給 Manna 的話" });
-    expect(bar).toBeDisabled();
+    expect(bar).toBeEnabled();
+    expect(bar).not.toHaveAttribute("readonly");
     expect(bar).toHaveAttribute("placeholder", "Manna 正在處理…");
     expect(screen.getAllByText("Manna 正在處理…").length).toBeGreaterThan(0);
+    await user.click(bar);
+    await user.type(bar, "下一句先寫好{Enter}");
+    // Typed text stays, Enter sent nothing, and the box still has the focus.
+    expect(bar).toHaveValue("下一句先寫好");
+    expect(bar).toHaveFocus();
+    expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(0);
+    expect(screen.getByText("Manna 做完後就能送出")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出" })).toBeDisabled();
+    expect(bar.closest(".prep-composer")).not.toHaveAttribute("data-disabled");
     expect(within(screen.getByRole("group", { name: "接下來可以" })).getByRole("button", { name: "完整學習單" })).toBeDisabled();
+  });
+
+  it("keeps the focus in the box when the turn finishes", async () => {
+    signIn();
+    let done = false;
+    mockApi({
+      ...baseRoutes(),
+      [`GET ${S7}`]: () =>
+        done ? session([turn("activity", { result: plan, interaction_id: 77 })]) : session([turn("activity", { status: "running" })]),
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const bar = await screen.findByRole("textbox", { name: "給 Manna 的話" });
+    await user.click(bar);
+    await user.type(bar, "等一下");
+    done = true;
+    await waitFor(() => expect(screen.getByRole("button", { name: "送出" })).toBeEnabled());
+    expect(bar).toHaveFocus();
+    expect(screen.queryByText("Manna 做完後就能送出")).not.toBeInTheDocument();
+  });
+
+  it("the AI disclaimer scrolls with the conversation, not in the sticky bar", async () => {
+    signIn();
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([turn("activity", { result: plan, interaction_id: 77 })]) });
+    renderApp("/prep/7");
+    const note = await screen.findByText(AI_DISCLAIMER);
+    expect(note.closest(".prep-bottom")).toBeNull();
   });
 
   it("polls while a turn runs and stops when running is false", async () => {

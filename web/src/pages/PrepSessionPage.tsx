@@ -36,6 +36,7 @@ import { KitDownload } from "../components/prep/KitDownload";
 import { useSplitResize } from "../components/prep/useSplitResize";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
 import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
+import { scrollToEl, scrollToIdWhenReady, whenVisible } from "../lib/scroll";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ChatCard, ResourcesCard, ReviseCard, WorksheetTurnCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
@@ -86,11 +87,12 @@ function useNarrow(): boolean {
 
 /** The worksheet preview's block, scrolled into view (the preview's blocks carry `sheet-block-<id>`). */
 function scrollToBlock(blockId: string) {
-  document.getElementById(`sheet-block-${blockId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  scrollToEl(document.getElementById(`sheet-block-${blockId}`), "center");
 }
 
 /** How long changed blocks stay highlighted after a revision. */
 const FLASH_MS = 4000;
+const FLASH_FALLBACK_MS = 60_000;
 
 export function PrepSessionPage() {
   const { sessionId } = useParams();
@@ -219,21 +221,35 @@ function PrepSessionView({ id }: { id: number }) {
 
   useEffect(() => {
     if (arrived === null) return;
-    document.getElementById(`prep-turn-${arrived}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    scrollToEl(document.getElementById(`prep-turn-${arrived}`), "start");
   }, [arrived]);
 
-  useEffect(() => {
-    if (!flash) return undefined;
-    const timer = setTimeout(() => setFlash(null), FLASH_MS);
-    return () => clearTimeout(timer);
-  }, [flash]);
-
-  // A chat turn changed blocks: the preview scrolls to the first one once the new version is in.
+  // A chat turn changed blocks: the preview scrolls to the first one once its new version is in
+  // the page (once; it gives way when the teacher scrolls, points or types), and the highlight
+  // runs for FLASH_MS from the moment that block is on screen, not from the end of the turn.
   useEffect(() => {
     const first = flash ? [...flash.ids][0] : undefined;
     if (!first) return undefined;
-    const timers = [400, 1500].map((ms) => setTimeout(() => scrollToBlock(first), ms));
-    return () => timers.forEach(clearTimeout);
+    let unwatch: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const clear = () => setFlash(null);
+    const cancel = scrollToIdWhenReady(`sheet-block-${first}`, {
+      onScrolled: (el) => {
+        unwatch?.();
+        unwatch = whenVisible(el, () => {
+          if (timer !== undefined) clearTimeout(timer);
+          timer = setTimeout(clear, FLASH_MS);
+        });
+      },
+    });
+    // Never seen (a hidden tab, a block that is gone): the highlight does not stay forever.
+    const fallback = setTimeout(clear, FLASH_FALLBACK_MS);
+    return () => {
+      cancel();
+      unwatch?.();
+      clearTimeout(fallback);
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [flash]);
 
   const onLabels = useCallback((worksheetId: number, map: Record<string, string>) => {
@@ -324,7 +340,7 @@ function PrepSessionView({ id }: { id: number }) {
       setProposalsKey((prev) => ({ ...prev, [t.worksheetId]: (prev[t.worksheetId] ?? 0) + 1 }));
       setTarget(null);
       setDraft("");
-      document.getElementById(`sheet-block-${t.blockId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      scrollToEl(document.getElementById(`sheet-block-${t.blockId}`), "center");
     } catch (err) {
       setSendError(errorMessage(err));
     } finally {
@@ -358,6 +374,8 @@ function PrepSessionView({ id }: { id: number }) {
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
     e.preventDefault();
+    // While Manna works the teacher may keep typing; only sending waits (sendDraft also checks).
+    if (locked) return;
     void sendDraft();
   }
 
@@ -801,6 +819,8 @@ function PrepSessionView({ id }: { id: number }) {
           </li>
         ))}
       </ol>
+      {/* With the conversation, not in the sticky bar: it scrolls away with the turns. */}
+      <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
 
       {session.material &&
         !longSeen &&
@@ -839,7 +859,8 @@ function PrepSessionView({ id }: { id: number }) {
         {/* From 「改這一區」 (on a card above or from this bar): asked here, where she is typing. */}
         <MemorySuggestionCards items={reviseSuggestions} onDone={memory.drop} onRemembered={memory.reload} />
         <ErrorText message={sendError} />
-        {currentSheet && !target && (
+        {/* Beside the conversation the worksheet itself is in view; only its own tab needs the name. */}
+        {currentSheet && !target && (!split || narrow) && (
           <p className="prep-current-sheet">目前的學習單：{currentSheet.title}</p>
         )}
         {target && (
@@ -862,7 +883,6 @@ function PrepSessionView({ id }: { id: number }) {
             mode switch bottom-left, the send button bottom-right. */}
         <div
           className="prep-composer"
-          data-disabled={locked || undefined}
           data-tall={composerTall || undefined}
           data-dragging={(canAttach && drop.dragging) || undefined}
           onDragEnter={drop.onDragEnter}
@@ -904,10 +924,10 @@ function PrepSessionView({ id }: { id: number }) {
           <textarea
             id={`${ids}-draft`}
             ref={draftRef}
-            rows={3}
+            rows={2}
             maxLength={2000}
             value={draft}
-            disabled={locked}
+            readOnly={sending}
             placeholder={
               running
                 ? WORKING_LINE
@@ -921,8 +941,14 @@ function PrepSessionView({ id }: { id: number }) {
           />
           <div className="prep-composer-tools">
             {canAttach && <AttachButton onFiles={attach.add} disabled={locked} />}
-            <span className="prep-composer-hint" aria-hidden="true">
-              Enter 送出・Shift＋Enter 換行
+            {!running && (
+              <span className="prep-composer-hint" aria-hidden="true">
+                Enter 送出・Shift＋Enter 換行
+              </span>
+            )}
+            {/* Always present, so the line is announced when it appears. */}
+            <span className="prep-composer-wait" role="status">
+              {running ? "Manna 做完後就能送出" : ""}
             </span>
             <button
               type="submit"
@@ -944,10 +970,9 @@ function PrepSessionView({ id }: { id: number }) {
             </button>
           </div>
         </div>
-        {canAttach && (
+        {canAttach && (attach.imageIds.length > 0 || attach.uploading || drop.dragging) && (
           <p className="prep-attach-note">{IMAGE_PRIVACY_NOTE}</p>
         )}
-        <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
       </section>
 
