@@ -352,7 +352,7 @@ describe("the conversation and the worksheet side by side", () => {
     const chatPane = within(screen.getByRole("region", { name: "對話" }));
     // The turn's card is a line, not the preview.
     expect(chatPane.getByText("學習單一")).toBeInTheDocument();
-    expect(chatPane.getByText("已顯示在右邊")).toBeInTheDocument();
+    expect(chatPane.getByText("已顯示在左邊")).toBeInTheDocument();
     expect(chatPane.queryByRole("article")).not.toBeInTheDocument();
     expect(screen.queryByRole("tablist", { name: "對話或學習單" })).not.toBeInTheDocument();
   });
@@ -375,7 +375,7 @@ describe("the conversation and the worksheet side by side", () => {
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "chat", request: "改簡單", worksheet_id: 11 });
     // The compact card of the other worksheet puts it in the pane.
-    await user.click(screen.getAllByRole("button", { name: "在右邊看" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: "在左邊看" })[0]!);
     expect(screen.getByText("目前的學習單：學習單二")).toBeInTheDocument();
   });
 

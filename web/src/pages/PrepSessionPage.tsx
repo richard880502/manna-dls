@@ -368,7 +368,7 @@ function PrepSessionView({ id }: { id: number }) {
     apply(await api.getPrepSession(id));
   }
 
-  /** 「在右邊看」: this worksheet becomes the one beside the conversation (a tab of its own on a narrow screen). */
+  /** 「在左邊看」: this worksheet becomes the one beside the conversation (a tab of its own on a narrow screen). */
   function showSheet(turnId: number) {
     setPickedTurn(turnId);
     if (narrow) setTab("sheet");
