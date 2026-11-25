@@ -786,6 +786,14 @@
   }
 }
 
+/* The editor's tables carry a POS select and a 級別 column: two side by side need more room, or
+ * words break mid-way (「importan / t」). */
+@container (max-width: 56rem) {
+  .ws-result .ws-keyvocab-cols.is-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .ws-bank-words {
   display: grid;
   gap: var(--space-xs);
