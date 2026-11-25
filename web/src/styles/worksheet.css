@@ -2503,3 +2503,12 @@ button.bloom-seg:focus-visible {
     min-height: var(--hit);
   }
 }
+
+/* 調整設定 is never a dead end: 回到學習單 at the top of the form. */
+.ws-options-back {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+  margin: 0 0 var(--space-lg);
+}

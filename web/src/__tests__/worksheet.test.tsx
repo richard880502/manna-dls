@@ -588,6 +588,23 @@ describe("result editor", () => {
     expect(screen.getByRole("textbox", { name: "區塊標題 B" })).toHaveValue("Paragraph 2: Compare");
   });
 
+  it("調整設定 can be left without generating: 回到學習單 at the top and beside the generate button", async () => {
+    const api = mockApi(routes(generated()));
+    const user = userEvent.setup();
+    renderApp("/worksheets/5");
+    await screen.findByRole("textbox", { name: "區塊標題 B" });
+    await user.click(screen.getByRole("button", { name: "調整設定" }));
+    // The form, with a way back at the top…
+    await user.click(await screen.findByRole("button", { name: "← 回到學習單" }));
+    expect(await screen.findByRole("textbox", { name: "區塊標題 B" })).toBeInTheDocument();
+    // …and beside the generate button.
+    await user.click(screen.getByRole("button", { name: "調整設定" }));
+    await user.click(await screen.findByRole("button", { name: "不改了，回到學習單" }));
+    expect(await screen.findByRole("textbox", { name: "區塊標題 B" })).toBeInTheDocument();
+    // Nothing was generated on the way.
+    expect(api.callsTo("POST", `${WS}/generate`)).toHaveLength(0);
+  });
+
   it("regenerates one block and can undo it", async () => {
     const regenerated = generated({
       version_no: 3,
