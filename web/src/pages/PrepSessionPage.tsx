@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
@@ -141,7 +141,7 @@ function PrepSessionView({ id }: { id: number }) {
   // The worksheet shown beside the conversation: the turn the teacher chose, else the latest one.
   const [pickedTurn, setPickedTurn] = useState<number | null>(null);
   const narrow = useNarrow();
-  const { containerRef, share, dragging, min, max, dividerProps } = useSplitResize();
+  const { containerRef, share, dragging, canResize, columns, edge, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -586,7 +586,7 @@ function PrepSessionView({ id }: { id: number }) {
     <div
       ref={containerRef}
       className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}${dragging ? " is-resizing" : ""}`}
-      style={split && !narrow ? ({ "--prep-sheet-share": share } as CSSProperties) : undefined}
+      style={split && !narrow ? { gridTemplateColumns: columns } : undefined}
     >
       {split && narrow && (
         <div className="prep-split-tabs" role="tablist" aria-label="對話或學習單">
@@ -657,7 +657,11 @@ function PrepSessionView({ id }: { id: number }) {
           aria-valuenow={Math.round(share)}
           aria-valuemin={Math.ceil(min)}
           aria-valuemax={Math.floor(max)}
-          tabIndex={0}
+          aria-valuetext={`學習單 ${Math.round(share)}%，對話 ${100 - Math.round(share)}%`}
+          aria-disabled={canResize ? undefined : true}
+          data-edge={edge ?? undefined}
+          title="拖曳調整寬度；按兩下或 Enter 還原"
+          tabIndex={canResize ? 0 : -1}
           {...dividerProps}
         />
       )}
