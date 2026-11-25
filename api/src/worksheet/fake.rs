@@ -591,6 +591,7 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             "key_vocabulary": [{
                 "word": "zzzunlisted", "paragraph_no": 1, "context_sentence": "Not in the text.",
                 "student_friendly_definition_en": "a made-up word",
+                "pos": "n.", "meaning_zh": "編出來的字",
             }],
         });
     }
@@ -607,6 +608,9 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 "word": c["word"], "paragraph_no": c["paragraph_no"],
                 "context_sentence": c["sentence"],
                 "student_friendly_definition_en": "an important idea in this text",
+                // The first part of speech the list gives, else a noun; a fixed Chinese meaning.
+                "pos": c["pos"].as_str().and_then(|p| p.split('/').next()).filter(|p| !p.is_empty()).unwrap_or("n."),
+                "meaning_zh": "這篇文章裡的重要字詞",
             })
         })
         .collect();

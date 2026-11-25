@@ -153,6 +153,7 @@ fn sample_candidates(paragraphs: &[String]) -> Vec<crate::worksheet::checks::Can
                     out.push(crate::worksheet::checks::Candidate {
                         word,
                         level: None,
+                        pos: String::new(),
                         paragraph_no: pi as i64 + 1,
                         sentence: sentence.to_string(),
                     });
@@ -297,7 +298,7 @@ fn prepare(key: &str, sample: &Sample) -> Result<Prepared, String> {
                 json!({
                     "task": "worksheet_warmup", "title": FAKE_TITLE, "vocab_count": 5,
                     "candidates": candidates.iter()
-                        .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence }))
+                        .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence, "pos": c.pos }))
                         .collect::<Vec<_>>(),
                 }),
                 2000,

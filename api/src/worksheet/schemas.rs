@@ -158,6 +158,12 @@ pub struct RawKeyWord {
     pub paragraph_no: i64,
     pub context_sentence: String,
     pub student_friendly_definition_en: String,
+    /// Part of speech of the word as the context sentence uses it (checked by the server).
+    #[serde(default)]
+    pub pos: String,
+    /// Short Traditional Chinese meaning of that sense.
+    #[serde(default)]
+    pub meaning_zh: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,10 +201,12 @@ pub fn warmup_schema() -> Value {
                         "word": { "type": "string" },
                         "paragraph_no": { "type": "integer" },
                         "context_sentence": { "type": "string" },
-                        "student_friendly_definition_en": { "type": "string" }
+                        "student_friendly_definition_en": { "type": "string" },
+                        "pos": { "type": "string" },
+                        "meaning_zh": { "type": "string" }
                     },
                     "required": ["word", "paragraph_no", "context_sentence",
-                                 "student_friendly_definition_en"],
+                                 "student_friendly_definition_en", "pos", "meaning_zh"],
                     "additionalProperties": false
                 }
             }

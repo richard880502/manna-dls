@@ -1677,11 +1677,37 @@ export interface WsVocab {
   word: string;
   /** 由伺服器查詞彙表；查不到是 null */
   level: number | null;
+  /** 英文字義 */
   definition: string;
   context: string;
   paragraph_id: string | null;
-  /** 作答指示裡的功能詞（compare、support your answer…），definition 是中文提示（SIOP V2）；一般關鍵字沒有這一欄 */
+  /** 作答指示裡的功能詞（compare、support your answer…；Key Vocabulary 的 Academic 欄，SIOP V2）；一般關鍵字沒有這一欄 */
   task_word?: boolean;
+  /** 詞性（n.、v.、adj.、adv.、prep.、conj.、pron.、det.、aux.、interj.、phr.）；舊學習單沒有 */
+  pos?: string;
+  /** 中文字義；還沒有時沒有這一欄（印英文字義） */
+  meaning_zh?: string;
+}
+
+/** Key Vocabulary 字義的語言：en（預設）或 zh */
+export type WsVocabLang = "en" | "zh";
+
+/** 字詞表鷹架（Word bank）的一個字 */
+export interface WsBankWord {
+  word: string;
+  pos?: string;
+  /** 英文字義 */
+  definition?: string;
+  meaning_zh?: string;
+  /** 老師勾選：學生版這個字旁邊也印字義 */
+  show_meaning?: boolean;
+}
+
+/** 字詞表鷹架的字（每個字都印詞性；勾選的字才印字義）。純文字的字詞表由伺服器讀成這個；不是一串單字的（Linking words for …）沒有 */
+export interface WsWordBank {
+  /** 印出來的字義語言（預設 en） */
+  lang?: WsVocabLang;
+  words: WsBankWord[];
 }
 
 export interface WsItem {
@@ -1817,6 +1843,8 @@ export interface WsScaffold {
   origin: WsOrigin;
   /** 印在它上面的標題（照版型產生時是原學習單的標題）；沒有時印種類的英文標題 */
   heading?: string;
+  /** 字詞表鷹架的字與詞性、字義；其他鷹架沒有 */
+  bank?: WsWordBank;
 }
 
 export interface WsBlock {
@@ -1943,6 +1971,8 @@ export interface WorksheetContent {
   student_order?: WsLevel[];
   /** 字詞表放在學習單最後：每一區的字詞表合成一張，印在最後一區之後（預設印在各區裡）；沒有這個鍵就是各區裡 */
   vocabulary_at_end?: boolean;
+  /** Key Vocabulary 印哪一種字義：沒有這個鍵就是英文 */
+  vocabulary_language?: WsVocabLang;
   chosen: WsChosen | null;
   notices: string[];
 }
@@ -2581,7 +2611,17 @@ export interface WsSheet {
   objectives: string[];
   blocks: WsSheetBlock[];
   /** 字詞表放在學習單最後時：各區字詞表合成的一張（各區的 vocabulary 都是空的）；沒有時沒有這個鍵 */
-  end_words?: Array<{ word: string; level: number | null; definition: string }>;
+  end_words?: WsSheetWord[];
+}
+
+/** Key Vocabulary 的一列（definition 已經是選定語言的字義） */
+export interface WsSheetWord {
+  word: string;
+  level: number | null;
+  pos?: string;
+  definition: string;
+  /** Academic 欄（作答指示裡的功能詞）；沒有這個鍵是 Content 欄 */
+  task_word?: boolean;
 }
 
 export interface WsSheetBlock {
@@ -2594,7 +2634,7 @@ export interface WsSheetBlock {
   steps: string[];
   /** 印在編號步驟上面的一行（Follow the steps below.）；沒有步驟或舊的伺服器時沒有 */
   steps_lead?: string;
-  vocabulary: Array<{ word: string; level: number | null; definition: string }>;
+  vocabulary: WsSheetWord[];
   supports: Array<{ type: WsScaffoldType; kind: string; heading?: string; content: string }>;
   items: Array<{
     /** 題目在學習單裡的 id（註記錨在題目上）；舊的伺服器沒有這一欄 */

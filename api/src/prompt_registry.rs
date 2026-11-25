@@ -193,7 +193,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "worksheet_warmup",
         name_zh: "暖身活動（一般學習單）",
         group: G_WORKSHEET,
-        description: "一般學習單產生的第 2 步：設計暖身（喚醒背景知識、關鍵字彙）。暖身的指示是活動介紹（In this activity, you will …），作答步驟由程序鷹架另外印。「照我的學習單做」不會用這一個，它用「照我的學習單做：每一區的題目」。",
+        description: "一般學習單產生的第 2 步：設計暖身（喚醒背景知識、關鍵字彙）。暖身的指示是活動介紹（In this activity, you will …），作答步驟由程序鷹架另外印。每個關鍵字除了英文解釋，還要給詞性（pos）與簡短中文意思（meaning_zh），印在學習單的 Key Vocabulary 字詞表（Content 欄）；詞性由程式對照詞彙表檢查。「照我的學習單做」不會用這一個，它用「照我的學習單做：每一區的題目」。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -214,7 +214,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "worksheet_scaffolds",
         name_zh: "學習支持／鷹架（一般學習單）",
         group: G_WORKSHEET,
-        description: "一般學習單產生的第 3 步：為每一區設計語言、教學、程序三種鷹架。",
+        description: "一般學習單產生的第 3 步：為每一區設計語言、教學、程序三種鷹架。字詞表鷹架不要重複 Key Vocabulary 已列出的字（印出時，字都已在 Key Vocabulary 裡的字詞表鷹架會被省略）。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -484,7 +484,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "worksheet_vocab_gloss",
         name_zh: "超出級別的字：提供字義",
         group: G_VOCAB,
-        description: "詞彙級別檢查後，老師選「提供字義」時：為每個超出級別的字寫出在學習單上下文裡的意思。",
+        description: "詞彙級別檢查後，老師選「提供字義」時：為每個超出級別的字寫出在學習單上下文裡的意思。老師把 Key Vocabulary 字詞表切換成中文字義、而有些字還沒有中文字義時，也用這一個提示詞一次補齊。",
         uses_user_template: true,
         vars: vars![
             opt("target_level", "目標級別"),
@@ -659,7 +659,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_scaffolds",
         name_zh: "逐步設計第 5 步：語言與教學鷹架",
         group: G_SOP,
-        description: "逐步設計第 5 步的第 2 次呼叫：為每一段的任務安排語言與教學鷹架。程序鷹架一律由程式依任務自動產生；這一次沒成功時，任務仍保留程式產生的程序鷹架。",
+        description: "逐步設計第 5 步的第 2 次呼叫：為每一段的任務安排語言與教學鷹架。程序鷹架一律由程式依任務自動產生；這一次沒成功時，任務仍保留程式產生的程序鷹架。字詞表鷹架不要重複 Key Vocabulary 已列出的字。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -680,7 +680,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_warmup",
         name_zh: "逐步設計第 6 步：暖身與關鍵字彙",
         group: G_SOP,
-        description: "逐步設計第 6 步：設計喚醒背景知識的活動，並從程式依詞彙表挑出的候選字裡選關鍵字彙。暖身的指示是活動介紹（In this activity, you will …），不重複作答步驟。字彙級別一律由程式帶入，模型不輸出級別。",
+        description: "逐步設計第 6 步：設計喚醒背景知識的活動，並從程式依詞彙表挑出的候選字裡選關鍵字彙。暖身的指示是活動介紹（In this activity, you will …），不重複作答步驟。字彙級別一律由程式帶入，模型不輸出級別；每個關鍵字另給詞性（pos）與簡短中文意思（meaning_zh），詞性由程式對照詞彙表檢查。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),

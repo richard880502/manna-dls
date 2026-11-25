@@ -18,6 +18,7 @@ import type {
   WsScaffold,
   WsScaffoldType,
   WsSupportKind,
+  WsWordBank,
 } from "../api/types";
 import { withOrganizerFor } from "./organizer";
 
@@ -807,3 +808,80 @@ export const percent = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
 export function frameShown(level: WsLevel, levels: readonly WsLevel[]): boolean {
   return level !== "advanced" || !levels.some((l) => l !== "advanced");
 }
+
+// ---------------------------------------------------------------- Key Vocabulary
+
+/** The parts of speech a row may carry (the server keeps the same set). */
+export const POS_OPTIONS = ["n.", "v.", "adj.", "adv.", "prep.", "conj.", "pron.", "det.", "aux.", "interj.", "phr."] as const;
+
+/** One row of Key Vocabulary as every printed form shows it. */
+export interface KeyWordRow {
+  /** Unique within the table. */
+  id: string;
+  word: string;
+  pos: string;
+  /** Academic column (the task words of the instructions); otherwise Content. */
+  task: boolean;
+  meaning: string;
+}
+
+/** The two groups of Key Vocabulary, a group without rows left out. */
+export function keyVocabularyGroups<T extends { task: boolean }>(rows: readonly T[]): Array<{ title: "Content" | "Academic"; rows: T[] }> {
+  return [
+    { title: "Content" as const, rows: rows.filter((r) => !r.task) },
+    { title: "Academic" as const, rows: rows.filter((r) => r.task) },
+  ].filter((g) => g.rows.length > 0);
+}
+
+/** Key Vocabulary as plain text, for 複製. */
+export function keyVocabularyText(rows: readonly KeyWordRow[]): string[] {
+  if (rows.length === 0) return [];
+  const lines = ["Key Vocabulary"];
+  keyVocabularyGroups(rows).forEach((g) => {
+    lines.push(g.title);
+    g.rows.forEach((r) => lines.push(`  ${r.word}${r.pos ? ` (${r.pos})` : ""}: ${r.meaning}`));
+  });
+  return lines;
+}
+
+/** The meaning of a row in the worksheet's language: the Chinese one falls back to the English one. */
+export function vocabMeaning(v: { definition: string; meaning_zh?: string }, lang: "en" | "zh" | undefined): string {
+  const en = v.definition.trim();
+  const zh = (v.meaning_zh ?? "").trim();
+  return lang === "zh" && zh ? zh : en || zh;
+}
+
+/** The words of a word bank's text (comma separated), the way the server reads it; null for anything else. */
+export function parseWordList(text: string): string[] | null {
+  let t = text.trim();
+  if (/^word bank:/i.test(t)) t = t.slice(10).trim();
+  if (t === "" || /[:：]/.test(t)) return null;
+  const words: string[] = [];
+  for (const raw of t.split(/[,，、;；\n/]/)) {
+    const w = raw.trim().replace(/\.$/, "").trim();
+    if (w === "") continue;
+    if (!/^[A-Za-z' ’-]+$/.test(w) || w.split(/\s+/).length > 4 || w.length > 40) return null;
+    if (!words.some((x) => x.toLowerCase() === w.toLowerCase())) words.push(w);
+  }
+  // One long entry is a sentence, not a list.
+  if (words.length === 1 && words[0]!.split(/\s+/).length > 2) return null;
+  return words.length > 0 && words.length <= 40 ? words : null;
+}
+
+/** A word bank after its text was edited: the words still listed keep what is known about them. */
+export function bankWithText(bank: WsWordBank | undefined, text: string): WsWordBank | undefined {
+  const words = parseWordList(text);
+  if (!words) return undefined;
+  const old = bank?.words ?? [];
+  return {
+    ...(bank?.lang ? { lang: bank.lang } : {}),
+    words: words.map((word) => {
+      const known = old.find((o) => o.word.toLowerCase() === word.toLowerCase());
+      return known ? { ...known, word } : { word };
+    }),
+  };
+}
+
+/** Whether a word bank still lacks a part of speech or any meaning (the server fills them). */
+export const bankNeedsFill = (bank: WsWordBank | undefined): boolean =>
+  (bank?.words ?? []).some((w) => !(w.pos ?? "").trim() || !((w.definition ?? "").trim() || (w.meaning_zh ?? "").trim()));

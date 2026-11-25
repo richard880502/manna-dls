@@ -505,6 +505,9 @@ export const api = {
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/regenerate`),
   restoreWordTable: (id: number, blockId: string) =>
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/restore-word-table`),
+  /** 補上中文字義／字詞表鷹架的詞性與字義：只有缺的才請 Manna 寫（一次呼叫），沒有缺的不呼叫 */
+  fillVocabularyMeanings: (id: number, scope: { tables?: boolean; banks?: boolean }) =>
+    post<WorksheetState & { notice: string | null; filled: number }>(`/worksheets/${id}/vocabulary-meanings`, scope),
   undoWorksheetBlock: (id: number, blockId: string) =>
     post<WorksheetState>(`/worksheets/${id}/blocks/${encodeURIComponent(blockId)}/undo`),
   // 修改歷程

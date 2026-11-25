@@ -374,7 +374,9 @@ async fn nothing_selected_still_generates_and_says_what_was_chosen() {
             "worksheet_tasks",
             "worksheet_warmup",
             "worksheet_scaffolds",
-            "worksheet_exit_ticket"
+            "worksheet_exit_ticket",
+            // the word bank's parts of speech and meanings, one call for the worksheet
+            "worksheet_vocab_gloss"
         ]
     );
     let with_scaffold: i64 = sqlx::query_scalar(
@@ -384,7 +386,7 @@ async fn nothing_selected_still_generates_and_says_what_was_chosen() {
     .fetch_one(&app.db)
     .await
     .unwrap();
-    assert_eq!(with_scaffold, 4);
+    assert_eq!(with_scaffold, 5);
 }
 
 #[tokio::test]
@@ -1684,7 +1686,10 @@ async fn a_runaway_output_is_kept_for_diagnosis_and_repaired() {
     .fetch_all(&app.db)
     .await
     .unwrap();
-    let first: Vec<&Row> = rows.iter().filter(|r| r.1 == 1).collect();
+    let first: Vec<&Row> = rows
+        .iter()
+        .filter(|r| r.1 == 1 && r.0 != "worksheet_vocab_gloss")
+        .collect();
     assert_eq!(first.len(), 4);
     for (module, _, status, output, checks) in first {
         assert_eq!(status, "blocked", "{module}");
@@ -1841,12 +1846,12 @@ async fn the_word_table_can_move_to_the_end_of_every_printed_form() {
     }
     assert_eq!(at_end["end_words"].as_array().unwrap().len(), warm_words);
 
-    // DOCX: the Key words table comes after every block's text.
+    // DOCX: the Key Vocabulary table comes after every block's text.
     let xml = export_docx(&app, &t, id).await;
     let last_block = xml.rfind("Heading2").expect("blocks are printed");
-    let key_words = xml.find("Key words").expect("the table is printed");
+    let key_words = xml.find("Key Vocabulary").expect("the table is printed");
     assert!(key_words > last_block, "the table is after the last block");
-    assert_eq!(xml.matches("Key words").count(), 1);
+    assert_eq!(xml.matches("Key Vocabulary").count(), 1);
 
     // PDF: still produced.
     let (status, _, _, bytes) = raw_get(
@@ -1999,4 +2004,519 @@ async fn sentence_frames_and_hints_go_under_their_own_question() {
             .all(|i| i["answer_format"] == "簡答題" || i["answer_format"] == "段落寫作"));
         assert!(items.iter().any(|i| i.get("hint").is_some()));
     }
+}
+
+// ---------------------------------------------------------------- Key Vocabulary (the word table)
+
+/// A worksheet with one warm-up block holding the given vocabulary rows and scaffolds.
+async fn with_block(
+    app: &common::TestApp,
+    t: &str,
+    vocabulary: Value,
+    scaffolds: Value,
+    extra: Value,
+) -> (i64, Value) {
+    let id = direct(app, t, &passage("")).await["id"].as_i64().unwrap();
+    let (_, state) = app.get(&format!("/api/worksheets/{id}"), Some(t)).await;
+    let mut content = state["content"].clone();
+    content["levels"] = json!(["standard"]);
+    content["blocks"] = json!([{
+        "id": "warmup", "kind": "warmup", "enabled": true, "title": "Warm-up",
+        "vocabulary": vocabulary, "scaffolds": scaffolds,
+    }]);
+    for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+        content[k] = v;
+    }
+    let (s, saved) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(t),
+            json!({ "content": content, "base_version_no": state["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{saved}");
+    (id, saved)
+}
+
+async fn gloss_calls(app: &common::TestApp) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ai_interactions WHERE module = 'worksheet_vocab_gloss'",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap()
+}
+
+fn row_of<'a>(sheet: &'a Value, word: &str) -> &'a Value {
+    sheet["blocks"][0]["vocabulary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["word"] == word)
+        .unwrap_or_else(|| panic!("{word} not on the sheet: {sheet}"))
+}
+
+#[tokio::test]
+async fn a_new_generation_stores_the_part_of_speech_and_both_meanings() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let pi = app.pi_token().await;
+    let (s, v) = app
+        .post_csv("/api/admin/vocabulary/import", Some(&pi), &vocabulary_csv())
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = direct(&app, &t, &passage("")).await["id"].as_i64().unwrap();
+    let state = generate(&app, &t, id).await;
+    let listed = [
+        ("umbrella", "n."),
+        ("neighbor", "n."),
+        ("disappear", "v."),
+        ("unexpected", "adj."),
+        ("trust", "n."),
+        ("stand", "v."),
+    ];
+    let rows = state["content"]["blocks"][0]["vocabulary"]
+        .as_array()
+        .unwrap();
+    assert!(!rows.is_empty());
+    for r in rows.iter().filter(|r| r["task_word"] != true) {
+        let word = r["word"].as_str().unwrap();
+        // The model's part of speech is checked against the list; the list's first one here.
+        if let Some((_, pos)) = listed.iter().find(|(w, _)| *w == word) {
+            assert_eq!(r["pos"], *pos, "{word}");
+        }
+        assert!(!r["pos"].as_str().unwrap_or_default().is_empty(), "{word}");
+        assert!(has_cjk(r["meaning_zh"].as_str().unwrap()), "{word}: {r}");
+        assert!(!has_cjk(r["definition"].as_str().unwrap()), "{word}: {r}");
+    }
+    // The sheet prints English by default, with the part of speech.
+    let sheet = sheet(&app, &t, id, "standard", "student").await;
+    for r in sheet["blocks"][0]["vocabulary"].as_array().unwrap() {
+        assert!(!has_cjk(r["definition"].as_str().unwrap()), "{r}");
+        assert!(r["pos"].as_str().is_some_and(|p| !p.is_empty()), "{r}");
+    }
+}
+
+#[tokio::test]
+async fn old_content_with_a_chinese_task_word_hint_and_no_pos_still_renders() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let (id, saved) = with_block(&app, &t, json!([]), json!([]), json!({})).await;
+    // What was stored before pos and meaning_zh existed: the Chinese hint as the definition.
+    let mut content = saved["content"].clone();
+    content["blocks"][0]["vocabulary"] = json!([
+        { "word": "umbrella", "level": 2, "definition": "a thing for rain", "context": "", "paragraph_id": null },
+        { "word": "compare", "level": null, "definition": "比較（找出相同與不同）", "context": "",
+          "paragraph_id": null, "task_word": true },
+    ]);
+    sqlx::query(
+        "UPDATE worksheet_versions SET content = $1 WHERE worksheet_id = $2 AND version_no = $3",
+    )
+    .bind(&content)
+    .bind(id)
+    .bind(saved["version_no"].as_i64().unwrap() as i32)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (s, state) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
+    assert_eq!(s, StatusCode::OK, "{state}");
+    let rows = &state["content"]["blocks"][0]["vocabulary"];
+    assert_eq!(rows[0]["definition"], "a thing for rain");
+    assert!(
+        rows[0].get("pos").is_none(),
+        "a word of old content has no part of speech"
+    );
+    assert_eq!(rows[1]["meaning_zh"], "比較（找出相同與不同）");
+    assert_eq!(
+        rows[1]["definition"],
+        "to look at how things are the same and different"
+    );
+    assert_eq!(rows[1]["pos"], "v.");
+    // English by default; the printed forms agree.
+    let sheet = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        row_of(&sheet, "compare")["definition"],
+        "to look at how things are the same and different"
+    );
+    assert_eq!(row_of(&sheet, "compare")["pos"], "v.");
+    assert!(row_of(&sheet, "umbrella").get("pos").is_none());
+    let xml = export_docx(&app, &t, id).await;
+    assert!(
+        xml.contains(">Key Vocabulary<") && xml.contains(">Academic<") && xml.contains(">Content<")
+    );
+    assert!(xml.contains("a thing for rain"));
+    assert!(!xml.contains("比較"));
+}
+
+#[tokio::test]
+async fn the_language_switch_is_saved_and_versioned_and_chinese_is_filled_once() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let rows = json!([
+        { "word": "umbrella", "level": 2, "pos": "n.", "definition": "a thing that keeps rain off you",
+          "meaning_zh": "雨傘", "context": "", "paragraph_id": null },
+        { "word": "trust", "level": 3, "pos": "v.", "definition": "to believe someone is honest",
+          "context": "", "paragraph_id": null },
+        { "word": "compare", "pos": "v.", "definition": "to look at how things are the same and different",
+          "meaning_zh": "比較（找出相同與不同）", "task_word": true, "context": "", "paragraph_id": null },
+    ]);
+    let (id, saved) = with_block(&app, &t, rows, json!([]), json!({})).await;
+    let url = format!("/api/worksheets/{id}/vocabulary-meanings");
+
+    // Nothing asked for: no key, English.
+    assert!(saved["content"].get("vocabulary_language").is_none());
+    let english = export_docx(&app, &t, id).await;
+    assert!(english.contains("a thing that keeps rain off you") && !english.contains("雨傘"));
+
+    // The switch is a content field, saved as a new version like 字詞表放在學習單最後.
+    let mut content = saved["content"].clone();
+    content["vocabulary_language"] = json!("zh");
+    let (s, zh) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": saved["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{zh}");
+    assert_eq!(zh["content"]["vocabulary_language"], "zh");
+    assert!(zh["version_no"].as_i64() > saved["version_no"].as_i64());
+    // Before the call: the word without Chinese keeps its English meaning.
+    let sheet1 = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(row_of(&sheet1, "umbrella")["definition"], "雨傘");
+    assert_eq!(
+        row_of(&sheet1, "trust")["definition"],
+        "to believe someone is honest"
+    );
+    assert_eq!(
+        row_of(&sheet1, "compare")["definition"],
+        "比較（找出相同與不同）"
+    );
+
+    // One model call writes the missing Chinese meaning, as a new version.
+    assert_eq!(gloss_calls(&app).await, 0);
+    let (s, filled) = app.post(&url, Some(&t), json!({ "tables": true })).await;
+    assert_eq!(s, StatusCode::OK, "{filled}");
+    assert_eq!(gloss_calls(&app).await, 1);
+    assert!(filled["notice"].is_null(), "{filled}");
+    assert_eq!(filled["filled"], 1);
+    assert!(filled["version_no"].as_i64() > zh["version_no"].as_i64());
+    let trust = filled["content"]["blocks"][0]["vocabulary"][1].clone();
+    assert!(has_cjk(trust["meaning_zh"].as_str().unwrap()), "{trust}");
+    assert_eq!(
+        trust["definition"], "to believe someone is honest",
+        "English is kept"
+    );
+    let logged: (String, String) = sqlx::query_as(
+        "SELECT status, prompt_key FROM (SELECT status, input_snapshot->'prompt'->>'key' AS prompt_key
+           FROM ai_interactions WHERE module = 'worksheet_vocab_gloss') x",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        logged,
+        ("shown".to_string(), "worksheet_vocab_gloss".to_string())
+    );
+    let xml = export_docx(&app, &t, id).await;
+    assert!(xml.contains("雨傘") && xml.contains("比較（找出相同與不同）"));
+    assert!(!xml.contains("a thing that keeps rain off you"));
+
+    // Nothing is missing now: no new call, no new version.
+    let (s, again) = app.post(&url, Some(&t), json!({ "tables": true })).await;
+    assert_eq!(s, StatusCode::OK, "{again}");
+    assert_eq!(gloss_calls(&app).await, 1);
+    assert_eq!(again["version_no"], filled["version_no"]);
+    assert!(again["notice"].is_null());
+
+    // Back to English: both languages are still there.
+    let mut content = again["content"].clone();
+    content
+        .as_object_mut()
+        .unwrap()
+        .remove("vocabulary_language");
+    let (s, back) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": again["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{back}");
+    let sheet2 = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        row_of(&sheet2, "umbrella")["definition"],
+        "a thing that keeps rain off you"
+    );
+    assert!(has_cjk(
+        back["content"]["blocks"][0]["vocabulary"][1]["meaning_zh"]
+            .as_str()
+            .unwrap()
+    ));
+    let xml = export_docx(&app, &t, id).await;
+    assert!(xml.contains("a thing that keeps rain off you") && !xml.contains("雨傘"));
+}
+
+#[tokio::test]
+async fn with_ai_off_the_switch_still_works_and_the_teacher_is_told() {
+    let app = test_app!(|c: &mut manna_api::config::Config| {
+        c.ai_provider = manna_api::config::AiProviderKind::None;
+        c.ai_model = String::new();
+    });
+    let t = app.teacher("T-001", "general").await;
+    let rows = json!([
+        { "word": "trust", "pos": "v.", "definition": "to believe someone is honest", "context": "", "paragraph_id": null },
+    ]);
+    let (id, saved) = with_block(
+        &app,
+        &t,
+        rows,
+        json!([]),
+        json!({ "vocabulary_language": "zh" }),
+    )
+    .await;
+    let (s, v) = app
+        .post(
+            &format!("/api/worksheets/{id}/vocabulary-meanings"),
+            Some(&t),
+            json!({ "tables": true }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["notice"].as_str().unwrap().contains("英文字義"), "{v}");
+    assert_eq!(v["version_no"], saved["version_no"], "nothing was changed");
+    assert_eq!(gloss_calls(&app).await, 0);
+    // The sheet prints the English meaning.
+    let sheet = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        row_of(&sheet, "trust")["definition"],
+        "to believe someone is honest"
+    );
+}
+
+fn bank_scaffold(content: &str, bank: Value) -> Value {
+    let mut s = json!({
+        "id": "warmup-sv1", "type": "verbal", "kind": "字詞表", "content": content,
+        "steps": [], "levels": ["basic", "standard", "advanced"], "auto": false, "origin": "ai",
+    });
+    if !bank.is_null() {
+        s["bank"] = bank;
+    }
+    s
+}
+
+fn bank_support(sheet: &Value) -> Option<String> {
+    sheet["blocks"][0]["supports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["kind"] == "字詞表")
+        .map(|s| s["content"].as_str().unwrap().to_string())
+}
+
+#[tokio::test]
+async fn a_word_bank_prints_every_word_with_its_pos_and_the_ticked_meanings() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let bank = json!({ "words": [
+        { "word": "plain", "pos": "adj.", "definition": "easy to see", "meaning_zh": "明顯的" },
+        { "word": "fork", "pos": "n.", "definition": "a place where a road divides", "meaning_zh": "岔路" },
+    ]});
+    let (id, _) = with_block(
+        &app,
+        &t,
+        json!([{ "word": "umbrella", "pos": "n.", "definition": "a thing for rain", "context": "", "paragraph_id": null }]),
+        json!([bank_scaffold("plain, fork", bank.clone())]),
+        json!({}),
+    )
+    .await;
+    // Every word with its part of speech; no meaning while nothing is ticked.
+    let s1 = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        bank_support(&s1).as_deref(),
+        Some("plain (adj.), fork (n.)")
+    );
+    let xml = export_docx(&app, &t, id).await;
+    assert!(xml.contains("plain (adj.), fork (n.)"));
+    assert!(!xml.contains("easy to see"));
+
+    // Tick one word, English: only that word shows its meaning.
+    let (_, state) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
+    let mut content = state["content"].clone();
+    content["blocks"][0]["scaffolds"][0]["bank"]["words"][0]["show_meaning"] = json!(true);
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": state["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let s2 = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        bank_support(&s2).as_deref(),
+        Some("plain (adj.): easy to see\nfork (n.)")
+    );
+    let xml = export_docx(&app, &t, id).await;
+    assert!(xml.contains("plain (adj.): easy to see") && xml.contains(">fork (n.)<"));
+    assert!(!xml.contains("a place where a road divides"));
+
+    // The bank's language is its own choice, Chinese here.
+    let mut content = v["content"].clone();
+    content["blocks"][0]["scaffolds"][0]["bank"]["lang"] = json!("zh");
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": v["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let s3 = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        bank_support(&s3).as_deref(),
+        Some("plain (adj.): 明顯的\nfork (n.)")
+    );
+    // The text of the scaffold is still the plain list.
+    assert_eq!(
+        v["content"]["blocks"][0]["scaffolds"][0]["content"],
+        "plain, fork"
+    );
+    assert_eq!(gloss_calls(&app).await, 0, "nothing was missing");
+}
+
+#[tokio::test]
+async fn an_old_plain_text_word_bank_loads_as_words_and_is_filled_once() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let pi = app.pi_token().await;
+    let (s, v) = app
+        .post_csv("/api/admin/vocabulary/import", Some(&pi), &vocabulary_csv())
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (id, saved) = with_block(&app, &t, json!([]), json!([]), json!({})).await;
+    // What was stored before: the plain text only.
+    let mut content = saved["content"].clone();
+    content["blocks"][0]["scaffolds"] = json!([bank_scaffold(
+        "Word bank: umbrella, however, disappear",
+        Value::Null
+    )]);
+    sqlx::query(
+        "UPDATE worksheet_versions SET content = $1 WHERE worksheet_id = $2 AND version_no = $3",
+    )
+    .bind(&content)
+    .bind(id)
+    .bind(saved["version_no"].as_i64().unwrap() as i32)
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let (_, state) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
+    let words: Vec<&str> = state["content"]["blocks"][0]["scaffolds"][0]["bank"]["words"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["word"].as_str().unwrap())
+        .collect();
+    assert_eq!(words, ["umbrella", "however", "disappear"]);
+    // Printed as it was, with no part of speech yet.
+    let before = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        bank_support(&before).as_deref(),
+        Some("umbrella, however, disappear")
+    );
+
+    // The first time it is opened: the list's part of speech where the list has exactly one,
+    // and one model call for the rest (meanings, and the part of speech of "however").
+    let url = format!("/api/worksheets/{id}/vocabulary-meanings");
+    let (s, filled) = app.post(&url, Some(&t), json!({ "banks": true })).await;
+    assert_eq!(s, StatusCode::OK, "{filled}");
+    assert_eq!(gloss_calls(&app).await, 1);
+    let bank = &filled["content"]["blocks"][0]["scaffolds"][0]["bank"]["words"];
+    assert_eq!(bank[0]["pos"], "n.", "from the word list");
+    assert_eq!(bank[2]["pos"], "v.", "from the word list");
+    assert!(bank
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|w| has_cjk(w["meaning_zh"].as_str().unwrap())));
+    let after = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        bank_support(&after).as_deref(),
+        Some("umbrella (n.), however (n.), disappear (v.)")
+    );
+
+    // Filled once: the next open asks nothing.
+    let (s, again) = app.post(&url, Some(&t), json!({ "banks": true })).await;
+    assert_eq!(s, StatusCode::OK, "{again}");
+    assert_eq!(gloss_calls(&app).await, 1);
+    assert_eq!(again["version_no"], filled["version_no"]);
+}
+
+#[tokio::test]
+async fn a_word_list_that_repeats_key_vocabulary_is_not_printed_but_one_with_an_extra_word_is() {
+    let app = test_app!();
+    let t = app.teacher("T-001", "general").await;
+    let rows = json!([
+        { "word": "umbrella", "pos": "n.", "definition": "a thing for rain", "context": "", "paragraph_id": null },
+        { "word": "trust", "pos": "v.", "definition": "to believe someone", "context": "", "paragraph_id": null },
+    ]);
+    let (id, saved) = with_block(
+        &app,
+        &t,
+        rows,
+        json!([bank_scaffold("Word bank: Umbrella,  trust", Value::Null)]),
+        json!({}),
+    )
+    .await;
+    for audience in ["student", "teacher"] {
+        let s = sheet(&app, &t, id, "standard", audience).await;
+        assert!(bank_support(&s).is_none(), "{audience}: {s}");
+    }
+    let xml = export_docx(&app, &t, id).await;
+    assert!(xml.contains(">Key Vocabulary<") && !xml.contains("Word bank"));
+    let (s, pdf, ..) = {
+        let (s, _, _, b) = raw_get(
+            &app,
+            &format!("/api/worksheets/{id}/export?format=pdf&level=standard&audience=student"),
+            &t,
+        )
+        .await;
+        (s, b, ())
+    };
+    if manna_api::worksheet::export::pdf_supports_cjk() {
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(&pdf[..4], b"%PDF");
+    }
+    // Wherever the table is placed (at the end of the sheet too).
+    let mut content = saved["content"].clone();
+    content["vocabulary_at_end"] = json!(true);
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": saved["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(bank_support(&sheet(&app, &t, id, "standard", "student").await).is_none());
+    // A word the table does not have: the list prints, with every word's part of speech slot.
+    let mut content = v["content"].clone();
+    content["blocks"][0]["scaffolds"][0]["content"] = json!("umbrella, trust, forest");
+    content["blocks"][0]["scaffolds"][0]["bank"] = Value::Null;
+    let (s, v) = app
+        .put(
+            &format!("/api/worksheets/{id}"),
+            Some(&t),
+            json!({ "content": content, "base_version_no": v["version_no"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let printed = sheet(&app, &t, id, "standard", "student").await;
+    assert_eq!(
+        bank_support(&printed).as_deref(),
+        Some("umbrella, trust, forest")
+    );
+    assert!(export_docx(&app, &t, id)
+        .await
+        .contains("umbrella, trust, forest"));
 }

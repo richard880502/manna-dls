@@ -767,6 +767,7 @@ fn level_scaffolds(
         auto: draft.steps.is_empty(),
         origin: Origin::Ai,
         heading: None,
+        bank: None,
     }];
     if !draft.example.trim().is_empty() {
         let shown: Vec<Level> = match output {
@@ -788,6 +789,7 @@ fn level_scaffolds(
                 auto: false,
                 origin: Origin::Ai,
                 heading: None,
+                bank: None,
             });
         }
     }
@@ -812,6 +814,7 @@ fn level_scaffolds(
                 auto: false,
                 origin: Origin::Ai,
                 heading: None,
+                bank: None,
             });
         }
     }
@@ -1181,6 +1184,7 @@ async fn generate(run: &Run, jobs: &HashMap<&'static str, i64>) -> AppResult<()>
         levels: levels.clone(),
         // 字詞表的位置是老師選的，重新產生也留著。
         vocabulary_at_end: latest.content.vocabulary_at_end,
+        vocabulary_language: latest.content.vocabulary_language,
         chosen: Some(chosen),
         notices,
     };

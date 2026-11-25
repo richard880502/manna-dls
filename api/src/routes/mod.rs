@@ -193,6 +193,10 @@ pub fn api_router() -> Router<AppState> {
             "/worksheets/{id}/blocks/{block_id}/restore-word-table",
             post(worksheets::restore_word_table),
         )
+        .route(
+            "/worksheets/{id}/vocabulary-meanings",
+            post(worksheets::fill_vocabulary_meanings),
+        )
         // 修改歷程
         .route(
             "/worksheets/{id}/blocks/{block_id}/history",

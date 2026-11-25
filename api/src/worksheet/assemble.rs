@@ -15,11 +15,11 @@ use super::schemas::{
 };
 use super::tiered::{self, SupportKind};
 use super::{
-    info_function_from_label, uses_choices, Audience, Block, BlockKind, Bloom, Content, Item,
-    Level, Material, Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, EXIT_PURPOSES,
-    FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH, FMT_TABLE, FMT_TRUE_FALSE,
-    GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE, KIND_FRAMES, KIND_GUIDING,
-    KIND_STEPS, KIND_WORD_LIST,
+    info_function_from_label, uses_choices, Audience, BankWord, Block, BlockKind, Bloom, Content,
+    Item, Level, Material, Origin, Practice, Scaffold, ScaffoldType, Settings, Vocab, VocabLang,
+    WordBank, EXIT_PURPOSES, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
+    FMT_TABLE, FMT_TRUE_FALSE, GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING, GEN_WORD_LIST, KIND_EXAMPLE,
+    KIND_FRAMES, KIND_GUIDING, KIND_STEPS, KIND_WORD_LIST,
 };
 use crate::sop::ExitKind;
 
@@ -203,6 +203,7 @@ fn auto_procedural(block: &Block, levels: &[Level]) -> Scaffold {
         auto: true,
         origin: Origin::Ai,
         heading: None,
+        bank: None,
     }
 }
 
@@ -227,6 +228,7 @@ pub fn attach_scaffolds(
                 auto: true,
                 origin: Origin::Ai,
                 heading: None,
+                bank: None,
             });
         }
         // (A question's number is the one in its id: questions that are not in every version
@@ -281,6 +283,7 @@ pub fn attach_scaffolds(
                     auto: false,
                     origin: Origin::Ai,
                     heading: None,
+                    bank: None,
                 });
             }
         }
@@ -292,6 +295,11 @@ pub fn attach_scaffolds(
     {
         let auto = auto_procedural(block, levels);
         block.scaffolds.insert(0, auto);
+    }
+    // A word bank of plain words gets its entries (part of speech and meanings are filled in
+    // by `key_vocab::fill`).
+    for s in &mut block.scaffolds {
+        s.sync_bank();
     }
 }
 
@@ -365,6 +373,7 @@ pub fn lift_frames(block: &mut Block, passage: &str) -> usize {
             auto: false,
             origin: Origin::Ai,
             heading: None,
+            bank: None,
         }),
     }
     frames.len()
@@ -606,6 +615,8 @@ fn vocab_of(w: &CleanWord, material: &Material) -> Vocab {
         word: w.word.clone(),
         level: w.level,
         definition: w.definition.clone(),
+        pos: w.pos.clone(),
+        meaning_zh: w.meaning_zh.clone(),
         context: w.context.clone(),
         paragraph_id: w
             .paragraph_no
@@ -747,8 +758,13 @@ pub fn target_of(block: &Block) -> String {
 pub struct SheetWord {
     pub word: String,
     pub level: Option<u8>,
+    /// Part of speech (`n.`, `v.` …); absent when unknown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pos: String,
+    /// The meaning to print, in the worksheet's `vocabulary_language` (the Chinese one falls
+    /// back to the English one for a word that has none).
     pub definition: String,
-    /// A word of the instructions whose `definition` is a Chinese hint (SIOP V2).
+    /// A word of the instructions (the Academic column of Key Vocabulary), SIOP V2.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub task_word: bool,
 }
@@ -758,6 +774,10 @@ pub struct SheetSupport {
     #[serde(rename = "type")]
     pub kind_type: ScaffoldType,
     pub kind: String,
+    /// The words of a word bank made of plain words (not printed as such: `content` is what
+    /// prints; this is what the Key Vocabulary comparison reads).
+    #[serde(skip)]
+    pub words: Vec<String>,
     /// English heading printed on the sheet (the kind labels themselves are Chinese): the
     /// scaffold's own heading when it has one (a template block prints the sample's, e.g.
     /// "Directions", "Sentence Frame for Sharing"), otherwise the kind's ([`support_heading`]).
@@ -1354,7 +1374,8 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 .map(|v| SheetWord {
                     word: v.word.trim().to_string(),
                     level: v.level,
-                    definition: v.definition.trim().to_string(),
+                    pos: v.pos.trim().to_string(),
+                    definition: v.meaning(content.vocabulary_language).to_string(),
                     task_word: v.task_word,
                 })
                 .collect(),
@@ -1365,7 +1386,9 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 .filter(|s| s.kind_type != ScaffoldType::Procedural || s.own_heading().is_some())
                 .filter_map(|s| {
                     let heading = s.own_heading().unwrap_or_else(|| support_heading(&s.kind));
-                    let text = if s.kind_type == ScaffoldType::Procedural {
+                    let text = if let Some(bank) = &s.bank {
+                        bank_text(bank)
+                    } else if s.kind_type == ScaffoldType::Procedural {
                         s.steps
                             .iter()
                             .map(|l| l.trim())
@@ -1379,6 +1402,11 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     (!content.is_empty()).then(|| SheetSupport {
                         kind_type: s.kind_type,
                         kind: s.kind.clone(),
+                        words: s
+                            .bank
+                            .iter()
+                            .flat_map(|b| b.words.iter().map(|w| w.word.clone()))
+                            .collect(),
                         heading: heading.to_string(),
                         content: refs(content),
                     })
@@ -1437,6 +1465,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             }
         }
     }
+    drop_repeated_word_list(&mut blocks, &end_words);
     Sheet {
         title: title.trim().to_string(),
         level,
@@ -1455,6 +1484,80 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         },
         blocks,
         end_words,
+    }
+}
+
+/// A word bank as it prints: every word with its part of speech (「plain (adj.)」, no 「(…)」
+/// when it is not known yet). Without a ticked word it is one line, words separated by commas;
+/// with ticked words each word is a line of its own and a ticked one is followed by its meaning
+/// in the bank's language (the Chinese one falls back to the English one; nothing to show:
+/// the word alone).
+pub fn bank_text(bank: &WordBank) -> String {
+    let label = |w: &BankWord| match w.pos.trim() {
+        "" => w.word.trim().to_string(),
+        pos => format!("{} ({pos})", w.word.trim()),
+    };
+    let meaning = |w: &BankWord| {
+        let (en, zh) = (w.definition.trim(), w.meaning_zh.trim());
+        let shown = match bank.lang {
+            VocabLang::Zh if !zh.is_empty() => zh,
+            _ if !en.is_empty() => en,
+            _ => zh,
+        };
+        shown.to_string()
+    };
+    if !bank.words.iter().any(|w| w.show_meaning) {
+        return bank.words.iter().map(label).collect::<Vec<_>>().join(", ");
+    }
+    bank.words
+        .iter()
+        .map(|w| match (w.show_meaning, meaning(w)) {
+            (true, m) if !m.is_empty() => format!("{}: {m}", label(w)),
+            _ => label(w),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The words of a 字詞表 scaffold's text (`reason, evidence, …`), lower-cased.
+fn word_list_words(text: &str) -> Vec<String> {
+    let text = text.trim();
+    let text = text
+        .get(..10)
+        .filter(|head| head.eq_ignore_ascii_case("word bank:"))
+        .map_or(text, |_| text[10..].trim());
+    text.split([',', '，', '、', ';', '；', '\n'])
+        .map(|w| w.trim().trim_end_matches('.').trim().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Key Vocabulary already lists the key words, so a 字詞表 scaffold (「Word bank: …」) whose words
+/// are all in the table (wherever the table is printed) is left out of what is printed; a list
+/// with a word the table does not have, and every other scaffold, stays. The stored content is
+/// not changed, so worksheets made before this show no repeated list either.
+fn drop_repeated_word_list(blocks: &mut [SheetBlock], end_words: &[SheetWord]) {
+    let table: std::collections::HashSet<String> = blocks
+        .iter()
+        .flat_map(|b| b.vocabulary.iter())
+        .chain(end_words)
+        .map(|w| w.word.trim().to_lowercase())
+        .collect();
+    if table.is_empty() {
+        return;
+    }
+    for b in blocks {
+        b.supports.retain(|s| {
+            if s.kind != KIND_WORD_LIST {
+                return true;
+            }
+            let words = if s.words.is_empty() {
+                word_list_words(&s.content)
+            } else {
+                s.words.iter().map(|w| w.trim().to_lowercase()).collect()
+            };
+            words.is_empty() || !words.iter().all(|w| table.contains(w))
+        });
     }
 }
 

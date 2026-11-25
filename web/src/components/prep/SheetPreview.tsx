@@ -1,16 +1,19 @@
 import type { ReactNode } from "react";
-import type { WsSheet, WsSheetBlock } from "../../api/types";
+import type { WsSheet, WsSheetBlock, WsSheetWord } from "../../api/types";
 import { BLOOM_EN, BLOOM_LABEL, blockBloomLine, isBloom } from "../../lib/bloom";
 import {
   AUDIENCE_LABEL,
   BLOCK_KIND_LABEL,
+  keyVocabularyText,
   LEVEL_LABEL,
+  type KeyWordRow,
   printedAnswer,
   printedOption,
   studentVersionName,
   versionLabel,
 } from "../../lib/worksheet";
 import { BloomChip } from "../worksheet/Bloom";
+import { KeyVocabulary } from "../worksheet/KeyVocabulary";
 import { GlossaryBox, glossText } from "../worksheet/Glossary";
 import { OrganizerView } from "../worksheet/Organizer";
 import { organizerText } from "../../lib/organizer";
@@ -22,13 +25,26 @@ import { SectionTools } from "./SectionTools";
 export const sheetBlockName = (b: Pick<WsSheetBlock, "kind" | "label">) =>
   b.label ? `${b.label} ${BLOCK_KIND_LABEL[b.kind]}` : BLOCK_KIND_LABEL[b.kind];
 
+/** A row of the sheet's Key Vocabulary. */
+const sheetWordRow = (v: WsSheetWord, i: number): KeyWordRow => ({
+  id: `${v.word}-${i}`,
+  word: v.word,
+  pos: v.pos ?? "",
+  task: v.task_word === true,
+  meaning: v.definition,
+});
+
+function SheetKeyVocabulary({ words, label }: { words: WsSheetWord[]; label: string }) {
+  return <KeyVocabulary label={label} rows={words.map(sheetWordRow)} />;
+}
+
 /** One block as plain text, for 複製. */
 export function sheetBlockText(b: WsSheetBlock): string {
   const lines: string[] = [`${b.label ? `${b.label}. ` : ""}${b.title}`];
   if (b.instructions.trim()) lines.push(b.instructions);
   if (b.steps.length > 0 && b.steps_lead) lines.push(b.steps_lead);
   b.steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
-  b.vocabulary.forEach((v) => lines.push(`${v.word}: ${v.definition}`));
+  lines.push(...keyVocabularyText(b.vocabulary.map(sheetWordRow)));
   b.images?.forEach((img) => {
     if (img.caption.trim()) lines.push(`（圖）${img.caption}`);
   });
@@ -184,24 +200,7 @@ export function SheetPreview({
                 </ol>
               </div>
             )}
-            {b.vocabulary.length > 0 && (
-              <table className="ws-vocab" aria-label={`字詞表 ${name}`}>
-                <thead>
-                  <tr>
-                    <th scope="col">Word</th>
-                    <th scope="col">Meaning</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {b.vocabulary.map((v) => (
-                    <tr key={v.word}>
-                      <td>{v.word}</td>
-                      <td>{v.definition}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
+            {b.vocabulary.length > 0 && <SheetKeyVocabulary words={b.vocabulary} label={`字詞表 ${name}`} />}
             {(b.original_text?.length ?? 0) > 0 && (
               <div className="ws-support">
                 <p className="ws-support-head">Original text (read this first; the simplified text below is a help)</p>
@@ -358,22 +357,7 @@ export function SheetPreview({
       })}
       {(sheet.end_words ?? []).length > 0 && (
         <section className="ws-block" aria-label="字詞表（學習單最後）">
-          <table className="ws-vocab" aria-label="字詞表">
-            <thead>
-              <tr>
-                <th scope="col">Word</th>
-                <th scope="col">Meaning</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(sheet.end_words ?? []).map((v) => (
-                <tr key={v.word}>
-                  <td>{v.word}</td>
-                  <td>{v.definition}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SheetKeyVocabulary words={sheet.end_words ?? []} label="字詞表" />
         </section>
       )}
     </article>

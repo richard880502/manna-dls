@@ -1447,6 +1447,8 @@ pub struct Candidate {
     pub paragraph_no: i64,
     /// The sentence of the material the word appears in.
     pub sentence: String,
+    /// The parts of speech the word list prints for it (`n./v.`); "" when unlisted.
+    pub pos: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1464,6 +1466,10 @@ pub struct CleanWord {
     pub word: String,
     pub level: Option<u8>,
     pub definition: String,
+    /// Part of speech in the context sentence, one of `key_vocab::POS_SET` or "".
+    pub pos: String,
+    /// Traditional Chinese meaning; "" when the model gave none that could be used.
+    pub meaning_zh: String,
     pub context: String,
     pub paragraph_no: Option<i64>,
 }
@@ -1604,9 +1610,16 @@ pub fn evaluate_warmup(raw: &RawWarmup, ctx: &WarmupCtx<'_>) -> Eval<CleanWarmup
             );
             (candidate.sentence.clone(), Some(candidate.paragraph_no))
         };
+        let meaning_zh = clean(&v.meaning_zh);
         words.push(CleanWord {
             word: candidate.word.clone(),
             level: candidate.level,
+            pos: super::key_vocab::resolve_pos(&v.pos, &candidate.pos),
+            meaning_zh: if super::key_vocab::has_han(&meaning_zh) {
+                meaning_zh
+            } else {
+                String::new()
+            },
             definition: if english_only(&definition) {
                 definition
             } else {
@@ -4842,12 +4855,14 @@ mod tests {
                 word: "disappear".into(),
                 level: Some(2),
                 paragraph_no: 3,
+                pos: "v.".into(),
                 sentence: "In the first month, twelve umbrellas did disappear.".into(),
             },
             Candidate {
                 word: "unexpected".into(),
                 level: Some(4),
                 paragraph_no: 3,
+                pos: "adj.".into(),
                 sentence: "However, something unexpected followed.".into(),
             },
         ];
@@ -4866,18 +4881,24 @@ mod tests {
                     paragraph_no: 3,
                     context_sentence: "twelve umbrellas did disappear".into(),
                     student_friendly_definition_en: "to go away".into(),
+                    pos: "verb".into(),
+                    meaning_zh: "消失".into(),
                 },
                 RawKeyWord {
                     word: "unexpected".into(),
                     paragraph_no: 1,
                     context_sentence: "made up sentence".into(),
                     student_friendly_definition_en: "沒想到的".into(),
+                    pos: String::new(),
+                    meaning_zh: String::new(),
                 },
                 RawKeyWord {
                     word: "trust".into(),
                     paragraph_no: 1,
                     context_sentence: "x".into(),
                     student_friendly_definition_en: "belief".into(),
+                    pos: "n.".into(),
+                    meaning_zh: "belief".into(),
                 },
             ],
         };
@@ -4920,6 +4941,13 @@ mod tests {
             "However, something unexpected followed."
         );
         assert_eq!(w.words[1].definition, "");
+        // The model's part of speech is normalised and checked against the list's.
+        assert_eq!(
+            (w.words[0].pos.as_str(), w.words[0].meaning_zh.as_str()),
+            ("v.", "消失")
+        );
+        assert_eq!(w.words[1].pos, "adj.", "none given: the list's single one");
+        assert_eq!(w.words[1].meaning_zh, "");
     }
     use crate::worksheet::schemas::{RawBackground, RawKeyWord};
 

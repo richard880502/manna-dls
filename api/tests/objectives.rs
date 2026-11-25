@@ -445,7 +445,8 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
         .unwrap()
         .contains("示範 → 共同練習 → 同儕練習 → 獨立應用"));
 
-    // V2: the words of the instructions, with Chinese hints, after the warm-up's key words.
+    // V2: the words of the instructions, with a fixed English definition, a part of speech and
+    // the Chinese hint, after the warm-up's key words.
     let warmup = blocks.iter().find(|b| b["kind"] == "warmup").unwrap();
     let task_words: Vec<(&str, &str)> = warmup["vocabulary"]
         .as_array()
@@ -455,10 +456,21 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
         .map(|v| {
             (
                 v["word"].as_str().unwrap(),
-                v["definition"].as_str().unwrap(),
+                v["meaning_zh"].as_str().unwrap(),
             )
         })
         .collect();
+    assert!(warmup["vocabulary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["task_word"] == true)
+        .all(|v| !v["definition"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+            && v["pos"].as_str().is_some_and(|p| !p.is_empty())));
     assert!(
         task_words.contains(&("in your own words", "用你自己的話說")),
         "{task_words:?}"
