@@ -892,7 +892,7 @@ describe("備課對話 (session page)", () => {
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "worksheet", request: "學習單" });
   });
 
-  it("the bottom bar sends a turn without kind on Enter; Shift+Enter is a new line", async () => {
+  it("the bottom bar sends a chat turn on Enter; Shift+Enter is a new line", async () => {
     signIn();
     const wsTurn = turn("worksheet", { worksheet: { id: 11, title: "U", version_no: 3, running: false } });
     const done = session([wsTurn]);
@@ -906,8 +906,10 @@ describe("備課對話 (session page)", () => {
     const user = userEvent.setup();
     renderApp("/prep/7");
     const bar = await screen.findByRole("textbox", { name: "給 Manna 的話" });
-    // There is a worksheet: the bar offers to revise it.
-    expect(bar).toHaveAttribute("placeholder", "針對上面產出的內容，你有什麼想修改的嗎？");
+    // One box for questions and changes, and the worksheet it works on.
+    expect(bar).toHaveAttribute("placeholder", "問問題，或說要怎麼改學習單（例如：把 C 區第 2 題改成比較表）");
+    expect(screen.getByText("目前的學習單：U")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "問 Manna" })).not.toBeInTheDocument();
     expect(screen.getByText("AI 產生的內容可能有錯，請核對重要資訊。")).toBeInTheDocument();
 
     await user.type(bar, "第一行{Shift>}{Enter}{/Shift}第二行");
@@ -917,32 +919,11 @@ describe("備課對話 (session page)", () => {
     await user.clear(bar);
     await user.type(bar, "B 區改簡單一點{Enter}");
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
-    expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ request: "B 區改簡單一點" });
+    expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "chat", request: "B 區改簡單一點" });
     await waitFor(() => expect(bar).toHaveValue(""));
   });
 
-  it("with a worksheet, 問 Manna switches the bar from revising to asking", async () => {
-    signIn();
-    const wsTurn = turn("worksheet", { worksheet: { id: 11, title: "U", version_no: 3, running: false } });
-    const done = session([wsTurn]);
-    const api = mockApi({
-      ...baseRoutes(),
-      [`GET ${S7}`]: done,
-      "GET /api/worksheets/11": worksheet(),
-      "GET /api/worksheets/11/sheet": sheetRoute,
-      [`POST ${S7}/turns`]: done,
-    });
-    const user = userEvent.setup();
-    renderApp("/prep/7");
-    const bar = await screen.findByRole("textbox", { name: "給 Manna 的話" });
-    await user.click(screen.getByRole("radio", { name: "問 Manna" }));
-    expect(bar).toHaveAttribute("placeholder", "還想問什麼？");
-    await user.type(bar, "這課要上幾節？{Enter}");
-    await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
-    expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "ask", request: "這課要上幾節？" });
-  });
-
-  it("without a worksheet the bar asks 還想問什麼？, and it is disabled while a turn runs", async () => {
+  it("the bar is disabled while a turn runs", async () => {
     signIn();
     mockApi({
       ...baseRoutes(),
@@ -973,7 +954,7 @@ describe("備課對話 (session page)", () => {
     expect(await screen.findByText("雨天經驗")).toBeInTheDocument();
     const bar = screen.getByRole("textbox", { name: "給 Manna 的話" });
     expect(bar).toBeEnabled();
-    expect(bar).toHaveAttribute("placeholder", "還想問什麼？");
+    expect(bar).toHaveAttribute("placeholder", "問問題，或說要怎麼改學習單（例如：把 C 區第 2 題改成比較表）");
     const count = api.callsTo("GET", S7).length;
     expect(count).toBe(3);
     await new Promise((r) => setTimeout(r, 150));

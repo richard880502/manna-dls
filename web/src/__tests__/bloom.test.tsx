@@ -665,6 +665,8 @@ const sheetFor = (first: WsLevel) => (call: MockCall): WsSheet => {
   };
 };
 
+const pane = async () => within(await screen.findByRole("complementary", { name: "目前的學習單" }));
+
 describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () => {
   it("a 閱讀理解題 turn is a worksheet card; the teacher version shows Bloom tags and every card a read-only bar", async () => {
     const api = mockApi({
@@ -675,20 +677,20 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
-    const result = await screen.findByRole("region", { name: "閱讀理解題（第 1 則）" });
-    const preview = await within(result).findByRole("article", { name: /學生版/ });
+    const result = await pane();
+    const preview = await result.findByRole("article", { name: /學生版/ });
     expect(within(preview).getByText("Why did the neighbors laugh?")).toBeInTheDocument();
     // The student version has no tags.
     expect(preview.querySelector(".bloom-chip")).toBeNull();
-    expect(within(result).getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
+    expect(result.getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
 
     // The read-only distribution of the version shown (no buttons).
-    const bar = await within(result).findByRole("img", { name: /Bloom 層次分布（一般版）/ });
+    const bar = await result.findByRole("img", { name: /Bloom 層次分布（一般版）/ });
     expect(bar).toHaveAccessibleName("Bloom 層次分布（一般版）：記憶 1、理解 1、分析 1、未標 1");
-    expect(within(within(result).getByRole("group", { name: "Bloom 層次分布（一般版）" })).queryByRole("button")).toBeNull();
+    expect(within(result.getByRole("group", { name: "Bloom 層次分布（一般版）" })).queryByRole("button")).toBeNull();
 
-    await user.click(within(result).getByRole("radio", { name: "教師版" }));
-    const teacher = await within(result).findByRole("article", { name: /教師版/ });
+    await user.click(result.getByRole("radio", { name: "教師版" }));
+    const teacher = await result.findByRole("article", { name: /教師版/ });
     const blockB = within(teacher).getByRole("region", { name: "區塊 B 活動" });
     expect(within(blockB).getByText("分析")).toHaveAttribute("title", "Bloom：Analyze");
     expect(within(blockB).getByText("Bloom：分析 1")).toBeInTheDocument();
@@ -704,13 +706,13 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
-    const result = await screen.findByRole("region", { name: "差異化學習單（第 1 則）" });
-    const tabs = within(await within(result).findByRole("tablist", { name: "版本程度" }));
+    const result = await pane();
+    const tabs = within(await result.findByRole("tablist", { name: "版本程度" }));
     expect(tabs.getAllByRole("tab").map((t) => t.textContent)).toEqual(["基礎版", "一般版", "進階版"]);
-    expect(await within(result).findByText("Hint: Hint for 1")).toBeInTheDocument();
+    expect(await result.findByText("Hint: Hint for 1")).toBeInTheDocument();
     await user.click(tabs.getByRole("tab", { name: "進階版" }));
-    await within(result).findByRole("article", { name: "進階版 學生版" });
-    expect(within(result).queryByText("Hint: Hint for 1")).not.toBeInTheDocument();
+    await result.findByRole("article", { name: "進階版 學生版" });
+    expect(result.queryByText("Hint: Hint for 1")).not.toBeInTheDocument();
   });
 
   it("a 教學套件 turn: the plan with Bloom chips on its steps, the worksheet card, and one DOCX download", async () => {
@@ -755,7 +757,7 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     ).toEqual(["Bloom 層次：記憶", "Bloom 層次：理解"]);
     expect(within(result).queryByRole("group", { name: "「說說看」的 Bloom 層次" })).toBeNull();
     // The worksheet beside it.
-    expect(await within(result).findByRole("tablist", { name: "版本程度" })).toBeInTheDocument();
+    expect(await (await pane()).findByRole("tablist", { name: "版本程度" })).toBeInTheDocument();
 
     await user.click(within(result).getByRole("button", { name: "下載教學套件 (DOCX)" }));
     await waitFor(() => expect(clicked).toEqual(["教學套件.docx"]));
@@ -775,6 +777,6 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
     expect(within(result).getByRole("button", { name: "下載教學套件 (DOCX)" })).toBeDisabled();
     expect(within(result).getByText("兩個部分都做好之後就可以下載。")).toBeInTheDocument();
     expect(within(result).getByText("Manna 正在規劃教學活動…")).toBeInTheDocument();
-    expect(within(result).getByText("Manna 正在建立學習單…")).toBeInTheDocument();
+    expect((await pane()).getByText("Manna 正在建立學習單…")).toBeInTheDocument();
   });
 });

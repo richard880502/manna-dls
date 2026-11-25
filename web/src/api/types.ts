@@ -2690,6 +2690,7 @@ export type PrepKind =
   | "resources"
   | "ask"
   | "revise"
+  | "chat"
   | "comprehension"
   | "tiered"
   | "kit";
@@ -3056,6 +3057,30 @@ export interface WsProposalAccepted {
   pictures?: PictureOutcome[];
 }
 
+/** 備課對話的一輪（工具式對話，docs/PREP_CHAT.md §4）：回答，加上這一輪對學習單做的修改 */
+export interface PrepChatChange {
+  target: "block" | "picture" | "vocabulary";
+  block_id: string | null;
+  /** 「C 區」「C 區的圖」「Key Vocabulary」 */
+  label: string;
+  /** 中文一句：改了標題、第 2 題改成表格題… */
+  summary: string;
+}
+
+export interface PrepChatResult {
+  /** 段落以 \n\n 分隔 */
+  answer: string;
+  /** ≤3 */
+  follow_ups: string[];
+  changes: PrepChatChange[];
+  not_applied: Array<{ label: string; reason: string }>;
+  /** 這一輪寫成的版本；沒有修改是 null */
+  version_no: number | null;
+  /** 這一輪的修改目前還能整輪復原 */
+  undoable: boolean;
+  tool_calls: number;
+}
+
 export interface PrepReviseResult {
   reply: string;
   changed_block_ids: string[];
@@ -3090,7 +3115,7 @@ export interface PrepTurn {
   worksheet: { id: number; title: string; version_no: number; running: boolean } | null;
   /** 照版型做的學習單：用的版型與它的狀態；extracting 時 worksheet 是 null。舊的伺服器沒有這一欄 */
   template?: { id: number; title: string; status: WsTemplateStatus } | null;
-  result: ActivityPlan | PrepResources | PrepAskResult | PrepReviseResult | null;
+  result: ActivityPlan | PrepResources | PrepAskResult | PrepReviseResult | PrepChatResult | null;
   /** 這一輪附上的圖片；舊的伺服器沒有這一欄 */
   images?: PrepImage[];
   /** 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs } */
@@ -3259,6 +3284,8 @@ export interface CreatePrepTurnRequest {
   /** 省略（下方輸入列）：有學習單就是 revise，否則 ask */
   kind?: PrepKind;
   request: string;
+  /** chat：要改的學習單（那份學習單的 id）；省略＝這個對話最新的一份 */
+  worksheet_id?: number;
   /** 先用 POST /prep-sessions/:id/images 上傳；只用在修改學習單 */
   image_ids?: number[];
 }

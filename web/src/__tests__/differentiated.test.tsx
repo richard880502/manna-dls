@@ -290,24 +290,24 @@ describe("差異化學習單: neutral codes and per-version support", () => {
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
-    const result = await screen.findByRole("region", { name: "差異化學習單（第 1 則）" });
-    const a = await within(result).findByRole("article", { name: "A 版 學生版" });
+    const result = within(await screen.findByRole("complementary", { name: "目前的學習單" }));
+    const a = await result.findByRole("article", { name: "A 版 學生版" });
     expect(within(a).getByText("Version A")).toBeInTheDocument();
     expect(within(a).getByText("Sentence frame:")).toBeInTheDocument();
     expect(within(a).getByText("gone / umbrellas")).toBeInTheDocument();
     for (const name of LEVEL_NAMES) expect(a.textContent).not.toContain(name);
     expect(a.textContent).not.toContain("片語即可給分");
 
-    const tabs = within(within(result).getByRole("tablist", { name: "版本程度" }));
+    const tabs = within(result.getByRole("tablist", { name: "版本程度" }));
     await user.click(tabs.getByRole("tab", { name: "一般版" }));
-    const b = await within(result).findByRole("article", { name: "B 版 學生版" });
+    const b = await result.findByRole("article", { name: "B 版 學生版" });
     expect(within(b).getByText("Version B")).toBeInTheDocument();
     expect(within(b).getByText("The neighbors thought that …")).toBeInTheDocument();
     for (const name of LEVEL_NAMES) expect(b.textContent).not.toContain(name);
 
     // The teacher keeps the level name, this version's answer and scoring note, and the 分層說明.
-    await user.click(within(result).getByRole("radio", { name: "教師版" }));
-    const teacher = await within(result).findByRole("article", { name: "一般版 教師版" });
+    await user.click(result.getByRole("radio", { name: "教師版" }));
+    const teacher = await result.findByRole("article", { name: "一般版 教師版" });
     expect(within(teacher).getByText("一個完整句")).toBeInTheDocument();
     expect(within(teacher).getByText(/^差異化學習單：三個版本/)).toBeInTheDocument();
   });

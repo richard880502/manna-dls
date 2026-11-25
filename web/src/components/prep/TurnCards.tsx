@@ -1,4 +1,14 @@
-import type { ActivityPlan, ActivityStep, PrepAskResult, PrepResources, PrepReviseResult } from "../../api/types";
+import { useState } from "react";
+import { errorMessage } from "../../api/client";
+import type {
+  ActivityPlan,
+  ActivityStep,
+  PrepAskResult,
+  PrepChatResult,
+  PrepResources,
+  PrepReviseResult,
+  PrepTurn,
+} from "../../api/types";
 import { BLOOM_LABEL } from "../../lib/bloom";
 import {
   LANGUAGE_CATEGORY_LABEL,
@@ -7,7 +17,9 @@ import {
   changedBlocksLine,
   goalGroups,
   goalsText,
+  KIND_LABEL,
   hasPrepare,
+  paragraphsOf,
   prepareText,
   reviewText,
   stepText,
@@ -397,6 +409,181 @@ export function ReviseCard({
         </p>
       )}
       <SectionTools name="這次修改" text={result.reply} interactionId={interactionId} />
+    </div>
+  );
+}
+
+/**
+ * A worksheet turn as the conversation shows it: its title, version and state, and a way to put it
+ * in the pane beside the conversation (the preview itself is not repeated here).
+ */
+export function WorksheetTurnCard({
+  turn,
+  current,
+  split,
+  narrow,
+  onShow,
+}: {
+  turn: PrepTurn;
+  current: boolean;
+  split: boolean;
+  narrow: boolean;
+  onShow: () => void;
+}) {
+  const ref = turn.worksheet;
+  const running = turn.status === "running" || (ref?.running ?? false);
+  const title = ref?.title.trim() || KIND_LABEL[turn.kind];
+  return (
+    <div className="prep-sheet-summary">
+      <p className="prep-sheet-summary-line">
+        <strong>{title}</strong>
+        {ref && <span className="soft-tag">第 {ref.version_no} 版</span>}
+        <span className="quiet-note">{running ? "Manna 正在做…" : turn.status === "failed" ? "沒有完成" : "做好了"}</span>
+      </p>
+      {ref &&
+        (current && !narrow ? (
+          <p className="quiet-note">已顯示在右邊</p>
+        ) : (
+          <button type="button" className="text-link" onClick={onShow}>
+            {narrow ? "去看學習單" : "在右邊看"}
+          </button>
+        ))}
+      {!ref && running && split && narrow && (
+        <button type="button" className="text-link" onClick={onShow}>
+          去看學習單
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 備課對話 (tool chat): Manna's answer in paragraphs, the follow-up questions, what this turn
+ * changed in the worksheet (with 復原這一輪, confirmed in the page), and what could not be changed.
+ */
+export function ChatCard({
+  result,
+  interactionId,
+  disabled,
+  onFollowUp,
+  onUndo,
+  onShowBlock,
+  onShowSheet,
+}: {
+  result: PrepChatResult;
+  interactionId: number | null;
+  disabled: boolean;
+  onFollowUp: (question: string) => void;
+  /** Undoes the turn; rejects with the server's reason (409) when it cannot. */
+  onUndo: () => Promise<void>;
+  /** A change was clicked: the worksheet preview scrolls to that block. */
+  onShowBlock: (blockId: string) => void;
+  /** Narrow screens only: the worksheet is another tab, so offer to go there after a change. */
+  onShowSheet?: (firstBlockId: string | null) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const changes = result.changes ?? [];
+  const notApplied = result.not_applied ?? [];
+  const followUps = result.follow_ups ?? [];
+
+  async function undo() {
+    setUndoing(true);
+    setUndoError(null);
+    try {
+      await onUndo();
+      setConfirming(false);
+    } catch (err) {
+      setUndoError(errorMessage(err));
+      setConfirming(false);
+    } finally {
+      setUndoing(false);
+    }
+  }
+
+  return (
+    <div className="prep-answer prep-chat">
+      {paragraphsOf(result.answer).map((p, i) => (
+        // oxlint-disable-next-line react/no-array-index-key -- paragraphs have no id; order is the identity
+        <p key={i} className="prep-pre">
+          {p}
+        </p>
+      ))}
+      {changes.length > 0 && (
+        <section className="prep-section prep-chat-changes" aria-label="這一輪改了">
+          <h4 className="prep-subhead">這一輪改了</h4>
+          <ul className="prep-changed-list">
+            {changes.map((c, i) => (
+              // oxlint-disable-next-line react/no-array-index-key -- a label can repeat; order is the identity
+              <li key={i}>
+                {c.block_id ? (
+                  <button type="button" className="text-link" onClick={() => onShowBlock(c.block_id!)}>
+                    {c.label}
+                  </button>
+                ) : (
+                  <strong>{c.label}</strong>
+                )}
+                ：{c.summary}
+              </li>
+            ))}
+          </ul>
+          {result.version_no !== null && <p className="quiet-note">已存成第 {result.version_no} 版。</p>}
+          {onShowSheet && (
+            <button
+              type="button"
+              className="text-link"
+              onClick={() => onShowSheet(changes.find((c) => c.block_id)?.block_id ?? null)}
+            >
+              學習單已更新，去看
+            </button>
+          )}
+        </section>
+      )}
+      {notApplied.length > 0 && (
+        <ul className="prep-not-applied">
+          {notApplied.map((n, i) => (
+            // oxlint-disable-next-line react/no-array-index-key -- a label can repeat; order is the identity
+            <li key={i}>
+              沒有改成：{n.label}（{n.reason}）
+            </li>
+          ))}
+        </ul>
+      )}
+      {result.version_no !== null && result.undoable && (
+        <div className="prep-undo">
+          {confirming ? (
+            <span role="group" aria-label="確認復原">
+              復原這一輪的修改？學習單會回到改之前的樣子（會存成新的一版）。
+              <button type="button" className="text-link is-danger" disabled={undoing} onClick={() => void undo()}>
+                確定復原
+              </button>
+              <button type="button" className="text-link is-plain" disabled={undoing} onClick={() => setConfirming(false)}>
+                不復原
+              </button>
+            </span>
+          ) : (
+            <button type="button" className="secondary-button small-button" disabled={disabled} onClick={() => setConfirming(true)}>
+              復原這一輪
+            </button>
+          )}
+        </div>
+      )}
+      {undoError && (
+        <p className="error-text" role="alert">
+          {undoError}
+        </p>
+      )}
+      <SectionTools name="這個回答" text={result.answer} interactionId={interactionId} />
+      {followUps.length > 0 && (
+        <div className="prep-chips is-quiet" role="group" aria-label="接著問">
+          {followUps.map((q) => (
+            <button key={q} type="button" className="prep-chip" disabled={disabled} onClick={() => onFollowUp(q)}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
