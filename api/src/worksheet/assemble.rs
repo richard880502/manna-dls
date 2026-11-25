@@ -1199,6 +1199,27 @@ fn renumber_refs(text: &str, printed: &HashMap<usize, usize>) -> String {
         .into_owned()
 }
 
+/// The choices of a question end the same way: when any of them is a phrase or a sentence
+/// (three words or more), each one that ends in a letter or a digit gets a full stop (the model
+/// wrote 「(B) Woodland walks with a friend who hesitated at forks」 under a question whose
+/// other choices ended with one). Choices of one or two words (a word, a name, a year) and
+/// choices that already end in punctuation, a quote or a bracket stay as they are.
+fn with_full_stops(options: Vec<String>) -> Vec<String> {
+    if !options.iter().any(|o| o.split_whitespace().count() >= 3) {
+        return options;
+    }
+    options
+        .into_iter()
+        .map(|o| {
+            if o.chars().last().is_some_and(char::is_alphanumeric) {
+                format!("{o}.")
+            } else {
+                o
+            }
+        })
+        .collect()
+}
+
 /// The sheet one audience gets for one version. Switched-off blocks and blocks with nothing to
 /// print in this version are left out, items and scaffolds follow their `levels`, items are
 /// numbered through the whole sheet (and references to a block's questions by number follow
@@ -1242,11 +1263,13 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     answer_format: i.answer_format.clone(),
                     prompt: refs(i.prompt.trim()),
                     options: if uses_choices(i.answer_format.as_deref()) {
-                        i.options
-                            .iter()
-                            .map(|o| o.trim().to_string())
-                            .filter(|o| !o.is_empty())
-                            .collect()
+                        with_full_stops(
+                            i.options
+                                .iter()
+                                .map(|o| refs(o.trim()))
+                                .filter(|o| !o.is_empty())
+                                .collect(),
+                        )
                     } else {
                         Vec::new()
                     },
@@ -2978,6 +3001,53 @@ mod item_ref_tests {
         assert_eq!(
             renumber_refs("Line 12 of item 1", &printed),
             "Line 12 of item 7"
+        );
+    }
+}
+
+#[cfg(test)]
+mod full_stop_tests {
+    use super::with_full_stops;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn phrase_choices_end_with_a_full_stop() {
+        assert_eq!(
+            with_full_stops(v(&[
+                "A debate with readers about difficult language",
+                "Woodland walks with a friend who hesitated at forks",
+                "A journey to find an unexplored forest.",
+                "Edward Thomas",
+            ])),
+            v(&[
+                "A debate with readers about difficult language.",
+                "Woodland walks with a friend who hesitated at forks.",
+                "A journey to find an unexplored forest.",
+                "Edward Thomas.",
+            ])
+        );
+    }
+
+    #[test]
+    fn short_choices_and_closing_marks_stay() {
+        assert_eq!(
+            with_full_stops(v(&["1915", "1916", "True"])),
+            v(&["1915", "1916", "True"])
+        );
+        assert_eq!(
+            with_full_stops(v(&[
+                "Why did he choose it?",
+                "“readers from all walks of life”",
+                "the other road (the left one)"
+            ])),
+            v(&[
+                "Why did he choose it?",
+                "“readers from all walks of life”",
+                "the other road (the left one)"
+            ])
         );
     }
 }
