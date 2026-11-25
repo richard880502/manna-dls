@@ -28,6 +28,9 @@ export function boundsFor(width: number): { min: number; max: number } {
 /** worksheet | 0-width divider track | conversation */
 export const splitColumns = (share: number) => `minmax(0, ${share}%) 0 minmax(0, 1fr)`;
 
+/** Conversation folded to its strip: the worksheet takes the rest, no divider (the stored share is untouched). */
+export const FOLDED_COLUMNS = "minmax(0, 1fr) 0 2.75rem";
+
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 function readStored(): number {
