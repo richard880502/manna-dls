@@ -418,3 +418,139 @@ describe("the conversation and the worksheet side by side", () => {
     expect(screen.queryByRole("region", { name: "對話" })).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------- the draggable divider
+
+describe("the divider between the worksheet and the conversation", () => {
+  const KEY = "manna.prepSplitSheetShare";
+  // 1200px container, 16px rem: the worksheet (left) may take 42.67% (32rem) to 73.33% (100% - 20rem).
+  const share = (el: HTMLElement) => el.closest<HTMLElement>(".prep-session")!.style.getPropertyValue("--prep-sheet-share");
+
+  beforeEach(() => {
+    window.localStorage.removeItem(KEY);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const w = this.classList.contains("prep-session") ? 1200 : 0;
+      return { x: 0, y: 0, left: 0, top: 0, right: w, bottom: 0, width: w, height: 0, toJSON: () => ({}) } as DOMRect;
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.removeItem(KEY);
+  });
+
+  const open = async () => {
+    mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
+    renderApp("/prep/7");
+    const sep = await screen.findByRole("separator", { name: "調整對話與學習單的寬度" });
+    await waitFor(() => expect(sep).toHaveAttribute("aria-valuemin", "43")); // measured
+    return sep;
+  };
+
+  it("is a focusable vertical separator that starts at 60% and moves with the arrow keys", async () => {
+    const user = userEvent.setup();
+    const sep = await open();
+    expect(sep).toHaveAttribute("aria-orientation", "vertical");
+    expect(sep).toHaveAttribute("aria-controls", expect.stringMatching(/-pane-sheet$/));
+    expect(sep).toHaveAttribute("aria-valuenow", "60");
+    expect(share(sep)).toBe("60");
+    sep.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(sep).toHaveAttribute("aria-valuenow", "62");
+    expect(share(sep)).toBe("62");
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(sep).toHaveAttribute("aria-valuenow", "58");
+    await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    expect(sep).toHaveAttribute("aria-valuenow", "68");
+    expect(window.localStorage.getItem(KEY)).toBe("68");
+  });
+
+  it("never goes past the minimum widths of the two panes", async () => {
+    const user = userEvent.setup();
+    const sep = await open();
+    expect(sep).toHaveAttribute("aria-valuemin", "43");
+    expect(sep).toHaveAttribute("aria-valuemax", "73");
+    sep.focus();
+    await user.keyboard("{End}");
+    expect(Number(share(sep))).toBeCloseTo(73.33, 1);
+    await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
+    expect(Number(share(sep))).toBeCloseTo(73.33, 1);
+    await user.keyboard("{Home}");
+    expect(Number(share(sep))).toBeCloseTo(42.67, 1);
+    await user.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    expect(Number(share(sep))).toBeCloseTo(42.67, 1);
+  });
+
+  it("goes back to 60% on Enter and on a double click", async () => {
+    const user = userEvent.setup();
+    const sep = await open();
+    sep.focus();
+    await user.keyboard("{ArrowRight}{ArrowRight}{Enter}");
+    expect(sep).toHaveAttribute("aria-valuenow", "60");
+    await user.keyboard("{End}");
+    expect(sep).toHaveAttribute("aria-valuenow", "73");
+    await user.dblClick(sep);
+    expect(sep).toHaveAttribute("aria-valuenow", "60");
+    expect(window.localStorage.getItem(KEY)).toBe("60");
+  });
+
+  it("reads the remembered share back, clamped to what fits", async () => {
+    window.localStorage.setItem(KEY, "55");
+    expect(await open()).toHaveAttribute("aria-valuenow", "55");
+  });
+
+  it("clamps a remembered share that is too big or too small", async () => {
+    window.localStorage.setItem(KEY, "90");
+    const sep = await open();
+    expect(sep).toHaveAttribute("aria-valuenow", "73");
+  });
+
+  it("clamps a remembered share that is too small", async () => {
+    window.localStorage.setItem(KEY, "10");
+    expect(await open()).toHaveAttribute("aria-valuenow", "43");
+  });
+
+  it("puts the worksheet before the divider and the conversation after it", async () => {
+    const sep = await open();
+    const sheetPane = screen.getByRole("complementary", { name: "目前的學習單" });
+    const chatPane = screen.getByRole("region", { name: "對話" });
+    expect(sheetPane.compareDocumentPosition(sep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sep.compareDocumentPosition(chatPane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("ignores a remembered value that is not a number", async () => {
+    window.localStorage.setItem(KEY, "abc");
+    expect(await open()).toHaveAttribute("aria-valuenow", "60");
+  });
+
+  it("works when storage throws", async () => {
+    const getItem = Storage.prototype.getItem;
+    const setItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (this: Storage, k: string) {
+      if (k === KEY) throw new Error("blocked");
+      return getItem.call(this, k);
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+      if (k === KEY) throw new Error("blocked");
+      setItem.call(this, k, v);
+    });
+    const user = userEvent.setup();
+    const sep = await open();
+    expect(sep).toHaveAttribute("aria-valuenow", "60");
+    sep.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(sep).toHaveAttribute("aria-valuenow", "62");
+  });
+
+  it("is not there in the narrow (tabs) layout", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
+    renderApp("/prep/7");
+    await screen.findByRole("tablist", { name: "對話或學習單" });
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+  });
+});

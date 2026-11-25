@@ -1262,7 +1262,7 @@
 }
 
 /* ================= conversation and worksheet side by side ================= */
-/* Wide screens (1100px and up): the conversation on the left, the worksheet on the right, each with
+/* Wide screens (1100px and up): the worksheet on the left, the conversation on the right, each with
  * its own scroll, filling the screen below the banner. Narrower: one column; the page shows one of
  * them at a time (the tabs 對話｜學習單), the other is `hidden`. 68.75rem matches NARROW_QUERY. */
 .prep-split-chat[hidden],
@@ -1339,7 +1339,8 @@
   .prep-session.is-split.with-viewer,
   :root:has(.shell.is-collapsed) .prep-session.is-split.with-viewer {
     display: grid;
-    grid-template-columns: minmax(22rem, 2fr) minmax(0, 3fr);
+    /* --prep-sheet-share (percent) is set by the draggable divider; 60 = worksheet 3 : conversation 2 */
+    grid-template-columns: minmax(0, calc(var(--prep-sheet-share, 60) * 1%)) minmax(0, 1fr);
     max-width: none;
     margin-left: 0;
   }
@@ -1355,11 +1356,60 @@
   }
 
   .prep-split-chat {
+    grid-area: 1 / 2;
     padding-bottom: 0;
-    border-right: var(--rule-hair) solid var(--color-rule);
   }
 
   .prep-split-sheet {
+    grid-area: 1 / 1;
     background: var(--color-paper-2);
+  }
+
+  /* The draggable line between the panes: a 1px rule inside a 12px hit area, centred on the column edge. */
+  .prep-split-divider {
+    grid-area: 1 / 1 / 2 / -1;
+    justify-self: start;
+    align-self: start;
+    position: sticky;
+    top: var(--banner-h);
+    z-index: var(--z-sticky);
+    width: 0.75rem;
+    height: calc(100dvh - var(--banner-h));
+    margin-left: calc(var(--prep-sheet-share, 60) * 1% - 0.375rem);
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .prep-split-divider::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(50% - var(--rule-hair) / 2);
+    width: var(--rule-hair);
+    background: var(--color-rule);
+  }
+
+  .prep-split-divider:hover::before,
+  .is-resizing .prep-split-divider::before {
+    left: calc(50% - 1px);
+    width: 2px;
+    background: var(--color-accent);
+  }
+
+  .prep-split-divider:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: -2px;
+  }
+
+  /* While dragging: no text selection, and nothing under the pointer (iframes, scroll areas) takes the events. */
+  .prep-session.is-resizing {
+    user-select: none;
+    cursor: col-resize;
+  }
+
+  .prep-session.is-resizing .prep-split-chat,
+  .prep-session.is-resizing .prep-split-sheet {
+    pointer-events: none;
   }
 }
