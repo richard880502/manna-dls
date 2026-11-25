@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
@@ -33,6 +33,7 @@ import {
 } from "../lib/longMaterial";
 import { ClassChip, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
 import { KitDownload } from "../components/prep/KitDownload";
+import { useSplitResize } from "../components/prep/useSplitResize";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
 import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
@@ -140,6 +141,7 @@ function PrepSessionView({ id }: { id: number }) {
   // The worksheet shown beside the conversation: the turn the teacher chose, else the latest one.
   const [pickedTurn, setPickedTurn] = useState<number | null>(null);
   const narrow = useNarrow();
+  const { containerRef, share, dragging, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -581,7 +583,11 @@ function PrepSessionView({ id }: { id: number }) {
   }
 
   return (
-    <div className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}`}>
+    <div
+      ref={containerRef}
+      className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}${dragging ? " is-resizing" : ""}`}
+      style={split && !narrow ? ({ "--prep-sheet-share": share } as CSSProperties) : undefined}
+    >
       {split && narrow && (
         <div className="prep-split-tabs" role="tablist" aria-label="對話或學習單">
           {(
@@ -605,6 +611,57 @@ function PrepSessionView({ id }: { id: number }) {
           ))}
         </div>
       )}
+      {sheetTurn && (
+        <aside
+          id={`${ids}-pane-sheet`}
+          className="prep-split-sheet"
+          aria-label="目前的學習單"
+          hidden={narrow && tab !== "sheet"}
+        >
+          {sheetTurns.length > 1 && (
+            <p className="prep-sheet-picker">
+              <label htmlFor={`${ids}-sheet-pick`}>學習單</label>
+              <select
+                id={`${ids}-sheet-pick`}
+                value={sheetTurn.id}
+                onChange={(e) => setPickedTurn(Number(e.target.value))}
+              >
+                {sheetTurns.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {`第 ${t.seq} 則：${t.worksheet?.title.trim() || KIND_LABEL[t.kind]}`}
+                  </option>
+                ))}
+              </select>
+            </p>
+          )}
+          {stepsShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
+            <RunProgressPanel
+              progress={sheetTurn.progress}
+              error={sheetTurn.error}
+              onClose={lastPanel.close}
+              onCancelled={refreshSession}
+              className="prep-turn-progress"
+            />
+          )}
+          <div key={sheetTurn.id}>{worksheetCard(sheetTurn)}</div>
+        </aside>
+      )}
+
+      {split && !narrow && (
+        <div
+          className="prep-split-divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="調整對話與學習單的寬度"
+          aria-controls={`${ids}-pane-sheet`}
+          aria-valuenow={Math.round(share)}
+          aria-valuemin={Math.ceil(min)}
+          aria-valuemax={Math.floor(max)}
+          tabIndex={0}
+          {...dividerProps}
+        />
+      )}
+
       <section
         id={`${ids}-pane-chat`}
         className="prep-split-chat"
@@ -893,42 +950,6 @@ function PrepSessionView({ id }: { id: number }) {
         <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
       </section>
-
-      {sheetTurn && (
-        <aside
-          id={`${ids}-pane-sheet`}
-          className="prep-split-sheet"
-          aria-label="目前的學習單"
-          hidden={narrow && tab !== "sheet"}
-        >
-          {sheetTurns.length > 1 && (
-            <p className="prep-sheet-picker">
-              <label htmlFor={`${ids}-sheet-pick`}>學習單</label>
-              <select
-                id={`${ids}-sheet-pick`}
-                value={sheetTurn.id}
-                onChange={(e) => setPickedTurn(Number(e.target.value))}
-              >
-                {sheetTurns.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {`第 ${t.seq} 則：${t.worksheet?.title.trim() || KIND_LABEL[t.kind]}`}
-                  </option>
-                ))}
-              </select>
-            </p>
-          )}
-          {stepsShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
-            <RunProgressPanel
-              progress={sheetTurn.progress}
-              error={sheetTurn.error}
-              onClose={lastPanel.close}
-              onCancelled={refreshSession}
-              className="prep-turn-progress"
-            />
-          )}
-          <div key={sheetTurn.id}>{worksheetCard(sheetTurn)}</div>
-        </aside>
-      )}
 
       {viewing !== null && (
         <MaterialViewer mode="panel" materialId={viewing} open onClose={() => setViewing(null)} />
