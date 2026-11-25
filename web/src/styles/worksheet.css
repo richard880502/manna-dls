@@ -27,6 +27,7 @@
   position: sticky;
   top: calc(var(--banner-h) + var(--top-h) + var(--space-md));
   max-height: calc(100vh - var(--banner-h) - var(--top-h) - var(--space-xl));
+  max-height: calc(100dvh - var(--banner-h) - var(--top-h) - var(--space-xl));
   padding-right: var(--space-lg);
   overflow-y: auto;
   border-right: var(--rule-hair) solid var(--color-rule);
@@ -1676,7 +1677,7 @@ button.bloom-seg:focus-visible {
 
 .ws-proposal-asked {
   margin-top: var(--space-2xs);
-  color: var(--color-ink-soft, inherit);
+  color: var(--color-ink-2);
   overflow-wrap: anywhere;
 }
 
@@ -1824,7 +1825,7 @@ button.bloom-seg:focus-visible {
 .ws-history-block {
   margin-top: var(--space-xs);
   padding: var(--space-xs) var(--space-sm);
-  border: var(--rule-hair) solid var(--color-rule, var(--color-manna-rule));
+  border: var(--rule-hair) solid var(--color-rule);
   border-radius: var(--radius-control);
   font-family: var(--font-print);
   overflow-wrap: anywhere;

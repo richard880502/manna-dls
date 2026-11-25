@@ -480,6 +480,26 @@
   box-shadow: var(--shadow-dialog);
 }
 
+/* Enter only: the scrim fades in and the dialog settles from 96%; leaving stays instant. */
+@media (prefers-reduced-motion: no-preference) {
+  .scrim,
+  .dialog {
+    transition:
+      opacity 200ms var(--ease-out),
+      scale 200ms var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  .dialog {
+    @starting-style {
+      scale: 0.96;
+    }
+  }
+}
+
 /* 「要放棄剛才輸入的內容嗎？」: asked inside the dialog before typed input is thrown away. */
 .dialog-confirm {
   margin-top: var(--space-md);

@@ -94,7 +94,7 @@
   background: linear-gradient(to top, var(--color-scrim), transparent 55%);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-short) var(--ease-out);
+  transition: opacity 150ms ease;
 }
 
 .com-hover-acts {
@@ -124,13 +124,13 @@
 
 /* Where there is hover, the actions come with the pointer or the keyboard; on a touch screen
    they are always there. */
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .com-hover-acts {
     opacity: 0;
     transform: translateY(var(--space-3xs));
     transition:
-      opacity var(--dur-short) var(--ease-out),
-      transform var(--dur-short) var(--ease-out);
+      opacity 150ms ease,
+      transform 150ms ease;
   }
 
   .com-card:hover .com-hover-acts,
