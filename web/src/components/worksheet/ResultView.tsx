@@ -32,6 +32,7 @@ import {
   newId,
   frameShown,
   newItem,
+  itemHasAnswer,
   printedNumbers,
   projectSheet,
   renumberRefs,
@@ -500,6 +501,12 @@ function BlockSection({
   const [over, setOver] = useState(false);
   const levels = ws.state?.content.levels ?? [];
   const teacher = audience === "teacher";
+  // 看答案: the student view can open one block's answers; they are drawn as the teacher view draws them.
+  const [revealed, setRevealed] = useState(false);
+  const answersId = useId();
+  const hasAnswers = view.items.some(({ item }) => itemHasAnswer(item));
+  const canReveal = !teacher && hasAnswers;
+  const showAnswers = teacher || (revealed && hasAnswers);
   const name = label || BLOCK_KIND_LABEL[block.kind];
   const undoable = ws.state?.undoable.includes(block.id) ?? false;
   const toggleName = block.kind === "warmup" ? "暖身" : block.kind === "exit_ticket" ? "Exit ticket" : null;
@@ -684,6 +691,19 @@ function BlockSection({
           disabled={locked}
           onChange={(title) => patch((b) => ({ ...b, title }))}
         />
+        {canReveal && (
+          <button
+            type="button"
+            className="text-link is-plain ws-reveal"
+            lang="zh-Hant"
+            aria-expanded={showAnswers}
+            aria-controls={answersId}
+            aria-label={`${showAnswers ? "收起答案" : "看答案"} ${name}`}
+            onClick={() => setRevealed((r) => !r)}
+          >
+            {showAnswers ? "收起答案" : "看答案"}
+          </button>
+        )}
       </h3>
       {teacher && bloomLine && (
         <p className="ws-bloom-line" lang="zh-Hant">
@@ -839,7 +859,12 @@ function BlockSection({
         </div>
       ))}
 
-      <ol className="ws-items">
+      {showAnswers && !teacher && (
+        <p className="ws-answer-note" lang="zh-Hant" role="note">
+          參考答案（只有你看得到）：印出與匯出的學生版不含這些答案。
+        </p>
+      )}
+      <ol className="ws-items" id={answersId}>
         {shownItems.map(({ item, no, lines }) => {
           const tier = item.tiers?.find((t) => t.level === level);
           const differentiated = (item.tiers ?? []).length > 0;
@@ -876,7 +901,7 @@ function BlockSection({
                   tier={tier}
                   no={no}
                   level={level}
-                  teacher={teacher}
+                  teacher={showAnswers}
                   disabled={locked}
                   memory={supportMemory}
                   onChange={(change) => patchTier(item.id, change)}
@@ -927,14 +952,14 @@ function BlockSection({
                   level={level}
                   levels={levels}
                   perVersion={differentiated}
-                  teacher={teacher}
+                  teacher={showAnswers}
                   disabled={locked}
                   onChange={(org) => changeItem((it) => ({ ...it, organizer: org }))}
                 />
               ) : (
                 <WritingArea item={item} no={no} lines={lines} disabled={locked} onChange={changeItem} />
               )}
-              {teacher && (
+              {showAnswers && (
                 <div className="ws-answer" lang="zh-Hant">
                   {/* A 差異化學習單 question has its answer per version (in TierEditor). */}
                   {!tier && (

@@ -774,6 +774,15 @@ export function projectSheet(content: WorksheetContent, level: WsLevel, audience
   };
 }
 
+/** Whether the teacher version draws an answer (or a scoring note) for this question. */
+export function itemHasAnswer(item: WsItem): boolean {
+  return (
+    item.answer.trim() !== "" ||
+    (item.tiers ?? []).some((t) => t.answer.trim() !== "" || t.scoring.trim() !== "") ||
+    (item.organizer?.sections.some((s) => s.cells.some((c) => c.answer.trim() !== "")) ?? false)
+  );
+}
+
 /** Printed above a block's numbered steps (mirrors `assemble::STEPS_LEAD`). */
 export const STEPS_LEAD = "Follow the steps below.";
 
