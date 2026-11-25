@@ -2747,6 +2747,13 @@ export interface WsVersionRestored {
   worksheet: WorksheetState;
 }
 
+/** 還原成這一版：寫成新的一版，舊的版本都還在 */
+export interface WsVersionRestored {
+  version_no: number;
+  from_version_no: number;
+  worksheet: WorksheetState;
+}
+
 // ---- 備課對話（prep sessions）----
 
 /**
