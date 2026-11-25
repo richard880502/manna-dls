@@ -8,10 +8,12 @@ use serde_json::json;
 
 use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
-use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::routes::worksheets::{state_of, WorksheetState};
+use crate::error::{ApiJson, ApiPath, ApiQuery, AppError, AppResult};
+use crate::routes::worksheets::{sheet_of_version, state_of, SheetQuery, WorksheetState};
+use crate::worksheet::assemble::Sheet;
 use crate::worksheet::history::{self, History, Target};
 use crate::worksheet::images::actions::PictureOutcome;
+use crate::worksheet::restore;
 use crate::worksheet::revise as rv;
 use crate::worksheet::store;
 use crate::AppState;
@@ -91,6 +93,56 @@ pub async fn adopt_version(
         version_no: done.version_no,
         kind: done.kind,
         pictures: done.pictures,
+        worksheet: state_of(&state, id).await?,
+    }))
+}
+
+// ---------------------------------------------------------------- 版本紀錄 (whole worksheet)
+
+/// `GET /api/worksheets/:id/versions/:version_no/sheet?level&audience`: the sheet as that
+/// version had it, with the pictures it showed.
+pub async fn version_sheet(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, version_no)): ApiPath<(i64, i32)>,
+    ApiQuery(q): ApiQuery<SheetQuery>,
+) -> AppResult<Json<Sheet>> {
+    let ws = store::owned(&state.db, id, teacher.id()).await?;
+    let (version, pictures) = store::version_at(&state.db, id, version_no)
+        .await?
+        .ok_or_else(|| AppError::not_found("找不到這一版。"))?;
+    Ok(Json(
+        sheet_of_version(&state, &ws, &version.content, pictures.as_ref(), &q).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreRequest {
+    /// The latest version the client has seen; a newer one is a 409.
+    pub base_version_no: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestoreResult {
+    /// The version the restore wrote (`cause = "restore"`).
+    pub version_no: i32,
+    /// The version whose content it put back.
+    pub from_version_no: i32,
+    pub worksheet: WorksheetState,
+}
+
+/// `POST /api/worksheets/:id/versions/:version_no/restore`
+pub async fn restore_version(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, version_no)): ApiPath<(i64, i32)>,
+    ApiJson(req): ApiJson<RestoreRequest>,
+) -> AppResult<Json<RestoreResult>> {
+    let ws = store::owned(&state.db, id, teacher.id()).await?;
+    let done = restore::restore(&state, &ws, teacher.id(), version_no, req.base_version_no).await?;
+    Ok(Json(RestoreResult {
+        version_no: done.version_no,
+        from_version_no: done.from_version_no,
         worksheet: state_of(&state, id).await?,
     }))
 }

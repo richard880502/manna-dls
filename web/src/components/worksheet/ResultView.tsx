@@ -60,6 +60,7 @@ import { ErrorText } from "../common";
 import { BloomDistribution, BloomSelect } from "./Bloom";
 import { ChoicesArea, WritingArea, promptPlaceholder } from "./ItemAnswer";
 import { BlockHistoryButton } from "./BlockHistory";
+import { VersionHistoryButton } from "./VersionHistory";
 import { SheetText } from "./SheetText";
 import { KeyVocabulary } from "./KeyVocabulary";
 import { WordBankEditor } from "./WordBankEditor";
@@ -1311,6 +1312,13 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
         <Link className="text-link" to={`/worksheets/${state.id}/check`}>
           詞彙級別檢查
         </Link>
+        <VersionHistoryButton
+          worksheetId={state.id}
+          levels={levels}
+          blockedReason={locked ? "Manna 正在處理這份學習單，好了之後再看版本紀錄。" : null}
+          beforeOpen={ws.flush}
+          onRestored={(done) => ws.adopt(done.worksheet)}
+        />
       </div>
 
       {fillNotice && (

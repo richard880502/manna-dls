@@ -1215,6 +1215,8 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/vocabulary-meanings` | `{ "tables"?: bool, "banks"?: bool }` | `WorksheetState` 加上 `notice`（要告訴老師的話，沒有時 `null`）與 `filled`（這次從模型得到字義的字數）：補上 Key Vocabulary 缺的資料（見「Key Vocabulary」一節）。`tables`：字詞表裡沒有中文字義的字（老師把字義切到中文時）；`banks`：字詞表鷹架缺詞性或字義的字（先用詞彙表的詞性，其餘一次模型呼叫）。**沒有缺的就不呼叫模型、不寫新版本**；有缺的最多一次呼叫（`worksheet_vocab_gloss`，記在 `ai_interactions`），寫成新版本（`cause = "edit"`，`source.action = "fill_vocabulary_meanings"`）。AI 關閉、呼叫失敗或只寫出一部分時不報錯：沒有中文字義的字印英文字義、沒有詞性的字只印字，`notice` 用白話說明。學習單正在產生 → 409 |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
 | GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
+| GET | `/api/worksheets/:id/versions/:version_no/sheet?level&audience` | – | `Sheet`：那一版的學習單，形狀與 `GET /api/worksheets/:id/sheet` 相同；圖片是那一版當時用的圖（`worksheet_versions.pictures`；更早、沒有記錄的版本用現在的圖）。別人的學習單或沒有這一版 → 404；`level` 不在那一版裡 → 400 |
+| POST | `/api/worksheets/:id/versions/:version_no/restore` | `{ base_version_no }`（畫面上看到的最新版本） | `{ version_no, from_version_no, worksheet: WorksheetState }`：把整份學習單換成那一版的內容，**寫成新的一版**（`cause = "restore"`，舊版本都還在）。409（中文原因）：還原的就是最新版、內容與現在相同、`base_version_no` 不是最新（之後有新版本）、學習單正在產生、備課對話正在修改這份學習單。別人的學習單／沒有這一版 → 404 |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
 | POST | `/api/worksheets/:id/sop-sync` | `{ confirm: true, keys: string[], sop_version_no, worksheet_version_no?, worksheet_updated_at?, lesson_id? }` | `{ sop_version_no, applied }`。沒有 `confirm: true` → 400；課例／學習單版本或連結與預覽不符 → 409 |
 | PUT | `/api/worksheets/:id/link` | `{ lesson_id: number \| null }` | `WorksheetState`：連結既有課例或取消連結（不改課例內容） |
@@ -4076,3 +4078,14 @@ interface WsTemplateDetail { /* …既有欄位… */
 
 `usage_logs` 新事件：`community_share`、`community_unshare`、`community_view`、`community_save`、`community_unsave`、
 `community_remix`（只記編號與固定標籤，欄位見 COMMUNITY.md）。
+
+
+## 版本紀錄與還原整份學習單
+
+「修改歷程」是一區一區的；**版本紀錄**是整份學習單：列出每一版、唯讀預覽任何一版、「還原成這一版」。
+
+- 列表用 `GET /api/worksheets/:id/versions`（新到舊；每項 `version_no`、`cause`、`source`、`created_at`）。網頁依 `source.cause`（沒有時用 `cause`）取一句話：`generate` 第一版＝Manna 產生，之後＝整份重新產生；`regenerate`＝重新產生一區；`block_proposal`／`block_proposal_pictures`＝Manna 修改一區；`prep_turn`／`revise`＝對話修改；`edit`＝手動編輯；`undo`＝復原；`vocabulary`＝字詞；`pictures`＝圖片；`restore`＝還原成第 n 版（`source.adopted_kind = "worksheet"`）或採用一區的過往版本。
+- 還原**不刪除、不覆寫**任何東西：新的一版內容＝那一版的內容；那一版當時用的圖片重新成為目前的圖（不會重畫，圖片列都還在）。`source` 為 `{ cause: "restore", adopted_kind: "worksheet", adopted_version_no, from_version_no（還原前的最新版）, block_ids（內容改變的區塊） }`；一區的「採用」則是 `adopted_kind = "version" | "proposal"`，兩者分得開。
+- 每個內容改變的區塊，都在 `worksheet_block_history` 記一列（還原前的樣子、`after_block`、新版本號），所以那一區的「修改歷程」多一步「還原」、「復原上一版」仍可用。
+- 使用紀錄 `worksheet_version_restored`：`{ worksheet_id, from_version_no, new_version_no }`（不含內容）。
+- 網頁入口：備課頁學習單卡片的「版本紀錄」按鈕、完整編輯頁（含備課頁的編輯模式）工具列的「版本紀錄」；學習單正在產生或備課對話正在跑時按鈕是 `aria-disabled` 並說明原因。編輯器開啟前先存好手上的修改。

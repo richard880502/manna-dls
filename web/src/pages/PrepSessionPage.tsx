@@ -585,6 +585,7 @@ function PrepSessionView({ id }: { id: number }) {
         stepsShown={stepsShown(turn)}
         onReady={() => setSheetReadyTurn(turn.id)}
         refreshKey={refreshKey}
+        chatBusy={locked}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
         target={target && target.worksheetId === wsId ? target.blockId : null}
