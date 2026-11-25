@@ -541,7 +541,7 @@ fn modified_scaffold(old: &Scaffold, e: &RawScaffoldEdit) -> Result<Scaffold, St
         if content.is_empty() {
             return Err("鷹架的內容不可以是空的（要拿掉就用 remove）".to_string());
         }
-        s.content = content;
+        s.set_text(&content);
     }
     if s == *old {
         return Ok(old.clone());
@@ -582,10 +582,11 @@ fn new_scaffold(e: &RawScaffoldEdit, id: String, levels: &[Level]) -> Result<Sca
             return Err(format!("步驟要有 1 到 {MAX_STEPS} 步"));
         }
     } else {
-        s.content = plain(&e.content, SCAFFOLD_CONTENT_CHARS);
-        if s.content.is_empty() {
+        let text = plain(&e.content, SCAFFOLD_CONTENT_CHARS);
+        if text.is_empty() {
             return Err("新增鷹架的內容是空的".to_string());
         }
+        s.set_text(&text);
     }
     Ok(s)
 }
@@ -707,6 +708,9 @@ fn merge_words(raw: &[RawWordEdit], m: &MergeCtx<'_>, out: &mut ExtrasOut) {
                 } else {
                     let mut next = v.clone();
                     next.definition = meaning;
+                    // The Chinese meaning was written for the old English one: it is written
+                    // again when the table is switched to Chinese.
+                    next.meaning_zh = String::new();
                     out.vocabulary.push(next);
                 }
             }
@@ -760,6 +764,18 @@ fn merge_words(raw: &[RawWordEdit], m: &MergeCtx<'_>, out: &mut ExtrasOut) {
                 .map(|p| sentence_with(&word, &p.text))
                 .unwrap_or_default(),
             paragraph_id: at.map(|p| p.id.clone()),
+            // The part of speech only when the word list gives exactly one; the Chinese meaning
+            // is filled when the teacher switches the table to Chinese.
+            pos: m
+                .lexicon
+                .map(|lex| {
+                    super::super::key_vocab::resolve_pos(
+                        "",
+                        &super::super::key_vocab::listed_pos_of(lex, &word),
+                    )
+                })
+                .unwrap_or_default(),
+            meaning_zh: String::new(),
             word,
             definition: meaning,
             task_word: false,

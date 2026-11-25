@@ -21,6 +21,10 @@ pub struct VocabularySuggestion {
     /// A verbatim sentence of the material (named `evidence`: scrubbed when the material is deleted).
     pub evidence: String,
     pub definition_en: String,
+    /// Part of speech in the evidence sentence (checked against the word list).
+    pub pos: String,
+    /// Short Traditional Chinese meaning of that sense ("" when none).
+    pub meaning_zh: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
@@ -78,6 +82,8 @@ fn clean_to_suggestion(
                 .map(|p| p.id.clone()),
             evidence: v.context.clone(),
             definition_en: v.definition.clone(),
+            pos: v.pos.clone(),
+            meaning_zh: v.meaning_zh.clone(),
         })
         .collect();
     WarmupSuggestion {
@@ -159,16 +165,7 @@ pub async fn run_warmup(
             lines_or(
                 candidates
                     .iter()
-                    .map(|c| {
-                        format!(
-                            "{}｜{}｜P{}",
-                            c.word,
-                            c.level
-                                .map(|l| format!("第 {l} 級"))
-                                .unwrap_or_else(|| "未對應到詞彙表".to_string()),
-                            c.paragraph_no
-                        )
-                    })
+                    .map(worksheet::ai::candidate_line)
                     .collect(),
                 "（沒有候選字彙；key_vocabulary 請給空陣列）",
             ),
@@ -189,7 +186,7 @@ pub async fn run_warmup(
         "title": input.material.title,
         "vocab_count": count,
         "candidates": candidates.iter()
-            .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence }))
+            .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence, "pos": c.pos }))
             .collect::<Vec<_>>(),
         "sop": true,
     });

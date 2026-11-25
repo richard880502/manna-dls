@@ -307,6 +307,32 @@ fn extras_detail(block: &Block) -> Vec<String> {
             }
         } else {
             lines.push(format!("  內容：{}", s.content.trim()));
+            if let Some(bank) = &s.bank {
+                // The entries the sheet prints: part of speech always, the meaning only of the
+                // words the teacher ticked.
+                lines.push(format!(
+                    "  字詞表的字（每個字都印詞性；老師勾選的字才印字義，字義語言：{}）：",
+                    if bank.lang == crate::worksheet::VocabLang::Zh {
+                        "中文"
+                    } else {
+                        "英文"
+                    }
+                ));
+                for w in &bank.words {
+                    lines.push(format!(
+                        "    {}｜詞性：{}｜英文字義：{}｜中文字義：{}｜{}",
+                        w.word.trim(),
+                        or_none(&w.pos),
+                        or_none(&w.definition),
+                        or_none(&w.meaning_zh),
+                        if w.show_meaning {
+                            "印出字義"
+                        } else {
+                            "不印字義"
+                        }
+                    ));
+                }
+            }
         }
     }
     if block.vocabulary.is_empty() {

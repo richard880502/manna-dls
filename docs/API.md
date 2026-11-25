@@ -1212,6 +1212,7 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/blocks/:block_id/regenerate` | `{}` | 202 `WorksheetState`：只重新產生這一個區塊 |
 | POST | `/api/worksheets/:id/blocks/:block_id/undo` | `{}` | `WorksheetState`：復原成重新產生（或採用）之前的那一版，採用的圖片動作也一起復原；沒有上一版 → 409；採用之後這一區又改過 → 409（見「復原與修改歷程」） |
 | POST | `/api/worksheets/:id/blocks/:block_id/restore-word-table` | `{}` | `WorksheetState`：恢復字詞表。老師按「刪除」（或請 Manna 拿掉每一列）時，各列留在區塊的 `vocabulary_removed`；這裡把它們放回 `vocabulary`，級別重新查詞彙表、指示用語重新由程式找出（不用記下來的值）。寫一個新版本（`cause = "edit"`，`source.action = "restore_word_table"`）、記 `worksheet_word_table_restored`。這一區現在有字詞表、或沒有刪掉的可以恢復 → 409；學習單正在產生 → 409 |
+| POST | `/api/worksheets/:id/vocabulary-meanings` | `{ "tables"?: bool, "banks"?: bool }` | `WorksheetState` 加上 `notice`（要告訴老師的話，沒有時 `null`）與 `filled`（這次從模型得到字義的字數）：補上 Key Vocabulary 缺的資料（見「Key Vocabulary」一節）。`tables`：字詞表裡沒有中文字義的字（老師把字義切到中文時）；`banks`：字詞表鷹架缺詞性或字義的字（先用詞彙表的詞性，其餘一次模型呼叫）。**沒有缺的就不呼叫模型、不寫新版本**；有缺的最多一次呼叫（`worksheet_vocab_gloss`，記在 `ai_interactions`），寫成新版本（`cause = "edit"`，`source.action = "fill_vocabulary_meanings"`）。AI 關閉、呼叫失敗或只寫出一部分時不報錯：沒有中文字義的字印英文字義、沒有詞性的字只印字，`notice` 用白話說明。學習單正在產生 → 409 |
 | GET | `/api/worksheets/:id/sheet` | `?level=&audience=` | `WsSheet` |
 | GET | `/api/worksheets/:id/versions` | – | `Array<{ version_no, cause, created_at }>`，新到舊；`cause` = `created`／`edit`／`generate`／`regenerate`／`undo`／`revise`（備課對話的修改與逐區修改的「採用」）／`vocabulary`（詞彙級別檢查的「套用」） |
 | GET | `/api/worksheets/:id/sop-sync` | – | `SopSyncPreview`（沒有連結課例 → 409） |
@@ -2528,7 +2529,7 @@ interface WsSheetBlock { /* …既有欄位… */
   - 題目下方印這個版本的支持：「Sentence frame: …」「Fill in the blanks: …」「Start like this: …」，字庫印「Word bank: a  /  b」。
 - **教師版**保留程度名稱：橫幅「Teacher reference · Basic version (students' sheet: Version A) · …」、PDF 頁尾「Basic (Version A) · 1/2」、檔名 `<檔名>_基礎版_教師參考版.docx`；每題印這個版本的「Answer: …」「Scoring: …」，橫幅下印分層說明。
 - 代號的順序存在學習單內容的 `student_order`（`Content.student_order`）：學習單**第一次產生時隨機排**（例如基礎版＝B、一般版＝C、進階版＝A），重新產生時沿用，所以學生不會從「A」猜出哪一版支持最多（T9）。教師版、教學套件與預覽照這個順序印對應（「教師版（基礎版＝B 版）」）。沒有 `student_order` 的舊學習單（或它沒有剛好列出學習單的版本時）照版本在學習單的順序：基礎版＝A、一般版＝B、進階版＝C。這個規則適用於所有有兩個以上版本的學習單（完整學習單、照我的學習單做也是）。
-- **字詞表放在學習單最後**：內容的 `vocabulary_at_end`（`true` 時才有這個鍵；預設各區各印各的）。為 `true` 時，投影（`GET …/sheet`、DOCX、PDF、教學套件、詞彙級別檢查）把各區的字詞表合成一張（同一個字只列一次）放在 `end_words`，印在最後一區之後（標題「Key words」），各區的 `vocabulary` 是空的；區塊內容裡的 `vocabulary` 不動（編輯、重新產生照舊）。重新產生整份學習單時沿用這個選擇。只是內容的一個欄位，老師勾選後和其他編輯一樣由 `PUT /api/worksheets/:id` 存成新版本。
+- **字詞表放在學習單最後**：內容的 `vocabulary_at_end`（`true` 時才有這個鍵；預設各區各印各的）。為 `true` 時，投影（`GET …/sheet`、DOCX、PDF、教學套件、詞彙級別檢查）把各區的字詞表合成一張（同一個字只列一次）放在 `end_words`，印在最後一區之後（標題「Key Vocabulary」），各區的 `vocabulary` 是空的；區塊內容裡的 `vocabulary` 不動（編輯、重新產生照舊）。重新產生整份學習單時沿用這個選擇。只是內容的一個欄位，老師勾選後和其他編輯一樣由 `PUT /api/worksheets/:id` 存成新版本。
 - **教學套件**：學生部分的標題「學生版（A 版）」「學生版（B 版）」「學生版（C 版）」；差異化學習單的教師部分是每個版本一份教師版，標題「教師版（基礎版＝A 版）」…（各版本的支持、答案與評分說明不同）。改版前的分層練習照舊印一份合併的教師版與舊的對應說明。
 - 編輯器與備課對話的預覽：學生版標示「Version A」，預覽的名稱是「A 版 學生版」；分頁（基礎版／一般版／進階版）與教師版照舊用程度名稱。
 
@@ -3334,7 +3335,7 @@ interface WsProposal {
 - 模型看不到的欄位（教師備註、`template_section_id`，以及之後加的欄位，例如圖片）全部沿用。
 - **鷹架、字詞表、Glossary 也是這一區的一部分**（Issue：教師說「不要單字表格」三次，Manna 三次回答「這一區沒有單字表格」，因為以前送給模型的只有標題、指示與題目，輸出也沒有放鷹架的欄位）。範圍開放（整區）時模型可以：
   - 鷹架（`worksheet::revise::merge_scaffolds`）：`remove` 刪除；`change` 程序鷹架換 `steps`（空白步驟拿掉，1–12 步）、其他鷹架換 `content`（不可為空），id、種類、`levels`、標題保留，`origin` 改成 `ai`，內容沒變不算修改；`new` 新增，`kind` 只能是句型框架、引導問題、作答示例或清楚的分步指示及完成順序，`levels` 是這份學習單的版本，id 是 `<block>-p<proposal>s<k>`，一次最多新增 5 個。
-  - 字詞表（`merge_words`）：`remove` 刪一列（每一列都 remove 就是整張表不見）；`change` 只能換 `meaning`（不可為空），**標了指示用語（`task_word`）的列解釋由程式決定，模型寫什麼都不採用**，字與級別不動；`new` 新增一個字：要是英文字或片語（≤60 字元）、有解釋、**真的出現在教材或這一區的文字裡**（容許詞尾變化）、表裡還沒有，**級別由程式查詞彙表（`vocabulary::word_level`），不用模型寫**，`paragraph_id` 與例句取自第一個出現的段落；一次最多新增 5 個。
+  - 字詞表（`merge_words`）：`remove` 刪一列（每一列都 remove 就是整張表不見）；`change` 只能換 `meaning`（不可為空；換的是英文字義 `definition`，原來的中文字義 `meaning_zh` 清空，切到中文時再補），**標了指示用語（`task_word`）的列解釋由程式決定，模型寫什麼都不採用**，字與級別不動；`new` 新增一個字：要是英文字或片語（≤60 字元）、有解釋、**真的出現在教材或這一區的文字裡**（容許詞尾變化）、表裡還沒有，**級別由程式查詞彙表（`vocabulary::word_level`），不用模型寫**，`paragraph_id` 與例句取自第一個出現的段落；一次最多新增 5 個。
   - Glossary（`merge_glosses`）：只能 `remove`。
   - 沒通過上面任一項的修改：該項維持原樣（新增的不加入）、列進重試的問題、`reply` 後面註明「（鷹架 S2 的修改沒有通過學習單的檢查，維持原樣。）」。
   - 範圍只有標在題目／標題／作答指示上的註記時，三者一律沿用，模型寫什麼都不採用。
@@ -3494,9 +3495,21 @@ interface ObjectiveDraft {
 
 ### V2：作答指示的功能詞
 
-- 程式（`worksheet::task_words`，不呼叫模型）在完整學習單產生後（四個步驟；照版型與閱讀理解題／分層練習不做）找出學生要照著做的文字（區塊的作答指示、題目、分步驟指示）裡的學術功能詞，例如 compare、summarize、explain、infer、support your answer、in your own words、according to、main idea、give reasons、evidence（固定的 30 個詞與它們的詞形），依出現順序最多 8 個，每個附固定的中文提示（例如 compare「比較（找出相同與不同）」），列在暖身的字彙表（關鍵字後面；沒有暖身時放在第一個活動區塊）。已經是關鍵字的不重複列。
-- `WsVocab.task_word: true`（一般關鍵字沒有這一欄），`definition` 是中文提示，`level` 照詞彙表；學習單投影的 `SheetWord` 也有 `task_word`。重新產生區塊後依當時的指示重列。編輯器的「級別」欄顯示「指示用語」。
-- 學生版因此會有中文（這些提示）：伺服器沒有中文字型時，學生版 PDF 也會像教師版一樣回 409（訊息改成「…例如教師備註或字彙的中文提示…」）；Docker 映像有安裝中文字型。
+- 程式（`worksheet::task_words`，不呼叫模型）在完整學習單產生後（四個步驟；照版型與閱讀理解題／分層練習不做）找出學生要照著做的文字（區塊的作答指示、題目、分步驟指示）裡的學術功能詞，例如 compare、summarize、explain、infer、support your answer、in your own words、according to、main idea、give reasons、evidence（固定的 30 個詞與它們的詞形），依出現順序最多 8 個，列在暖身的字彙表（關鍵字後面；沒有暖身時放在第一個活動區塊）。已經是關鍵字的不重複列。每個詞在 `TASK_WORDS` 裡有固定的詞性、固定的英文字義（不超過 15 個字、比該詞簡單、不用該詞本身）與固定的中文提示（例如 compare「比較（找出相同與不同）」）。
+- `WsVocab.task_word: true`（一般關鍵字沒有這一欄；Key Vocabulary 的 Academic 欄），`definition` 是英文字義、`meaning_zh` 是中文提示、`pos` 是詞性，`level` 照詞彙表；學習單投影的 `SheetWord` 也有 `task_word`。重新產生區塊後依當時的指示重列。編輯器的「級別」欄顯示「指示用語」。
+- **舊內容**：以前指示用語的 `definition` 是中文提示、沒有 `pos`／`meaning_zh`。讀進來時（`Vocab` 的反序列化）`task_word` 為真、`meaning_zh` 空、`definition` 是中文的列，中文移到 `meaning_zh`，`definition` 換成固定的英文字義、`pos` 補固定詞性，所以每一處讀到的都是新的樣子。
+- 學生版預設是英文；老師把字詞表切到中文時才有中文（見「Key Vocabulary」）。
+
+### Key Vocabulary（字詞表）
+
+- **版面**：標題「Key Vocabulary」；分成兩欄：Content（課文的關鍵字）與 Academic（作答指示的功能詞，`task_word`）；每一欄是一張 `Word | POS | Meaning` 的小表。螢幕上（編輯器與預覽）左右並排、窄螢幕上下疊；PDF 兩欄並排（超過一頁時下一頁重印欄標題）；DOCX 用一張無框線的兩格版面表，每格放一張 `Word | POS | Meaning` 的表（所以 Word 裡也是左右並排）。其中一欄沒有字時只印另一欄，滿版寬度。教師版在 Content 的字後面加「(Level n)」。
+- **資料**（學習單內容）：`Vocab.pos`（`n.`、`v.`、`adj.`、`adv.`、`prep.`、`conj.`、`pron.`、`det.`、`aux.`、`interj.`、`phr.`；空＝未知，不印）、`Vocab.meaning_zh`（簡短繁體中文字義；空＝還沒有）；`definition` 仍是英文字義。都是選填，舊內容照常讀。`Content.vocabulary_language`（`"zh"` 時才有這個鍵；沒有＝英文）：整份學習單印哪一種字義，和 `vocabulary_at_end` 一樣是內容的一個欄位，老師勾選後由 `PUT /api/worksheets/:id` 存成新版本；重新產生時沿用。兩種字義都留在每一列，所以來回切換不會遺失任何一種；投影（`GET …/sheet`、DOCX、PDF、教學套件）把選定語言的字義放在 `SheetWord.definition`（選中文而這個字沒有中文字義時，印英文字義），並帶 `pos`。
+- **關鍵字的詞性與中文字義**：暖身的提示詞（`worksheet_warmup`、`sop_warmup`）與 JSON schema 每個關鍵字多回 `pos`（這個字在 `context_sentence` 裡的詞性）與 `meaning_zh`。伺服器檢查詞性（`key_vocab::resolve_pos`）：先正規化成固定集合；詞彙表（`vocabulary_items.pos`，如 `n./v.`）有這個字時，模型的詞性必須是表裡給的其中一個，否則表裡只給一個就用那一個，給多個則保留模型正規化後的值。候選字彙清單每一行附「詞彙表詞性」。`meaning_zh` 沒有中文就丟掉（留空）。「改這一區」新增的字：詞性只在詞彙表只給一個時填，中文字義留空；改了英文字義的字，中文字義清空，切到中文時再補。老師存檔時（`relookup_levels`）沒有詞性的字、字詞表鷹架的字也用同樣的規則從詞彙表補詞性。
+- **切到中文補字義**（`POST /api/worksheets/:id/vocabulary-meanings`，`tables: true`）：沒有中文字義的字（舊學習單、老師新增的字）用**一次**模型呼叫補上，沿用 `worksheet_vocab_gloss`（字義、詞性、英文解釋；logged 成一筆 `ai_interactions`）；指示用語的中文提示是固定的，不用模型。沒有缺的就不呼叫。AI 關閉或失敗時不擋住切換：那些字印英文字義，回應的 `notice` 說明。
+- **字詞表鷹架（Word bank）**：學習單上畫在表下面的「Word bank」是暖身區塊的 verbal 鷹架（`kind = "字詞表"`）。`Scaffold.bank`（`{ lang?, words: [{ word, pos?, definition?, meaning_zh?, show_meaning? }] }`）把它存成一個個字：每個字**一定印詞性**（`plain (adj.)`；還不知道詞性的字只印字）；老師勾選的字（`show_meaning`）才在旁邊印字義，語言是這個字詞表鷹架自己的 `bank.lang`（`"zh"`／預設英文）。沒有勾選時是一行、逗號隔開；有勾選時每個字一行，勾選的字寫成 `plain (adj.): easy to see`。`content` 仍是同樣的字用逗號隔開（與 `bank` 同步，所以讀 `content` 的地方照舊）。舊的純文字字詞表讀進來就是它的字（`parse_word_list`；「Linking words for …: …」這類不是一串單字的沒有 `bank`，照原文印）。詞性與字義：產生（與重新產生區塊）後伺服器先用詞彙表的詞性（只給一個時），其餘整份學習單**一次**模型呼叫補上（同一個 `worksheet_vocab_gloss`）；舊學習單在編輯器第一次打開、或勾選一個沒有字義的字時補（`banks: true`）。失敗或 AI 關閉時照樣印（沒有詞性的字只印字），`notice` 說明；產生時的 `notice` 放進 `content.notices`。這是產生步驟之後的一次伺服器端補齊，字詞表的提示詞（`worksheet_scaffolds`、`sop_scaffolds`）仍照舊只列字，不改它們的 schema。
+- **不重複 Key Vocabulary**：字詞表鷹架的字都已經在 Key Vocabulary 表裡時（不分大小寫、去頭尾空白，不論表放在各區或最後），投影不印它（預覽、教師版與學生版、複製、DOCX、PDF 一致）；儲存的內容不動，所以以前產生的學習單也不再印。多了表裡沒有的字就整個照印。提示詞（`worksheet_scaffolds`、`sop_scaffolds`）也告訴模型不要重複。
+- **「改這一區」**：模型看到字詞表鷹架每個字的詞性、英文與中文字義和有沒有勾選（`extras_detail`）。要增減字就改鷹架的 `content`（逗號隔開的字）；留下的字保留原有詞性、字義與勾選（`Scaffold::set_text`），新加的字之後補。勾選哪些字與字義語言是老師在編輯器上自己選的，模型不能改。
+- **提示詞版本**（`0054_key_vocabulary.sql`）：`worksheet_warmup`、`sop_warmup`（pos、meaning_zh 的規則）、`worksheet_scaffolds`、`sop_scaffolds`（不要重複 Key Vocabulary 的字）與 `worksheet_block_revise`（字詞表鷹架與 Key Vocabulary 的說明）各加一版。
 
 ## 測試用假模型（`AI_PROVIDER=fake`）新增的標記（寫在教材文字裡）
 

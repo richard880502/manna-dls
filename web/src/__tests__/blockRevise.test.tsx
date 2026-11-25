@@ -869,7 +869,7 @@ describe("編輯器: 鷹架與字詞表", () => {
     renderApp("/worksheets/11");
     await screen.findByRole("region", { name: "區塊 B" });
     // The table is on the sheet before.
-    expect(await editorBlock().findByRole("table", { name: "字詞表 B" })).toBeInTheDocument();
+    expect(await editorBlock().findAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
     const panel = within(await editorBlock().findByRole("region", { name: "Manna 的修改建議" }));
     const list = within(panel.getByRole("list", { name: "鷹架與字詞表的修改" }));
     const rows = list.getAllByRole("listitem");
@@ -882,7 +882,7 @@ describe("編輯器: 鷹架與字詞表", () => {
 
     await user.click(panel.getByRole("button", { name: "採用" }));
     await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(1));
-    await waitFor(() => expect(editorBlock().queryByRole("table", { name: "字詞表 B" })).toBeNull());
+    await waitFor(() => expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0));
     expect(editorBlock().getByRole("textbox", { name: "句型框架（B）" })).toHaveValue("The opening event is ___.");
   });
 
@@ -896,11 +896,12 @@ describe("編輯器: 鷹架與字詞表", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/11");
     await screen.findByRole("region", { name: "區塊 B" });
-    const table = await editorBlock().findByRole("table", { name: "字詞表 B" });
-    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    const tables = await editorBlock().findAllByRole("table", { name: /^字詞表 B/ });
+    // Content and Academic side by side: a header row and one word each.
+    expect(tables.map((t) => within(t).getAllByRole("row").length)).toEqual([2, 2]);
     // Every other 刪除 on the block is for something else: the table has its own.
     await user.click(editorBlock().getByRole("button", { name: "刪除字詞表 B" }));
-    await waitFor(() => expect(editorBlock().queryByRole("table", { name: "字詞表 B" })).toBeNull());
+    await waitFor(() => expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0));
     await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
     const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content.blocks[1]!;
     expect(saved.vocabulary).toEqual([]);
@@ -922,13 +923,13 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/11");
     await screen.findByRole("region", { name: "區塊 B" });
-    expect(editorBlock().getByRole("table", { name: "字詞表 B" })).toBeInTheDocument();
+    expect(editorBlock().getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
     expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
 
     await user.click(screen.getByRole("checkbox", { name: "字詞表放在學習單最後" }));
     const end = await screen.findByRole("region", { name: "字詞表（學習單最後）" });
-    expect(within(end).getByRole("table", { name: "字詞表 B" })).toBeInTheDocument();
-    expect(editorBlock().queryByRole("table", { name: "字詞表 B" })).toBeNull();
+    expect(within(end).getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
+    expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0);
     // Still editable where it is now.
     expect(within(end).getByRole("textbox", { name: "umbrella 的解釋" })).toHaveValue("雨傘");
     await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
@@ -938,7 +939,7 @@ describe("編輯器: 字詞表的位置與恢復", () => {
 
     // And back.
     await user.click(screen.getByRole("checkbox", { name: "字詞表放在學習單最後" }));
-    await waitFor(() => expect(editorBlock().getByRole("table", { name: "字詞表 B" })).toBeInTheDocument());
+    await waitFor(() => expect(editorBlock().getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2));
     expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
   });
 
@@ -962,8 +963,9 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content.blocks[1]!;
     expect(saved.vocabulary).toEqual([]);
     expect(saved.vocabulary_removed).toEqual(before.vocabulary);
-    const table = await editorBlock().findByRole("table", { name: "字詞表 B" });
-    expect(within(table).getAllByRole("row")).toHaveLength(3);
+    const tables = await editorBlock().findAllByRole("table", { name: /^字詞表 B/ });
+    // Content and Academic side by side: a header row and one word each.
+    expect(tables.map((t) => within(t).getAllByRole("row").length)).toEqual([2, 2]);
     expect(editorBlock().queryByRole("button", { name: "恢復字詞表 B" })).toBeNull();
   });
 });

@@ -340,6 +340,7 @@ fn template_scaffolds(
                 auto: false,
                 origin: Origin::Ai,
                 heading: s.heading.clone(),
+                bank: None,
             }
         })
         .collect()
@@ -653,6 +654,7 @@ async fn generate(run: &Run, job_id: i64, tpl: &TemplateUse) -> AppResult<()> {
         levels: levels.clone(),
         // 字詞表的位置是老師選的，重新產生也留著。
         vocabulary_at_end: latest.content.vocabulary_at_end,
+        vocabulary_language: latest.content.vocabulary_language,
         chosen: Some(chosen),
         notices,
     };
