@@ -10,6 +10,7 @@ import type {
 } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { RunProgressPanel, useRunPanel } from "../components/RunProgress";
+import { useConfirmFocus } from "../lib/useConfirmFocus";
 import { TOOL_NAME } from "../lib/create";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import {
@@ -132,6 +133,9 @@ function PrepSessionView({ id }: { id: number }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [headError, setHeadError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { triggerRef: deleteTriggerRef, safeRef: deleteSafeRef } = useConfirmFocus(confirmDelete);
+  // The turn whose worksheet card first had its sheet (see `holdsPanel`).
+  const [sheetReadyTurn, setSheetReadyTurn] = useState<number | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<number, Record<string, string>>>({});
   const [flash, setFlash] = useState<{ worksheetId: number; ids: ReadonlySet<string> } | null>(null);
@@ -424,8 +428,21 @@ function PrepSessionView({ id }: { id: number }) {
       : (templates ?? []);
 
   /** Whether this turn's 「進度」 panel shows (then its own working lines stay quiet). */
-  function stepsShown(turn: PrepTurn) {
+  function panelShown(turn: PrepTurn) {
     return turn.id === lastTurn?.id && lastPanel.visible && !!turn.progress;
+  }
+
+  /**
+   * The pane's panel keeps its steps, all done, until the sheet it makes is on screen (then it folds
+   * into one line in that same frame), so the panel, a loading line and the sheet never stack.
+   */
+  function holdsPanel(turn: PrepTurn) {
+    return panelShown(turn) && turn.progress?.status === "done" && ownsPane(turn) && sheetReadyTurn !== turn.id;
+  }
+
+  /** The panel is still the run's live status (steps running or failed), so working lines stay quiet. */
+  function stepsShown(turn: PrepTurn) {
+    return panelShown(turn) && (turn.progress?.status !== "done" || holdsPanel(turn));
   }
 
   /** A worksheet turn's 「進度」 panel shows in the right pane, beside the sheet it makes. */
@@ -443,6 +460,7 @@ function PrepSessionView({ id }: { id: number }) {
       <WorksheetCard
         turn={turn}
         stepsShown={stepsShown(turn)}
+        onReady={() => setSheetReadyTurn(turn.id)}
         refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}-${lastVersion}-${undone}`}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
@@ -634,12 +652,13 @@ function PrepSessionView({ id }: { id: number }) {
               </select>
             </p>
           )}
-          {stepsShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
+          {panelShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
             <RunProgressPanel
               progress={sheetTurn.progress}
               error={sheetTurn.error}
               onClose={lastPanel.close}
               onCancelled={refreshSession}
+              collapseDone={!holdsPanel(sheetTurn)}
               className="prep-turn-progress"
             />
           )}
@@ -759,12 +778,12 @@ function PrepSessionView({ id }: { id: number }) {
                 <button type="button" className="text-link is-danger" onClick={() => void remove()}>
                   確定刪除
                 </button>
-                <button type="button" className="text-link is-plain" onClick={() => setConfirmDelete(false)}>
+                <button type="button" className="text-link is-plain" ref={deleteSafeRef} onClick={() => setConfirmDelete(false)}>
                   不刪
                 </button>
               </span>
             ) : (
-              <button type="button" className="text-link is-plain" onClick={() => setConfirmDelete(true)}>
+              <button type="button" className="text-link is-plain" ref={deleteTriggerRef} onClick={() => setConfirmDelete(true)}>
                 刪除
               </button>
             )}
@@ -782,7 +801,7 @@ function PrepSessionView({ id }: { id: number }) {
             </p>
             <PrepImageThumbs sessionId={id} images={turn.images} />
             <section className="prep-result" aria-label={`${KIND_LABEL[turn.kind]}（第 ${turn.seq} 則）`}>
-              {stepsShown(turn) && turn.progress && !ownsPane(turn) && (
+              {panelShown(turn) && turn.progress && !ownsPane(turn) && (
                 <RunProgressPanel
                   progress={turn.progress}
                   error={turn.error}

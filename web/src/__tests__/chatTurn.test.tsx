@@ -272,6 +272,43 @@ describe("a chat turn", () => {
     expect(screen.getByText("這一輪的修改已經復原。")).toBeInTheDocument();
   });
 
+  it("復原 confirm: focus goes to 不復原, back to the trigger on cancel, and stays inside once undone", async () => {
+    const t = turn("chat", { result: chat({ version_no: 4, undoable: true }) });
+    let undone = false;
+    mockApi({
+      ...baseRoutes(),
+      ...sheetRoutes(),
+      [`GET ${S7}`]: () =>
+        undone
+          ? session([sheetTurn(101, "學習單一"), { ...t, result: chat({ version_no: 4, undoable: false, undone: true }) }])
+          : session([sheetTurn(101, "學習單一"), t]),
+      [`POST ${S7}/turns/${t.id}/undo`]: () => {
+        undone = true;
+        return t;
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "復原這一輪" }));
+    expect(screen.getByRole("button", { name: "不復原" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "不復原" }));
+    expect(screen.getByRole("button", { name: "復原這一輪" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "復原這一輪" }));
+    await user.click(screen.getByRole("button", { name: "確定復原" }));
+    await screen.findByText("這一輪的修改已經復原。");
+    expect(document.body).not.toHaveFocus();
+  });
+
+  it("deleting the session: 不刪 takes focus first and hands it back to 刪除", async () => {
+    mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "刪除" }));
+    expect(screen.getByRole("button", { name: "不刪" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "不刪" }));
+    expect(screen.getByRole("button", { name: "刪除" })).toHaveFocus();
+  });
+
   it("shows the server's reason when 復原 is refused with 409", async () => {
     const t = turn("chat", { result: chat({ version_no: 4, undoable: true }) });
     mockApi({

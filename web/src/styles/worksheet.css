@@ -2425,3 +2425,19 @@ button.bloom-seg:focus-visible {
   font-family: var(--font-body);
   font-size: var(--text-sm);
 }
+
+/* The sheet fades in when it arrives after the progress panel (no motion for reduced-motion). */
+@media (prefers-reduced-motion: no-preference) {
+  .prep-sheet-wrap.is-arriving {
+    animation: prep-sheet-in 150ms var(--ease-out) both;
+  }
+}
+
+@keyframes prep-sheet-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

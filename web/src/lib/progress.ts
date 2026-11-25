@@ -6,6 +6,8 @@ export const PROGRESS_WORDS = {
   title: "進度",
   close: "關閉進度",
   allDone: "全部完成",
+  /** The one line the panel folds into once every step is done: 「全部完成（6 步）」. */
+  doneLine: (steps: number) => `全部完成（${steps} 步）`,
   /** For a screen reader: what each step's mark means. */
   status: {
     pending: "還沒開始",
@@ -37,9 +39,6 @@ export function queueText(queue: NonNullable<RunProgress["queue"]>): string {
         : `（約 ${Math.ceil(queue.eta_secs / 60)} 分鐘）`;
   return `排隊中，前面還有 ${queue.ahead} 個${eta}`;
 }
-
-/** How long the panel stays, all done, before it folds away. Tests shorten it. */
-export const progressConfig = { doneMs: 4000 };
 
 /** One line of the list: 「配圖中（3／6）」. */
 export function stepText(step: ProgressStep): string {

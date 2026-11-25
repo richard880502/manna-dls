@@ -1,7 +1,8 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import type { QueueInfo, RunProgress } from "../api/types";
 import { api, errorMessage } from "../api/client";
-import { PROGRESS_WORDS, QUEUE_WORDS, announcement, progressConfig, queueText, stepText } from "../lib/progress";
+import { PROGRESS_WORDS, QUEUE_WORDS, announcement, queueText, stepText } from "../lib/progress";
+import { useConfirmFocus } from "../lib/useConfirmFocus";
 import { ErrorText } from "./common";
 
 /** 「排隊中…」 with 取消排隊 (an in-page confirm); `onCancelled` refreshes the page after the job is cancelled. */
@@ -9,7 +10,9 @@ export function QueueLine({ queue, onCancelled }: { queue: QueueInfo; onCancelle
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { triggerRef, safeRef } = useConfirmFocus(asking);
   async function cancel() {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -31,15 +34,20 @@ export function QueueLine({ queue, onCancelled }: { queue: QueueInfo; onCancelle
       {asking ? (
         <span role="group" aria-label={QUEUE_WORDS.cancel}>
           {QUEUE_WORDS.confirm}
-          <button type="button" className="text-link is-danger" disabled={busy} onClick={() => void cancel()}>
+          <button
+            type="button"
+            className="text-link is-danger"
+            aria-disabled={busy || undefined}
+            onClick={() => void cancel()}
+          >
             {QUEUE_WORDS.yes}
           </button>
-          <button type="button" className="text-link is-plain" onClick={() => setAsking(false)}>
+          <button type="button" className="text-link is-plain" ref={safeRef} onClick={() => setAsking(false)}>
             {QUEUE_WORDS.no}
           </button>
         </span>
       ) : (
-        <button type="button" className="text-link is-plain" onClick={() => setAsking(true)}>
+        <button type="button" className="text-link is-plain" ref={triggerRef} onClick={() => setAsking(true)}>
           {QUEUE_WORDS.cancel}
         </button>
       )}
@@ -49,29 +57,22 @@ export function QueueLine({ queue, onCancelled }: { queue: QueueInfo; onCancelle
 }
 
 /**
- * Whether the progress panel of run `runKey` shows: while the run goes on, then for a moment once
- * it is all done (it folds away), or, when a step failed, until the teacher closes it. A run that
- * was already over when the page first saw it shows nothing: the page says how it ended. Closing
- * (×) hides that run only; the next run shows again.
+ * Whether the progress panel of run `runKey` shows: while the run goes on, and once it is all
+ * done (the panel then folds into one fixed line and stays, so nothing below it moves later), or,
+ * when a step failed, until the teacher closes it. A run that was already over when the page
+ * first saw it shows nothing: the page says how it ended. Closing (×) hides that run only; the
+ * next run shows again.
  */
 export function useRunPanel(progress: RunProgress | null | undefined, runKey: string | null) {
   const [closed, setClosed] = useState<string | null>(null);
   const [watched, setWatched] = useState<string | null>(null);
-  const [folded, setFolded] = useState<string | null>(null);
   const status = progress?.status ?? null;
   // A run seen running shows how it ends, too (state adjusted while rendering).
   if (status === "running" && runKey !== null && watched !== runKey) setWatched(runKey);
   const seen = runKey !== null && watched === runKey;
 
-  useEffect(() => {
-    if (status !== "done" || !seen || runKey === null) return undefined;
-    const timer = setTimeout(() => setFolded(runKey), progressConfig.doneMs);
-    return () => clearTimeout(timer);
-  }, [status, seen, runKey]);
-
   const open = runKey !== null && closed !== runKey;
-  const visible =
-    !!progress && open && (status === "running" || (seen && (status === "failed" || folded !== runKey)));
+  const visible = !!progress && open && (status === "running" || seen);
   return {
     visible,
     /** The teacher closed this run's panel. */
@@ -88,6 +89,11 @@ interface RunProgressPanelProps {
   /** Called after a queued job was cancelled, so the page can refresh at once. */
   onCancelled?: () => void;
   className?: string;
+  /**
+   * Fold into the one 「全部完成」 line once every step is done (default). A page that still waits
+   * for what the run makes (the worksheet being loaded) passes false until it is there.
+   */
+  collapseDone?: boolean;
 }
 
 /**
@@ -96,23 +102,25 @@ interface RunProgressPanelProps {
  * to come are plain; a failed step says why. A polite live region says when the step changes,
  * when everything is done, or which step failed. × hides the panel; the run goes on.
  */
-export function RunProgressPanel({ progress, error, onClose, onCancelled, className }: RunProgressPanelProps) {
+export function RunProgressPanel({ progress, error, onClose, onCancelled, className, collapseDone = true }: RunProgressPanelProps) {
   const ids = useId();
+  const folded = progress.status === "done" && collapseDone;
   return (
     <section
-      className={`run-progress is-${progress.status}${className ? ` ${className}` : ""}`}
-      aria-labelledby={`${ids}-title`}
+      className={`run-progress is-${progress.status}${folded ? " is-folded" : ""}${className ? ` ${className}` : ""}`}
+      aria-labelledby={`${ids}-name`}
     >
       <div className="run-progress-head">
         <p className="run-progress-title" id={`${ids}-title`}>
-          {PROGRESS_WORDS.title}
+          <span id={`${ids}-name`}>{PROGRESS_WORDS.title}</span>
+          {folded && <span className="run-progress-summary">：{PROGRESS_WORDS.doneLine(progress.steps.length)}</span>}
         </p>
         <button type="button" className="run-progress-close" aria-label={PROGRESS_WORDS.close} onClick={onClose}>
           <span aria-hidden="true">×</span>
         </button>
       </div>
       {progress.status === "running" && progress.queue && <QueueLine queue={progress.queue} onCancelled={onCancelled} />}
-      {!(progress.status === "running" && progress.queue) && (
+      {!folded && !(progress.status === "running" && progress.queue) && (
       <ol className="run-progress-steps">
         {progress.steps.map((step, i) => (
           <li
