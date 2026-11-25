@@ -435,7 +435,7 @@ export function WorksheetCard({
         )}
         <div className="prep-ws-actions">
           <Link className="text-link is-plain" to={`/worksheets/${wsId}`}>
-            直接編輯
+            在完整編輯頁開啟
           </Link>
           <Link className="text-link is-plain" to={`/worksheets/${wsId}/check`}>
             詞彙檢查

@@ -1155,14 +1155,22 @@ function chosenLine(content: WorksheetContent): string | null {
 
 interface ResultViewProps {
   ws: WorksheetController;
-  onAdjust: () => void;
+  /** 調整設定 (back to the options). Without it the link is not drawn. */
+  onAdjust?: () => void;
+  /**
+   * The editor sits beside the prep conversation (about half a screen): the tools that belong to
+   * the full page (export, linking the lesson, 調整設定, the long explanations) are left to it.
+   */
+  embedded?: boolean;
+  /** Something else (a chat turn) is changing the worksheet: everything is read-only meanwhile. */
+  frozen?: boolean;
 }
 
 /**
  * The generated worksheet, edited in place: version tabs (only the selected ones), student or
  * teacher view, block tools, quiet saving. Answers exist in the page only in the teacher view.
  */
-export function ResultView({ ws, onAdjust }: ResultViewProps) {
+export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: ResultViewProps) {
   const state = ws.state;
   const levels = state?.content.levels ?? [];
   const [level, setLevel] = useState<WsLevel>(levels[0] ?? "standard");
@@ -1203,7 +1211,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
 
   if (!state) return null;
   const { content } = state;
-  const locked = state.running || ws.busy || revise.busy;
+  const locked = state.running || ws.busy || revise.busy || frozen;
   const sheet = projectSheet(content, current, audience);
   const views = new Map(sheet.blocks.map((b) => [b.block.id, b]));
   const chosen = chosenLine(content);
@@ -1232,7 +1240,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
     audience === "student" && code ? `${versionLabel(code)} ${AUDIENCE_LABEL.student}` : `${LEVEL_LABEL[current]} ${AUDIENCE_LABEL[audience]}`;
 
   return (
-    <div className="ws-result">
+    <div className={`ws-result${embedded ? " is-embedded" : ""}`}>
       <SopSyncNotice ws={ws} />
 
       <div className="ws-tabs" role="tablist" aria-label="版本">
@@ -1248,9 +1256,11 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
             {LEVEL_LABEL[l]}
           </button>
         ))}
-        <button type="button" className="text-link is-plain ws-adjust" onClick={onAdjust}>
-          調整設定
-        </button>
+        {onAdjust && !embedded && (
+          <button type="button" className="text-link is-plain ws-adjust" onClick={onAdjust}>
+            調整設定
+          </button>
+        )}
       </div>
 
       <div className="ws-tool-row">
@@ -1312,12 +1322,16 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
       {!state.running && <RunOutcome jobs={state.jobs} />}
       <ErrorText message={ws.actionError} />
 
-      <p className="manna-label ws-draft-note">
-        <span className="star" aria-hidden="true" />
-        Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除，也可以按「改這一區」或加註記，請 Manna 只改那一區。
-        {audience === "teacher" ? "參考答案只在教師版。" : ""}
-      </p>
-      <p className="field-hint">{NOTES_HINT}</p>
+      {!embedded && (
+        <>
+          <p className="manna-label ws-draft-note">
+            <span className="star" aria-hidden="true" />
+            Manna 產生的草稿。直接點文字就能改；每個區塊都可以移動、重新產生或刪除，也可以按「改這一區」或加註記，請 Manna 只改那一區。
+            {audience === "teacher" ? "參考答案只在教師版。" : ""}
+          </p>
+          <p className="field-hint">{NOTES_HINT}</p>
+        </>
+      )}
       <LostNotes ctl={revise} />
       {chosen && <p className="quiet-note ws-chosen">{chosen}</p>}
       {content.chosen?.reasons.map((r) => (
@@ -1500,8 +1514,8 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
         </p>
       </article>
 
-      <ExportArea ws={ws} level={current} />
-      <LessonLinkControls ws={ws} />
+      {!embedded && <ExportArea ws={ws} level={current} />}
+      {!embedded && <LessonLinkControls ws={ws} />}
     </div>
   );
 }

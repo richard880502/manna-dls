@@ -40,6 +40,14 @@ import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { scrollToEl, scrollToIdWhenReady, whenVisible } from "../lib/scroll";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ChatCard, ResourcesCard, ReviseCard, WorksheetTurnCard } from "../components/prep/TurnCards";
+import {
+  SheetEditor,
+  SheetModeToggle,
+  loadSheetMode,
+  saveSheetMode,
+  type SheetFlush,
+  type SheetMode,
+} from "../components/prep/SheetEditPane";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
 import { MemorySuggestionCards, habitWordsSent, useMemorySuggestions } from "../components/memory/MemorySuggestions";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
@@ -155,6 +163,11 @@ function PrepSessionView({ id }: { id: number }) {
   const narrow = useNarrow();
   const { containerRef, share, dragging, canResize, columns, edge, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
+  // 預覽｜編輯 in the worksheet pane. The editor registers how to save its pending edits, so a
+  // message is sent from the saved version; `editRev` makes the preview read the sheet again after edits.
+  const [sheetMode, setSheetMode] = useState<SheetMode>(loadSheetMode);
+  const editFlush = useRef<SheetFlush | null>(null);
+  const [editRev, setEditRev] = useState(0);
   // Narrow screens share one page scroll between the two tabs: each tab keeps its own position.
   const tabScrolls = useRef<Partial<Record<"chat" | "sheet", number>>>({});
   const shownTab = useRef(tab);
@@ -324,6 +337,12 @@ function PrepSessionView({ id }: { id: number }) {
     setSending(true);
     setSendError(null);
     try {
+      // Edits made by hand are saved first: the turn starts from the version the teacher sees.
+      const unsaved = await editFlush.current?.();
+      if (unsaved) {
+        setSendError(`學習單的修改還沒存好，所以先不送出：${unsaved}`);
+        return false;
+      }
       apply(await api.createPrepTurn(id, body));
       // What the teacher typed is also read for habits (the suggestions ask again).
       if (body.kind === "chat") habitWordsSent();
@@ -334,6 +353,17 @@ function PrepSessionView({ id }: { id: number }) {
     } finally {
       setSending(false);
     }
+  }
+
+  /** 預覽｜編輯: leaving 編輯 saves first (and stays when that fails, the editor says why). */
+  async function chooseSheetMode(next: SheetMode) {
+    if (next === sheetMode) return;
+    if (sheetMode === "edit") {
+      if (await editFlush.current?.()) return;
+      setEditRev((n) => n + 1);
+    }
+    setSheetMode(next);
+    saveSheetMode(next);
   }
 
   /** 回上一步: the home box, filled in as it was when this conversation began. Nothing is lost. */
@@ -503,12 +533,25 @@ function PrepSessionView({ id }: { id: number }) {
       .reverse()
       .find((t) => (t.kind === "revise" || t.kind === "chat") && targets.get(t.id) === wsId);
     const lastVersion = lastRevise ? (chatResult(lastRevise)?.version_no ?? "") : "";
+    const versionKey = `${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}-${lastVersion}-${undone}`;
+    const editing = sheetMode === "edit" && !!wsId && turn.id === sheetTurn?.id;
+    return (
+      <>
+        {editing && wsId && (
+          <SheetEditor worksheetId={wsId} chatBusy={locked} versionKey={versionKey} flushRef={editFlush} />
+        )}
+        <div hidden={editing}>{previewCard(turn, wsId, `${versionKey}-${editRev}`)}</div>
+      </>
+    );
+  }
+
+  function previewCard(turn: PrepTurn, wsId: number | undefined, refreshKey: string) {
     return (
       <WorksheetCard
         turn={turn}
         stepsShown={stepsShown(turn)}
         onReady={() => setSheetReadyTurn(turn.id)}
-        refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}-${lastVersion}-${undone}`}
+        refreshKey={refreshKey}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
         target={target && target.worksheetId === wsId ? target.blockId : null}
@@ -719,6 +762,7 @@ function PrepSessionView({ id }: { id: number }) {
               className="prep-turn-progress"
             />
           )}
+          {currentSheet && <SheetModeToggle mode={sheetMode} onChange={(m) => void chooseSheetMode(m)} />}
           <div key={sheetTurn.id}>{worksheetCard(sheetTurn)}</div>
         </aside>
       )}
