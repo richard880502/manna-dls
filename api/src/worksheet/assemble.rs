@@ -149,10 +149,8 @@ pub fn auto_steps(block: &Block) -> Vec<String> {
                 steps.push("Look at the key words. Circle the ones you already know.".to_string());
             }
         }
-        BlockKind::ExitTicket => {
-            steps.push("Answer on your own. Do not look back at your notes.".to_string());
-            steps.push("Hand in your answers before you leave.".to_string());
-        }
+        // The PI: the exit ticket needs no steps (its instruction says it all).
+        BlockKind::ExitTicket => {}
         BlockKind::Activity => {
             steps.push(if block.paragraph_ids.is_empty() {
                 "Read the questions first.".to_string()
@@ -294,7 +292,9 @@ pub fn attach_scaffolds(
         .any(|s| s.kind_type == ScaffoldType::Procedural)
     {
         let auto = auto_procedural(block, levels);
-        block.scaffolds.insert(0, auto);
+        if !auto.steps.is_empty() {
+            block.scaffolds.insert(0, auto);
+        }
     }
     // A word bank of plain words gets its entries (part of speech and meanings are filled in
     // by `key_vocab::fill`).
@@ -1222,6 +1222,14 @@ fn renumber_refs(text: &str, printed: &HashMap<usize, usize>) -> String {
         .into_owned()
 }
 
+/// Steps Manna put on an exit ticket (older sheets have 「Answer on your own…」「Hand in your
+/// answers…」): the PI does not want them, so they do not print. Steps a teacher wrote herself do.
+fn exit_ticket_default_steps(block: &Block, s: &Scaffold) -> bool {
+    block.kind == BlockKind::ExitTicket
+        && s.kind_type == ScaffoldType::Procedural
+        && s.origin == Origin::Ai
+}
+
 /// The line printed above a block's numbered steps (the PI: the instruction introduces the
 /// paragraphs; how to work is the steps, introduced by this line).
 pub const STEPS_LEAD: &str = "Follow the steps below.";
@@ -1350,7 +1358,11 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 (!counts.is_empty()).then(|| super::bloom::summary(&counts))
             })
             .flatten();
-        let scaffolds: Vec<&Scaffold> = b.scaffolds.iter().filter(|s| shown(&s.levels)).collect();
+        let scaffolds: Vec<&Scaffold> = b
+            .scaffolds
+            .iter()
+            .filter(|s| shown(&s.levels) && !exit_ticket_default_steps(b, s))
+            .collect();
         blocks.push(SheetBlock {
             id: b.id.clone(),
             kind: b.kind,
@@ -3235,5 +3247,73 @@ mod steps_lead_tests {
         );
         assert!(sheet.blocks[1].steps.is_empty());
         assert!(sheet.blocks[1].steps_lead.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod exit_ticket_steps_tests {
+    use super::*;
+
+    fn exit(scaffolds: Vec<Scaffold>) -> Content {
+        let all = Level::ALL.to_vec();
+        Content {
+            blocks: vec![Block {
+                id: EXIT_ID.into(),
+                kind: BlockKind::ExitTicket,
+                title: "Exit ticket".into(),
+                instructions: "Answer these before you leave.".into(),
+                items: vec![Item {
+                    id: format!("{EXIT_ID}-i1"),
+                    prompt: "What did you learn?".into(),
+                    levels: all.clone(),
+                    ..Item::default()
+                }],
+                scaffolds,
+                ..Block::default()
+            }],
+            levels: all,
+            ..Content::default()
+        }
+    }
+
+    fn steps(origin: Origin, text: &str) -> Scaffold {
+        Scaffold {
+            id: "exit-sp".into(),
+            kind_type: ScaffoldType::Procedural,
+            kind: KIND_STEPS.into(),
+            content: String::new(),
+            steps: vec![text.into()],
+            levels: Level::ALL.to_vec(),
+            auto: origin == Origin::Ai,
+            origin,
+            heading: None,
+            bank: None,
+        }
+    }
+
+    #[test]
+    fn a_new_exit_ticket_gets_no_steps() {
+        let mut c = exit(Vec::new());
+        attach_scaffolds(&mut c.blocks[0], None, &Level::ALL, &[]);
+        assert!(c.blocks[0]
+            .scaffolds
+            .iter()
+            .all(|s| s.kind_type != ScaffoldType::Procedural));
+        let sheet = project("T", &c, Level::Standard, Audience::Student);
+        assert!(sheet.blocks[0].steps.is_empty());
+        assert!(sheet.blocks[0].steps_lead.is_empty());
+    }
+
+    #[test]
+    fn old_default_steps_do_not_print_but_the_teachers_own_do() {
+        let old = exit(vec![steps(
+            Origin::Ai,
+            "Answer on your own. Do not look back at your notes.",
+        )]);
+        let sheet = project("T", &old, Level::Standard, Audience::Student);
+        assert!(sheet.blocks[0].steps.is_empty());
+        let own = exit(vec![steps(Origin::Teacher, "Swap papers with a partner.")]);
+        let sheet = project("T", &own, Level::Standard, Audience::Student);
+        assert_eq!(sheet.blocks[0].steps, vec!["Swap papers with a partner."]);
     }
 }

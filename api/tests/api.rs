@@ -1305,7 +1305,7 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_scaffolds v4 and worksheet_warmup v3 since 0054_key_vocabulary.sql.
         vec![
             1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 4, 1, 1, 1, 2, 1, 4, 1, 3, 3, 2, 3, 9, 1, 6, 5, 2, 4, 10,
-            3, 2, 6, 4, 1, 1, 2
+            3, 2, 6, 4, 1, 1, 3
         ]
     );
     let v1_kept: i64 = sqlx::query_scalar(

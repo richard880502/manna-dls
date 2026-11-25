@@ -755,7 +755,11 @@ export function projectSheet(content: WorksheetContent, level: WsLevel, audience
     const items = block.items
       .filter((it) => it.levels.includes(level))
       .map((item) => ({ item, no: ++no, lines: answerLines(item, level) }));
-    const scaffolds = block.scaffolds.filter((s) => s.levels.includes(level));
+    // Steps Manna put on an exit ticket do not print (mirrors `assemble::exit_ticket_default_steps`).
+    const scaffolds = block.scaffolds.filter(
+      (s) =>
+        s.levels.includes(level) && !(block.kind === "exit_ticket" && s.type === "procedural" && s.origin === "ai"),
+    );
     const printed = printable(block, items, scaffolds, audience);
     const label = block.kind === "exit_ticket" || !printed ? "" : letter(lettered++);
     blocks.push({ block, label, items, scaffolds, printed });
