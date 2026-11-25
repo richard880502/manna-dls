@@ -150,6 +150,12 @@ function PrepSessionView({ id }: { id: number }) {
   const [viewing, setViewing] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<number, Record<string, string>>>({});
   const [flash, setFlash] = useState<{ worksheetId: number; ids: ReadonlySet<string> } | null>(null);
+  /** 版本紀錄 (opened from a chat card) restored a version: the preview and the session are read again. */
+  function afterVersionRestore() {
+    setUndone((n) => n + 1);
+    refreshSession();
+  }
+
   // 「改這一區」: the bottom bar revises one block of one worksheet instead of the whole worksheet.
   const [target, setTarget] = useState<{ worksheetId: number; blockId: string; name: string } | null>(null);
   const [undone, setUndone] = useState(0);
@@ -658,6 +664,8 @@ function PrepSessionView({ id }: { id: number }) {
           disabled={locked}
           onFollowUp={(q) => void send({ kind: "chat", request: q })}
           onUndo={() => undoTurn(turn.id)}
+          worksheetId={targets.get(turn.id) ?? null}
+          onVersionRestored={afterVersionRestore}
           onShowBlock={showBlock}
           onShowSheet={narrow ? (blockId) => {
             setTab("sheet");
