@@ -877,6 +877,9 @@ pub struct SheetBlock {
     pub title: String,
     pub instructions: String,
     pub steps: Vec<String>,
+    /// 「Follow the steps below.」 printed right above the numbered steps ([`STEPS_LEAD`]);
+    /// empty when the block prints no steps.
+    pub steps_lead: String,
     pub vocabulary: Vec<SheetWord>,
     pub supports: Vec<SheetSupport>,
     pub items: Vec<SheetItem>,
@@ -1199,6 +1202,26 @@ fn renumber_refs(text: &str, printed: &HashMap<usize, usize>) -> String {
         .into_owned()
 }
 
+/// The line printed above a block's numbered steps (the PI: the instruction introduces the
+/// paragraphs; how to work is the steps, introduced by this line).
+pub const STEPS_LEAD: &str = "Follow the steps below.";
+
+/// The instruction without a closing 「Follow the steps below.」 of its own: the sheet prints that
+/// line above the steps.
+fn without_steps_lead(instructions: &str) -> String {
+    let t = instructions.trim();
+    let lower = t.to_lowercase();
+    let lead = STEPS_LEAD.to_lowercase();
+    let lead = lead.trim_end_matches('.');
+    for end in [format!("{lead}."), format!("{lead}:"), lead.to_string()] {
+        let cut = t.len().saturating_sub(end.len());
+        if lower.ends_with(&end) && t.is_char_boundary(cut) && t[cut..].eq_ignore_ascii_case(&end) {
+            return t[..cut].trim_end().to_string();
+        }
+    }
+    t.to_string()
+}
+
 /// The choices of a question end the same way: when any of them is a phrase or a sentence
 /// (three words or more), each one that ends in a letter or a digit gets a full stop (the model
 /// wrote 「(B) Woodland walks with a friend who hesitated at forks」 under a question whose
@@ -1313,7 +1336,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             kind: b.kind,
             label,
             title: b.title.trim().to_string(),
-            instructions: refs(b.instructions.trim()),
+            instructions: refs(&without_steps_lead(&b.instructions)),
             // A procedural scaffold with a heading of its own is a box (below).
             steps: scaffolds
                 .iter()
@@ -1322,6 +1345,8 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                 .map(|s| refs(s.trim()))
                 .filter(|s| !s.is_empty())
                 .collect(),
+            // Set below, once the steps are known.
+            steps_lead: String::new(),
             vocabulary: b
                 .vocabulary
                 .iter()
@@ -1379,6 +1404,11 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         });
     }
     blocks.retain(has_content);
+    for b in &mut blocks {
+        if !b.steps.is_empty() {
+            b.steps_lead = STEPS_LEAD.to_string();
+        }
+    }
     let mut lettered = 0;
     for b in &mut blocks {
         if b.kind != BlockKind::ExitTicket {
@@ -3049,5 +3079,57 @@ mod full_stop_tests {
                 "the other road (the left one)"
             ])
         );
+    }
+}
+
+#[cfg(test)]
+mod steps_lead_tests {
+    use super::*;
+
+    #[test]
+    fn the_lead_is_printed_above_steps_and_not_twice() {
+        assert_eq!(
+            without_steps_lead("Paragraphs 4–6 show two roads. Follow the steps below."),
+            "Paragraphs 4–6 show two roads."
+        );
+        assert_eq!(
+            without_steps_lead("Paragraphs 4–6 show two roads. follow the steps below:"),
+            "Paragraphs 4–6 show two roads."
+        );
+        assert_eq!(without_steps_lead("Read and think."), "Read and think.");
+        let all = Level::ALL.to_vec();
+        let mut with_steps = Block {
+            id: "b1".into(),
+            title: "Paragraphs 4–6".into(),
+            instructions: "Paragraphs 4–6 show two roads. Follow the steps below.".into(),
+            items: vec![Item {
+                id: "b1-i1".into(),
+                prompt: "Why?".into(),
+                levels: all.clone(),
+                ..Item::default()
+            }],
+            ..Block::default()
+        };
+        attach_scaffolds(&mut with_steps, None, &all, &[]);
+        let without_steps = Block {
+            id: "b2".into(),
+            title: "Notes".into(),
+            instructions: "Read the notes.".into(),
+            ..Block::default()
+        };
+        let content = Content {
+            blocks: vec![with_steps, without_steps],
+            levels: all,
+            ..Content::default()
+        };
+        let sheet = project("T", &content, Level::Standard, Audience::Student);
+        assert!(!sheet.blocks[0].steps.is_empty());
+        assert_eq!(sheet.blocks[0].steps_lead, STEPS_LEAD);
+        assert_eq!(
+            sheet.blocks[0].instructions,
+            "Paragraphs 4–6 show two roads."
+        );
+        assert!(sheet.blocks[1].steps.is_empty());
+        assert!(sheet.blocks[1].steps_lead.is_empty());
     }
 }

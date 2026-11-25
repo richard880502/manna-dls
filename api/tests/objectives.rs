@@ -437,8 +437,9 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
     // that a sentence frame is not a question, version 7 (0036_template_supports.sql) the 是非題
     // statement and wrapped frames, version 8 (0050_per_question_frames.sql) the block's
     // instructions as a passage introduction, version 9 (0051_table_organizer_headers.sql) the
-    // table's headings and row labels.
-    assert_eq!(tasks[0].3["prompt"]["version_no"], 9);
+    // table's headings and row labels, version 10 (0053_block_intros.sql) an introduction only,
+    // the how-to left to the steps.
+    assert_eq!(tasks[0].3["prompt"]["version_no"], 10);
     assert!(tasks[0].3["prompt"]["system"]
         .as_str()
         .unwrap()

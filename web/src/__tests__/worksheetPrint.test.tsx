@@ -154,4 +154,21 @@ describe("the prep preview prints the sheet as the exports do", () => {
     // After the last block in the page.
     expect(block.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  it("prints Follow the steps below. above the numbered steps, in the preview and in 複製", () => {
+    const base = sheet("student");
+    const block = {
+      ...base.blocks[0]!,
+      instructions: "The first three stanzas show the speaker examining two roads.",
+      steps: ["Underline the clues.", "Work with a partner."],
+      steps_lead: "Follow the steps below.",
+    };
+    render(<SheetPreview sheet={{ ...base, blocks: [block] }} highlight={new Set()} interactionFor={() => null} />);
+    const region = screen.getByRole("region", { name: "區塊 A 活動" });
+    const lead = within(region).getByText("Follow the steps below.");
+    expect(lead.nextElementSibling?.tagName).toBe("OL");
+    expect(sheetBlockText(block)).toContain(
+      "The first three stanzas show the speaker examining two roads.\nFollow the steps below.\n1. Underline the clues.",
+    );
+  });
 });

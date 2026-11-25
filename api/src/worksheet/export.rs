@@ -808,6 +808,15 @@ fn sheet_body(sheet: &Sheet, banner: Option<&str>, media: &mut Media<'_>) -> Str
         for img in &b.images {
             docx_image(&mut body, img, teacher, media);
         }
+        if !b.steps_lead.is_empty() {
+            body.push_str(&para(
+                &[run(&b.steps_lead, RunStyle::default())],
+                &ParaStyle {
+                    after: 20,
+                    ..ParaStyle::default()
+                },
+            ));
+        }
         for (i, s) in b.steps.iter().enumerate() {
             let text = if s.to_lowercase().starts_with("step") {
                 s.clone()
@@ -2098,6 +2107,9 @@ fn layout_sheet(l: &mut Layout<'_>, sheet: &Sheet) {
         for img in &b.images {
             l.picture(img, teacher);
         }
+        if !b.steps_lead.is_empty() {
+            l.paragraph(&b.steps_lead, Style { after: 1.0, ..body });
+        }
         for (i, s) in b.steps.iter().enumerate() {
             let text = if s.to_lowercase().starts_with("step") {
                 s.clone()
@@ -2224,7 +2236,11 @@ fn printed_text(sheet: &Sheet) -> String {
             .flat_map(|v| [v.word.clone(), v.definition.clone()]),
     );
     for b in &sheet.blocks {
-        out.extend([b.title.clone(), b.instructions.clone()]);
+        out.extend([
+            b.title.clone(),
+            b.instructions.clone(),
+            b.steps_lead.clone(),
+        ]);
         out.extend(b.steps.iter().cloned());
         out.extend(
             b.vocabulary
@@ -2469,6 +2485,7 @@ mod tests {
                 title: "Paragraph 1: Find".into(),
                 instructions: "Read paragraph 1 again, then answer.".into(),
                 steps: vec!["Read on your own.".into(), "Check with a partner.".into()],
+                steps_lead: crate::worksheet::assemble::STEPS_LEAD.into(),
                 vocabulary: vec![SheetWord { word: "stand".into(), level: Some(1), definition: "a small table".into(), task_word: false }],
                 supports: vec![SheetSupport { kind_type: ScaffoldType::Verbal, kind: "句型框架".into(), heading: "Sentence frames".into(), content: "She started it because ___.".into() }],
                 items: (1..=30)

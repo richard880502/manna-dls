@@ -26,6 +26,7 @@ export const sheetBlockName = (b: Pick<WsSheetBlock, "kind" | "label">) =>
 export function sheetBlockText(b: WsSheetBlock): string {
   const lines: string[] = [`${b.label ? `${b.label}. ` : ""}${b.title}`];
   if (b.instructions.trim()) lines.push(b.instructions);
+  if (b.steps.length > 0 && b.steps_lead) lines.push(b.steps_lead);
   b.steps.forEach((s, i) => lines.push(`${i + 1}. ${s}`));
   b.vocabulary.forEach((v) => lines.push(`${v.word}: ${v.definition}`));
   b.images?.forEach((img) => {
@@ -174,6 +175,7 @@ export function SheetPreview({
               ))}
             {b.steps.length > 0 && (
               <div className="ws-procedure">
+                {b.steps_lead && <p className="ws-steps-lead">{b.steps_lead}</p>}
                 <ol>
                   {b.steps.map((s, i) => (
                     // oxlint-disable-next-line react/no-array-index-key -- plain strings in print order

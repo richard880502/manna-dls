@@ -2592,6 +2592,8 @@ export interface WsSheetBlock {
   title: string;
   instructions: string;
   steps: string[];
+  /** 印在編號步驟上面的一行（Follow the steps below.）；沒有步驟或舊的伺服器時沒有 */
+  steps_lead?: string;
   vocabulary: Array<{ word: string; level: number | null; definition: string }>;
   supports: Array<{ type: WsScaffoldType; kind: string; heading?: string; content: string }>;
   items: Array<{

@@ -521,6 +521,10 @@
   color: var(--color-manna-ink);
 }
 
+.ws-steps-lead {
+  margin: 0;
+}
+
 .ws-procedure ol,
 .ws-items,
 .ws-objectives ol {
