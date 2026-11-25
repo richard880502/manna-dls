@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../../api/client";
 import type {
@@ -68,6 +68,7 @@ export function WorksheetCard({
   onTarget,
   proposalsKey,
   stepsShown = false,
+  onReady,
 }: {
   turn: PrepTurn;
   /** Changes when the worksheet got a new version (a revise turn finished). */
@@ -83,6 +84,11 @@ export function WorksheetCard({
   proposalsKey?: number;
   /** The page shows this turn's 「進度」 panel above the card: no working line of our own. */
   stepsShown?: boolean;
+  /**
+   * Called once the sheet is on screen (or could not be loaded), in the same frame: the page then
+   * swaps its 「進度」 panel for the one-line summary. The sheet fades in when it arrived late.
+   */
+  onReady?: () => void;
 }) {
   const ids = useId();
   const ref = turn.worksheet;
@@ -104,6 +110,15 @@ export function WorksheetCard({
   const [draft, setDraft] = useState<SheetSelection | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  // Before paint, so the page swaps its panel in the very frame the sheet appears.
+  const ready = sheet !== null || error !== null;
+  const onReadyRef = useRef(onReady);
+  useLayoutEffect(() => {
+    onReadyRef.current = onReady;
+  });
+  useLayoutEffect(() => {
+    if (ready) onReadyRef.current?.();
+  }, [ready]);
   const revise = useBlockRevise(running ? null : wsId, {
     reloadKey: proposalsKey,
     onApplied: (done) => {
@@ -451,11 +466,11 @@ export function WorksheetCard({
       <ErrorText message={exportError} />
       <ErrorText message={error} />
       {state && <RunOutcome jobs={state.jobs} />}
-      {!sheet && !error && <Loading label="正在載入學習單…" />}
+      {!sheet && !error && !stepsShown && <Loading label="正在載入學習單…" />}
       <ErrorText message={undoError} />
       <LostNotes ctl={revise} />
       {sheet && (
-        <div ref={sheetRef} className="prep-sheet-wrap">
+        <div ref={sheetRef} className="prep-sheet-wrap is-arriving">
           <SheetPreview
             sheet={sheet}
             highlight={flash.size > 0 ? new Set([...highlight, ...flash]) : highlight}

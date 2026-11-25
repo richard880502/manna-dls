@@ -10,19 +10,17 @@ import type { PrepSession, PrepTurn, ProgressStep, RunProgress } from "../api/ty
 import { RunProgressPanel, RunProgressSlot } from "../components/RunProgress";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { prepConfig } from "../lib/prep";
-import { announcement, progressConfig, stepText } from "../lib/progress";
+import { announcement, stepText } from "../lib/progress";
 import { baseRoutes, mockApi, renderApp, signIn } from "../test/mockApi";
 
 beforeEach(() => {
   prepConfig.pollMs = 20;
   worksheetConfig.pollMs = 20;
-  progressConfig.doneMs = 60;
 });
 
 afterEach(() => {
   prepConfig.pollMs = 2000;
   worksheetConfig.pollMs = 2000;
-  progressConfig.doneMs = 4000;
 });
 
 const step = (key: string, label: string, status: ProgressStep["status"], extra: Partial<ProgressStep> = {}): ProgressStep => ({
@@ -145,16 +143,28 @@ describe("when the panel shows", () => {
     render(<Harness initial={running} />);
     await user.click(screen.getByRole("button", { name: "fail" }));
     expect(panel().getByRole("status")).toHaveTextContent("沒有成功：寫逐段任務");
-    await new Promise((r) => setTimeout(r, progressConfig.doneMs * 2));
+    await new Promise((r) => setTimeout(r, 120));
     expect(screen.getByRole("region", { name: "進度" })).toBeInTheDocument();
   });
 
-  it("a finished run says so, then folds away", async () => {
+  it("a finished run folds into one line at once, says so, and stays", async () => {
     const user = userEvent.setup();
     render(<Harness initial={running} />);
     await user.click(screen.getByRole("button", { name: "finish" }));
     expect(panel().getByRole("status")).toHaveTextContent("全部完成");
-    await waitFor(() => expect(screen.queryByRole("region", { name: "進度" })).toBeNull());
+    expect(panel().getByText(`：全部完成（${done.steps.length} 步）`)).toBeInTheDocument();
+    expect(panel().queryByRole("list")).toBeNull();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(screen.getByRole("region", { name: "進度" })).toBeInTheDocument();
+    // × still hides it.
+    await user.click(panel().getByRole("button", { name: "關閉進度" }));
+    expect(screen.queryByRole("region", { name: "進度" })).toBeNull();
+  });
+
+  it("collapseDone={false} keeps the steps listed, all done", () => {
+    render(<RunProgressPanel progress={done} onClose={() => undefined} collapseDone={false} />);
+    expect(panel().getByRole("list")).toBeInTheDocument();
+    expect(panel().getByRole("status")).toHaveTextContent("全部完成");
   });
 
   it("a run already over when the page saw it shows nothing", () => {
@@ -296,7 +306,7 @@ describe("the 備課對話", () => {
     expect(screen.queryByRole("region", { name: "進度" })).toBeNull();
   });
 
-  it("keeps following a done turn while its SIOP 自我檢核 runs, then folds the panel", async () => {
+  it("keeps following a done turn while its SIOP 自我檢核 runs, then folds the panel into one line", async () => {
     signIn();
     const siopRunning: RunProgress = {
       steps: [step("read", "讀教材", "done"), step("plan", "規劃教學活動", "done"), step("siop", "SIOP 自我檢核", "running")],
@@ -312,8 +322,10 @@ describe("the 備課對話", () => {
     const region = await screen.findByRole("region", { name: "進度" });
     await waitFor(() => expect(within(region).getByRole("status")).toHaveTextContent("全部完成"));
     expect(api.calls.filter((c) => c.path === S7).length).toBeGreaterThanOrEqual(2);
-    await waitFor(() => expect(screen.queryByRole("region", { name: "進度" })).toBeNull());
+    await waitFor(() => expect(within(region).queryByRole("list")).toBeNull());
+    expect(within(region).getByText(/全部完成（3 步）/)).toBeInTheDocument();
     await act(async () => new Promise((r) => setTimeout(r, 80)));
+    expect(screen.getByRole("region", { name: "進度" })).toBeInTheDocument();
   });
 
   it("a turn long over comes without progress: no panel, and the turn shows as before", async () => {

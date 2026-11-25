@@ -227,7 +227,7 @@ export function SheetPreview({
             className={`ws-block prep-sheet-block${highlight.has(b.id) ? " is-changed" : ""}${extra.targeted ? " is-targeted" : ""}`}
             aria-label={`區塊 ${name}`}
           >
-            <h3 className="ws-block-head">
+            <h3 className="ws-block-head" tabIndex={-1}>
               {b.label && <span className="ws-letter">{b.label}.</span>}
               <span data-field="title">{b.title}</span>
               {canReveal && (

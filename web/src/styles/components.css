@@ -914,3 +914,18 @@ summary {
   color: var(--color-ink-2);
   font-size: var(--text-sm);
 }
+
+/* All done: the steps fold into this one line, which stays (nothing below it moves later). */
+.run-progress.is-folded {
+  padding-block: 0 var(--space-2xs);
+}
+
+.run-progress-summary {
+  color: var(--color-muted);
+  font-weight: var(--weight-normal, 400);
+}
+
+[aria-disabled="true"]:is(.text-link, .primary-button, .secondary-button, .ghost-button, .decision-button) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

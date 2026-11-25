@@ -34,14 +34,23 @@ export function Card({
               type="button"
               className="secondary-button"
               aria-pressed={card.saved}
-              disabled={busy}
-              onClick={() => onToggleSave(card)}
+              aria-disabled={busy || undefined}
+              onClick={() => {
+                if (!busy) onToggleSave(card);
+              }}
             >
               {card.saved ? "已收藏" : "收藏"}
             </button>
           )}
           {!card.is_mine && card.allow_remix && (
-            <button type="button" className="primary-button" disabled={busy} onClick={() => onRemix(card)}>
+            <button
+              type="button"
+              className="primary-button"
+              aria-disabled={busy || undefined}
+              onClick={() => {
+                if (!busy) onRemix(card);
+              }}
+            >
               拿來改
             </button>
           )}

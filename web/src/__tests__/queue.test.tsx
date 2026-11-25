@@ -56,8 +56,10 @@ describe("queue line", () => {
     render(<RunProgressPanel progress={queued(2, null)} onClose={() => undefined} onCancelled={onCancelled} />);
     await user.click(screen.getByRole("button", { name: "取消排隊" }));
     expect(api.callsTo("DELETE", "/api/ai-jobs/7")).toHaveLength(0);
+    // Opening the confirm focuses the safe choice; cancelling gives focus back to the trigger.
+    expect(screen.getByRole("button", { name: "不取消" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "不取消" }));
-    expect(screen.getByRole("button", { name: "取消排隊" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消排隊" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "取消排隊" }));
     await user.click(screen.getByRole("button", { name: "確定取消" }));
     expect(api.callsTo("DELETE", "/api/ai-jobs/7")).toHaveLength(1);

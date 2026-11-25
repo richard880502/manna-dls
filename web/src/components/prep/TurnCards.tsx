@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { errorMessage } from "../../api/client";
 import type {
   ActivityPlan,
@@ -10,6 +10,7 @@ import type {
   PrepTurn,
 } from "../../api/types";
 import { BLOOM_LABEL } from "../../lib/bloom";
+import { useConfirmFocus } from "../../lib/useConfirmFocus";
 import {
   LANGUAGE_CATEGORY_LABEL,
   OPTION_NAMES,
@@ -483,6 +484,9 @@ export function ChatCard({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  const answerRef = useRef<HTMLDivElement>(null);
+  // 復原 opens on 不復原; cancelling returns to the button; once undone the card itself takes focus.
+  const { triggerRef, safeRef } = useConfirmFocus(confirming, () => answerRef.current);
   const [undoError, setUndoError] = useState<string | null>(null);
   const changes = result.changes ?? [];
   const notApplied = result.not_applied ?? [];
@@ -503,7 +507,7 @@ export function ChatCard({
   }
 
   return (
-    <div className="prep-answer prep-chat">
+    <div className="prep-answer prep-chat" ref={answerRef} tabIndex={-1}>
       {paragraphsOf(result.answer).map((p, i) => (
         // oxlint-disable-next-line react/no-array-index-key -- paragraphs have no id; order is the identity
         <p key={i} className="prep-pre">
@@ -555,15 +559,36 @@ export function ChatCard({
           {confirming ? (
             <span role="group" aria-label="確認復原">
               復原這一輪的修改？學習單會回到改之前的樣子（會存成新的一版）。
-              <button type="button" className="text-link is-danger" disabled={undoing} onClick={() => void undo()}>
+              <button
+                type="button"
+                className="text-link is-danger"
+                aria-disabled={undoing || undefined}
+                onClick={() => {
+                  if (!undoing) void undo();
+                }}
+              >
                 確定復原
               </button>
-              <button type="button" className="text-link is-plain" disabled={undoing} onClick={() => setConfirming(false)}>
+              <button
+                type="button"
+                className="text-link is-plain"
+                ref={safeRef}
+                aria-disabled={undoing || undefined}
+                onClick={() => {
+                  if (!undoing) setConfirming(false);
+                }}
+              >
                 不復原
               </button>
             </span>
           ) : (
-            <button type="button" className="secondary-button small-button" disabled={disabled} onClick={() => setConfirming(true)}>
+            <button
+              type="button"
+              className="secondary-button small-button"
+              ref={triggerRef}
+              disabled={disabled}
+              onClick={() => setConfirming(true)}
+            >
               復原這一輪
             </button>
           )}
