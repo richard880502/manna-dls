@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, errorMessage } from "../../api/client";
 import type { WsBlock, WsBlockAdopted, WsBlockHistory, WsHistoryPicture, WsHistoryStep } from "../../api/types";
 import { formatDateTime } from "../../lib/labels";
@@ -34,10 +35,16 @@ export function BlockHistoryButton({
   disabled,
   className,
   beforeOpen,
+  focusAfter,
   onAdopted,
 }: {
   worksheetId: number;
   blockId: string;
+  /**
+   * The button sits in a menu that closes (and hides its contents) while the dialog is open: the
+   * dialog is drawn on the page itself, and focus goes to the element given when it closes.
+   */
+  focusAfter?: (button: HTMLButtonElement | null) => HTMLElement | null;
   /** For the screen reader: which block (「修改歷程（區塊 B）」). */
   label: string;
   disabled?: boolean;
@@ -49,7 +56,20 @@ export function BlockHistoryButton({
 }) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
-  const back = useCallback(() => button.current, []);
+  const back = useCallback(() => focusAfter?.(button.current) ?? button.current, [focusAfter]);
+  const dialog = (
+    <BlockHistoryDialog
+      worksheetId={worksheetId}
+      blockId={blockId}
+      returnFocus={back}
+      beforeOpen={beforeOpen}
+      onClose={() => setOpen(false)}
+      onAdopted={(done) => {
+        setOpen(false);
+        onAdopted(done);
+      }}
+    />
+  );
   return (
     <>
       <button
@@ -62,19 +82,7 @@ export function BlockHistoryButton({
       >
         修改歷程
       </button>
-      {open && (
-        <BlockHistoryDialog
-          worksheetId={worksheetId}
-          blockId={blockId}
-          returnFocus={back}
-          beforeOpen={beforeOpen}
-          onClose={() => setOpen(false)}
-          onAdopted={(done) => {
-            setOpen(false);
-            onAdopted(done);
-          }}
-        />
-      )}
+      {open && (focusAfter ? createPortal(dialog, document.body) : dialog)}
     </>
   );
 }

@@ -2425,3 +2425,17 @@ button.bloom-seg:focus-visible {
   font-family: var(--font-body);
   font-size: var(--text-sm);
 }
+
+/* Touch targets follow the pointer, not the width: an iPad is wider than 47.5rem. */
+@media (pointer: coarse) {
+  .ws-tools .text-link,
+  .ws-item-tools .text-link,
+  .ws-add .text-link,
+  .ws-proposal-attempts .text-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--hit);
+    min-height: var(--hit);
+  }
+}

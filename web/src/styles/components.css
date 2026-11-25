@@ -897,3 +897,10 @@ summary {
   color: var(--color-ink-2);
   font-size: var(--text-sm, 0.9rem);
 }
+
+@media (pointer: coarse) {
+  .run-progress-close {
+    min-width: var(--hit);
+    min-height: var(--hit);
+  }
+}
