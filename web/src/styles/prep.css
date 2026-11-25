@@ -191,7 +191,7 @@
   font-weight: var(--weight-regular);
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .prep-chip:not(:disabled):hover {
     background: var(--color-manna-wash-2);
   }
@@ -895,14 +895,12 @@
   box-shadow: 0 0 0 2px var(--color-focus);
 }
 
-.prep-composer[data-disabled] {
-  background: var(--color-paper-2);
-}
-
 .prep-composer textarea {
   width: 100%;
   min-height: 3.5rem;
   max-height: 12rem;
+  /* Grows with the text where supported (Chromium); two rows elsewhere. */
+  field-sizing: content;
   padding: var(--space-2xs) 0;
   border: 0;
   border-radius: 0;
@@ -937,9 +935,11 @@
   cursor: pointer;
 }
 
-.prep-composer-size:hover {
-  background: var(--color-paper-2);
-  color: var(--color-ink);
+@media (hover: hover) and (pointer: fine) {
+  .prep-composer-size:hover {
+    background: var(--color-paper-2);
+    color: var(--color-ink);
+  }
 }
 
 .prep-composer-size:focus-visible {
@@ -969,6 +969,12 @@
   font-size: var(--text-sm);
 }
 
+.prep-composer-wait {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
 .prep-send {
   display: inline-grid;
   flex: none;
@@ -983,8 +989,10 @@
   cursor: pointer;
 }
 
-.prep-send:hover:not(:disabled) {
-  background: var(--color-accent-hover);
+@media (hover: hover) and (pointer: fine) {
+  .prep-send:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+  }
 }
 
 .prep-send:active:not(:disabled) {
@@ -1007,7 +1015,7 @@
 }
 
 .prep-disclaimer {
-  margin-top: var(--space-2xs);
+  margin-top: var(--space-md);
   color: var(--color-muted);
   font-size: var(--text-sm);
   text-align: center;
@@ -1033,9 +1041,11 @@
   cursor: pointer;
 }
 
-.prep-attach:hover:not(:disabled) {
-  background: var(--color-paper-2);
-  color: var(--color-ink);
+@media (hover: hover) and (pointer: fine) {
+  .prep-attach:hover:not(:disabled) {
+    background: var(--color-paper-2);
+    color: var(--color-ink);
+  }
 }
 
 .prep-attach:focus-visible {

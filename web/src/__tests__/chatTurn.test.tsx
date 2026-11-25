@@ -158,7 +158,8 @@ describe("the bottom bar sends chat turns", () => {
     expect(bar).toHaveAttribute("placeholder", PLACEHOLDER);
     expect(screen.queryByRole("radio", { name: "問 Manna" })).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: "改學習單" })).not.toBeInTheDocument();
-    expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
+    // The worksheet is beside the conversation: its name is not repeated in the bar.
+    expect(screen.queryByText(/目前的學習單：/)).not.toBeInTheDocument();
 
     await user.type(bar, "把 C 區第 2 題改成比較表{Enter}");
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
@@ -367,16 +368,17 @@ describe("the conversation and the worksheet side by side", () => {
     const user = userEvent.setup();
     renderApp("/prep/7");
     const pick = await screen.findByRole("combobox", { name: "學習單" });
-    expect(screen.getByText("目前的學習單：學習單二")).toBeInTheDocument();
+    expect(pick).toHaveValue("102");
     await user.selectOptions(pick, screen.getByRole("option", { name: /學習單一/ }));
-    expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
+    expect(pick).toHaveValue("101");
+    expect(screen.queryByText(/目前的學習單：/)).not.toBeInTheDocument();
     await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/sheet").length).toBeGreaterThan(0));
     await user.type(await box(), "改簡單{Enter}");
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "chat", request: "改簡單", worksheet_id: 11 });
     // The compact card of the other worksheet puts it in the pane.
     await user.click(screen.getAllByRole("button", { name: "在左邊看" })[0]!);
-    expect(screen.getByText("目前的學習單：學習單二")).toBeInTheDocument();
+    expect(pick).toHaveValue("102");
   });
 
   it("after a chat turn that changed the worksheet the pane reads the new version", async () => {
@@ -411,6 +413,8 @@ describe("the conversation and the worksheet side by side", () => {
     renderApp("/prep/7");
     const tabs = within(await screen.findByRole("tablist", { name: "對話或學習單" }));
     expect(tabs.getByRole("tab", { name: "對話" })).toHaveAttribute("aria-selected", "true");
+    // With the tabs the worksheet is not in view, so the bar names it.
+    expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "目前的學習單" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "學習單已更新，去看" }));
     expect(tabs.getByRole("tab", { name: "學習單" })).toHaveAttribute("aria-selected", "true");
