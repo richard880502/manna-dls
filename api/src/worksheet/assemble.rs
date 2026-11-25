@@ -1222,6 +1222,29 @@ fn renumber_refs(text: &str, printed: &HashMap<usize, usize>) -> String {
         .into_owned()
 }
 
+static OWN_NUMBER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^\s*(?:[(（]\s*[0-9]{1,3}\s*[)）]|[0-9]{1,3}\s*[.)．、）])")
+        .expect("valid regex")
+});
+
+/// The prompt without a question number of its own at the start (「1. ______(n.) 峰會」,
+/// 「(2) Why …」, 「3) …」, 「4、…」): the sheet numbers its questions itself, so the paper
+/// printed 「1. 1. ______」 (template sheets, where the model copied the sample's numbers). A
+/// number that starts the sentence (「3.5 million …」) or a prompt that is only a number stays.
+pub fn without_own_number(prompt: &str) -> &str {
+    let Some(m) = OWN_NUMBER.find(prompt) else {
+        return prompt;
+    };
+    let rest = &prompt[m.end()..];
+    if rest.starts_with(|c: char| c.is_ascii_digit()) {
+        return prompt;
+    }
+    match rest.trim_start() {
+        "" => prompt,
+        rest => rest,
+    }
+}
+
 /// Steps Manna put on an exit ticket (older sheets have 「Answer on your own…」「Hand in your
 /// answers…」): the PI does not want them, so they do not print. Steps a teacher wrote herself do.
 fn exit_ticket_default_steps(block: &Block, s: &Scaffold) -> bool {
@@ -1312,7 +1335,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     id: i.id.clone(),
                     no,
                     answer_format: i.answer_format.clone(),
-                    prompt: refs(i.prompt.trim()),
+                    prompt: refs(without_own_number(i.prompt.trim())),
                     options: if uses_choices(i.answer_format.as_deref()) {
                         with_full_stops(
                             i.options
@@ -3148,6 +3171,31 @@ mod item_ref_tests {
             renumber_refs("Line 12 of item 1", &printed),
             "Line 12 of item 7"
         );
+    }
+
+    #[test]
+    fn a_number_written_into_the_prompt_does_not_print_twice() {
+        for (written, printed) in [
+            ("1. ______(n.) 峰會；高峰會議", "______(n.) 峰會；高峰會議"),
+            ("2.______ (n.) 同盟", "______ (n.) 同盟"),
+            ("(3) Why did they meet?", "Why did they meet?"),
+            ("（4）為什麼？", "為什麼？"),
+            ("5) Explain.", "Explain."),
+            ("6、說明原因。", "說明原因。"),
+            ("  7 . Name the leaders.", "Name the leaders."),
+            // A number that starts the sentence, a prompt that is only a number, a year.
+            ("3.5 million people watched.", "3.5 million people watched."),
+            ("1.", "1."),
+            ("1945. The war ended.", "1945. The war ended."),
+            ("Why did they meet?", "Why did they meet?"),
+        ] {
+            assert_eq!(without_own_number(written), printed, "{written}");
+        }
+        let mut c = content();
+        c.blocks[1].items[0].prompt = "1. Who wrote the poem?".into();
+        let sheet = project("T", &c, Level::Standard, Audience::Student);
+        assert_eq!(sheet.blocks[1].items[0].no, 4);
+        assert_eq!(sheet.blocks[1].items[0].prompt, "Who wrote the poem?");
     }
 }
 

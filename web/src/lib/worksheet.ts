@@ -818,6 +818,22 @@ export function renumberRefs(text: string, printed: ReadonlyMap<number, number>)
   );
 }
 
+const OWN_NUMBER = /^\s*(?:[(（]\s*[0-9]{1,3}\s*[)）]|[0-9]{1,3}\s*[.)．、）])/;
+
+/**
+ * The prompt without a question number of its own at the start (「1. ______」「(2) Why…」「3) …」
+ * 「4、…」): the sheet numbers its questions itself (mirrors `assemble::without_own_number`). A
+ * number that starts the sentence (「3.5 million …」) or a prompt that is only a number stays.
+ */
+export function withoutOwnNumber(prompt: string): string {
+  const m = OWN_NUMBER.exec(prompt);
+  if (!m) return prompt;
+  const rest = prompt.slice(m[0].length);
+  if (/^[0-9]/.test(rest)) return prompt;
+  const trimmed = rest.trimStart();
+  return trimmed === "" ? prompt : trimmed;
+}
+
 /** The name of a block in the teacher's words, e.g. 「A 暖身」. */
 export function blockName(block: WsBlock, label: string): string {
   const kind = BLOCK_KIND_LABEL[block.kind];

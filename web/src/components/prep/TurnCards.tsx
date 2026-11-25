@@ -442,10 +442,10 @@ export function WorksheetTurnCard({
       </p>
       {ref &&
         (current && !narrow ? (
-          <p className="quiet-note">已顯示在右邊</p>
+          <p className="quiet-note">已顯示在左邊</p>
         ) : (
           <button type="button" className="text-link" onClick={onShow}>
-            {narrow ? "去看學習單" : "在右邊看"}
+            {narrow ? "去看學習單" : "在左邊看"}
           </button>
         ))}
       {!ref && running && split && narrow && (

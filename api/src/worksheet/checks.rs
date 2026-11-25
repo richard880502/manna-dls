@@ -126,6 +126,12 @@ fn clean(s: &str) -> String {
     clean_markup(s)
 }
 
+/// A question's prompt, cleaned, without a number of its own at the start: the sheet numbers
+/// its questions ([`crate::worksheet::assemble::without_own_number`]).
+fn clean_prompt(s: &str) -> String {
+    crate::worksheet::assemble::without_own_number(&clean(s)).to_string()
+}
+
 fn clean_all(list: &[String]) -> Vec<String> {
     list.iter()
         .map(|s| clean(s))
@@ -1183,7 +1189,7 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
         for (ii, it) in b.items.iter().enumerate() {
             let iname = format!("{name} 第 {} 題", ii + 1);
             let mut item = it.clone();
-            item.prompt_en = clean(&it.prompt_en);
+            item.prompt_en = clean_prompt(&it.prompt_en);
             item.answer_en = clean(&it.answer_en);
             item.options = clean_all(&it.options);
             // A label outside the fixed set (a provider that ignores the schema) is dropped.
@@ -2167,7 +2173,7 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
             continue;
         }
         let mut item = it.clone();
-        item.prompt_en = clean(&it.prompt_en);
+        item.prompt_en = clean_prompt(&it.prompt_en);
         item.options = clean_all(&it.options);
         item.sample_answer_en = it
             .sample_answer_en
@@ -3005,7 +3011,7 @@ fn section_item(
     }
     let mut item = CleanSectionItem {
         answer_format: format,
-        prompt: clean(&it.prompt),
+        prompt: clean_prompt(&it.prompt),
         options: clean_all(&it.options),
         answer: clean(&it.answer),
         evidence: None,
@@ -3258,7 +3264,7 @@ fn shared_item(
     }
     let mut item = CleanSectionItem {
         answer_format: format,
-        prompt: clean(raw.prompt),
+        prompt: clean_prompt(raw.prompt),
         options: clean_all(raw.options),
         answer: clean(raw.answer),
         evidence: None,

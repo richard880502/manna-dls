@@ -36,6 +36,7 @@ import {
   printedNumbers,
   projectSheet,
   renumberRefs,
+  withoutOwnNumber,
   studentVersionName,
   toggleIn,
   versionCode,
@@ -495,6 +496,11 @@ function BlockSection({
     const out = renumberRefs(text, printed);
     return out !== text ? out : null;
   };
+  /** A question prints without a number of its own at the start (the sheet numbers it). */
+  const promptPrintedAs = (text: string) => {
+    const out = renumberRefs(withoutOwnNumber(text), printed);
+    return out !== text ? out : null;
+  };
   const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
   const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -893,7 +899,7 @@ function BlockSection({
                 disabled={locked}
                 onChange={(prompt) => changeItem((it) => ({ ...it, prompt }))}
               />
-              <PrintedAs text={printedAs(item.prompt)} />
+              <PrintedAs text={promptPrintedAs(item.prompt)} />
               <ChoicesArea item={item} no={no} disabled={locked} onChange={changeItem} />
               {tier ? (
                 <TierEditor
