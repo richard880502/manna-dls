@@ -53,6 +53,7 @@ import {
   tally,
   type BloomFilter,
 } from "../../lib/bloom";
+import { useConfirmFocus } from "../../lib/useConfirmFocus";
 import { NOTES_HINT, holdsBlock, type SheetSelection } from "../../lib/blockRevise";
 import { needsMaterial } from "../../lib/templates";
 import { ErrorText } from "../common";
@@ -504,6 +505,7 @@ function BlockSection({
   const shownItems = view.items.filter(({ item }) => matchesFilter(item.bloom, filter));
   const bloomLine = blockBloomLine(view.items.map(({ item }) => item));
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { triggerRef: deleteTriggerRef, safeRef: deleteSafeRef } = useConfirmFocus(confirmDelete);
   const [over, setOver] = useState(false);
   const levels = ws.state?.content.levels ?? [];
   const teacher = audience === "teacher";
@@ -661,16 +663,30 @@ function BlockSection({
               type="button"
               className="text-link is-danger"
               disabled={locked}
-              onClick={() => ws.setContent((c) => ({ ...c, blocks: c.blocks.filter((b) => b.id !== block.id) }))}
+              onClick={(e) => {
+                // The block (and this button) goes away: focus the next block's heading, else the previous one.
+                const heads = [...(e.currentTarget.closest("article")?.querySelectorAll<HTMLElement>(".ws-block-head") ?? [])];
+                const mine = e.currentTarget.closest(".ws-block")?.querySelector<HTMLElement>(".ws-block-head");
+                const at = mine ? heads.indexOf(mine) : -1;
+                const next = at >= 0 ? (heads[at + 1] ?? heads[at - 1]) : undefined;
+                ws.setContent((c) => ({ ...c, blocks: c.blocks.filter((b) => b.id !== block.id) }));
+                if (next) setTimeout(() => next.focus(), 0);
+              }}
             >
               確定刪除
             </button>
-            <button type="button" className="text-link is-plain" onClick={() => setConfirmDelete(false)}>
+            <button type="button" className="text-link is-plain" ref={deleteSafeRef} onClick={() => setConfirmDelete(false)}>
               不刪
             </button>
           </span>
         ) : (
-          <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setConfirmDelete(true)}>
+          <button
+            type="button"
+            className="text-link is-plain"
+            ref={deleteTriggerRef}
+            disabled={locked}
+            onClick={() => setConfirmDelete(true)}
+          >
             刪除
           </button>
         )}
@@ -687,7 +703,7 @@ function BlockSection({
         onDraftDone={() => setDraft(null)}
       />
 
-      <h3 className="ws-block-head">
+      <h3 className="ws-block-head" tabIndex={-1}>
         {label && <span className="ws-letter">{label}.</span>}
         <SheetText
           label={`區塊標題 ${name}`}

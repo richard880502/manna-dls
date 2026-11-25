@@ -1,5 +1,5 @@
 // 備課對話：工具式對話（kind "chat"）、並排的對話與學習單，以及舊的 ask／revise 輪次。
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -158,7 +158,8 @@ describe("the bottom bar sends chat turns", () => {
     expect(bar).toHaveAttribute("placeholder", PLACEHOLDER);
     expect(screen.queryByRole("radio", { name: "問 Manna" })).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: "改學習單" })).not.toBeInTheDocument();
-    expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
+    // The worksheet is beside the conversation: its name is not repeated in the bar.
+    expect(screen.queryByText(/目前的學習單：/)).not.toBeInTheDocument();
 
     await user.type(bar, "把 C 區第 2 題改成比較表{Enter}");
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
@@ -272,6 +273,43 @@ describe("a chat turn", () => {
     expect(screen.getByText("這一輪的修改已經復原。")).toBeInTheDocument();
   });
 
+  it("復原 confirm: focus goes to 不復原, back to the trigger on cancel, and stays inside once undone", async () => {
+    const t = turn("chat", { result: chat({ version_no: 4, undoable: true }) });
+    let undone = false;
+    mockApi({
+      ...baseRoutes(),
+      ...sheetRoutes(),
+      [`GET ${S7}`]: () =>
+        undone
+          ? session([sheetTurn(101, "學習單一"), { ...t, result: chat({ version_no: 4, undoable: false, undone: true }) }])
+          : session([sheetTurn(101, "學習單一"), t]),
+      [`POST ${S7}/turns/${t.id}/undo`]: () => {
+        undone = true;
+        return t;
+      },
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "復原這一輪" }));
+    expect(screen.getByRole("button", { name: "不復原" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "不復原" }));
+    expect(screen.getByRole("button", { name: "復原這一輪" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "復原這一輪" }));
+    await user.click(screen.getByRole("button", { name: "確定復原" }));
+    await screen.findByText("這一輪的修改已經復原。");
+    expect(document.body).not.toHaveFocus();
+  });
+
+  it("deleting the session: 不刪 takes focus first and hands it back to 刪除", async () => {
+    mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await user.click(await screen.findByRole("button", { name: "刪除" }));
+    expect(screen.getByRole("button", { name: "不刪" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "不刪" }));
+    expect(screen.getByRole("button", { name: "刪除" })).toHaveFocus();
+  });
+
   it("shows the server's reason when 復原 is refused with 409", async () => {
     const t = turn("chat", { result: chat({ version_no: 4, undoable: true }) });
     mockApi({
@@ -367,16 +405,17 @@ describe("the conversation and the worksheet side by side", () => {
     const user = userEvent.setup();
     renderApp("/prep/7");
     const pick = await screen.findByRole("combobox", { name: "學習單" });
-    expect(screen.getByText("目前的學習單：學習單二")).toBeInTheDocument();
+    expect(pick).toHaveValue("102");
     await user.selectOptions(pick, screen.getByRole("option", { name: /學習單一/ }));
-    expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
+    expect(pick).toHaveValue("101");
+    expect(screen.queryByText(/目前的學習單：/)).not.toBeInTheDocument();
     await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/sheet").length).toBeGreaterThan(0));
     await user.type(await box(), "改簡單{Enter}");
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(1));
     expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "chat", request: "改簡單", worksheet_id: 11 });
     // The compact card of the other worksheet puts it in the pane.
     await user.click(screen.getAllByRole("button", { name: "在左邊看" })[0]!);
-    expect(screen.getByText("目前的學習單：學習單二")).toBeInTheDocument();
+    expect(pick).toHaveValue("102");
   });
 
   it("after a chat turn that changed the worksheet the pane reads the new version", async () => {
@@ -411,11 +450,14 @@ describe("the conversation and the worksheet side by side", () => {
     renderApp("/prep/7");
     const tabs = within(await screen.findByRole("tablist", { name: "對話或學習單" }));
     expect(tabs.getByRole("tab", { name: "對話" })).toHaveAttribute("aria-selected", "true");
+    // With the tabs the worksheet is not in view, so the bar names it.
+    expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "目前的學習單" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "學習單" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "學習單已更新，去看" }));
     expect(tabs.getByRole("tab", { name: "學習單" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("complementary", { name: "目前的學習單" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "對話" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("tabpanel", { name: "學習單" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "對話" })).not.toBeInTheDocument();
   });
 });
 
@@ -424,12 +466,19 @@ describe("the conversation and the worksheet side by side", () => {
 describe("the divider between the worksheet and the conversation", () => {
   const KEY = "manna.prepSplitSheetShare";
   // 1200px container, 16px rem: the worksheet (left) may take 42.67% (32rem) to 73.33% (100% - 20rem).
-  const share = (el: HTMLElement) => el.closest<HTMLElement>(".prep-session")!.style.getPropertyValue("--prep-sheet-share");
+  const page = (el: HTMLElement) => el.closest<HTMLElement>(".prep-session")!;
+  const share = (el: HTMLElement) => /minmax\(0(?:px)?, ([\d.]+)%\)/.exec(page(el).style.gridTemplateColumns)?.[1] ?? "";
+  let narrowWidth = 1200;
 
   beforeEach(() => {
+    narrowWidth = 1200;
     window.localStorage.removeItem(KEY);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
-      const w = this.classList.contains("prep-session") ? 1200 : 0;
+      if (this.classList.contains("prep-split-divider")) {
+        // centred on 60% of 1200px = 720px, 12px wide
+        return { x: 714, y: 0, left: 714, top: 0, right: 726, bottom: 0, width: 12, height: 0, toJSON: () => ({}) } as DOMRect;
+      }
+      const w = this.classList.contains("prep-session") ? narrowWidth : 0;
       return { x: 0, y: 0, left: 0, top: 0, right: w, bottom: 0, width: w, height: 0, toJSON: () => ({}) } as DOMRect;
     });
   });
@@ -478,6 +527,92 @@ describe("the divider between the worksheet and the conversation", () => {
     expect(Number(share(sep))).toBeCloseTo(42.67, 1);
     await user.keyboard("{Shift>}{ArrowLeft}{/Shift}");
     expect(Number(share(sep))).toBeCloseTo(42.67, 1);
+  });
+
+  it("describes the split for screen readers and hints at the reset", async () => {
+    const sep = await open();
+    expect(sep).toHaveAttribute("aria-valuetext", "學習單 60%，對話 40%");
+    expect(sep).toHaveAttribute("title", "拖曳調整寬度；按兩下或 Enter 還原");
+    expect(sep).not.toHaveAttribute("aria-disabled");
+    expect(sep).not.toHaveAttribute("data-edge");
+  });
+
+  describe("dragging with the pointer", () => {
+    let frames: FrameRequestCallback[];
+    const flush = () => {
+      const f = frames;
+      frames = [];
+      f.forEach((cb) => cb(0));
+    };
+    beforeEach(() => {
+      frames = [];
+      vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+      vi.stubGlobal("cancelAnimationFrame", () => {
+        frames = [];
+      });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("writes the container directly per frame and commits once on release", async () => {
+      const sep = await open();
+      const ptr = (type: string, clientX: number) => fireEvent(sep, new MouseEvent(type, { bubbles: true, cancelable: true, clientX, button: 0 }));
+      const setItem = vi.spyOn(Storage.prototype, "setItem");
+      // grab 10px right of the handle centre (720 + 10)
+      expect(fireEvent(sep, new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 730, button: 0 }))).toBe(false); // preventDefault
+      await waitFor(() => expect(page(sep)).toHaveClass("is-resizing"));
+      ptr("pointermove", 730); // no movement: the divider must not jump (centre stays at 720 = 60%)
+      flush();
+      expect(Number(share(sep))).toBeCloseTo(60, 5);
+      ptr("pointermove", 830);
+      ptr("pointermove", 930); // two moves, one frame
+      expect(frames).toHaveLength(1);
+      expect(share(sep)).toBe("60"); // nothing written until the frame runs
+      flush();
+      // 930 - 10 (grab offset) = 920 → 76.67%, clamped to 73.33%
+      expect(Number(share(sep))).toBeCloseTo(73.33, 1);
+      expect(sep).toHaveAttribute("aria-valuenow", "60"); // React state untouched mid-drag
+      expect(setItem).not.toHaveBeenCalled();
+      ptr("pointermove", 630); // 620 → 51.67%
+      flush();
+      expect(Number(share(sep))).toBeCloseTo(51.67, 1);
+      ptr("pointerup", 630);
+      expect(sep).toHaveAttribute("aria-valuenow", "52");
+      expect(Number(window.localStorage.getItem(KEY))).toBeCloseTo(51.67, 1);
+      expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(1);
+      expect(page(sep)).not.toHaveClass("is-resizing");
+      expect(Number(share(sep))).toBeCloseTo(51.67, 1);
+    });
+
+    it("keeps the worksheet at its minimum when dragged far left, and flags the edge", async () => {
+      const sep = await open();
+      fireEvent(sep, new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 726, button: 0 }));
+      fireEvent(sep, new MouseEvent("pointermove", { bubbles: true, clientX: -50 }));
+      fireEvent(sep, new MouseEvent("pointerup", { bubbles: true, clientX: -50 }));
+      expect(Number(share(sep))).toBeCloseTo(42.67, 1);
+      await waitFor(() => expect(sep).toHaveAttribute("data-edge", "min"));
+    });
+
+    it("does not store anything for a press without movement", async () => {
+      const sep = await open();
+      fireEvent(sep, new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 726, button: 0 }));
+      fireEvent(sep, new MouseEvent("pointerup", { bubbles: true, clientX: 726 }));
+      expect(window.localStorage.getItem(KEY)).toBeNull();
+      expect(sep).toHaveAttribute("aria-valuenow", "60");
+    });
+  });
+
+  it("is not a draggable divider when the container is too narrow for both panes", async () => {
+    narrowWidth = 800; // 32rem + 20rem = 832px > 800px
+    mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
+    renderApp("/prep/7");
+    const sep = await screen.findByRole("separator", { name: "調整對話與學習單的寬度" });
+    await waitFor(() => expect(sep).toHaveAttribute("aria-disabled", "true"));
+    expect(sep).toHaveAttribute("tabindex", "-1");
+    fireEvent(sep, new MouseEvent("pointerdown", { bubbles: true, cancelable: true, clientX: 480, button: 0 }));
+    expect(page(sep)).not.toHaveClass("is-resizing");
+    sep.focus();
+    await userEvent.setup().keyboard("{ArrowRight}");
+    expect(sep).toHaveAttribute("aria-valuenow", "60");
   });
 
   it("goes back to 60% on Enter and on a double click", async () => {

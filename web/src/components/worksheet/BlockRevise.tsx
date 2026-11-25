@@ -761,17 +761,33 @@ export function ProposalPanel({
         </div>
       )}
       <div className="anno-actions">
-        <button type="button" className="primary-button small-button" disabled={ctl.busy} onClick={() => void ctl.accept(s)}>
+        <button
+          type="button"
+          className="primary-button small-button"
+          aria-disabled={ctl.busy || undefined}
+          onClick={() => {
+            if (!ctl.busy) void ctl.accept(s);
+          }}
+        >
           採用
         </button>
-        <button type="button" className="secondary-button small-button" disabled={ctl.busy} onClick={() => void ctl.reject(p)}>
+        <button
+          type="button"
+          className="secondary-button small-button"
+          aria-disabled={ctl.busy || undefined}
+          onClick={() => {
+            if (!ctl.busy) void ctl.reject(p);
+          }}
+        >
           放棄
         </button>
         <button
           type="button"
           className="text-link is-plain"
-          disabled={ctl.busy}
-          onClick={() => void ctl.retry(s)}
+          aria-disabled={ctl.busy || undefined}
+          onClick={() => {
+            if (!ctl.busy) void ctl.retry(s);
+          }}
         >
           再改一次
         </button>
@@ -785,9 +801,11 @@ export function ProposalPanel({
 /** 「已採用 Manna 的修改。」 with 復原: shown until the block is changed again by anything. */
 function AcceptedNotice({ blockId, ctl }: { blockId: string; ctl: BlockRevise }) {
   const ref = useRef<HTMLDivElement>(null);
-  // 採用 removed the button that had focus: put it here, where 復原 is the next stop.
+  // 採用 removed the panel that had focus: put it on the block's heading (the notice is its next
+  // stop, 復原 after it); without a heading around, on the notice itself.
   useEffect(() => {
-    ref.current?.focus();
+    const head = ref.current?.closest(".ws-block")?.querySelector<HTMLElement>(".ws-block-head");
+    (head ?? ref.current)?.focus();
   }, []);
   return (
     <div className="ws-accepted-notice" role="status" aria-live="polite" ref={ref} tabIndex={-1} lang="zh-Hant">

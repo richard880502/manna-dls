@@ -136,7 +136,10 @@ function RevealButton({
 
 /** What a page adds to a block of the preview: more tools, and what goes under the block. */
 export interface SheetBlockExtras {
+  /** Shown with the block: the main tools (改這一區, 加註記). */
   tools?: ReactNode;
+  /** The secondary tools, inside the block's 「更多…」 menu (`popover-item` buttons). */
+  more?: ReactNode;
   below?: ReactNode;
   /** The block is the one the bottom bar will revise. */
   targeted?: boolean;
@@ -227,7 +230,7 @@ export function SheetPreview({
             className={`ws-block prep-sheet-block${highlight.has(b.id) ? " is-changed" : ""}${extra.targeted ? " is-targeted" : ""}`}
             aria-label={`區塊 ${name}`}
           >
-            <h3 className="ws-block-head">
+            <h3 className="ws-block-head" tabIndex={-1}>
               {b.label && <span className="ws-letter">{b.label}.</span>}
               <span data-field="title">{b.title}</span>
               {canReveal && (
@@ -415,7 +418,13 @@ export function SheetPreview({
             {extra.below}
             {!readOnly && (
               <div lang="zh-Hant">
-                <SectionTools name={`區塊 ${name}`} text={sheetBlockText(b)} interactionId={interactionFor(b)}>
+                <SectionTools
+                  name={`區塊 ${name}`}
+                  text={sheetBlockText(b)}
+                  interactionId={interactionFor(b)}
+                  more={extra.more}
+                  ratingTarget={{ itemIndex: sheet.blocks.indexOf(b) + 1 }}
+                >
                   {extra.tools}
                 </SectionTools>
               </div>

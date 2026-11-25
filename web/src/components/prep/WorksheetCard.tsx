@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../../api/client";
 import type {
@@ -28,6 +28,7 @@ import { BlockHistoryButton } from "../worksheet/BlockHistory";
 import { BlockReviseArea, LostNotes, ReviseByNotesButton, useBlockRevise } from "../worksheet/BlockRevise";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { anyOpen } from "../worksheet/SlotPicture";
+import { MenuItem } from "./SectionTools";
 import { SheetPreview, sheetBlockName } from "./SheetPreview";
 
 /** How long a block stays highlighted after 採用. */
@@ -37,6 +38,10 @@ const AUDIENCES: Array<[WsAudience, string]> = [
   ["student", "學生版"],
   ["teacher", "教師版"],
 ];
+
+/** The dialog of 修改歷程 opens from the closed 「更多…」 menu: focus goes back to the menu's button. */
+const menuButtonOf = (button: HTMLButtonElement | null) =>
+  button?.closest(".popover-root")?.querySelector<HTMLElement>("[aria-controls]") ?? null;
 
 /** The step whose AI call produced a block: its own job first, then the step for its kind. */
 function interactionFor(jobs: WsJob[], block: WsSheetBlock, fallback: number | null): number | null {
@@ -68,6 +73,7 @@ export function WorksheetCard({
   onTarget,
   proposalsKey,
   stepsShown = false,
+  onReady,
 }: {
   turn: PrepTurn;
   /** Changes when the worksheet got a new version (a revise turn finished). */
@@ -83,6 +89,11 @@ export function WorksheetCard({
   proposalsKey?: number;
   /** The page shows this turn's 「進度」 panel above the card: no working line of our own. */
   stepsShown?: boolean;
+  /**
+   * Called once the sheet is on screen (or could not be loaded), in the same frame: the page then
+   * swaps its 「進度」 panel for the one-line summary. The sheet fades in when it arrived late.
+   */
+  onReady?: () => void;
 }) {
   const ids = useId();
   const ref = turn.worksheet;
@@ -104,6 +115,15 @@ export function WorksheetCard({
   const [draft, setDraft] = useState<SheetSelection | null>(null);
   const [undoError, setUndoError] = useState<string | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  // Before paint, so the page swaps its panel in the very frame the sheet appears.
+  const ready = sheet !== null || error !== null;
+  const onReadyRef = useRef(onReady);
+  useLayoutEffect(() => {
+    onReadyRef.current = onReady;
+  });
+  useLayoutEffect(() => {
+    if (ready) onReadyRef.current?.();
+  }, [ready]);
   const revise = useBlockRevise(running ? null : wsId, {
     reloadKey: proposalsKey,
     onApplied: (done) => {
@@ -351,13 +371,18 @@ export function WorksheetCard({
             加註記
           </button>
           <ReviseByNotesButton blockId={b.id} ctl={revise} disabled={held} />
+        </>
+      ),
+      more: (
+        <>
           {wsId !== null && (
             <BlockHistoryButton
               worksheetId={wsId}
               blockId={b.id}
               label={`修改歷程（${name}）`}
-              className="decision-button"
+              className="popover-item"
               disabled={held}
+              focusAfter={menuButtonOf}
               onAdopted={(done) => {
                 setState(done.worksheet);
                 setImages(done.worksheet.images ?? null);
@@ -367,9 +392,7 @@ export function WorksheetCard({
             />
           )}
           {state?.undoable.includes(b.id) && !held && (
-            <button type="button" className="decision-button" onClick={() => void undo(b.id)}>
-              復原上一版
-            </button>
+            <MenuItem onClick={() => void undo(b.id)}>復原上一版</MenuItem>
           )}
         </>
       ),
@@ -451,11 +474,11 @@ export function WorksheetCard({
       <ErrorText message={exportError} />
       <ErrorText message={error} />
       {state && <RunOutcome jobs={state.jobs} />}
-      {!sheet && !error && <Loading label="正在載入學習單…" />}
+      {!sheet && !error && !stepsShown && <Loading label="正在載入學習單…" />}
       <ErrorText message={undoError} />
       <LostNotes ctl={revise} />
       {sheet && (
-        <div ref={sheetRef} className="prep-sheet-wrap">
+        <div ref={sheetRef} className="prep-sheet-wrap is-arriving">
           <SheetPreview
             sheet={sheet}
             highlight={flash.size > 0 ? new Set([...highlight, ...flash]) : highlight}

@@ -358,6 +358,7 @@ mark.anno.is-focused {
   flex-direction: column;
   max-width: 60vw;
   max-height: calc(100vh - var(--banner-h) - var(--top-h) - var(--space-xl));
+  max-height: calc(100dvh - var(--banner-h) - var(--top-h) - var(--space-xl));
   padding-right: var(--space-lg);
   border-right: var(--rule-hair) solid var(--color-rule-strong);
 }

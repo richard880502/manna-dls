@@ -5,6 +5,7 @@ import {
   IMAGE_ACCEPT,
   IMAGE_COUNT_MESSAGE,
   IMAGE_MAX_COUNT,
+  IMAGE_PRIVACY_NOTE,
   checkImageFile,
   imageFilesOf,
   outcomeNote,
@@ -186,7 +187,7 @@ export function AttachButton({ onFiles, disabled }: { onFiles: (files: File[]) =
         type="button"
         className="prep-attach"
         aria-label="附上圖片"
-        title="附上圖片"
+        title={`附上圖片（${IMAGE_PRIVACY_NOTE}）`}
         disabled={disabled}
         onClick={() => input.current?.click()}
       >

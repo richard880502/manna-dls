@@ -1,5 +1,5 @@
 // 學習單（左）與對話（右）並排時，中間可拖動的分隔線：記住左邊學習單佔容器寬度的百分比。
-import { useCallback, useEffect, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 export const DEFAULT_SHARE = 60; // the worksheet on the left, 3:2
 export const SPLIT_KEY = "manna.prepSplitSheetShare";
@@ -24,6 +24,9 @@ export function boundsFor(width: number): { min: number; max: number } {
   const max = 100 - ((MIN_CHAT_REM * rem) / width) * 100;
   return min > max ? { min: DEFAULT_SHARE, max: DEFAULT_SHARE } : { min, max };
 }
+
+/** worksheet | 0-width divider track | conversation */
+export const splitColumns = (share: number) => `minmax(0, ${share}%) 0 minmax(0, 1fr)`;
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -66,6 +69,7 @@ export function useSplitResize() {
   }, [container]);
 
   const share = clamp(wanted, bounds.min, bounds.max);
+  const canResize = bounds.max - bounds.min > 0.01; // too narrow for both minimum widths → nothing to drag
 
   const commit = useCallback((next: number) => {
     setWanted(next);
@@ -73,29 +77,73 @@ export function useSplitResize() {
   }, []);
   const reset = () => commit(DEFAULT_SHARE);
 
-  const fromPointer = (e: PointerEvent) => {
-    const rect = container?.getBoundingClientRect();
-    if (!rect || !(rect.width > 0)) return null;
-    const b = boundsFor(rect.width);
-    return clamp(((e.clientX - rect.left) / rect.width) * 100, b.min, b.max);
+  // Drag path: measure once on pointerdown, then write the container's grid-template-columns directly
+  // (one write per animation frame, no React state, no inherited CSS variable). Only pointerup commits.
+  const drag = useRef<{
+    el: HTMLDivElement;
+    rect: DOMRect;
+    min: number;
+    max: number;
+    offset: number;
+    next: number;
+    moved: boolean;
+    raf: number;
+  } | null>(null);
+
+  const writeColumns = (d: NonNullable<typeof drag.current>) => {
+    d.el.style.gridTemplateColumns = splitColumns(d.next);
   };
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !container || !canResize) return;
+    const rect = container.getBoundingClientRect();
+    if (!(rect.width > 0)) return;
+    e.preventDefault(); // no text selection from the gap between panes
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    setDragging(true);
+    const handle = e.currentTarget.getBoundingClientRect();
+    const b = boundsFor(rect.width);
+    drag.current = {
+      el: container,
+      rect,
+      min: b.min,
+      max: b.max,
+      offset: e.clientX - (handle.left + handle.width / 2), // grab offset: no jump on the first move
+      next: share,
+      moved: false,
+      raf: 0,
+    };
+    setDragging(true); // the only render at the start of a drag
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    const next = fromPointer(e);
-    if (next !== null) setWanted(next);
+    const d = drag.current;
+    if (!d) return;
+    d.next = clamp(((e.clientX - d.offset - d.rect.left) / d.rect.width) * 100, d.min, d.max);
+    d.moved = true;
+    if (d.raf) return;
+    d.raf = requestAnimationFrame(() => {
+      d.raf = 0;
+      writeColumns(d);
+    });
   };
   const endDrag = (e: PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    setDragging(false);
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    if (d.raf) cancelAnimationFrame(d.raf);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
-    commit(share);
+    if (d.moved) {
+      writeColumns(d); // the final value, even if the last frame hasn't run
+      commit(d.next); // the only state + storage write of the drag
+    }
+    setDragging(false);
   };
+
+  useEffect(
+    () => () => {
+      if (drag.current?.raf) cancelAnimationFrame(drag.current.raf);
+    },
+    [],
+  );
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const step = e.shiftKey ? BIG_STEP : STEP;
@@ -114,6 +162,9 @@ export function useSplitResize() {
     containerRef,
     share,
     dragging,
+    canResize,
+    columns: splitColumns(share),
+    edge: !canResize ? null : share <= bounds.min + 0.01 ? ("min" as const) : share >= bounds.max - 0.01 ? ("max" as const) : null,
     min: bounds.min,
     max: bounds.max,
     dividerProps: {

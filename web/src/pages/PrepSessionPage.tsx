@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
@@ -10,6 +10,7 @@ import type {
 } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { RunProgressPanel, useRunPanel } from "../components/RunProgress";
+import { useConfirmFocus } from "../lib/useConfirmFocus";
 import { TOOL_NAME } from "../lib/create";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import {
@@ -36,6 +37,7 @@ import { KitDownload } from "../components/prep/KitDownload";
 import { useSplitResize } from "../components/prep/useSplitResize";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
 import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
+import { scrollToEl, scrollToIdWhenReady, whenVisible } from "../lib/scroll";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
 import { ActivityCard, AskCard, ChatCard, ResourcesCard, ReviseCard, WorksheetTurnCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
@@ -86,11 +88,18 @@ function useNarrow(): boolean {
 
 /** The worksheet preview's block, scrolled into view (the preview's blocks carry `sheet-block-<id>`). */
 function scrollToBlock(blockId: string) {
-  document.getElementById(`sheet-block-${blockId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  scrollToEl(document.getElementById(`sheet-block-${blockId}`), "center");
 }
 
 /** How long changed blocks stay highlighted after a revision. */
 const FLASH_MS = 4000;
+const FLASH_FALLBACK_MS = 60_000;
+
+/** The two panes below the split width, in tab order. */
+const SPLIT_TABS = [
+  ["chat", "對話"],
+  ["sheet", "學習單"],
+] as const;
 
 export function PrepSessionPage() {
   const { sessionId } = useParams();
@@ -132,6 +141,9 @@ function PrepSessionView({ id }: { id: number }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [headError, setHeadError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { triggerRef: deleteTriggerRef, safeRef: deleteSafeRef } = useConfirmFocus(confirmDelete);
+  // The turn whose worksheet card first had its sheet (see `holdsPanel`).
+  const [sheetReadyTurn, setSheetReadyTurn] = useState<number | null>(null);
   const [viewing, setViewing] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<number, Record<string, string>>>({});
   const [flash, setFlash] = useState<{ worksheetId: number; ids: ReadonlySet<string> } | null>(null);
@@ -141,8 +153,31 @@ function PrepSessionView({ id }: { id: number }) {
   // The worksheet shown beside the conversation: the turn the teacher chose, else the latest one.
   const [pickedTurn, setPickedTurn] = useState<number | null>(null);
   const narrow = useNarrow();
-  const { containerRef, share, dragging, min, max, dividerProps } = useSplitResize();
+  const { containerRef, share, dragging, canResize, columns, edge, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
+  // Narrow screens share one page scroll between the two tabs: each tab keeps its own position.
+  const tabScrolls = useRef<Partial<Record<"chat" | "sheet", number>>>({});
+  const shownTab = useRef(tab);
+  const lastScrollY = useRef(0);
+  const tabRefs = useRef<Partial<Record<"chat" | "sheet", HTMLButtonElement | null>>>({});
+  useEffect(() => {
+    const onScroll = () => {
+      lastScrollY.current = window.scrollY;
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  useLayoutEffect(() => {
+    if (shownTab.current === tab) return;
+    tabScrolls.current[shownTab.current] = lastScrollY.current;
+    shownTab.current = tab;
+    const y = tabScrolls.current[tab];
+    if (y !== undefined) {
+      window.scrollTo({ top: y, behavior: "instant" });
+      lastScrollY.current = y;
+    }
+  }, [tab]);
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
   // 修改課文 / 只選要用的段落 open here; `materialChanged`: the next try uses what was changed.
@@ -219,21 +254,35 @@ function PrepSessionView({ id }: { id: number }) {
 
   useEffect(() => {
     if (arrived === null) return;
-    document.getElementById(`prep-turn-${arrived}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    scrollToEl(document.getElementById(`prep-turn-${arrived}`), "start");
   }, [arrived]);
 
-  useEffect(() => {
-    if (!flash) return undefined;
-    const timer = setTimeout(() => setFlash(null), FLASH_MS);
-    return () => clearTimeout(timer);
-  }, [flash]);
-
-  // A chat turn changed blocks: the preview scrolls to the first one once the new version is in.
+  // A chat turn changed blocks: the preview scrolls to the first one once its new version is in
+  // the page (once; it gives way when the teacher scrolls, points or types), and the highlight
+  // runs for FLASH_MS from the moment that block is on screen, not from the end of the turn.
   useEffect(() => {
     const first = flash ? [...flash.ids][0] : undefined;
     if (!first) return undefined;
-    const timers = [400, 1500].map((ms) => setTimeout(() => scrollToBlock(first), ms));
-    return () => timers.forEach(clearTimeout);
+    let unwatch: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const clear = () => setFlash(null);
+    const cancel = scrollToIdWhenReady(`sheet-block-${first}`, {
+      onScrolled: (el) => {
+        unwatch?.();
+        unwatch = whenVisible(el, () => {
+          if (timer !== undefined) clearTimeout(timer);
+          timer = setTimeout(clear, FLASH_MS);
+        });
+      },
+    });
+    // Never seen (a hidden tab, a block that is gone): the highlight does not stay forever.
+    const fallback = setTimeout(clear, FLASH_FALLBACK_MS);
+    return () => {
+      cancel();
+      unwatch?.();
+      clearTimeout(fallback);
+      if (timer !== undefined) clearTimeout(timer);
+    };
   }, [flash]);
 
   const onLabels = useCallback((worksheetId: number, map: Record<string, string>) => {
@@ -324,7 +373,7 @@ function PrepSessionView({ id }: { id: number }) {
       setProposalsKey((prev) => ({ ...prev, [t.worksheetId]: (prev[t.worksheetId] ?? 0) + 1 }));
       setTarget(null);
       setDraft("");
-      document.getElementById(`sheet-block-${t.blockId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      scrollToEl(document.getElementById(`sheet-block-${t.blockId}`), "center");
     } catch (err) {
       setSendError(errorMessage(err));
     } finally {
@@ -358,6 +407,8 @@ function PrepSessionView({ id }: { id: number }) {
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
     e.preventDefault();
+    // While Manna works the teacher may keep typing; only sending waits (sendDraft also checks).
+    if (locked) return;
     void sendDraft();
   }
 
@@ -424,8 +475,21 @@ function PrepSessionView({ id }: { id: number }) {
       : (templates ?? []);
 
   /** Whether this turn's 「進度」 panel shows (then its own working lines stay quiet). */
-  function stepsShown(turn: PrepTurn) {
+  function panelShown(turn: PrepTurn) {
     return turn.id === lastTurn?.id && lastPanel.visible && !!turn.progress;
+  }
+
+  /**
+   * The pane's panel keeps its steps, all done, until the sheet it makes is on screen (then it folds
+   * into one line in that same frame), so the panel, a loading line and the sheet never stack.
+   */
+  function holdsPanel(turn: PrepTurn) {
+    return panelShown(turn) && turn.progress?.status === "done" && ownsPane(turn) && sheetReadyTurn !== turn.id;
+  }
+
+  /** The panel is still the run's live status (steps running or failed), so working lines stay quiet. */
+  function stepsShown(turn: PrepTurn) {
+    return panelShown(turn) && (turn.progress?.status !== "done" || holdsPanel(turn));
   }
 
   /** A worksheet turn's 「進度」 panel shows in the right pane, beside the sheet it makes. */
@@ -443,6 +507,7 @@ function PrepSessionView({ id }: { id: number }) {
       <WorksheetCard
         turn={turn}
         stepsShown={stepsShown(turn)}
+        onReady={() => setSheetReadyTurn(turn.id)}
         refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}-${lastVersion}-${undone}`}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
@@ -586,25 +651,34 @@ function PrepSessionView({ id }: { id: number }) {
     <div
       ref={containerRef}
       className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}${dragging ? " is-resizing" : ""}`}
-      style={split && !narrow ? ({ "--prep-sheet-share": share } as CSSProperties) : undefined}
+      style={split && !narrow ? { gridTemplateColumns: columns } : undefined}
     >
       {split && narrow && (
         <div className="prep-split-tabs" role="tablist" aria-label="對話或學習單">
-          {(
-            [
-              ["chat", "對話"],
-              ["sheet", "學習單"],
-            ] as const
-          ).map(([key, label]) => (
+          {SPLIT_TABS.map(([key, label], i) => (
             <button
               key={key}
+              ref={(el) => {
+                tabRefs.current[key] = el;
+              }}
               type="button"
               role="tab"
               id={`${ids}-tab-${key}`}
               aria-selected={tab === key}
               aria-controls={`${ids}-pane-${key}`}
+              tabIndex={tab === key ? 0 : -1}
               className={tab === key ? "is-current" : ""}
               onClick={() => setTab(key)}
+              onKeyDown={(e) => {
+                const step =
+                  e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : e.key === "Home" ? -i : e.key === "End" ? 1 - i : null;
+                if (step === null) return;
+                e.preventDefault();
+                const next = SPLIT_TABS[(i + step + SPLIT_TABS.length) % SPLIT_TABS.length];
+                if (!next) return;
+                setTab(next[0]);
+                tabRefs.current[next[0]]?.focus();
+              }}
             >
               {label}
             </button>
@@ -616,6 +690,7 @@ function PrepSessionView({ id }: { id: number }) {
           id={`${ids}-pane-sheet`}
           className="prep-split-sheet"
           aria-label="目前的學習單"
+          {...(split && narrow ? { role: "tabpanel", "aria-labelledby": `${ids}-tab-sheet` } : {})}
           hidden={narrow && tab !== "sheet"}
         >
           {sheetTurns.length > 1 && (
@@ -634,12 +709,13 @@ function PrepSessionView({ id }: { id: number }) {
               </select>
             </p>
           )}
-          {stepsShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
+          {panelShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
             <RunProgressPanel
               progress={sheetTurn.progress}
               error={sheetTurn.error}
               onClose={lastPanel.close}
               onCancelled={refreshSession}
+              collapseDone={!holdsPanel(sheetTurn)}
               className="prep-turn-progress"
             />
           )}
@@ -657,7 +733,11 @@ function PrepSessionView({ id }: { id: number }) {
           aria-valuenow={Math.round(share)}
           aria-valuemin={Math.ceil(min)}
           aria-valuemax={Math.floor(max)}
-          tabIndex={0}
+          aria-valuetext={`學習單 ${Math.round(share)}%，對話 ${100 - Math.round(share)}%`}
+          aria-disabled={canResize ? undefined : true}
+          data-edge={edge ?? undefined}
+          title="拖曳調整寬度；按兩下或 Enter 還原"
+          tabIndex={canResize ? 0 : -1}
           {...dividerProps}
         />
       )}
@@ -666,6 +746,7 @@ function PrepSessionView({ id }: { id: number }) {
         id={`${ids}-pane-chat`}
         className="prep-split-chat"
         aria-label="對話"
+        {...(split && narrow ? { role: "tabpanel", "aria-labelledby": `${ids}-tab-chat` } : {})}
         hidden={split && narrow && tab !== "chat"}
       >
       <div className="page-head prep-head">
@@ -759,12 +840,12 @@ function PrepSessionView({ id }: { id: number }) {
                 <button type="button" className="text-link is-danger" onClick={() => void remove()}>
                   確定刪除
                 </button>
-                <button type="button" className="text-link is-plain" onClick={() => setConfirmDelete(false)}>
+                <button type="button" className="text-link is-plain" ref={deleteSafeRef} onClick={() => setConfirmDelete(false)}>
                   不刪
                 </button>
               </span>
             ) : (
-              <button type="button" className="text-link is-plain" onClick={() => setConfirmDelete(true)}>
+              <button type="button" className="text-link is-plain" ref={deleteTriggerRef} onClick={() => setConfirmDelete(true)}>
                 刪除
               </button>
             )}
@@ -782,7 +863,7 @@ function PrepSessionView({ id }: { id: number }) {
             </p>
             <PrepImageThumbs sessionId={id} images={turn.images} />
             <section className="prep-result" aria-label={`${KIND_LABEL[turn.kind]}（第 ${turn.seq} 則）`}>
-              {stepsShown(turn) && turn.progress && !ownsPane(turn) && (
+              {panelShown(turn) && turn.progress && !ownsPane(turn) && (
                 <RunProgressPanel
                   progress={turn.progress}
                   error={turn.error}
@@ -801,6 +882,8 @@ function PrepSessionView({ id }: { id: number }) {
           </li>
         ))}
       </ol>
+      {/* With the conversation, not in the sticky bar: it scrolls away with the turns. */}
+      <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
 
       {session.material &&
         !longSeen &&
@@ -839,7 +922,8 @@ function PrepSessionView({ id }: { id: number }) {
         {/* From 「改這一區」 (on a card above or from this bar): asked here, where she is typing. */}
         <MemorySuggestionCards items={reviseSuggestions} onDone={memory.drop} onRemembered={memory.reload} />
         <ErrorText message={sendError} />
-        {currentSheet && !target && (
+        {/* Beside the conversation the worksheet itself is in view; only its own tab needs the name. */}
+        {currentSheet && !target && (!split || narrow) && (
           <p className="prep-current-sheet">目前的學習單：{currentSheet.title}</p>
         )}
         {target && (
@@ -862,7 +946,6 @@ function PrepSessionView({ id }: { id: number }) {
             mode switch bottom-left, the send button bottom-right. */}
         <div
           className="prep-composer"
-          data-disabled={locked || undefined}
           data-tall={composerTall || undefined}
           data-dragging={(canAttach && drop.dragging) || undefined}
           onDragEnter={drop.onDragEnter}
@@ -904,10 +987,10 @@ function PrepSessionView({ id }: { id: number }) {
           <textarea
             id={`${ids}-draft`}
             ref={draftRef}
-            rows={3}
+            rows={2}
             maxLength={2000}
             value={draft}
-            disabled={locked}
+            readOnly={sending}
             placeholder={
               running
                 ? WORKING_LINE
@@ -921,8 +1004,14 @@ function PrepSessionView({ id }: { id: number }) {
           />
           <div className="prep-composer-tools">
             {canAttach && <AttachButton onFiles={attach.add} disabled={locked} />}
-            <span className="prep-composer-hint" aria-hidden="true">
-              Enter 送出・Shift＋Enter 換行
+            {!running && (
+              <span className="prep-composer-hint" aria-hidden="true">
+                Enter 送出・Shift＋Enter 換行
+              </span>
+            )}
+            {/* Always present, so the line is announced when it appears. */}
+            <span className="prep-composer-wait" role="status">
+              {running ? "Manna 做完後就能送出" : ""}
             </span>
             <button
               type="submit"
@@ -944,10 +1033,9 @@ function PrepSessionView({ id }: { id: number }) {
             </button>
           </div>
         </div>
-        {canAttach && (
+        {canAttach && (attach.imageIds.length > 0 || attach.uploading || drop.dragging) && (
           <p className="prep-attach-note">{IMAGE_PRIVACY_NOTE}</p>
         )}
-        <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
       </section>
 

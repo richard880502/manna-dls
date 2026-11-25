@@ -1988,6 +1988,9 @@ interface PrepTurn {
   result: ActivityPlan | Resources | { answer: string; follow_ups: string[] }
         | { reply: string; changed_block_ids: string[]; version_no: number | null } | null;
   interaction_id: number | null;   // 有幫助／不合用 → POST /api/ai/:interaction_id/decision { decision: "skip", thumbs: "up"|"down" }
+                                   // 學習單預覽每一區的評分（在「更多…」裡）另帶 item_index＝評分當時這一區在學習單上的位置（從 1）：
+                                   // 沒有自己 AI 呼叫的區塊共用同一步的 interaction，靠 item_index 分辨；2026-11-25 以前的區塊評分都是 0，分不出區塊。
+                                   // 每按一次新增一列（不覆寫），以同一 (interaction, item_index) 最新的一列為準
   created_at: string; finished_at: string | null;
   siop_check?: SiopCheck | null;   // worksheet／comprehension／tiered／activity／kit 才有這一欄：最新一次的 SIOP 自我檢核；
                                    // 還沒有（這一輪還在跑、失敗了，或是在檢核功能之前做的）是 null。其他種類沒有這一欄

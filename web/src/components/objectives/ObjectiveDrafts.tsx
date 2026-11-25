@@ -45,6 +45,7 @@ import {
   fieldsFrom,
   hasDrafts,
 } from "../../lib/objectives";
+import { scrollToEl } from "../../lib/scroll";
 
 export type DraftState =
   /** `key`: the progress key sent with the request; `progress`: its steps, once the server has them; `stage`: the kind asked for. */
@@ -580,7 +581,7 @@ export function ObjectiveDrafts({
   // Opening (and each change of phase) takes focus to the heading and brings the panel into view.
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
-    headingRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    scrollToEl(headingRef.current, "center");
   }, [state.phase]);
   const Tag = embedded ? "div" : "section";
   return (

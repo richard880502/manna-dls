@@ -12,6 +12,7 @@ body {
 }
 
 html {
+  -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   scrollbar-color: var(--color-rule-strong) var(--color-paper);
@@ -194,4 +195,10 @@ button:disabled {
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
 }

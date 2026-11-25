@@ -67,7 +67,7 @@
   text-decoration: none;
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .primary-button:hover {
     background: var(--color-accent-hover);
   }
@@ -75,11 +75,6 @@
   .secondary-button:hover {
     border-color: var(--color-field-edge);
     background: var(--color-paper-2);
-  }
-
-  .primary-button:not(:disabled):hover,
-  .secondary-button:not(:disabled):hover {
-    transform: translateY(-1px);
   }
 
   .ghost-button:hover {
@@ -97,9 +92,12 @@
   background: var(--color-paper-3);
 }
 
-.primary-button:not(:disabled):active,
-.secondary-button:not(:disabled):active {
-  transform: translateY(0);
+/* Pressed: the control gives a little under the finger. */
+:is(.primary-button, .secondary-button, .ghost-button, .decision-button, .prep-chip, .prep-send):not(
+    :disabled,
+    [aria-disabled="true"]
+  ):active {
+  transform: scale(0.97);
 }
 
 .primary-button:disabled,
@@ -120,7 +118,7 @@
   font-size: var(--text-sm);
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .decision-button:not(:disabled):hover {
     border-color: var(--color-field-edge);
     background: var(--color-paper-2);
@@ -150,6 +148,8 @@
   .secondary-button,
   .ghost-button,
   .decision-button,
+  .prep-chip,
+  .prep-send,
   .logout-button,
   .menu-toggle {
     transition:
@@ -256,7 +256,7 @@ select {
   opacity: 1;
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   input:not([type="checkbox"], [type="radio"], [type="file"], [type="range"], :disabled, [readonly]):hover,
   textarea:not(:disabled, [readonly]):hover,
   select:not(:disabled):hover {
@@ -377,7 +377,7 @@ input[type="file"]::file-selector-button {
   cursor: pointer;
 }
 
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .pref-option:hover,
   .route-option:hover,
   .siop-choice:hover,
@@ -613,6 +613,22 @@ summary {
   font-size: var(--text-sm);
 }
 
+/* A load that finishes quickly never flashes its label: it shows up after 300 ms. */
+@media (prefers-reduced-motion: no-preference) {
+  .loading-text {
+    animation: manna-reveal 0s linear 300ms backwards;
+  }
+
+  @keyframes manna-reveal {
+    from {
+      visibility: hidden;
+    }
+    to {
+      visibility: visible;
+    }
+  }
+}
+
 .empty-preview {
   margin: var(--space-sm) 0 0;
   padding: var(--space-md);
@@ -821,6 +837,7 @@ summary {
 
 /* One line per step. */
 .run-progress-label {
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -893,7 +910,29 @@ summary {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  gap: var(--space-xs) var(--space-sm);
   color: var(--color-ink-2);
-  font-size: var(--text-sm, 0.9rem);
+  font-size: var(--text-sm);
+}
+
+/* All done: the steps fold into this one line, which stays (nothing below it moves later). */
+.run-progress.is-folded {
+  padding-block: 0 var(--space-2xs);
+}
+
+.run-progress-summary {
+  color: var(--color-muted);
+  font-weight: var(--weight-normal, 400);
+}
+
+[aria-disabled="true"]:is(.text-link, .primary-button, .secondary-button, .ghost-button, .decision-button) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (pointer: coarse) {
+  .run-progress-close {
+    min-width: var(--hit);
+    min-height: var(--hit);
+  }
 }
