@@ -720,6 +720,7 @@ function BlockSection({
         <SheetText
           label={`區塊標題 ${name}`}
           className="is-title"
+          note={{ block_id: block.id, field: "title", onNote: setDraft }}
           value={block.title}
           placeholder="Title"
           disabled={locked}
@@ -771,6 +772,7 @@ function BlockSection({
       <SheetText
         label={`作答指示 ${name}`}
         className="is-steps"
+        note={{ block_id: block.id, field: "instructions", onNote: setDraft }}
         value={block.instructions}
         placeholder="Instructions"
         disabled={locked}
@@ -922,6 +924,7 @@ function BlockSection({
             <li key={item.id} value={no}>
               <SheetText
                 label={`題目 ${no}`}
+                note={{ block_id: block.id, field: "item", item_id: item.id, onNote: setDraft }}
                 value={item.prompt}
                 placeholder={promptPlaceholder(item.answer_format)}
                 disabled={locked}
@@ -946,6 +949,7 @@ function BlockSection({
                     <span>{hintLabel}</span>
                     <SheetText
                       label={`${hintLabel} ${no}`}
+                      note={{ block_id: block.id, field: "item", item_id: item.id, offsets: false, onNote: setDraft }}
                       value={hint}
                       placeholder="Hint: …"
                       disabled={locked}
@@ -959,6 +963,7 @@ function BlockSection({
                   <span>{frameLabel}</span>
                   <SheetText
                     label={`${frameLabel} ${no}`}
+                      note={{ block_id: block.id, field: "item", item_id: item.id, offsets: false, onNote: setDraft }}
                     value={frame}
                     placeholder="Hello, everyone. My answer is ___ because ___. Thank you."
                     disabled={locked}
@@ -1001,6 +1006,7 @@ function BlockSection({
                       <span>參考答案</span>
                       <SheetText
                         label={`參考答案 ${no}`}
+                      note={{ block_id: block.id, field: "item", item_id: item.id, offsets: false, onNote: setDraft }}
                         value={item.answer}
                         disabled={locked}
                         onChange={(answer) => changeItem((it) => ({ ...it, answer }))}
@@ -1011,6 +1017,7 @@ function BlockSection({
                     <span>依據（教材原文）</span>
                     <SheetText
                       label={`依據 ${no}`}
+                      note={{ block_id: block.id, field: "item", item_id: item.id, offsets: false, onNote: setDraft }}
                       value={item.evidence}
                       disabled={locked}
                       onChange={(evidence) => changeItem((it) => ({ ...it, evidence }))}
