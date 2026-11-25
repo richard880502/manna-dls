@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Icon } from "../components/Icon";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
@@ -167,6 +168,8 @@ function PrepSessionView({ id }: { id: number }) {
   // 預覽｜編輯 in the worksheet pane. The editor registers how to save its pending edits, so a
   // message is sent from the saved version; `editRev` makes the preview read the sheet again after edits.
   const [sheetMode, setSheetMode] = useState<SheetMode>(loadSheetMode);
+  // Where the embedded editor says 已自動儲存: on the right of the 預覽｜編輯 row.
+  const [savedSlot, setSavedSlot] = useState<HTMLDivElement | null>(null);
   const editFlush = useRef<SheetFlush | null>(null);
   const [editRev, setEditRev] = useState(0);
   // Wide layout: the conversation can fold to a strip on the right edge; its header settings fold too.
@@ -571,7 +574,7 @@ function PrepSessionView({ id }: { id: number }) {
     return (
       <>
         {editing && wsId && (
-          <SheetEditor worksheetId={wsId} chatBusy={locked} versionKey={versionKey} flushRef={editFlush} />
+          <SheetEditor worksheetId={wsId} chatBusy={locked} versionKey={versionKey} flushRef={editFlush} savedSlot={savedSlot} />
         )}
         <div hidden={editing}>{previewCard(turn, wsId, `${versionKey}-${editRev}`)}</div>
       </>
@@ -796,7 +799,12 @@ function PrepSessionView({ id }: { id: number }) {
               className="prep-turn-progress"
             />
           )}
-          {currentSheet && <SheetModeToggle mode={sheetMode} onChange={(m) => void chooseSheetMode(m)} />}
+          {currentSheet && (
+            <div className="prep-sheet-modebar">
+              <SheetModeToggle mode={sheetMode} onChange={(m) => void chooseSheetMode(m)} />
+              <div className="prep-sheet-modebar-status" ref={setSavedSlot} />
+            </div>
+          )}
           <div key={sheetTurn.id}>{worksheetCard(sheetTurn)}</div>
         </aside>
       )}
@@ -834,7 +842,8 @@ function PrepSessionView({ id }: { id: number }) {
               setChatCollapsed(false);
             }}
           >
-            展開對話
+            <Icon name="speech" />
+            <span className="rail-label">展開對話</span>
             {newReply && (
               <span className="prep-chat-new" role="status" aria-label="有新回覆">
                 <span className="prep-chat-dot" aria-hidden="true" />

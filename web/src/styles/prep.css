@@ -1614,3 +1614,21 @@
     background: var(--color-accent);
   }
 }
+
+/* 預覽｜編輯 with 已自動儲存 on its right. */
+.prep-sheet-modebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs) var(--space-md);
+}
+
+.prep-sheet-modebar .prep-sheet-mode {
+  margin-bottom: 0;
+}
+
+.prep-sheet-modebar-status .saved {
+  margin: 0;
+  text-align: right;
+}

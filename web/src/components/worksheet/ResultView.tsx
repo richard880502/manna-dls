@@ -1244,8 +1244,10 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
     <div className={`ws-result${embedded ? " is-embedded" : ""}`}>
       <SopSyncNotice ws={ws} />
 
-      <div className="ws-tabs" role="tablist" aria-label="版本">
-        {levels.map((l) => (
+      {/* One version only: no tab that says 「一般版」 for nothing. */}
+      {(levels.length > 1 || (onAdjust && !embedded)) && (
+      <div className="ws-tabs" {...(levels.length > 1 ? { role: "tablist", "aria-label": "版本" } : {})}>
+        {levels.length > 1 && levels.map((l) => (
           <button
             key={l}
             type="button"
@@ -1263,6 +1265,7 @@ export function ResultView({ ws, onAdjust, embedded = false, frozen = false }: R
           </button>
         )}
       </div>
+      )}
 
       <div className="ws-tool-row">
         <div className="ws-seg" role="radiogroup" aria-label="顯示版本">

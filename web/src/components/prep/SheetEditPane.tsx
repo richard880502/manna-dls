@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useEffect, useId, useRef, type MutableRefObject } from "react";
 import { ErrorText, Loading } from "../common";
 import { ResultView } from "../worksheet/ResultView";
@@ -61,6 +62,7 @@ export function SheetEditor({
   chatBusy,
   versionKey,
   flushRef,
+  savedSlot,
 }: {
   worksheetId: number;
   /** A chat turn is running (or being sent) in this conversation. */
@@ -68,6 +70,8 @@ export function SheetEditor({
   /** Changes when the conversation learned of a new version of this worksheet. */
   versionKey: string;
   flushRef: MutableRefObject<SheetFlush | null>;
+  /** Where 已自動儲存 goes (the right of the 預覽｜編輯 row); inline when the page has none. */
+  savedSlot?: HTMLElement | null;
 }) {
   const ws = useWorksheet(worksheetId);
   const flush = ws.flush;
@@ -123,28 +127,32 @@ export function SheetEditor({
         ? "尚未儲存"
         : `已自動儲存 ${formatClock(ws.savedAt ?? state.saved_at)}`;
 
+  const saved = (
+  <p className={`saved prep-sheet-saved${ws.saveError ? " is-failed" : ""}`} role="status">
+    {savedLine}
+    {ws.conflict ? (
+      <>
+        {" "}
+        <button type="button" className="text-link is-plain" onClick={ws.reload}>
+          重新載入
+        </button>
+      </>
+    ) : (
+      ws.saveError && (
+        <>
+          {" "}
+          <button type="button" className="text-link is-plain" onClick={() => void ws.flush()}>
+            再試一次
+          </button>
+        </>
+      )
+    )}
+  </p>
+  );
+
   return (
     <div className="prep-sheet-editor">
-      <p className={`saved prep-sheet-saved${ws.saveError ? " is-failed" : ""}`} role="status">
-        {savedLine}
-        {ws.conflict ? (
-          <>
-            {" "}
-            <button type="button" className="text-link is-plain" onClick={ws.reload}>
-              重新載入
-            </button>
-          </>
-        ) : (
-          ws.saveError && (
-            <>
-              {" "}
-              <button type="button" className="text-link is-plain" onClick={() => void ws.flush()}>
-                再試一次
-              </button>
-            </>
-          )
-        )}
-      </p>
+      {savedSlot ? createPortal(saved, savedSlot) : saved}
       {frozen && (
         <p className="prep-sheet-frozen" role="status">
           Manna 正在改這份學習單，完成後就能繼續編輯。

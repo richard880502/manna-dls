@@ -2512,3 +2512,33 @@ button.bloom-seg:focus-visible {
   gap: var(--space-xs) var(--space-sm);
   margin: 0 0 var(--space-lg);
 }
+
+/* The editor page's head: 已自動儲存 stays at the top right instead of wrapping under the title. */
+.ws-page-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.ws-page-head > .saved {
+  justify-self: end;
+  margin: 0;
+  text-align: right;
+}
+
+@media (max-width: 47.5rem) {
+  .ws-page-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ws-page-head > .saved {
+    justify-self: start;
+    text-align: left;
+  }
+}
+
+/* 全螢幕 material: the column is a sticky stacking context, so it must rise above the worksheet
+ * column (its sticky toolbar and the ✦ marks showed through the full-screen material). */
+.ws-pane-material:has(.material-pane.is-full) {
+  z-index: var(--z-overlay);
+}

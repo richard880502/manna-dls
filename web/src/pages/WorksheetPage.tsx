@@ -72,7 +72,7 @@ function WorksheetWorkspace({ id, materialPane }: { id: number; materialPane: Ma
 
   return (
     <>
-      <div className="head-row page-head">
+      <div className="head-row page-head ws-page-head">
         <div>
           {state.prep_session_id ? (
             <p className="crumbs prep-back">

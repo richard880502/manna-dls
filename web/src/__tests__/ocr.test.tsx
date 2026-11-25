@@ -380,7 +380,8 @@ describe("an upload whose text Manna is reading", () => {
     // Enabled once the library (limits, usage) is in.
     await waitFor(() => expect(section.getByRole("button", { name: "上傳檔案" })).toBeEnabled());
     await user.click(section.getByRole("button", { name: "上傳檔案" }));
-    const form = within(await section.findByRole("form", { name: "上傳檔案" }));
+    // The dialog is drawn on <body> (a portal), outside the section.
+    const form = within(await screen.findByRole("form", { name: "上傳檔案" }));
     await user.upload(form.getByLabelText("選擇檔案"), new File(["%PDF-1.4"], "bees-scan.pdf", { type: "application/pdf" }));
     await user.click(form.getByRole("button", { name: "上傳" }));
     expect(await section.findByText("已加入「Bees scan」。")).toBeInTheDocument();
