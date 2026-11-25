@@ -717,7 +717,13 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
 
     // The bottom bar revises the kit's worksheet.
     let ws_id = ws["id"].as_i64().unwrap();
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "第一題改難一點" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "第一題改難一點" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     assert_eq!(last(&v)["kind"], "revise");
     let done = wait(&app, &t, id).await;
@@ -884,7 +890,13 @@ async fn revise_keeps_the_tiers_of_a_tiered_worksheet() {
     );
 
     // The first block with items (記憶): its items keep their versions, labels and hints.
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "第一題改難一點" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "第一題改難一點" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     let done = wait(&app, &t, id).await;
     assert_eq!(last(&done)["status"], "done", "{}", last(&done));

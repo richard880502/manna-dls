@@ -322,6 +322,10 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/prep-sessions/{id}/turns/{turn_id}/kit", get(prep::kit))
         .route(
+            "/prep-sessions/{id}/turns/{turn_id}/undo",
+            post(prep::undo_turn),
+        )
+        .route(
             "/prep-sessions/{id}/turns/{turn_id}/siop-check",
             get(prep::siop_check).post(prep::rerun_siop_check),
         )

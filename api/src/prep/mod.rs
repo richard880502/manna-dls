@@ -5,13 +5,14 @@
 //! the background ([`run`]). The kinds: `worksheet` / `assessment` / `comprehension` / `tiered`
 //! make an ordinary worksheet and start its generation; `activity` plans a lesson (one model
 //! call); `kit` (教學套件) does both, an activity plan and a tiered worksheet; `resources` lists
-//! curriculum items and the teacher's own materials (no model); `ask` answers a question (one
-//! call); `revise` applies a typed instruction to the session's latest worksheet (one call,
-//! every change checked like a template block).
+//! curriculum items and the teacher's own materials (no model); `chat` answers questions and
+//! edits the session's worksheet with tools ([`chat`], docs/PREP_CHAT.md); `ask` and `revise`
+//! are the earlier turns it replaced (no new ones are made).
 //!
 //! Every string and array the model writes has a cap in its JSON schema: the gateway enforces
 //! `maxLength` / `maxItems` while decoding, which is what stops a runaway.
 
+pub mod chat;
 pub mod fake;
 pub mod images;
 pub mod kit;
@@ -39,7 +40,10 @@ pub const KIND_REVISE: &str = "revise";
 pub const KIND_COMPREHENSION: &str = "comprehension";
 pub const KIND_TIERED: &str = "tiered";
 pub const KIND_KIT: &str = "kit";
-pub const KINDS: [&str; 9] = [
+/// The tool-based chat (docs/PREP_CHAT.md): questions and edits in one box. Replaces `ask` and
+/// `revise`, which earlier turns still have.
+pub const KIND_CHAT: &str = "chat";
+pub const KINDS: [&str; 10] = [
     KIND_WORKSHEET,
     KIND_ASSESSMENT,
     KIND_ACTIVITY,
@@ -49,6 +53,7 @@ pub const KINDS: [&str; 9] = [
     KIND_COMPREHENSION,
     KIND_TIERED,
     KIND_KIT,
+    KIND_CHAT,
 ];
 /// The next-step chips, in the order they are offered (all of them need material).
 /// `assessment` and `resources` stay valid kinds but are no longer suggested.
@@ -67,6 +72,7 @@ pub const STATUS_FAILED: &str = "failed";
 pub const KEY_ACTIVITY: &str = "prep_activity";
 pub const KEY_ASK: &str = "prep_ask";
 pub const KEY_REVISE: &str = "prep_revise";
+pub const KEY_CHAT: &str = "prep_chat";
 
 pub const MAX_TITLE_CHARS: usize = 200;
 pub const MAX_TOPIC_CHARS: usize = 200;
@@ -107,6 +113,7 @@ pub fn chip_label(kind: &str) -> &'static str {
         KIND_COMPREHENSION => "閱讀理解題",
         KIND_TIERED => "差異化學習單",
         KIND_KIT => "教學套件",
+        KIND_CHAT => "和 Manna 對話",
         _ => "修改學習單",
     }
 }
@@ -934,6 +941,8 @@ pub fn revise_schema(block_ids: &[String], slot_ids: &[String], picture_max: usi
         ("prompt", s_max(ITEM_PROMPT_CHARS)),
         ("options", strings_max(ITEM_OPTIONS, ITEM_OPTION_CHARS)),
         ("answer", s_max(ITEM_ANSWER_CHARS)),
+        // 表格整理 only (null for the other formats): what the table compares.
+        ("table", crate::worksheet::table::schema()),
     ]);
     let change = obj(vec![
         ("block_id", block_id),

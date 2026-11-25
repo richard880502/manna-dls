@@ -792,7 +792,13 @@ async fn a_question_gets_a_plain_answer_with_the_conversation_so_far() {
     assert_eq!(done["next"], json!([]), "no material, no topic");
 
     // The bottom bar without a worksheet asks again; the earlier turn is in the context.
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "再多一個" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "ask", "request": "再多一個" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     assert_eq!(last(&v)["kind"], "ask");
     let done = wait(&app, &t, id).await;
@@ -847,7 +853,13 @@ async fn the_bottom_bar_revises_the_worksheet_in_one_version() {
         .clone();
     let block_id = target["id"].as_str().unwrap();
 
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "第一題改難一點" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "第一題改難一點" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     assert_eq!(last(&v)["kind"], "revise");
     assert_eq!(last(&v)["request"], "第一題改難一點");
@@ -950,6 +962,179 @@ async fn a_revision_that_fails_its_checks_changes_nothing() {
         .contains("第二次請求"));
 }
 
+// ---------------------------------------------------------------- apply a discussion
+
+async fn first_block_with_items(app: &common::TestApp, t: &str, ws_id: i64) -> Value {
+    let (_, ws) = app.get(&format!("/api/worksheets/{ws_id}"), Some(t)).await;
+    ws["content"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| !b["items"].as_array().unwrap().is_empty())
+        .unwrap()
+        .clone()
+}
+
+#[tokio::test]
+async fn a_revision_sees_the_conversation_as_far_as_an_ask_does() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-RC", "general").await;
+    let (id, ws_id, _) = worksheet_session(&app, &t).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "ask", "request": "比較兩種詮釋 DISCUSSED-SENTINEL" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let done = wait(&app, &t, id).await;
+    assert_eq!(last(&done)["status"], "done");
+
+    // 改學習單 refers to what was just discussed: the model got the earlier answer.
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "把剛才討論的放進來 FAKE_PREP_REVISE_RECENT" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let done = wait(&app, &t, id).await;
+    let turn = last(&done);
+    assert_eq!(turn["status"], "done", "{turn}");
+    let reply = turn["result"]["reply"].as_str().unwrap();
+    // The worksheet turn and the ask turn; the ask's answer is the line of its result.
+    assert!(reply.starts_with("參考了 2 則先前的對話"), "{reply}");
+    assert!(reply.contains("參考了 1 則先前的對話"), "{reply}");
+    // The conversation is redacted in the snapshot, as the ask path does.
+    let rows = interactions(&app, "prep_revise").await;
+    let snapshot = rows.last().unwrap().2.to_string();
+    assert!(!snapshot.contains("DISCUSSED-SENTINEL"), "{snapshot}");
+    assert!(!snapshot.contains("參考了 1 則先前的對話"), "{snapshot}");
+    assert!(snapshot.contains("先前的對話"), "{snapshot}");
+
+    // Never more than the last three turns, the same as an ask.
+    for q in ["再問一個", "再問兩個", "再問三個"] {
+        let (s, v) = post_turn(&app, &t, id, json!({ "kind": "ask", "request": q })).await;
+        assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+        wait(&app, &t, id).await;
+    }
+    let (s, _) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "再改一次 FAKE_PREP_REVISE_RECENT" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let done = wait(&app, &t, id).await;
+    let reply = last(&done)["result"]["reply"].as_str().unwrap().to_string();
+    assert!(reply.starts_with("參考了 3 則先前的對話"), "{reply}");
+    let _ = ws_id;
+}
+
+#[tokio::test]
+async fn a_revision_can_place_a_table_organiser_with_headings_and_row_labels() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-RT", "general").await;
+    let (id, ws_id, _) = worksheet_session(&app, &t).await;
+    let before = first_block_with_items(&app, &t, ws_id).await;
+    let block_id = before["id"].as_str().unwrap().to_string();
+
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "放進比較表 FAKE_PREP_REVISE_TABLE" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let done = wait(&app, &t, id).await;
+    let turn = last(&done);
+    assert_eq!(turn["status"], "done", "{turn}");
+    assert_eq!(turn["result"]["changed_block_ids"], json!([block_id]));
+    let block = first_block_with_items(&app, &t, ws_id).await;
+    let item = &block["items"][0];
+    assert_eq!(item["answer_format"], "表格整理");
+    assert_eq!(
+        item["table"]["columns"],
+        json!(["Reading One", "Reading Two"])
+    );
+    assert_eq!(
+        item["table"]["row_labels"],
+        json!(["Claim", "Supporting detail"])
+    );
+    assert_eq!(item["table"]["rows"], 2);
+}
+
+#[tokio::test]
+async fn a_revised_table_is_checked_like_a_generated_one() {
+    let app = test_app!();
+    let t = app.teacher("T-PREP-RV", "general").await;
+    let (id, ws_id, _) = worksheet_session(&app, &t).await;
+    let before = first_block_with_items(&app, &t, ws_id).await;
+
+    // 「Column 1」 headings over a question that names its columns: repaired, no second call.
+    let (s, _) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "放進比較表 FAKE_PREP_REVISE_TABLE_FIX" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let done = wait(&app, &t, id).await;
+    assert_eq!(last(&done)["status"], "done", "{}", last(&done));
+    assert_eq!(interactions(&app, "prep_revise").await.len(), 1);
+    let block = first_block_with_items(&app, &t, ws_id).await;
+    assert_eq!(
+        block["items"][0]["table"]["columns"],
+        json!(["Reading One", "Reading Two"])
+    );
+
+    // Placeholder headings, no labels, nothing in the question to repair them from: refused.
+    let (id2, ws2, _) = worksheet_session(&app, &t).await;
+    let (_, unchanged) = app.get(&format!("/api/worksheets/{ws2}"), Some(&t)).await;
+    let (s, _) = post_turn(
+        &app,
+        &t,
+        id2,
+        json!({ "kind": "revise", "request": "放進比較表 FAKE_PREP_REVISE_TABLE_BAD" }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let done = wait(&app, &t, id2).await;
+    let result = &last(&done)["result"];
+    assert_eq!(result["changed_block_ids"], json!([]), "{result}");
+    assert!(result["reply"].as_str().unwrap().contains("沒有改成"));
+    let (_, after) = app.get(&format!("/api/worksheets/{ws2}"), Some(&t)).await;
+    assert_eq!(after["content"], unchanged["content"]);
+    let _ = before;
+    // The retry told the model what was wrong with the table.
+    let rows = interactions(&app, "prep_revise").await;
+    assert_eq!(rows.len(), 3, "one for the repair test, two here");
+    assert!(rows[2].2["prompt"]["user"]
+        .as_str()
+        .unwrap()
+        .contains("第二次請求"));
+}
+
+#[tokio::test]
+async fn the_revise_prompt_gets_the_conversation_and_the_table_rules() {
+    let app = test_app!();
+    let (no, system, user): (i32, String, String) = sqlx::query_as(
+        "SELECT version_no, system_text, user_template FROM prompt_versions
+          WHERE prompt_key = 'prep_revise' ORDER BY version_no DESC LIMIT 1",
+    )
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(no, 5);
+    assert!(user.contains("{{recent_turns}}"));
+    assert!(system.contains("先前的對話") && system.contains("row_labels"));
+}
+
 // ---------------------------------------------------------------- rules and conflicts
 
 #[tokio::test]
@@ -978,7 +1163,7 @@ async fn needs_rules_are_enforced() {
     assert!(bad(json!({ "kind": "revise", "request": "x" }))
         .await
         .contains("修改"));
-    assert!(bad(json!({ "kind": "chat", "request": "x" }))
+    assert!(bad(json!({ "kind": "bogus", "request": "x" }))
         .await
         .contains("kind"));
     for kind in ["comprehension", "tiered", "kit"] {
@@ -1062,7 +1247,13 @@ async fn one_turn_runs_at_a_time() {
     .await;
     let id = sid(&session);
     assert_eq!(session["running"], true);
-    let (s, v) = post_turn(&app, &t, id, json!({ "request": "還有呢？" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "ask", "request": "還有呢？" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert!(v["error"]["message"].as_str().unwrap().contains("還在處理"));
     let done = wait(&app, &t, id).await;
@@ -1070,7 +1261,13 @@ async fn one_turn_runs_at_a_time() {
 
     // A worksheet still generating cannot be revised.
     let slow = pasted(&app, &t, "worksheet", "FAKE_SLOW").await;
-    let (s, v) = post_turn(&app, &t, sid(&slow), json!({ "request": "改短一點" })).await;
+    let (s, v) = post_turn(
+        &app,
+        &t,
+        sid(&slow),
+        json!({ "kind": "revise", "request": "改短一點" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert!(v["error"]["message"].as_str().unwrap().contains("正在產生"));
 }
@@ -1248,7 +1445,13 @@ async fn deleting_a_session_hides_it_with_its_worksheets() {
     assert!(!ids.contains(&ws_id), "{list}");
     assert!(ids.contains(&other), "a worksheet of its own stays: {list}");
     // No more turns or changes on it.
-    let (s, _) = post_turn(&app, &t, id, json!({ "request": "再改一次" })).await;
+    let (s, _) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "revise", "request": "再改一次" }),
+    )
+    .await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = patch(&app, &path, &t, json!({ "title": "x" })).await;
     assert_eq!(s, StatusCode::NOT_FOUND);

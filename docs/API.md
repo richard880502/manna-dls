@@ -2152,6 +2152,31 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 - 呼叫期間學習單開始產生時，這一輪 `failed`，不套用。
 - `revise` 只改學習單；活動規劃（包括學習目標）不會被改動，`activity`／`kit` 存的 `result` 原樣保留。
 
+## 對話（`kind = "chat"`，Migration `0056_prep_chat.sql`）
+
+底部的輸入框只有一個：老師問問題、要求修改，或兩者一起。設計與流程見 `docs/PREP_CHAT.md`；這裡只列介面。
+
+- `POST /api/prep-sessions/:id/turns { kind: "chat", request, image_ids?, worksheet_id? }` → 202 與整個對話（背景執行，照舊輪詢）。沒寫 `kind` 也是 chat。`worksheet_id` 只在老師選了「不是最新的」那份時才送，必須是這個老師在這個對話裡做的學習單（否則 404）；沒有時用最新的。`POST /api/prep-sessions { kind: "chat", request }` 也可以開新對話。`ask`、`revise` 不能再新建（400）；舊輪次照舊顯示。
+- `PrepKind` 多了 `"chat"`。`PrepTurn.result`（`kind = "chat"`）：
+
+```ts
+interface PrepChatResult {
+  answer: string;
+  follow_ups: string[];            // ≤3
+  changes: Array<{ target: "block" | "picture" | "vocabulary"; block_id: string | null;
+                   label: string; summary: string }>;   // 伺服器比對前後的學習單產生
+  not_applied: Array<{ label: string; reason: string }>;
+  version_no: number | null;       // 這一輪寫成的版本；沒有修改是 null
+  undoable: boolean;               // 目前還能整輪復原
+  tool_calls: number;
+}
+```
+- 進度：`PrepTurn.progress` 每次工具呼叫一步（「讀 C 區」「修改 C 區」「重畫 C 區的圖」…）。
+- `POST /api/prep-sessions/:id/turns/:turn_id/undo`：整輪復原，寫成一個新版本（`cause = "undo"`），回傳更新後的 `PrepTurn`。404 別人的對話；409（`{ error: { message } }`）沒有可復原的修改、或被改的區塊之後又改過。圖不復原。
+- 模型：只用 OpenAI。AI 設定是國網（或示範用的 Anthropic）時，chat 輪次 `failed`，「這個功能需要 OpenAI 模型。…」。
+- 紀錄：`ai_interactions`（`module = prep_chat`，每次模型呼叫一列，`usage.cached_tokens`）；`usage_logs`：`prep_chat_tool`、`prep_chat_turn`、`prep_chat_undo`。
+- 設定 `PREP_LEGACY_TURNS=true` 讓 `ask`／`revise` 可以再新建（測試舊流程用；預設關）。
+
 ## 測試用假模型（`AI_PROVIDER=fake`）
 
 | 標記（寫在請求或教材裡） | 效果 |
