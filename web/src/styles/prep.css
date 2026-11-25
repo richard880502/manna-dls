@@ -395,7 +395,9 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .prep-sheet-block {
-    transition: background-color var(--dur-short) var(--ease-out);
+    transition:
+      background-color var(--dur-short) var(--ease-out),
+      box-shadow var(--dur-short) var(--ease-out);
   }
 }
 

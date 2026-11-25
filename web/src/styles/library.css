@@ -283,6 +283,17 @@
   opacity: 0.55;
 }
 
+/* Dim only when the load is slow (restoring is immediate). */
+@media (prefers-reduced-motion: no-preference) {
+  .lib-grid {
+    transition: opacity var(--dur-micro) var(--ease-out);
+  }
+
+  .lib-grid.is-busy {
+    transition: opacity var(--dur-micro) var(--ease-out) 200ms;
+  }
+}
+
 .lib-card {
   min-width: 0;
 }
