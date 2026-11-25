@@ -51,30 +51,18 @@ cd web && pnpm install && pnpm dev
 
 | 變數 | 預設 | 意思 |
 |---|---|---|
-| `AI_QUEUE_ENABLED` | `false` | 開啟資料庫工作佇列（備課對話、整份學習單排隊分派）。**預設關閉**：先部署、確認沒問題，再由負責人改成 `true`；關閉時照舊直接執行 |
+| `AI_QUEUE_ENABLED` | `false` | 開啟資料庫工作佇列（備課對話、整份學習單、單區重新產生與修改、SOP、版型讀取、SIOP 檢核排隊分派）。**預設關閉**：先部署、確認沒問題，再由負責人改成 `true`；關閉時照舊直接執行 |
 | `AI_MAX_RUNNING_JOBS` | `6` | 全站同時執行的工作數（每台伺服器） |
 | `AI_MAX_RUNNING_PER_TEACHER` | `2` | 每位老師同時執行數（主持人不限），多的排隊 |
 | `AI_MAX_QUEUED_PER_TEACHER` | `10` | 每位老師排隊上限，超過才拒絕（409） |
 | `AI_JOB_LEASE_SECS` | `90` | 工作租約長度（每 1/3 租約延長一次） |
 | `AI_JOB_MAX_ATTEMPTS` | `2` | 重啟後最多重跑幾次 |
-| `AI_SHUTDOWN_GRACE_SECS` | `60` | 關閉時等正在跑的工作多久（Coolify 的停止等待時間要更長） |
+| `AI_SHUTDOWN_GRACE_SECS` | `60` | 關閉時等正在跑的工作多久（compose 的 `stop_grace_period` 要更長） |
 | `AI_RATE_LIMIT_RETRIES` | `2` | 單次呼叫遇 429 的重試次數（依 Retry-After） |
 | `AI_QUOTA_COOLDOWN_SECS` | `600` | 額度用完後多久內不再送出 |
 | `FAKE_LATENCY_MS` | `0` | 只給 `AI_PROVIDER=fake`：每次假呼叫等這麼久，本機壓力測試用 |
 
-### AI 請求控制
-
-| 環境變數 | 預設 | 說明 |
-|---|---:|---|
-| `AI_RATE_LIMIT_RETRIES` | `2` | 單次模型呼叫遇到一般 429 時的重試次數；依服務回傳的等待時間重試 |
-| `AI_QUOTA_COOLDOWN_SECS` | `600` | 偵測到額度用完後，暫停送出模型呼叫的秒數 |
-| `AI_QUEUE_ENABLED` | `true` | 啟用資料庫工作佇列；關閉時保留既有背景工作行為 |
-| `AI_MAX_RUNNING_JOBS` | `6` | 每台 API 執行個體同時執行的 AI 工作上限 |
-| `AI_MAX_RUNNING_PER_TEACHER` | `2` | 每位教師同時執行的上限；主持人不受此限制 |
-| `AI_MAX_QUEUED_PER_TEACHER` | `10` | 每位教師可等待的工作數上限 |
-| `AI_JOB_LEASE_SECS` | `90` | 執行中工作租約的秒數；逾期會在啟動恢復時接手或標成失敗 |
-| `AI_JOB_MAX_ATTEMPTS` | `2` | 因執行個體中斷而可重新排入的最大嘗試次數 |
-| `AI_SHUTDOWN_GRACE_SECS` | `60` | 收到關閉訊號後等待執行中工作結束的秒數 |
+`docker-compose.yml` 只把列在 `environment:` 的變數傳進容器：上面除了 `FAKE_LATENCY_MS` 都已列出，在 Coolify 設定後重新部署才生效。compose 的 `stop_grace_period: 90s` 要比 `AI_SHUTDOWN_GRACE_SECS` 長，否則重新部署時 Docker 會在工作收尾前就停掉容器。
 
 ### 語意索引（混合檢索）
 

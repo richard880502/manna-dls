@@ -1,6 +1,6 @@
 # 文字模型請求的流量控制：資料庫工作佇列（實作計劃書）
 
-狀態：步驟 1–4 的後端已完成（分支 `wip/queue-core`，預設 `AI_QUEUE_ENABLED=false`，部署後由負責人打開）；步驟 5 的畫面、步驟 6 的監測頁另外進行。實作紀錄見最後一節「10. 做了什麼、和計劃書的差異」。
+狀態：步驟 1–6 已完成（預設 `AI_QUEUE_ENABLED=false`，部署後由負責人在 Coolify 打開；變數要列在 `docker-compose.yml` 才傳得進容器）。實作紀錄見最後一節「10. 做了什麼、和計劃書的差異」。
 決定：使用者選「資料庫裡的工作佇列」（不是只在記憶體裡排隊）。老師送出的請求**不回 429**，而是照現在一樣回 202（已收到），工作進佇列，由伺服器的分派器依規則分配。
 前提：先等「備課對話改用 OpenAI Responses 介面」合併（它改 `api/src/ai/chat.rs`；本計劃第 2 層要包住新的呼叫函式）。
 
@@ -157,7 +157,7 @@ for attempt in 0..=AI_RATE_LIMIT_RETRIES:
      - 否則 → `failed`，`error` = 「伺服器重新啟動，這次沒有完成。請按再試一次。」並把對應的 `prep_turns`／`worksheet_jobs` 一起標失敗。
    - 現在 `prep/store.rs` 的 `refresh` 用「超過一段時間就判失敗」的作法，改成以佇列狀態為準（保留它當最後防線）。
 
-4. **優雅關閉**（`main.rs` 收到 SIGTERM）：停止分派新工作，等正在跑的最多 `AI_SHUTDOWN_GRACE_SECS`（預設 60）秒；沒跑完的留給下一次啟動接手（第 3 點）。Coolify 的停止等待時間要比這個長。
+4. **優雅關閉**（`main.rs` 收到 SIGTERM）：停止分派新工作，等正在跑的最多 `AI_SHUTDOWN_GRACE_SECS`（預設 60）秒；沒跑完的留給下一次啟動接手（第 3 點）。`docker-compose.yml` 的 `stop_grace_period`（90 秒）要比這個長，否則 Docker 預設 10 秒就強制停止。
 
 5. **取消**：排隊中的工作可以取消（`status='cancelled'`），例如老師刪掉備課對話、或按「取消排隊」。
 

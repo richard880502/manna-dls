@@ -20,6 +20,9 @@ services:
         # SOURCE_COMMIT for the build only with "Include Source Commit in Build" on (README「部署」).
         SOURCE_COMMIT: ${SOURCE_COMMIT:-}
     restart: unless-stopped
+    # Docker waits only 10 s by default before killing the container. The API drains running
+    # AI jobs for up to AI_SHUTDOWN_GRACE_SECS (60 s) on SIGTERM, so give it longer than that.
+    stop_grace_period: 90s
     environment:
       DATABASE_URL: ${DATABASE_URL}
       # Optional independent manna-memory resource (docs/TEACHER_MEMORY.md). Empty URL/token
@@ -39,6 +42,18 @@ services:
       OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL:-}
       OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
       AI_TIMEOUT_SECS: ${AI_TIMEOUT_SECS:-150}
+      # AI request control (docs/AI_REQUEST_CONTROL.md, README「AI 請求流量控制」). Only the
+      # variables listed here reach the container, so set them in Coolify and redeploy. The
+      # queue is off by default; turn it on with AI_QUEUE_ENABLED=true once a deploy is healthy.
+      AI_QUEUE_ENABLED: ${AI_QUEUE_ENABLED:-false}
+      AI_MAX_RUNNING_JOBS: ${AI_MAX_RUNNING_JOBS:-6}
+      AI_MAX_RUNNING_PER_TEACHER: ${AI_MAX_RUNNING_PER_TEACHER:-2}
+      AI_MAX_QUEUED_PER_TEACHER: ${AI_MAX_QUEUED_PER_TEACHER:-10}
+      AI_JOB_LEASE_SECS: ${AI_JOB_LEASE_SECS:-90}
+      AI_JOB_MAX_ATTEMPTS: ${AI_JOB_MAX_ATTEMPTS:-2}
+      AI_SHUTDOWN_GRACE_SECS: ${AI_SHUTDOWN_GRACE_SECS:-60}
+      AI_RATE_LIMIT_RETRIES: ${AI_RATE_LIMIT_RETRIES:-2}
+      AI_QUOTA_COOLDOWN_SECS: ${AI_QUOTA_COOLDOWN_SECS:-600}
       # Semantic index for hybrid retrieval (docs/API.md「Phase 2.4」). Off by default; set
       # EMBEDDING_PROVIDER=openai_compatible and the rest in Coolify. The NCHC embeddings key is
       # separate from the chat key. Any failure falls back to keyword retrieval.
