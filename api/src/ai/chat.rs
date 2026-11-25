@@ -162,6 +162,11 @@ fn message_json(m: &ChatMessage) -> Value {
 /// The request body for OpenAI's own API: `tools` (strict function schemas), `tool_choice`,
 /// `parallel_tool_calls: false`, a strict `json_schema` for the final message, the reasoning
 /// effort and a token limit that leaves room for the reasoning.
+///
+/// With tools the effort is `none`: OpenAI refuses function tools together with a reasoning
+/// effort on `/v1/chat/completions` for the GPT-5.6 models (HTTP 400 "Function tools with
+/// reasoning_effort are not supported … use /v1/responses or set reasoning_effort to 'none'",
+/// first real turn on 2026-11-25). Moving this path to the Responses API would allow both.
 pub fn build_body(model: &str, effort: &str, req: &ChatRequest) -> Value {
     let mut body = json!({
         "model": model,
@@ -172,7 +177,11 @@ pub fn build_body(model: &str, effort: &str, req: &ChatRequest) -> Value {
                 "name": req.answer_schema_name, "schema": req.answer_schema, "strict": true
             }
         },
-        "reasoning_effort": super::openai::reasoning_effort(effort),
+        "reasoning_effort": if req.tools.is_empty() {
+            super::openai::reasoning_effort(effort)
+        } else {
+            "none"
+        },
         "max_completion_tokens": req.max_tokens.saturating_add(super::openai::REASONING_ROOM),
     });
     if !req.tools.is_empty() {
@@ -340,12 +349,16 @@ mod tests {
             b["messages"][3],
             json!({"role": "tool", "tool_call_id": "c1", "content": "ok"})
         );
-        assert_eq!(b["reasoning_effort"], "medium");
+        // OpenAI refuses function tools with a reasoning effort on chat completions.
+        assert_eq!(b["reasoning_effort"], "none");
         let mut last = request();
         last.tool_choice = ToolChoice::None;
         assert_eq!(build_body("gpt", "low", &last)["tool_choice"], "none");
+        assert_eq!(build_body("gpt", "low", &last)["reasoning_effort"], "none");
         last.tools.clear();
-        assert!(build_body("gpt", "low", &last).get("tools").is_none());
+        let plain = build_body("gpt", "low", &last);
+        assert!(plain.get("tools").is_none());
+        assert_eq!(plain["reasoning_effort"], "low");
     }
 
     #[test]
