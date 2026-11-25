@@ -28,6 +28,7 @@ import { BlockHistoryButton } from "../worksheet/BlockHistory";
 import { BlockReviseArea, LostNotes, ReviseByNotesButton, useBlockRevise } from "../worksheet/BlockRevise";
 import { ProgressPanel, RunOutcome } from "../worksheet/OptionsView";
 import { anyOpen } from "../worksheet/SlotPicture";
+import { MenuItem } from "./SectionTools";
 import { SheetPreview, sheetBlockName } from "./SheetPreview";
 
 /** How long a block stays highlighted after 採用. */
@@ -37,6 +38,10 @@ const AUDIENCES: Array<[WsAudience, string]> = [
   ["student", "學生版"],
   ["teacher", "教師版"],
 ];
+
+/** The dialog of 修改歷程 opens from the closed 「更多…」 menu: focus goes back to the menu's button. */
+const menuButtonOf = (button: HTMLButtonElement | null) =>
+  button?.closest(".popover-root")?.querySelector<HTMLElement>("[aria-controls]") ?? null;
 
 /** The step whose AI call produced a block: its own job first, then the step for its kind. */
 function interactionFor(jobs: WsJob[], block: WsSheetBlock, fallback: number | null): number | null {
@@ -366,13 +371,18 @@ export function WorksheetCard({
             加註記
           </button>
           <ReviseByNotesButton blockId={b.id} ctl={revise} disabled={held} />
+        </>
+      ),
+      more: (
+        <>
           {wsId !== null && (
             <BlockHistoryButton
               worksheetId={wsId}
               blockId={b.id}
               label={`修改歷程（${name}）`}
-              className="decision-button"
+              className="popover-item"
               disabled={held}
+              focusAfter={menuButtonOf}
               onAdopted={(done) => {
                 setState(done.worksheet);
                 setImages(done.worksheet.images ?? null);
@@ -382,9 +392,7 @@ export function WorksheetCard({
             />
           )}
           {state?.undoable.includes(b.id) && !held && (
-            <button type="button" className="decision-button" onClick={() => void undo(b.id)}>
-              復原上一版
-            </button>
+            <MenuItem onClick={() => void undo(b.id)}>復原上一版</MenuItem>
           )}
         </>
       ),

@@ -743,9 +743,28 @@ describe("備課對話 (session page)", () => {
     const blockB = within(preview).getByRole("region", { name: "區塊 B 活動" });
     expect(within(blockB).getByText("Why did Mrs. Lin start the stand?")).toBeInTheDocument();
     expect(within(blockB).queryByText("A stranger once helped her.")).not.toBeInTheDocument();
+    // The block shows its main tools; copy and the rating are in 「更多…」.
+    expect(within(blockB).queryByRole("button", { name: "複製區塊 B 活動" })).not.toBeInTheDocument();
+    const more = within(blockB).getByRole("button", { name: "更多（區塊 B 活動）" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await user.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "true");
     expect(within(blockB).getByRole("button", { name: "複製區塊 B 活動" })).toBeInTheDocument();
     await user.click(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" }));
-    await waitFor(() => expect(api.lastBody("POST", "/api/ai/62/decision")).toEqual({ decision: "skip", thumbs: "up" }));
+    // The rating says which block it is about (blocks of one step share an AI call).
+    await waitFor(() =>
+      expect(api.lastBody("POST", "/api/ai/62/decision")).toEqual({
+        decision: "skip",
+        thumbs: "up",
+        item_index: expect.any(Number),
+        reason_note: expect.stringMatching(/^學習單區塊 /),
+      }),
+    );
+    expect(within(blockB).getByRole("button", { name: "區塊 B 活動有幫助" })).toHaveAttribute("aria-pressed", "true");
+    // Escape closes the menu and focus goes back to 「更多…」.
+    await user.keyboard("{Escape}");
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(more).toHaveFocus();
     expect(screen.getByRole("link", { name: "直接編輯" })).toHaveAttribute("href", "/worksheets/11");
     expect(screen.queryByRole("link", { name: "開啟編輯器" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "詞彙檢查" })).toHaveAttribute("href", "/worksheets/11/check");

@@ -349,6 +349,7 @@ describe("備課對話: one block of the worksheet", () => {
     await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(1));
     expect(await prepBlock().findByText("Did the neighbors think the umbrellas would stay?")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Manna 的修改建議" })).not.toBeInTheDocument();
+    await user.click(prepBlock().getByRole("button", { name: /^更多/ }));
     expect(prepBlock().getByRole("button", { name: "復原上一版" })).toBeInTheDocument();
     // Right after 採用: the notice with 復原 under the block.
     expect(prepBlock().getByText("已採用 Manna 的修改。")).toBeInTheDocument();
@@ -678,6 +679,35 @@ describe("編輯器: 採用之後的復原與同一輪的各次建議", () => {
     await waitFor(() => expect(api.callsTo("POST", `${WS}/proposals/88/accept`)).toHaveLength(1));
     expect(api.callsTo("POST", `${WS}/proposals/90/accept`)).toHaveLength(0);
     await waitFor(() => expect(editorBlock().queryByRole("region", { name: "Manna 的修改建議" })).toBeNull());
+  });
+});
+
+describe("備課對話: 更多… menu of a block", () => {
+  it("opens 修改歷程 from the menu and puts focus back on 更多… when the dialog closes", async () => {
+    mockApi({
+      ...baseRoutes(),
+      "GET /api/prep-sessions/7": session(),
+      [`GET ${WS}`]: worksheet(),
+      [`GET ${WS}/sheet`]: sheetRoute(),
+      [`GET ${WS}/comments`]: [],
+      [`GET ${WS}/proposals`]: [],
+      [`GET ${WS}/blocks/b2/history`]: { block_id: "b2", version_no: 3, busy: false, steps: [] },
+    });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    await screen.findByRole("region", { name: /^區塊 B/ });
+    // The two main tools stay on the block; the rest is in the menu.
+    expect(prepBlock().getByRole("button", { name: /^改這一區/ })).toBeInTheDocument();
+    expect(prepBlock().getByRole("button", { name: /^加註記/ })).toBeInTheDocument();
+    expect(prepBlock().queryByRole("button", { name: /修改歷程/ })).not.toBeInTheDocument();
+    const more = prepBlock().getByRole("button", { name: /^更多/ });
+    await user.click(more);
+    await user.click(prepBlock().getByRole("button", { name: /修改歷程/ }));
+    const dialog = await screen.findByRole("dialog", { name: "修改歷程" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(more).toHaveFocus();
   });
 });
 

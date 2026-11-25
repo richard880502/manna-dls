@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type {
@@ -95,6 +95,12 @@ function scrollToBlock(blockId: string) {
 const FLASH_MS = 4000;
 const FLASH_FALLBACK_MS = 60_000;
 
+/** The two panes below the split width, in tab order. */
+const SPLIT_TABS = [
+  ["chat", "對話"],
+  ["sheet", "學習單"],
+] as const;
+
 export function PrepSessionPage() {
   const { sessionId } = useParams();
   const id = Number(sessionId);
@@ -149,6 +155,29 @@ function PrepSessionView({ id }: { id: number }) {
   const narrow = useNarrow();
   const { containerRef, share, dragging, canResize, columns, edge, min, max, dividerProps } = useSplitResize();
   const [tab, setTab] = useState<"chat" | "sheet">("chat");
+  // Narrow screens share one page scroll between the two tabs: each tab keeps its own position.
+  const tabScrolls = useRef<Partial<Record<"chat" | "sheet", number>>>({});
+  const shownTab = useRef(tab);
+  const lastScrollY = useRef(0);
+  const tabRefs = useRef<Partial<Record<"chat" | "sheet", HTMLButtonElement | null>>>({});
+  useEffect(() => {
+    const onScroll = () => {
+      lastScrollY.current = window.scrollY;
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  useLayoutEffect(() => {
+    if (shownTab.current === tab) return;
+    tabScrolls.current[shownTab.current] = lastScrollY.current;
+    shownTab.current = tab;
+    const y = tabScrolls.current[tab];
+    if (y !== undefined) {
+      window.scrollTo({ top: y, behavior: "instant" });
+      lastScrollY.current = y;
+    }
+  }, [tab]);
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
   // 修改課文 / 只選要用的段落 open here; `materialChanged`: the next try uses what was changed.
@@ -626,21 +655,30 @@ function PrepSessionView({ id }: { id: number }) {
     >
       {split && narrow && (
         <div className="prep-split-tabs" role="tablist" aria-label="對話或學習單">
-          {(
-            [
-              ["chat", "對話"],
-              ["sheet", "學習單"],
-            ] as const
-          ).map(([key, label]) => (
+          {SPLIT_TABS.map(([key, label], i) => (
             <button
               key={key}
+              ref={(el) => {
+                tabRefs.current[key] = el;
+              }}
               type="button"
               role="tab"
               id={`${ids}-tab-${key}`}
               aria-selected={tab === key}
               aria-controls={`${ids}-pane-${key}`}
+              tabIndex={tab === key ? 0 : -1}
               className={tab === key ? "is-current" : ""}
               onClick={() => setTab(key)}
+              onKeyDown={(e) => {
+                const step =
+                  e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : e.key === "Home" ? -i : e.key === "End" ? 1 - i : null;
+                if (step === null) return;
+                e.preventDefault();
+                const next = SPLIT_TABS[(i + step + SPLIT_TABS.length) % SPLIT_TABS.length];
+                if (!next) return;
+                setTab(next[0]);
+                tabRefs.current[next[0]]?.focus();
+              }}
             >
               {label}
             </button>
@@ -652,6 +690,7 @@ function PrepSessionView({ id }: { id: number }) {
           id={`${ids}-pane-sheet`}
           className="prep-split-sheet"
           aria-label="目前的學習單"
+          {...(split && narrow ? { role: "tabpanel", "aria-labelledby": `${ids}-tab-sheet` } : {})}
           hidden={narrow && tab !== "sheet"}
         >
           {sheetTurns.length > 1 && (
@@ -707,6 +746,7 @@ function PrepSessionView({ id }: { id: number }) {
         id={`${ids}-pane-chat`}
         className="prep-split-chat"
         aria-label="對話"
+        {...(split && narrow ? { role: "tabpanel", "aria-labelledby": `${ids}-tab-chat` } : {})}
         hidden={split && narrow && tab !== "chat"}
       >
       <div className="page-head prep-head">

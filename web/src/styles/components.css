@@ -929,3 +929,10 @@ summary {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+@media (pointer: coarse) {
+  .run-progress-close {
+    min-width: var(--hit);
+    min-height: var(--hit);
+  }
+}

@@ -453,10 +453,11 @@ describe("the conversation and the worksheet side by side", () => {
     // With the tabs the worksheet is not in view, so the bar names it.
     expect(screen.getByText("目前的學習單：學習單一")).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "目前的學習單" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "學習單" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "學習單已更新，去看" }));
     expect(tabs.getByRole("tab", { name: "學習單" })).toHaveAttribute("aria-selected", "true");
-    expect(await screen.findByRole("complementary", { name: "目前的學習單" })).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "對話" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("tabpanel", { name: "學習單" })).toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel", { name: "對話" })).not.toBeInTheDocument();
   });
 });
 

@@ -1490,3 +1490,30 @@
     transform: translateX(100%);
   }
 }
+
+@media (pointer: coarse) {
+  .prep-split-tabs button {
+    min-height: var(--hit);
+  }
+}
+
+/* 更多…: the secondary tools of a worksheet block, opened below the block's own buttons. */
+.prep-more-popover {
+  min-width: 10rem;
+}
+
+.prep-more-popover[hidden] {
+  display: none;
+}
+
+.prep-more-popover .popover-item[aria-pressed="true"] {
+  background: var(--color-accent-wash);
+  color: var(--color-accent-text);
+  font-weight: var(--weight-strong);
+}
+
+@media (pointer: coarse) {
+  .prep-more-popover .popover-item {
+    min-height: var(--hit);
+  }
+}
