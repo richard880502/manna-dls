@@ -102,12 +102,18 @@ export function ProgressPanel({ jobs }: { jobs: WsJob[] }) {
  * and stay when a step failed. A run without steps (an older server or run) shows the job rows as
  * before; a closed panel leaves a working line while the run goes on.
  */
-export function WorksheetRunProgress({ state }: { state: Pick<WorksheetState, "id" | "jobs" | "running" | "progress"> }) {
+export function WorksheetRunProgress({
+  state,
+  onCancelled,
+}: {
+  state: Pick<WorksheetState, "id" | "jobs" | "running" | "progress">;
+  onCancelled?: () => void;
+}) {
   const progress = state.progress ?? null;
   const runNo = state.jobs[0]?.run_no;
   const panel = useRunPanel(progress, runNo === undefined ? null : `${state.id}:${runNo}`);
   if (!progress) return state.running ? <ProgressPanel jobs={state.jobs} /> : null;
-  if (panel.visible) return <RunProgressPanel progress={progress} onClose={panel.close} className="ws-progress" />;
+  if (panel.visible) return <RunProgressPanel progress={progress} onClose={panel.close} onCancelled={onCancelled} className="ws-progress" />;
   return state.running ? (
     <p className="manna-label ws-progress" role="status">
       <span className="star is-working" aria-hidden="true" />
@@ -253,7 +259,7 @@ export function OptionsView({ ws, onGenerated, onEditText, onPickParagraphs }: O
   return (
     <div className="ws-options" ref={topRef}>
       {/* 進度 comes first, so it is the first thing seen once a run starts. */}
-      {running && <WorksheetRunProgress state={state} />}
+      {running && <WorksheetRunProgress state={state} onCancelled={() => void ws.refresh()} />}
       <section className="ws-opt" aria-labelledby={`${ids}-what`}>
         <h2 id={`${ids}-what`}>要做什麼</h2>
         <div>

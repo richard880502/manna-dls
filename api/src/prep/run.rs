@@ -117,11 +117,21 @@ pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
     }
     // The steps the turn runs itself are shown from the start (docs/API.md「產生進度」).
     let tracker = open_progress(state, &input).await;
+    let queued = state.config.ai_queue_enabled;
     if kind == KIND_KIT {
         let worksheet_error = start_worksheet(state, &input)
             .await
             .err()
             .map(|e| worksheet_failure(&input, &e));
+        if queued {
+            // The plan is a queue job of its own, made after the worksheet so that the job
+            // knows whether the worksheet could start. The two entries never wait for each
+            // other, so they cannot deadlock; the kit closes when both are over.
+            if let Err(e) = enqueue_kit_plan(state, &input, worksheet_error).await {
+                store::finish(&state.db, input.turn.id, Err(teacher_message(&e))).await?;
+            }
+            return Ok(());
+        }
         spawn_kit(state, input, worksheet_error, tracker);
         return Ok(());
     }
@@ -132,7 +142,82 @@ pub async fn start(state: &AppState, input: TurnInput) -> AppResult<()> {
         }
         return Ok(());
     }
+    if queued && queued_kind(kind) {
+        // Its job was made with the turn ([`store::start_turn`]); the dispatcher runs it.
+        state.queue.wake();
+        return Ok(());
+    }
     spawn(state, input, tracker);
+    Ok(())
+}
+
+/// Turn kinds that run as a `prep_turn` queue job made together with the turn. The worksheet
+/// kinds have no job of their own (their generation is a `worksheet_run` job), `kit` makes its
+/// plan's job after its worksheet, and `resources` calls no text model.
+pub fn queued_kind(kind: &str) -> bool {
+    matches!(kind, KIND_ACTIVITY | KIND_ASK | KIND_REVISE | KIND_CHAT)
+}
+
+async fn enqueue_kit_plan(
+    state: &AppState,
+    input: &TurnInput,
+    worksheet_error: Option<String>,
+) -> AppResult<()> {
+    crate::queue::enqueue(
+        &state.db,
+        crate::queue::NewJob {
+            kind: crate::queue::handlers::KIND_PREP_TURN,
+            teacher_id: input.session.teacher_id,
+            priority: 0,
+            params: json!({
+                "turn_id": input.turn.id, "track": input.track,
+                "worksheet_error": worksheet_error,
+            }),
+            ref_kind: "prep_turn",
+            ref_id: input.turn.id,
+        },
+        state.config.ai_max_queued_per_teacher,
+    )
+    .await?;
+    state.queue.wake();
+    Ok(())
+}
+
+/// What a queued `prep_turn` job carries (ids and fixed system text only).
+pub struct Queued {
+    pub turn_id: i64,
+    pub track: String,
+    pub worksheet_id: Option<i64>,
+    /// A kit whose worksheet could not start: why.
+    pub worksheet_error: Option<String>,
+}
+
+/// Runs a queued turn to its end (the dispatcher's `prep_turn` handler): what [`spawn`] and
+/// [`spawn_kit`] run, awaited so the job lasts as long as the work. A turn that is no longer
+/// running (cancelled, failed meanwhile) is left alone. Replaying a job runs it from the start.
+pub async fn run_queued(state: &AppState, q: Queued) -> AppResult<()> {
+    let turn = store::turn(&state.db, q.turn_id).await?;
+    if turn.status != super::STATUS_RUNNING {
+        return Ok(());
+    }
+    let session = store::session_row(&state.db, turn.session_id).await?;
+    if !state.ai.has_turn_pin(turn.id) {
+        // After a restart: the settings in force now.
+        state.ai.remember_turn(turn.id);
+    }
+    let kit = turn.kind == KIND_KIT;
+    let input = TurnInput {
+        turn,
+        session,
+        track: q.track,
+        worksheet_id: q.worksheet_id,
+    };
+    let tracker = open_progress(state, &input).await;
+    if kit {
+        execute_kit(state, input, q.worksheet_error, tracker).await;
+    } else {
+        execute(state, input, tracker).await;
+    }
     Ok(())
 }
 
@@ -201,8 +286,13 @@ fn settle(outcome: AppResult<Outcome>) -> Outcome {
 
 fn spawn(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
     let state = state.clone();
+    tokio::spawn(async move { execute(&state, input, tracker).await });
+}
+
+/// The work of a turn, up to closing it.
+async fn execute(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
     let turn_id = input.turn.id;
-    tokio::spawn(async move {
+    {
         // The work runs in its own task so that a panic there still closes the turn.
         let work = {
             let state = state.clone();
@@ -220,13 +310,13 @@ fn spawn(state: &AppState, input: TurnInput, tracker: Arc<Tracker>) {
             Ok(Some(check)) => {
                 state
                     .ai
-                    .in_turn(turn_id, || super::selfcheck::spawn(&state, check));
+                    .in_turn(turn_id, || super::selfcheck::spawn(state, check));
                 state.ai.forget_turn(turn_id);
             }
             Ok(None) => {}
             Err(e) => tracing::error!(turn_id, error = %e, "could not close the prep turn"),
         }
-    });
+    }
 }
 
 /// The activity plan of a kit. Its outcome is recorded on the turn, which is closed now when
@@ -239,8 +329,18 @@ fn spawn_kit(
     tracker: Arc<Tracker>,
 ) {
     let state = state.clone();
+    tokio::spawn(async move { execute_kit(&state, input, worksheet_error, tracker).await });
+}
+
+/// The activity plan of a kit, up to recording it (and closing the kit when it can be).
+async fn execute_kit(
+    state: &AppState,
+    input: TurnInput,
+    worksheet_error: Option<String>,
+    tracker: Arc<Tracker>,
+) {
     let turn_id = input.turn.id;
-    tokio::spawn(async move {
+    {
         let work = {
             let state = state.clone();
             let tracker = tracker.clone();
@@ -257,14 +357,14 @@ fn spawn_kit(
                 .await
                 .map_err(AppError::from),
             None => match store::record_plan(&state.db, turn_id, &outcome).await {
-                Ok(()) => store::close_kit(&state, turn_id).await,
+                Ok(()) => store::close_kit(state, turn_id).await,
                 Err(e) => Err(e.into()),
             },
         };
         if let Err(e) = closed {
             tracing::error!(turn_id, error = %e, "could not record the kit's activity plan");
         }
-    });
+    }
 }
 
 /// How long a turn waits between two looks at the template it waits for.
@@ -296,7 +396,13 @@ async fn wait_for_template(
         if status.as_deref() != Some(super::STATUS_RUNNING) {
             return Ok(Waited::Abandoned);
         }
-        tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
+        tpl_store::expire_stale(
+            db,
+            teacher_id,
+            tpl_extract::stale_after(state),
+            state.config.ai_queue_enabled,
+        )
+        .await?;
         let Some(t) = tpl_store::find(db, template_id, teacher_id).await? else {
             return Ok(Waited::Failed(MSG_TEMPLATE_GONE.to_string()));
         };

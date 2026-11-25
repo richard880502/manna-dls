@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::auth::AuthTeacher;
 use crate::curriculum;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
-use crate::sop::ai::{self, Job, JobInput, JobKind, Scope, Swap};
+use crate::sop::ai::{self, Job, JobInput, JobKind, Scope};
 use crate::sop::stages;
 use crate::sop::store::{self, Material, Version, VersionSummary};
 use crate::sop::{self, SopContent, MAX_FIELD_CHARS, MAX_MATERIAL_CHARS, MAX_TITLE_CHARS};
@@ -356,7 +356,7 @@ async fn start_job(
             let index = req
                 .item_index
                 .ok_or_else(|| AppError::bad_request("請指定要換掉哪一項建議（item_index）。"))?;
-            Scope::Swap(swap_of(&state, teacher.id(), id, parent_id, index, &version).await?)
+            Scope::Swap(ai::swap_of(&state, teacher.id(), id, parent_id, index, &version).await?)
         }
         (JobKind::Goals, parent, Some(paragraph_id)) => {
             if !material.paragraphs.iter().any(|p| p.id == paragraph_id) {
@@ -403,58 +403,6 @@ pub async fn start_analysis(
     body: Bytes,
 ) -> AppResult<(StatusCode, Json<Job>)> {
     start_job(state, teacher, id, body, JobKind::Analysis).await
-}
-
-/// The suggestion of an objectives job that 換一個 replaces (read from the stored result, never
-/// from the request), and the objectives the new one must not repeat.
-async fn swap_of(
-    state: &AppState,
-    teacher_id: i64,
-    lesson_id: i64,
-    parent_id: i64,
-    index: i32,
-    version: &Version,
-) -> AppResult<Swap> {
-    let parent = ai::job(state, parent_id, teacher_id)
-        .await?
-        .filter(|j| j.lesson_id == lesson_id && j.kind == "objectives" && j.status == "done")
-        .ok_or_else(|| AppError::not_found("找不到這一批建議。"))?;
-    let list = parent
-        .result
-        .as_ref()
-        .and_then(|r| r["output"]["objectives"].as_array())
-        .ok_or_else(|| AppError::bad_request("這一批沒有可以換的建議。"))?;
-    let chosen = usize::try_from(index)
-        .ok()
-        .and_then(|i| list.get(i))
-        .ok_or_else(|| AppError::bad_request("找不到要換掉的那一項建議。"))?;
-    let kind = match chosen["type"].as_str() {
-        Some("language") => sop::ObjectiveType::Language,
-        Some("content") => sop::ObjectiveType::Content,
-        _ => return Err(AppError::bad_request("這一項建議沒有目標類型。")),
-    };
-    let text_of = |o: &serde_json::Value| o["text"].as_str().unwrap_or_default().trim().to_string();
-    let mut avoid: Vec<String> = version
-        .content
-        .objectives
-        .iter()
-        .filter(|o| !o.text.trim().is_empty())
-        .map(|o| o.text.trim().to_string())
-        .collect();
-    avoid.extend(
-        list.iter()
-            .enumerate()
-            .filter(|(i, _)| *i != index as usize)
-            .map(|(_, o)| text_of(o))
-            .filter(|t| !t.is_empty()),
-    );
-    Ok(Swap {
-        parent_job_id: parent_id,
-        index,
-        kind,
-        declined: text_of(chosen),
-        avoid,
-    })
 }
 
 pub async fn start_goals(

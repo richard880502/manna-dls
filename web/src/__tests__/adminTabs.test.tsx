@@ -14,6 +14,23 @@ const aiModel = {
   efforts: ["low", "medium"],
   timeout_range: { min: 30, max: 900 },
 };
+const traffic = (now: object = {}, hour: object = {}) => ({
+  now: { max_running: 6, running: 4, queued: 7, oldest_wait_secs: 38, queue_enabled: true, quota_blocked_secs: null, ...now },
+  last_hour: {
+    jobs: { done: 52, failed: 1, cancelled: 0 },
+    wait_secs: { p50: 4, p95: 41 },
+    run_secs: {},
+    calls: 488,
+    errors: 0,
+    rate_limited: 0,
+    quota: 0,
+    overloaded: 0,
+    tokens: { prompt: 0, cached: 0, completion: 0, reasoning: 0 },
+    latency_ms: { p50: 0, p95: 0 },
+    ...hour,
+  },
+  last_7_days: [],
+});
 const prompt = (key: string, version_no = 1) => ({
   id: 1,
   prompt_key: key,
@@ -36,6 +53,7 @@ function routes(extra: Record<string, unknown> = {}) {
     ...baseRoutes(),
     "GET /api/me": { ...teacher, role: "pi" },
     "GET /api/admin/ai-model": aiModel,
+    "GET /api/admin/ai-traffic": traffic(),
     "GET /api/admin/memory-settings": { enabled: true, graph_enabled: true },
     "GET /api/admin/memory-index": { pending: 2, failed: 0, compatible: true, providers_ready: true },
     "GET /api/admin/settings": { route_choice_enabled: false },
@@ -73,6 +91,46 @@ describe("後台管理 tabs", () => {
     const list = within(await screen.findByRole("list", { name: "目前設定" }));
     expect(await list.findByText(/模型設定讀不到/)).toBeInTheDocument();
     expect(await list.findByText("1 個帳號")).toBeInTheDocument();
+  });
+
+  it("shows the AI request row plainly when traffic is normal", async () => {
+    signIn();
+    mockApi(routes());
+    renderApp("/admin");
+    const list = within(await screen.findByRole("list", { name: "目前設定" }));
+    const text = await list.findByText("進行中 4／排隊 7（最久 38 秒）・近一小時 呼叫 488 次、太頻繁 0 次");
+    expect(text).not.toHaveClass("is-warn");
+    expect(text).not.toHaveClass("is-error");
+  });
+
+  it("warns when jobs wait long or a call was rate limited", async () => {
+    signIn();
+    mockApi(routes({ "GET /api/admin/ai-traffic": traffic({ oldest_wait_secs: 150 }) }));
+    const { unmount } = renderApp("/admin");
+    expect(await screen.findByText(/最久 150 秒/)).toHaveClass("is-warn");
+    unmount();
+    mockApi(routes({ "GET /api/admin/ai-traffic": traffic({}, { rate_limited: 3 }) }));
+    renderApp("/admin");
+    const row = await screen.findByText(/太頻繁 3 次/);
+    expect(row).toHaveClass("is-warn");
+  });
+
+  it("shows the quota message in error style while the cooldown runs", async () => {
+    signIn();
+    mockApi(routes({ "GET /api/admin/ai-traffic": traffic({ quota_blocked_secs: 420 }) }));
+    renderApp("/admin");
+    const row = await screen.findByText(/額度已用完（約 7 分鐘後再試），請到 OpenAI 帳戶提高上限或加值/);
+    expect(row).toHaveClass("is-error");
+  });
+
+  it("keeps a failing AI traffic endpoint from breaking the other rows", async () => {
+    signIn();
+    mockApi(routes({ "GET /api/admin/ai-traffic": respond(500, { error: { code: "x", message: "流量讀不到" } }) }));
+    renderApp("/admin");
+    const list = within(await screen.findByRole("list", { name: "目前設定" }));
+    expect(await list.findByText(/流量讀不到/)).toBeInTheDocument();
+    expect(await list.findByText("1 個帳號")).toBeInTheDocument();
+    expect(await list.findByText("2 個提示詞")).toBeInTheDocument();
   });
 
   it("selects the tab from ?tab= and updates it when a tab is clicked", async () => {

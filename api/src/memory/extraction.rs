@@ -142,6 +142,9 @@ fn failure_detail(e: &ProviderError) -> (&'static str, String) {
             "blocked",
             "bad_format: output truncated at max_tokens".into(),
         ),
+        ProviderError::RateLimited { .. } => ("error", "rate_limited: provider rate limit".into()),
+        ProviderError::QuotaExceeded { .. } => ("error", "quota: provider quota exhausted".into()),
+        ProviderError::Overloaded { status, .. } => ("error", format!("overloaded: HTTP {status}")),
         ProviderError::Http { status, .. } => ("error", format!("http_error: HTTP {status}")),
         ProviderError::Network(_) => ("error", "http_error: network error".into()),
         ProviderError::Disabled => ("error", "disabled: AI is off".into()),
@@ -251,6 +254,9 @@ pub async fn run(
     };
     let start = std::time::Instant::now();
     let response = ai.complete(&req).await;
+    if let Ok(resp) = &response {
+        pipeline::record_usage(&state.db, id, resp.usage).await?;
+    }
     let latency_ms = start.elapsed().as_millis().min(i32::MAX as u128) as i32;
     let mut proposed = None;
     let mut reasons: Vec<&'static str> = Vec::new();

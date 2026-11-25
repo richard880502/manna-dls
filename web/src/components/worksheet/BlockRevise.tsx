@@ -30,6 +30,7 @@ import {
 import { clipQuote } from "../../lib/materials";
 import { printedAnswer, printedOption } from "../../lib/worksheet";
 import { ErrorText } from "../common";
+import { QueueLine } from "../RunProgress";
 import { habitWordsSent } from "../memory/MemorySuggestions";
 import { PictureOutcomeList, PrepImageThumbs } from "../prep/ImageAttach";
 
@@ -632,6 +633,13 @@ export function ProposalPanel({
   const [view, setView] = useState<{ latest: number; at: number } | null>(null);
   const at = view && view.latest === p.id ? Math.min(view.at, attempts.length - 1) : attempts.length - 1;
   const shown = attempts[at] ?? p;
+  if (p.status === "running" && p.queue) {
+    return (
+      <div className="ws-proposal-running" lang="zh-Hant">
+        <QueueLine queue={p.queue} onCancelled={ctl.reload} />
+      </div>
+    );
+  }
   if (p.status === "running") {
     return (
       <p className="manna-label prep-working ws-proposal-running" role="status" lang="zh-Hant">

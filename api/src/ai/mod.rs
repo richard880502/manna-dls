@@ -9,6 +9,7 @@ pub mod anthropic;
 pub mod chat;
 pub(crate) mod execution;
 pub mod fake;
+pub mod guard;
 pub mod openai;
 pub mod pipeline;
 pub mod schemas;
@@ -80,6 +81,7 @@ pub struct LlmResponse {
     pub json: Value,
     /// Model id echoed by the provider (`response.model`).
     pub model_version: String,
+    pub usage: Option<chat::Usage>,
 }
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
@@ -93,6 +95,15 @@ pub enum ProviderError {
     /// diagnosis only (see [`Runaway`]); it is never parsed.
     #[error("output truncated at max_tokens")]
     MaxTokens { partial: String },
+    #[error("rate_limited: {body}")]
+    RateLimited {
+        retry_after: Option<Duration>,
+        body: String,
+    },
+    #[error("quota: {body}")]
+    QuotaExceeded { body: String },
+    #[error("overloaded: HTTP {status}: {body}")]
+    Overloaded { status: u16, body: String },
     #[error("HTTP {status}: {body}")]
     Http { status: u16, body: String },
     #[error("network error: {0}")]
@@ -110,6 +121,121 @@ impl ProviderError {
             Self::Timeout
         } else {
             Self::Network(e.to_string())
+        }
+    }
+}
+
+/// Extract the server's suggested delay before consuming the response body.
+pub(crate) fn retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    fn parse_reset(s: &str) -> Option<Duration> {
+        if s.is_empty() {
+            return None;
+        }
+        let mut total = 0.0;
+        let mut number = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c.is_ascii_digit() || c == '.' {
+                number.push(c);
+                continue;
+            }
+            let n: f64 = number.parse().ok()?;
+            number.clear();
+            let factor = match c {
+                'm' if chars.peek() == Some(&'s') => {
+                    chars.next();
+                    0.001
+                }
+                'm' => 60.0,
+                's' => 1.0,
+                'h' => 3600.0,
+                _ => return None,
+            };
+            total += n * factor;
+        }
+        if !number.is_empty() || !total.is_finite() || total < 0.0 || total > 86400.0 {
+            return None;
+        }
+        Some(Duration::from_secs_f64(total))
+    }
+    let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    if let Some(d) = get("retry-after-ms")
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Duration::from_millis)
+    {
+        return Some(d);
+    }
+    if let Some(d) = get("retry-after")
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(Duration::from_secs)
+    {
+        return Some(d);
+    }
+    ["x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"]
+        .iter()
+        .filter_map(|name| get(name).and_then(parse_reset))
+        .min()
+}
+
+pub(crate) fn http_error(status: u16, body: &str, retry_after: Option<Duration>) -> ProviderError {
+    let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let body = clip(body, 2000);
+    match status {
+        408 | 504 => ProviderError::Timeout,
+        429 => {
+            let quota = [
+                value["error"]["code"].as_str(),
+                value["error"]["type"].as_str(),
+            ]
+            .iter()
+            .flatten()
+            .any(|s| matches!(*s, "insufficient_quota" | "billing_hard_limit_reached"));
+            if quota {
+                ProviderError::QuotaExceeded { body }
+            } else {
+                ProviderError::RateLimited { retry_after, body }
+            }
+        }
+        500 | 502 | 503 => ProviderError::Overloaded { status, body },
+        _ => ProviderError::Http { status, body },
+    }
+}
+
+/// What a failed call means to the teacher (the rest of the errors read as "unavailable").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ErrorKind {
+    #[default]
+    Other,
+    /// The account's quota is used up (cooldown in effect).
+    Quota,
+    /// Rate limits stayed after the guard's retries.
+    Busy,
+}
+
+impl ErrorKind {
+    pub fn of(error: &ProviderError) -> Self {
+        match error {
+            ProviderError::QuotaExceeded { .. } => Self::Quota,
+            ProviderError::RateLimited { .. } => Self::Busy,
+            _ => Self::Other,
+        }
+    }
+
+    /// The status string features keep next to their messages.
+    pub fn status(self) -> &'static str {
+        match self {
+            Self::Quota => "quota",
+            Self::Busy => "busy",
+            Self::Other => "error",
+        }
+    }
+
+    /// The teacher-facing message, or `other` for the generic failure.
+    pub fn message(self, other: &'static str) -> &'static str {
+        match self {
+            Self::Quota => pipeline::MSG_QUOTA,
+            Self::Busy => pipeline::MSG_BUSY,
+            Self::Other => other,
         }
     }
 }
@@ -324,6 +450,8 @@ pub struct AiClient {
     pub(crate) change_lock: tokio::sync::Mutex<()>,
     http: reqwest::Client,
     endpoints: Arc<Endpoints>,
+    guard: Arc<guard::Guard>,
+    fake_latency: Duration,
 }
 
 /// One consistent view of the active settings, taken at the start of a call.
@@ -335,6 +463,8 @@ pub struct ActiveAi {
     pub timeout: Duration,
     http: reqwest::Client,
     endpoints: Arc<Endpoints>,
+    guard: Arc<guard::Guard>,
+    fake_latency: Duration,
 }
 
 impl AiClient {
@@ -353,6 +483,11 @@ impl AiClient {
             env_default,
             change_lock: tokio::sync::Mutex::new(()),
             http,
+            fake_latency: Duration::from_millis(cfg.fake_latency_ms),
+            guard: Arc::new(guard::Guard::new(
+                cfg.ai_rate_limit_retries,
+                Duration::from_secs(cfg.ai_quota_cooldown_secs),
+            )),
             endpoints: Arc::new(Endpoints {
                 anthropic_api_key: cfg.anthropic_api_key.clone(),
                 openai_base_url: cfg.openai_compat_base_url.clone(),
@@ -370,6 +505,8 @@ impl AiClient {
             timeout: Duration::from_secs(s.timeout_secs),
             http: self.http.clone(),
             endpoints: self.endpoints.clone(),
+            guard: self.guard.clone(),
+            fake_latency: self.fake_latency,
         }
     }
 
@@ -412,6 +549,13 @@ impl AiClient {
         pins.insert(turn_id, (now, pin));
     }
 
+    pub fn has_turn_pin(&self, turn_id: i64) -> bool {
+        self.turn_pins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&turn_id)
+    }
+
     pub fn forget_turn(&self, turn_id: i64) {
         self.turn_pins
             .lock()
@@ -445,7 +589,27 @@ impl AiClient {
 
     /// A client for settings that are not active (the admin test call).
     pub fn with_settings(&self, settings: &AiSettings) -> ActiveAi {
-        self.snapshot_of(settings)
+        let mut snapshot = self.snapshot_of(settings);
+        // A test of replacement credentials must be allowed during the active cooldown.
+        snapshot.guard = Arc::new(guard::Guard::new(0, Duration::from_secs(600)));
+        snapshot
+    }
+
+    /// Lets the guard write its quota event; called once at startup.
+    pub fn attach_db(&self, db: sqlx::PgPool) {
+        self.guard.attach_db(db);
+    }
+
+    pub fn clear_quota_cooldown(&self) {
+        self.guard.clear();
+    }
+
+    /// Seconds (rounded up) until calls are sent again after a quota error; `None` when not blocked.
+    pub fn quota_blocked_secs(&self) -> Option<u64> {
+        self.guard.blocked_until().map(|t| {
+            let left = t.saturating_duration_since(tokio::time::Instant::now());
+            left.as_secs() + u64::from(left.subsec_nanos() > 0)
+        })
     }
 
     pub fn active_settings(&self) -> (AiSettings, AiSource) {
@@ -503,46 +667,66 @@ impl ActiveAi {
     }
 
     /// One call to the provider of this snapshot, bounded by its timeout. Never retries on
-    /// another model.
+    /// another model. The guard's repeats are stored in the response's `usage`.
     pub async fn complete(&self, req: &LlmRequest) -> Result<LlmResponse, ProviderError> {
-        let e = &self.endpoints;
-        let call = async {
-            match self.kind {
-                AiProviderKind::None => Err(ProviderError::Disabled),
-                AiProviderKind::Fake => fake::complete(req, &self.model),
-                AiProviderKind::Anthropic => {
-                    let key = e.anthropic_api_key.as_deref().unwrap_or_default();
-                    anthropic::call(&self.http, key, &self.model, &self.effort, req).await
-                }
-                AiProviderKind::OpenAiCompatible => {
-                    let base = e.openai_base_url.as_deref().unwrap_or_default();
-                    openai::call(
-                        &self.http,
-                        base,
-                        e.openai_api_key.as_deref(),
-                        &self.model,
-                        None,
-                        req,
-                    )
-                    .await
-                }
-                AiProviderKind::OpenAi => {
-                    openai::call(
-                        &self.http,
-                        openai::OPENAI_BASE_URL,
-                        e.openai_platform_key.as_deref(),
-                        &self.model,
-                        Some(&self.effort),
-                        req,
-                    )
-                    .await
-                }
+        let (result, retries) = self.complete_counted(req).await;
+        result.map(|mut resp| {
+            if retries > 0 {
+                resp.usage
+                    .get_or_insert_with(Default::default)
+                    .transport_retries = u64::from(retries);
             }
-        };
-        match tokio::time::timeout(self.timeout, call).await {
-            Ok(r) => r,
-            Err(_) => Err(ProviderError::Timeout),
-        }
+            resp
+        })
+    }
+
+    /// [`ActiveAi::complete`], also returning how many times the guard repeated the call (so a
+    /// failed call can record it too).
+    pub async fn complete_counted(
+        &self,
+        req: &LlmRequest,
+    ) -> (Result<LlmResponse, ProviderError>, u32) {
+        let e = &self.endpoints;
+        self.guard
+            .run_counted(self.timeout, || async {
+                match self.kind {
+                    AiProviderKind::None => Err(ProviderError::Disabled),
+                    AiProviderKind::Fake => {
+                        if !self.fake_latency.is_zero() {
+                            tokio::time::sleep(self.fake_latency).await;
+                        }
+                        fake::complete(req, &self.model)
+                    }
+                    AiProviderKind::Anthropic => {
+                        let key = e.anthropic_api_key.as_deref().unwrap_or_default();
+                        anthropic::call(&self.http, key, &self.model, &self.effort, req).await
+                    }
+                    AiProviderKind::OpenAiCompatible => {
+                        let base = e.openai_base_url.as_deref().unwrap_or_default();
+                        openai::call(
+                            &self.http,
+                            base,
+                            e.openai_api_key.as_deref(),
+                            &self.model,
+                            None,
+                            req,
+                        )
+                        .await
+                    }
+                    AiProviderKind::OpenAi => {
+                        openai::call(
+                            &self.http,
+                            openai::OPENAI_BASE_URL,
+                            e.openai_platform_key.as_deref(),
+                            &self.model,
+                            Some(&self.effort),
+                            req,
+                        )
+                        .await
+                    }
+                }
+            })
+            .await
     }
 }
 
@@ -553,35 +737,79 @@ impl ActiveAi {
         &self,
         req: &chat::ChatRequest,
     ) -> Result<chat::ChatResponse, ProviderError> {
-        let call = async {
-            match self.kind {
-                AiProviderKind::None => Err(ProviderError::Disabled),
-                AiProviderKind::Fake => crate::prep::fake::chat(req, &self.model),
-                AiProviderKind::OpenAi => {
-                    chat::call(
-                        &self.http,
-                        self.endpoints.openai_platform_key.as_deref(),
-                        &self.model,
-                        &self.effort,
-                        req,
-                    )
-                    .await
+        let (result, retries) = self
+            .guard
+            .run_counted(self.timeout, || async {
+                match self.kind {
+                    AiProviderKind::None => Err(ProviderError::Disabled),
+                    AiProviderKind::Fake => {
+                        if !self.fake_latency.is_zero() {
+                            tokio::time::sleep(self.fake_latency).await;
+                        }
+                        crate::prep::fake::chat(req, &self.model)
+                    }
+                    AiProviderKind::OpenAi => {
+                        chat::call(
+                            &self.http,
+                            self.endpoints.openai_platform_key.as_deref(),
+                            &self.model,
+                            &self.effort,
+                            req,
+                        )
+                        .await
+                    }
+                    _ => Err(ProviderError::InvalidOutput(
+                        "tool calling is only supported with the OpenAI provider".into(),
+                    )),
                 }
-                _ => Err(ProviderError::InvalidOutput(
-                    "tool calling is only supported with the OpenAI provider".into(),
-                )),
+            })
+            .await;
+        result.map(|mut resp| {
+            if retries > 0 {
+                resp.usage
+                    .get_or_insert_with(Default::default)
+                    .transport_retries = u64::from(retries);
             }
-        };
-        match tokio::time::timeout(self.timeout, call).await {
-            Ok(r) => r,
-            Err(_) => Err(ProviderError::Timeout),
-        }
+            resp
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_error_classification_and_retry_headers() {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut h = HeaderMap::new();
+        h.insert(
+            "x-ratelimit-reset-requests",
+            HeaderValue::from_static("6m0s"),
+        );
+        h.insert("x-ratelimit-reset-tokens", HeaderValue::from_static("20ms"));
+        assert_eq!(retry_after(&h), Some(Duration::from_millis(20)));
+        h.insert("retry-after", HeaderValue::from_static("2"));
+        assert_eq!(retry_after(&h), Some(Duration::from_secs(2)));
+        h.insert("retry-after-ms", HeaderValue::from_static("250"));
+        assert_eq!(retry_after(&h), Some(Duration::from_millis(250)));
+        assert!(matches!(
+            http_error(429, r#"{"error":{"code":"insufficient_quota"}}"#, None),
+            ProviderError::QuotaExceeded { .. }
+        ));
+        assert!(matches!(
+            http_error(429, "{}", Some(Duration::from_secs(2))),
+            ProviderError::RateLimited {
+                retry_after: Some(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            http_error(503, "busy", None),
+            ProviderError::Overloaded { status: 503, .. }
+        ));
+        assert_eq!(http_error(504, "busy", None), ProviderError::Timeout);
+    }
 
     fn settings(model: &str, timeout_secs: u64) -> AiSettings {
         AiSettings {

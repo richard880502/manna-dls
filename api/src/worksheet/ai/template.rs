@@ -17,9 +17,9 @@ use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde_json::json;
 
 use super::{
-    close, empty_message, expire_stale, mark_held, open_progress, open_run, pictures_step,
-    replace_block, run_step, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult,
-    STEP_TEMPLATE,
+    close, drive, empty_message, expire_stale, mark_held, open_progress, open_run, pictures_step,
+    queue_block, queue_run, replace_block, run_step, Run, RunInput, Start, StepCall, StepInfo,
+    StepResult, STEP_TEMPLATE,
 };
 use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
@@ -468,17 +468,38 @@ pub(super) async fn start_generation(
 ) -> AppResult<()> {
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
+    let queue = queue_run(state, &input);
+    let how = if queue.is_some() {
+        Start::Queued
+    } else {
+        Start::Spawn
+    };
     let Some((run_no, ids)) = open_run(
         &state.db,
         worksheet_id,
         input.worksheet.teacher_id,
         &[STEP_TEMPLATE],
         None,
+        queue.as_ref(),
     )
     .await?
     else {
         return Ok(());
     };
+    begin_generation(state, input, tpl, run_no, ids, how).await;
+    Ok(())
+}
+
+/// The progress and the work of the template generation of run `run_no`.
+pub(super) async fn begin_generation(
+    state: &AppState,
+    input: RunInput,
+    tpl: TemplateUse,
+    run_no: i32,
+    ids: HashMap<&'static str, i64>,
+    how: Start,
+) {
+    let worksheet_id = input.worksheet.id;
     let job_id = ids[STEP_TEMPLATE];
     let steps = [
         Some(Step::new(STEP_TEMPLATE, L_TEMPLATE)),
@@ -487,11 +508,11 @@ pub(super) async fn start_generation(
     let tracker = open_progress(state, worksheet_id, run_no, steps.into_iter().flatten()).await;
     let state2 = state.clone();
     let progress = tracker.clone();
-    spawn_run(state, worksheet_id, run_no, tracker, async move {
+    let work = async move {
         let run = Run::new(&state2, input, run_no, Some(job_id), progress).await?;
         generate(&run, job_id, &tpl).await
-    });
-    Ok(())
+    };
+    drive(how, state, worksheet_id, run_no, tracker, work).await;
 }
 
 type BlockOutcome = Result<i64, (&'static str, String)>;
@@ -695,17 +716,41 @@ pub(super) async fn start_block(
 ) -> AppResult<()> {
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
+    let queue = queue_block(state, &input);
+    let how = if queue.is_some() {
+        Start::Queued
+    } else {
+        Start::Spawn
+    };
     let Some((run_no, ids)) = open_run(
         &state.db,
         worksheet_id,
         input.worksheet.teacher_id,
         &[STEP_TEMPLATE],
         Some(&old.id),
+        queue.as_ref(),
     )
     .await?
     else {
         return Ok(());
     };
+    begin_block(state, input, old, tpl, section, run_no, ids, how).await;
+    Ok(())
+}
+
+/// The progress and the work of regenerating one template block of run `run_no`.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn begin_block(
+    state: &AppState,
+    input: RunInput,
+    old: Block,
+    tpl: TemplateUse,
+    section: usize,
+    run_no: i32,
+    ids: HashMap<&'static str, i64>,
+    how: Start,
+) {
+    let worksheet_id = input.worksheet.id;
     let job_id = ids[STEP_TEMPLATE];
     let steps = [
         Some(Step::new(STEP_TEMPLATE, L_TEMPLATE_AGAIN)),
@@ -714,11 +759,11 @@ pub(super) async fn start_block(
     let tracker = open_progress(state, worksheet_id, run_no, steps.into_iter().flatten()).await;
     let state2 = state.clone();
     let progress = tracker.clone();
-    spawn_run(state, worksheet_id, run_no, tracker, async move {
+    let work = async move {
         let run = Run::new(&state2, input, run_no, Some(job_id), progress).await?;
         regenerate(&run, job_id, old, &tpl, section).await
-    });
-    Ok(())
+    };
+    drive(how, state, worksheet_id, run_no, tracker, work).await;
 }
 
 async fn regenerate(

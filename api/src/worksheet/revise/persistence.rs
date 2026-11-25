@@ -56,6 +56,9 @@ pub struct Proposal {
     /// the same block, not adopted or given up yet. Any of them can still be adopted.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub earlier: Vec<Proposal>,
+    /// While the revision waits in the AI queue: where it stands (docs/API.md「AI 工作佇列」).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<crate::progress::QueueInfo>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -121,21 +124,33 @@ impl From<Row> for Proposal {
             adopted_later_at: r.adopted_later_at,
             adopted_later_version_no: r.adopted_later_version_no,
             earlier: Vec::new(),
+            queue: None,
         }
     }
 }
 
 /// A revision still `running` long after its calls must have timed out died with the server.
-pub async fn expire_stale(db: &PgPool, worksheet_id: i64, after_secs: u64) -> sqlx::Result<()> {
+/// One whose job waits in the AI queue (or runs from it) is not stale, while `queued` says the
+/// queue is on: the queue's leases tell whether its server is alive.
+pub async fn expire_stale(
+    db: &PgPool,
+    worksheet_id: i64,
+    after_secs: u64,
+    queued: bool,
+) -> sqlx::Result<()> {
     sqlx::query(
-        "UPDATE worksheet_block_proposals
+        "UPDATE worksheet_block_proposals p
             SET status = 'failed', error = $2, finished_at = now()
-          WHERE worksheet_id = $1 AND status = 'running'
-            AND created_at < now() - make_interval(secs => $3)",
+          WHERE p.worksheet_id = $1 AND p.status = 'running'
+            AND p.created_at < now() - make_interval(secs => $3)
+            AND NOT ($4 AND EXISTS (SELECT 1 FROM ai_jobs j
+                             WHERE j.ref_kind = 'worksheet_proposal' AND j.ref_id = p.id
+                               AND j.status IN ('queued', 'running')))",
     )
     .bind(worksheet_id)
     .bind(MSG_STALE_RUN)
     .bind(after_secs as f64)
+    .bind(queued)
     .execute(db)
     .await?;
     Ok(())
@@ -304,6 +319,12 @@ pub async fn rounds(db: &PgPool, worksheet_id: i64, block_id: &str) -> sqlx::Res
     .await
 }
 
+/// Makes the new proposal a `block_revise` job of the AI queue (in the same transaction).
+pub struct ProposalQueue<'a> {
+    pub max_queued: usize,
+    pub track: &'a str,
+}
+
 pub struct NewProposal<'a> {
     pub worksheet_id: i64,
     pub teacher_id: i64,
@@ -313,10 +334,14 @@ pub struct NewProposal<'a> {
     pub comment_ids: &'a [i64],
     pub whole_block: bool,
     pub round: i32,
+    pub queue: Option<ProposalQueue<'a>>,
 }
 
-/// Opens a `running` proposal; another one running on the worksheet is a 409.
+/// Opens a `running` proposal; another one running on the worksheet is a 409. With a queue the
+/// proposal waits in the AI queue as `running` (the page shows 「Manna 正在改」 and, with
+/// `queue`, where it stands); its job is made in the same transaction.
 pub async fn insert_running(db: &PgPool, new: NewProposal<'_>) -> AppResult<Proposal> {
+    let mut tx = db.begin().await?;
     let row: Result<Row, sqlx::Error> = sqlx::query_as(&format!(
         "INSERT INTO worksheet_block_proposals
            (worksheet_id, teacher_id, block_id, base_version_no, base_block, instruction,
@@ -333,10 +358,28 @@ pub async fn insert_running(db: &PgPool, new: NewProposal<'_>) -> AppResult<Prop
     .bind(new.comment_ids)
     .bind(new.whole_block)
     .bind(new.round)
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await;
     match row {
-        Ok(r) => Ok(r.into()),
+        Ok(r) => {
+            if let Some(q) = &new.queue {
+                crate::queue::enqueue_tx(
+                    &mut tx,
+                    crate::queue::NewJob {
+                        kind: crate::queue::handlers::KIND_BLOCK_REVISE,
+                        teacher_id: new.teacher_id,
+                        priority: 0,
+                        params: serde_json::json!({ "proposal_id": r.id, "track": q.track }),
+                        ref_kind: "worksheet_proposal",
+                        ref_id: r.id,
+                    },
+                    q.max_queued,
+                )
+                .await?;
+            }
+            tx.commit().await?;
+            Ok(r.into())
+        }
         Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
             Err(AppError::Conflict(MSG_ANOTHER_RUNNING.to_string()))
         }

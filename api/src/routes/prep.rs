@@ -205,7 +205,14 @@ async fn spawn_turn(
     } else {
         None
     };
-    let turn = store::start_turn(&state.db, session.id, kind, request, template_id).await?;
+    // With the AI queue on, the turn's job is made in the same transaction as the turn.
+    let queue =
+        (state.config.ai_queue_enabled && run::queued_kind(kind)).then_some(store::QueueTurn {
+            max_queued: state.config.ai_max_queued_per_teacher,
+            track: teacher.track(),
+            worksheet_id,
+        });
+    let turn = store::start_turn(&state.db, session.id, kind, request, template_id, queue).await?;
     // The pictures belong to the turn before it runs (the run reads them).
     if let Err(e) = prep_images::attach_to_turn(&state.db, image_ids, turn.id).await {
         let message = match &e {
@@ -357,7 +364,13 @@ pub async fn create(
     // that is extracted once the OCR is done; the turn waits for it as for any extraction.
     let (template_id, extraction) = match sample {
         Some((m, after_ocr)) => {
-            tpl_store::expire_stale(db, teacher.id(), tpl_extract::stale_after(&state)).await?;
+            tpl_store::expire_stale(
+                db,
+                teacher.id(),
+                tpl_extract::stale_after(&state),
+                state.config.ai_queue_enabled,
+            )
+            .await?;
             let reusable = if after_ocr {
                 tpl_store::extracting_for_material(db, teacher.id(), m.id).await?
             } else {
@@ -426,7 +439,7 @@ pub async fn create(
     .await;
     // The template exists either way: its extraction always runs.
     match extraction {
-        Some((t, Some(text))) => tpl_extract::spawn(&state, &t, text),
+        Some((t, Some(text))) => tpl_extract::start(&state, &t, text).await,
         Some((t, None)) => tpl_extract::spawn_after_ocr(&state, &t),
         None => {}
     }
@@ -446,7 +459,13 @@ async fn template_to_retry(
     let Some(template_id) = session.template_id else {
         return Ok(None);
     };
-    tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
+    tpl_store::expire_stale(
+        db,
+        teacher_id,
+        tpl_extract::stale_after(state),
+        state.config.ai_queue_enabled,
+    )
+    .await?;
     let Some(t) = tpl_store::find(db, template_id, teacher_id).await? else {
         return Ok(None);
     };
@@ -852,7 +871,7 @@ pub async fn create_turn(
     .await;
     // The template was restarted either way: its extraction always runs.
     if let (Some(t), Some((_, text))) = (restarted, retry) {
-        tpl_extract::spawn(&state, &t, text);
+        tpl_extract::start(&state, &t, text).await;
     }
     Ok((StatusCode::ACCEPTED, Json(made?)))
 }
@@ -981,10 +1000,11 @@ pub async fn siop_check(
     ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
 ) -> AppResult<Json<SiopCheck>> {
     let turn = own_turn(&state, &teacher, id, turn_id).await?;
-    selfcheck::latest(&state.db, turn.id)
+    let mut check = selfcheck::latest(&state.db, turn.id)
         .await?
-        .map(Json)
-        .ok_or_else(|| AppError::not_found(selfcheck::MSG_NO_CHECK))
+        .ok_or_else(|| AppError::not_found(selfcheck::MSG_NO_CHECK))?;
+    selfcheck::with_queue(&state, &mut check).await?;
+    Ok(Json(check))
 }
 
 /// `POST /api/prep-sessions/:id/turns/:turn_id/siop-check`: runs the turn's SIOP 自我檢核
@@ -996,7 +1016,8 @@ pub async fn rerun_siop_check(
     ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
 ) -> AppResult<(StatusCode, Json<SiopCheck>)> {
     let turn = own_turn(&state, &teacher, id, turn_id).await?;
-    let check = selfcheck::restart(&state, &turn).await?;
+    let mut check = selfcheck::restart(&state, &turn).await?;
+    selfcheck::with_queue(&state, &mut check).await?;
     log_usage(
         &state.db,
         teacher.id(),

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api, errorMessage } from "../../api/client";
-import type { AiModelSettings, MemoryIndexStatus, MemorySettings } from "../../api/types";
+import type { AiModelSettings, AiTraffic, MemoryIndexStatus, MemorySettings } from "../../api/types";
 import { Loading } from "../common";
 
 type Load<T> = { data: T | null; error: string | null };
@@ -36,11 +36,36 @@ function memoryText(s: MemorySettings, i: MemoryIndexStatus): string {
   return parts.join("・");
 }
 
-function Row({ label, to, linkLabel, state, children }: {
+/** Queue waits longer than this (seconds) turn the AI row yellow. */
+const SLOW_QUEUE_SECS = 120;
+
+type Tone = "normal" | "warn" | "error";
+
+function trafficTone(t: AiTraffic): Tone {
+  if (t.now.quota_blocked_secs !== null) return "error";
+  if (t.now.oldest_wait_secs > SLOW_QUEUE_SECS || t.last_hour.rate_limited > 0) return "warn";
+  return "normal";
+}
+
+function trafficText(t: AiTraffic): string {
+  const { now, last_hour: hour } = t;
+  const parts: string[] = [];
+  if (now.quota_blocked_secs !== null) {
+    const minutes = Math.max(1, Math.ceil(now.quota_blocked_secs / 60));
+    parts.push(`額度已用完（約 ${minutes} 分鐘後再試），請到 OpenAI 帳戶提高上限或加值`);
+  }
+  parts.push(`進行中 ${now.running}／排隊 ${now.queued}（最久 ${now.oldest_wait_secs} 秒）`);
+  parts.push(`近一小時 呼叫 ${hour.calls} 次、太頻繁 ${hour.rate_limited} 次`);
+  return parts.join("・");
+}
+
+function Row({ label, to, linkLabel, state, tone = "normal", children }: {
   label: string;
-  to: string;
-  linkLabel: string;
+  /** Omit `to` for a row with no tab to link to. */
+  to?: string;
+  linkLabel?: string;
   state: Load<unknown>;
+  tone?: Tone;
   children: ReactNode;
 }) {
   return (
@@ -52,14 +77,16 @@ function Row({ label, to, linkLabel, state, children }: {
         ) : state.data === null ? (
           <Loading />
         ) : (
-          <p className="meta">{children}</p>
+          <p className={tone === "normal" ? "meta" : `meta is-${tone}`}>{children}</p>
         )}
       </div>
-      <div className="side">
-        <Link className="text-link" to={to} aria-label={`${linkLabel}（${label}）`}>
-          {linkLabel}
-        </Link>
-      </div>
+      {to && linkLabel && (
+        <div className="side">
+          <Link className="text-link" to={to} aria-label={`${linkLabel}（${label}）`}>
+            {linkLabel}
+          </Link>
+        </div>
+      )}
     </li>
   );
 }
@@ -72,6 +99,7 @@ export function AdminOverview() {
   const settings = useLoad(() => api.admin.getSettings());
   const accounts = useLoad(() => api.admin.listAccounts());
   const prompts = useLoad(() => api.admin.listPrompts());
+  const traffic = useLoad(() => api.admin.getAiTraffic());
   return (
     <section className="panel-card" aria-labelledby="overview-heading">
       <h2 id="overview-heading">目前設定</h2>
@@ -87,6 +115,10 @@ export function AdminOverview() {
         </Row>
         <Row label="自選備課菜單" to="/admin?tab=settings" linkLabel="調整" state={settings}>
           {settings.data && (settings.data.route_choice_enabled ? "開放" : "固定順序")}
+        </Row>
+        {/* TODO: link 「詳情」 to the 用量 tab once it exists (it will use the same endpoint). */}
+        <Row label="AI 請求" state={traffic} tone={traffic.data ? trafficTone(traffic.data) : "normal"}>
+          {traffic.data && trafficText(traffic.data)}
         </Row>
         <Row label="帳號" to="/admin?tab=accounts" linkLabel="管理" state={accounts}>
           {accounts.data && `${accounts.data.length} 個帳號`}

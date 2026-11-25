@@ -1,6 +1,52 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
-import type { RunProgress } from "../api/types";
-import { PROGRESS_WORDS, announcement, progressConfig, stepText } from "../lib/progress";
+import type { QueueInfo, RunProgress } from "../api/types";
+import { api, errorMessage } from "../api/client";
+import { PROGRESS_WORDS, QUEUE_WORDS, announcement, progressConfig, queueText, stepText } from "../lib/progress";
+import { ErrorText } from "./common";
+
+/** 「排隊中…」 with 取消排隊 (an in-page confirm); `onCancelled` refreshes the page after the job is cancelled. */
+export function QueueLine({ queue, onCancelled }: { queue: QueueInfo; onCancelled?: () => void }) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function cancel() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cancelAiJob(queue.job_id);
+      setAsking(false);
+      onCancelled?.();
+    } catch (err) {
+      setError(errorMessage(err));
+      setAsking(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="run-progress-queue">
+      <p role="status" aria-live="polite">
+        {queueText(queue)}
+      </p>
+      {asking ? (
+        <span role="group" aria-label={QUEUE_WORDS.cancel}>
+          {QUEUE_WORDS.confirm}
+          <button type="button" className="text-link is-danger" disabled={busy} onClick={() => void cancel()}>
+            {QUEUE_WORDS.yes}
+          </button>
+          <button type="button" className="text-link is-plain" onClick={() => setAsking(false)}>
+            {QUEUE_WORDS.no}
+          </button>
+        </span>
+      ) : (
+        <button type="button" className="text-link is-plain" onClick={() => setAsking(true)}>
+          {QUEUE_WORDS.cancel}
+        </button>
+      )}
+      <ErrorText message={error} />
+    </div>
+  );
+}
 
 /**
  * Whether the progress panel of run `runKey` shows: while the run goes on, then for a moment once
@@ -39,6 +85,8 @@ interface RunProgressPanelProps {
   /** Said under a failed step that carries no message of its own (e.g. the turn's error). */
   error?: string | null;
   onClose: () => void;
+  /** Called after a queued job was cancelled, so the page can refresh at once. */
+  onCancelled?: () => void;
   className?: string;
 }
 
@@ -48,7 +96,7 @@ interface RunProgressPanelProps {
  * to come are plain; a failed step says why. A polite live region says when the step changes,
  * when everything is done, or which step failed. × hides the panel; the run goes on.
  */
-export function RunProgressPanel({ progress, error, onClose, className }: RunProgressPanelProps) {
+export function RunProgressPanel({ progress, error, onClose, onCancelled, className }: RunProgressPanelProps) {
   const ids = useId();
   return (
     <section
@@ -63,6 +111,8 @@ export function RunProgressPanel({ progress, error, onClose, className }: RunPro
           <span aria-hidden="true">×</span>
         </button>
       </div>
+      {progress.status === "running" && progress.queue && <QueueLine queue={progress.queue} onCancelled={onCancelled} />}
+      {!(progress.status === "running" && progress.queue) && (
       <ol className="run-progress-steps">
         {progress.steps.map((step, i) => (
           <li
@@ -82,6 +132,7 @@ export function RunProgressPanel({ progress, error, onClose, className }: RunPro
           </li>
         ))}
       </ol>
+      )}
       <p className="sr-only" role="status" aria-live="polite">
         {announcement(progress)}
       </p>
@@ -99,7 +150,9 @@ export function RunProgressSlot({
   error,
   fallback = null,
   className,
+  onCancelled,
 }: {
+  onCancelled?: () => void;
   progress: RunProgress | null | undefined;
   runKey: string | null;
   error?: string | null;
@@ -108,7 +161,7 @@ export function RunProgressSlot({
 }) {
   const panel = useRunPanel(progress, runKey);
   if (panel.visible && progress) {
-    return <RunProgressPanel progress={progress} error={error} onClose={panel.close} className={className} />;
+    return <RunProgressPanel progress={progress} error={error} onClose={panel.close} onCancelled={onCancelled} className={className} />;
   }
   return <>{fallback}</>;
 }

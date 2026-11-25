@@ -888,3 +888,12 @@ summary {
     max-height: min(30vh, 12rem);
   }
 }
+
+.run-progress-queue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  color: var(--color-ink-2);
+  font-size: var(--text-sm, 0.9rem);
+}

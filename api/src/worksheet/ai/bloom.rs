@@ -24,9 +24,9 @@ use futures_util::stream::{self, StreamExt, TryStreamExt};
 use serde_json::json;
 
 use super::{
-    close, empty_message, expire_stale, mark_done, mark_held, open_progress, open_run,
-    replace_block, run_step, skip, spawn_run, Run, RunInput, StepCall, StepInfo, StepResult,
-    STEP_BLOOM, STEP_BLOOM_CHECK,
+    close, drive, empty_message, expire_stale, mark_done, mark_held, open_progress, open_run,
+    queue_block, queue_run, replace_block, run_step, skip, Run, RunInput, Start, StepCall,
+    StepInfo, StepResult, STEP_BLOOM, STEP_BLOOM_CHECK,
 };
 use crate::audit::log_usage;
 use crate::error::{AppError, AppResult};
@@ -958,17 +958,37 @@ fn chosen_for(settings: &Settings, plan: &[(Bloom, usize)]) -> Chosen {
 pub(super) async fn start_generation(state: &AppState, input: RunInput) -> AppResult<()> {
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
+    let queue = queue_run(state, &input);
+    let how = if queue.is_some() {
+        Start::Queued
+    } else {
+        Start::Spawn
+    };
     let Some((run_no, ids)) = open_run(
         &state.db,
         worksheet_id,
         input.worksheet.teacher_id,
         &[STEP_BLOOM, STEP_BLOOM_CHECK],
         None,
+        queue.as_ref(),
     )
     .await?
     else {
         return Ok(());
     };
+    begin_generation(state, input, run_no, ids, how).await;
+    Ok(())
+}
+
+/// The progress and the work of the per-level generation of run `run_no`.
+pub(super) async fn begin_generation(
+    state: &AppState,
+    input: RunInput,
+    run_no: i32,
+    ids: HashMap<&'static str, i64>,
+    how: Start,
+) {
+    let worksheet_id = input.worksheet.id;
     // One step per level, in the order they are written, then the judge.
     let output = input.worksheet.settings.output;
     let steps: Vec<Step> = bl::plan(&input.worksheet.settings)
@@ -979,12 +999,12 @@ pub(super) async fn start_generation(state: &AppState, input: RunInput) -> AppRe
     let tracker = open_progress(state, worksheet_id, run_no, steps).await;
     let state2 = state.clone();
     let progress = tracker.clone();
-    spawn_run(state, worksheet_id, run_no, tracker, async move {
+    let work = async move {
         let hold = ids.get(STEP_BLOOM_CHECK).copied();
         let run = Run::new(&state2, input, run_no, hold, progress).await?;
         generate(&run, &ids).await
-    });
-    Ok(())
+    };
+    drive(how, state, worksheet_id, run_no, tracker, work).await;
 }
 
 /// The judge's step of the run's progress, as the judge ended.
@@ -1248,17 +1268,39 @@ pub(super) async fn start_block(
 ) -> AppResult<()> {
     let worksheet_id = input.worksheet.id;
     expire_stale(state, worksheet_id).await?;
+    let queue = queue_block(state, &input);
+    let how = if queue.is_some() {
+        Start::Queued
+    } else {
+        Start::Spawn
+    };
     let Some((run_no, ids)) = open_run(
         &state.db,
         worksheet_id,
         input.worksheet.teacher_id,
         &[STEP_BLOOM, STEP_BLOOM_CHECK],
         Some(&old.id),
+        queue.as_ref(),
     )
     .await?
     else {
         return Ok(());
     };
+    begin_block(state, input, old, level, run_no, ids, how).await;
+    Ok(())
+}
+
+/// The progress and the work of regenerating one level's block of run `run_no`.
+pub(super) async fn begin_block(
+    state: &AppState,
+    input: RunInput,
+    old: Block,
+    level: Bloom,
+    run_no: i32,
+    ids: HashMap<&'static str, i64>,
+    how: Start,
+) {
+    let worksheet_id = input.worksheet.id;
     let output = input
         .content
         .chosen
@@ -1271,12 +1313,12 @@ pub(super) async fn start_block(
     let tracker = open_progress(state, worksheet_id, run_no, steps).await;
     let state2 = state.clone();
     let progress = tracker.clone();
-    spawn_run(state, worksheet_id, run_no, tracker, async move {
+    let work = async move {
         let hold = ids.get(STEP_BLOOM_CHECK).copied();
         let run = Run::new(&state2, input, run_no, hold, progress).await?;
         regenerate(&run, &ids, old, level).await
-    });
-    Ok(())
+    };
+    drive(how, state, worksheet_id, run_no, tracker, work).await;
 }
 
 async fn regenerate(

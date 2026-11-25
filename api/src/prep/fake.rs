@@ -790,6 +790,7 @@ pub fn chat(req: &ChatRequest, model: &str) -> Result<ChatResponse, ProviderErro
             // Everything before the first answer of the turn is what the cache already holds.
             cached_tokens: first_assistant.map_or(0, |i| chars(&req.messages[..i]) / 4),
             reasoning_tokens: 0,
+            transport_retries: 0,
         }
     };
     let (content, tool_calls) = match tool {

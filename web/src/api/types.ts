@@ -387,6 +387,39 @@ export interface AiModelProvider {
   uses_effort: boolean;
 }
 
+/** `GET /api/admin/ai-traffic`: queue state now, the last hour, and a seven-day trend. */
+export interface AiTraffic {
+  now: {
+    max_running: number;
+    running: number;
+    queued: number;
+    oldest_wait_secs: number;
+    queue_enabled: boolean;
+    /** Seconds until model calls resume after a quota error; null when not blocked. */
+    quota_blocked_secs: number | null;
+  };
+  last_hour: {
+    jobs: { done: number; failed: number; cancelled: number };
+    wait_secs: { p50: number; p95: number };
+    run_secs: Record<string, { p50: number; p95: number }>;
+    calls: number;
+    errors: number;
+    rate_limited: number;
+    quota: number;
+    overloaded: number;
+    tokens: { prompt: number; cached: number; completion: number; reasoning: number };
+    latency_ms: { p50: number; p95: number };
+  };
+  last_7_days: {
+    date: string;
+    calls: number;
+    jobs: number;
+    prompt_tokens: number;
+    cached_tokens: number;
+    completion_tokens: number;
+  }[];
+}
+
 export interface AiModelSettings {
   active: AiModelValue;
   /** env = 環境變數預設；admin = 主持人在後台設定 */
@@ -1382,6 +1415,8 @@ export interface SopJob<T = unknown> {
   /** 空字串＝整批；否則是「換一個」「這一段再建議一次」的那一項 */
   slot?: string;
   parent_job_id?: number | null;
+  /** 還在排隊時才有；舊的伺服器沒有這一欄 */
+  queue?: QueueInfo;
 }
 
 export interface SopState {
@@ -2163,12 +2198,21 @@ export interface ProgressStep {
   message?: string;
 }
 
+/** 排隊中的 AI 工作：前面還有幾個、大概要等多久（docs/API.md「AI 工作佇列」）；開始執行後就沒有 */
+export interface QueueInfo {
+  job_id: number;
+  ahead: number;
+  eta_secs: number | null;
+}
+
 /** 一次產生的進度：依序的步驟、正在做哪一步、結果 */
 export interface RunProgress {
   steps: ProgressStep[];
   /** 正在做的那一步（兩部分同時進行時是第一個）；結束後是 null */
   current: number | null;
   status: "running" | "done" | "failed";
+  /** 這次產生的工作還在排隊時才有（docs/AI_REQUEST_CONTROL.md 步驟 5）；開始執行後就沒有；舊的伺服器沒有這一欄 */
+  queue?: QueueInfo;
 }
 
 export interface CreateWorksheetRequest {
@@ -2477,6 +2521,8 @@ export interface WsTemplateDetail extends WsTemplateSummary {
    * 而且沒有別的範本在用。false：沒有原檔，或別的範本還在用（例如另存的版本、平台範本）。
    */
   deletes_source_material: boolean;
+  /** 讀取（extracting）還在排隊時才有；舊的伺服器沒有這一欄 */
+  queue?: QueueInfo;
 }
 
 export interface WsTemplateList {
@@ -2807,6 +2853,8 @@ export interface SiopCheck {
   interaction_id: number | null;
   created_at: string;
   finished_at: string | null;
+  /** 還在排隊時才有；舊的伺服器沒有這一欄 */
+  queue?: QueueInfo;
 }
 
 export interface PrepResources {
@@ -2948,6 +2996,8 @@ export interface WsProposal {
   } | null;
   /** 按「採用」後才會畫圖或移除圖片；舊的伺服器沒有這一欄 */
   picture_actions?: WsPictureAction[];
+  /** 還在排隊時才有；舊的伺服器沒有這一欄 */
+  queue?: QueueInfo;
   /** 這次修改附上的圖片；舊的伺服器沒有這一欄 */
   images?: PrepImage[];
   interaction_id: number | null;

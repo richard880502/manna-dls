@@ -107,16 +107,22 @@ pub struct Usage {
     pub cached_tokens: u64,
     /// `usage.output_tokens_details.reasoning_tokens` (already part of `completion_tokens`).
     pub reasoning_tokens: u64,
+    /// How many times the guard repeated the call (429 or 5xx) before it ended.
+    pub transport_retries: u64,
 }
 
 impl Usage {
     pub fn to_json(self) -> Value {
-        json!({
+        let mut v = json!({
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "cached_tokens": self.cached_tokens,
             "reasoning_tokens": self.reasoning_tokens,
-        })
+        });
+        if self.transport_retries > 0 {
+            v["transport_retries"] = json!(self.transport_retries);
+        }
+        v
     }
 }
 
@@ -264,14 +270,8 @@ pub fn build_body(model: &str, effort: &str, req: &ChatRequest) -> Value {
 }
 
 pub fn parse_response(status: u16, body: &str) -> Result<ChatResponse, ProviderError> {
-    if status == 408 || status == 504 {
-        return Err(ProviderError::Timeout);
-    }
     if !(200..300).contains(&status) {
-        return Err(ProviderError::Http {
-            status,
-            body: clip(body, 2000),
-        });
+        return Err(super::http_error(status, body, None));
     }
     let v: Value = serde_json::from_str(body)
         .map_err(|e| ProviderError::InvalidOutput(format!("response is not JSON: {e}")))?;
@@ -337,6 +337,7 @@ pub fn parse_response(status: u16, body: &str) -> Result<ChatResponse, ProviderE
         reasoning_tokens: v["usage"]["output_tokens_details"]["reasoning_tokens"]
             .as_u64()
             .unwrap_or(0),
+        transport_retries: 0,
     });
     // Only a turn that goes on needs the items back; they are sent as returned.
     let replay = if tool_calls.is_empty() {
@@ -371,7 +372,11 @@ pub async fn call(
     }
     let resp = rb.send().await.map_err(ProviderError::from_reqwest)?;
     let status = resp.status().as_u16();
+    let delay = super::retry_after(resp.headers());
     let body = resp.text().await.map_err(ProviderError::from_reqwest)?;
+    if !(200..300).contains(&status) {
+        return Err(super::http_error(status, &body, delay));
+    }
     parse_response(status, &body)
 }
 

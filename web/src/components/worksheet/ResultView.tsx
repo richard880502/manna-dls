@@ -1286,7 +1286,7 @@ export function ResultView({ ws, onAdjust }: ResultViewProps) {
           {fillNotice}
         </p>
       )}
-      <WorksheetRunProgress state={state} />
+      <WorksheetRunProgress state={state} onCancelled={() => void ws.refresh()} />
       {!state.running && <RunOutcome jobs={state.jobs} />}
       <ErrorText message={ws.actionError} />
 

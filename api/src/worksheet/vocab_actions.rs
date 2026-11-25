@@ -1467,11 +1467,11 @@ pub async fn suggest(
                     failure = Some("timeout");
                     break;
                 }
-                Failure::Error => {
+                Failure::Error(kind) => {
                     failure = Some(if matches!(e, crate::ai::ProviderError::Disabled) {
                         "disabled"
                     } else {
-                        "error"
+                        kind.status()
                     });
                     break;
                 }
@@ -1504,6 +1504,8 @@ pub async fn suggest(
         let (status, message) = match failure {
             Some("timeout") => ("timeout", crate::ai::pipeline::MSG_TIMEOUT),
             Some("disabled") => ("disabled", crate::ai::pipeline::MSG_DISABLED),
+            Some("quota") => ("error", crate::ai::pipeline::MSG_QUOTA),
+            Some("busy") => ("error", crate::ai::pipeline::MSG_BUSY),
             Some(_) => ("error", crate::ai::pipeline::MSG_ERROR),
             None => (
                 "blocked",

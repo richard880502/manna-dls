@@ -133,6 +133,17 @@ pub async fn version(
     Ok(row.map(Version::from))
 }
 
+/// A version by its id (a job keeps the version it was asked for).
+pub async fn version_by_id(db: &PgPool, id: i64) -> sqlx::Result<Option<Version>> {
+    let row: Option<VersionRow> = sqlx::query_as(&format!(
+        "SELECT {VERSION_COLS} FROM lesson_sop_versions WHERE id = $1"
+    ))
+    .bind(id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(Version::from))
+}
+
 pub async fn versions_count(db: &PgPool, lesson_id: i64) -> sqlx::Result<i64> {
     sqlx::query_scalar("SELECT COUNT(*) FROM lesson_sop_versions WHERE lesson_id = $1")
         .bind(lesson_id)

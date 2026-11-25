@@ -79,6 +79,18 @@ pub struct Config {
     pub ai_model: String,
     pub ai_effort: String,
     pub ai_timeout_secs: u64,
+    pub ai_rate_limit_retries: u32,
+    pub ai_quota_cooldown_secs: u64,
+    /// Persistent text-work queue. Disabled keeps the legacy direct background jobs.
+    pub ai_queue_enabled: bool,
+    pub ai_max_running_jobs: usize,
+    pub ai_max_running_per_teacher: usize,
+    pub ai_max_queued_per_teacher: usize,
+    pub ai_job_lease_secs: u64,
+    pub ai_job_max_attempts: i32,
+    pub ai_shutdown_grace_secs: u64,
+    /// `FAKE_LATENCY_MS`: how long the fake provider takes per call (load tests only).
+    pub fake_latency_ms: u64,
     pub anthropic_api_key: Option<String>,
     pub openai_compat_base_url: Option<String>,
     pub openai_compat_api_key: Option<String>,
@@ -226,6 +238,16 @@ impl Config {
                 reason: "must be greater than zero",
             });
         }
+        let ai_queue_enabled = get("AI_QUEUE_ENABLED")
+            .map(|v| {
+                v.parse::<bool>().map_err(|_| ConfigError::Invalid {
+                    var: "AI_QUEUE_ENABLED",
+                    value: v,
+                    reason: "expected true or false",
+                })
+            })
+            .transpose()?
+            .unwrap_or(false);
         let rag_top_k = parse_num("RAG_TOP_K", get("RAG_TOP_K"), 8usize)?;
         if rag_top_k == 0 {
             return Err(ConfigError::Invalid {
@@ -279,6 +301,44 @@ impl Config {
             ai_model,
             ai_effort,
             ai_timeout_secs,
+            ai_rate_limit_retries: parse_num(
+                "AI_RATE_LIMIT_RETRIES",
+                get("AI_RATE_LIMIT_RETRIES"),
+                2u32,
+            )?,
+            ai_quota_cooldown_secs: parse_num(
+                "AI_QUOTA_COOLDOWN_SECS",
+                get("AI_QUOTA_COOLDOWN_SECS"),
+                600u64,
+            )?,
+            ai_queue_enabled,
+            ai_max_running_jobs: parse_num(
+                "AI_MAX_RUNNING_JOBS",
+                get("AI_MAX_RUNNING_JOBS"),
+                6usize,
+            )?,
+            ai_max_running_per_teacher: parse_num(
+                "AI_MAX_RUNNING_PER_TEACHER",
+                get("AI_MAX_RUNNING_PER_TEACHER"),
+                2usize,
+            )?,
+            ai_max_queued_per_teacher: parse_num(
+                "AI_MAX_QUEUED_PER_TEACHER",
+                get("AI_MAX_QUEUED_PER_TEACHER"),
+                10usize,
+            )?,
+            ai_job_lease_secs: parse_num("AI_JOB_LEASE_SECS", get("AI_JOB_LEASE_SECS"), 90u64)?,
+            ai_job_max_attempts: parse_num(
+                "AI_JOB_MAX_ATTEMPTS",
+                get("AI_JOB_MAX_ATTEMPTS"),
+                2i32,
+            )?,
+            fake_latency_ms: parse_num("FAKE_LATENCY_MS", get("FAKE_LATENCY_MS"), 0u64)?,
+            ai_shutdown_grace_secs: parse_num(
+                "AI_SHUTDOWN_GRACE_SECS",
+                get("AI_SHUTDOWN_GRACE_SECS"),
+                60u64,
+            )?,
             anthropic_api_key,
             openai_compat_base_url,
             openai_compat_api_key,
@@ -311,6 +371,16 @@ impl Config {
             ai_model: "fake-model".into(),
             ai_effort: "medium".into(),
             ai_timeout_secs: 5,
+            ai_rate_limit_retries: 2,
+            ai_quota_cooldown_secs: 600,
+            ai_queue_enabled: false,
+            ai_max_running_jobs: 2,
+            ai_max_running_per_teacher: 2,
+            ai_max_queued_per_teacher: 10,
+            ai_job_lease_secs: 90,
+            ai_job_max_attempts: 2,
+            ai_shutdown_grace_secs: 1,
+            fake_latency_ms: 0,
             anthropic_api_key: None,
             openai_compat_base_url: None,
             openai_compat_api_key: None,

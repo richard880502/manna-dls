@@ -26,6 +26,7 @@ pub mod progress;
 pub mod prompt_registry;
 pub mod prompt_try;
 pub mod prompts;
+pub mod queue;
 pub mod record;
 pub mod retrieval;
 pub mod routes;
@@ -83,11 +84,14 @@ pub struct AppState {
     pub progress: Arc<progress::Registry>,
     /// The memory index client: cached sidecar health, orphan sweep clock.
     pub memory: Arc<memory::graph::Runtime>,
+    /// The AI job queue's process-local half (docs/AI_REQUEST_CONTROL.md).
+    pub queue: Arc<queue::dispatcher::Queue>,
 }
 
 impl AppState {
     pub fn new(db: PgPool, config: Config) -> Self {
         let ai = Arc::new(AiClient::from_config(&config));
+        ai.attach_db(db.clone());
         let embedder = Arc::new(Embedder::new(config.embedding.clone()));
         let storage = config.storage.build();
         let ocr = Arc::new(materials::ocr::Ocr::new(config.ocr.clone()));
@@ -110,6 +114,7 @@ impl AppState {
             images,
             progress: Arc::default(),
             memory: Arc::default(),
+            queue: Arc::default(),
         }
     }
 }

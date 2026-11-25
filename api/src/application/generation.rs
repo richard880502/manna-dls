@@ -208,13 +208,13 @@ where
                     },
                     Err(e) => match finish_failure(db, &a, e).await? {
                         // The retry did not answer: what was usable in the first attempt is kept.
-                        Failure::Timeout | Failure::Error if first.is_some() => break,
+                        Failure::Timeout | Failure::Error(_) if first.is_some() => break,
                         Failure::Timeout => return Ok(Err(MSG_TIMEOUT.to_string())),
-                        Failure::Error => {
+                        Failure::Error(kind) => {
                             let message = if matches!(e, crate::ai::ProviderError::Disabled) {
                                 MSG_DISABLED
                             } else {
-                                MSG_ERROR
+                                kind.message(MSG_ERROR)
                             };
                             return Ok(Err(message.to_string()));
                         }

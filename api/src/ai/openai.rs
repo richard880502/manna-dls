@@ -79,14 +79,8 @@ pub fn endpoint(base_url: &str) -> String {
 }
 
 pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderError> {
-    if status == 408 || status == 504 {
-        return Err(ProviderError::Timeout);
-    }
     if !(200..300).contains(&status) {
-        return Err(ProviderError::Http {
-            status,
-            body: clip(body, 2000),
-        });
+        return Err(super::http_error(status, body, None));
     }
     let v: Value = serde_json::from_str(body)
         .map_err(|e| ProviderError::InvalidOutput(format!("response is not JSON: {e}")))?;
@@ -120,6 +114,17 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
     Ok(LlmResponse {
         json,
         model_version,
+        usage: v["usage"].is_object().then(|| super::chat::Usage {
+            prompt_tokens: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
+            completion_tokens: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
+            cached_tokens: v["usage"]["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+            reasoning_tokens: v["usage"]["completion_tokens_details"]["reasoning_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+            transport_retries: 0,
+        }),
     })
 }
 
@@ -139,7 +144,11 @@ pub async fn call(
     }
     let resp = rb.send().await.map_err(ProviderError::from_reqwest)?;
     let status = resp.status().as_u16();
+    let delay = super::retry_after(resp.headers());
     let body = resp.text().await.map_err(ProviderError::from_reqwest)?;
+    if !(200..300).contains(&status) {
+        return Err(super::http_error(status, &body, delay));
+    }
     parse_response(status, &body)
 }
 
@@ -250,7 +259,7 @@ mod tests {
         ));
         assert!(matches!(
             parse_response(503, "busy"),
-            Err(ProviderError::Http { status: 503, .. })
+            Err(ProviderError::Overloaded { status: 503, .. })
         ));
     }
     #[test]

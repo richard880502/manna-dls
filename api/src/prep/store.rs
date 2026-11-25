@@ -13,7 +13,7 @@ use super::{
     KIND_WORKSHEET, NEXT_KINDS, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING,
 };
 use crate::error::{AppError, AppResult};
-use crate::progress::{self, Progress, Step, StepStatus, Stored};
+use crate::progress::{self, Progress, RunStatus, Step, StepStatus, Stored};
 use crate::worksheet::ai as ws_ai;
 use crate::worksheet::store as ws_store;
 use crate::worksheet::template::extract as tpl_extract;
@@ -207,12 +207,14 @@ pub async fn start_turn(
     kind: &str,
     request: &str,
     template_id: Option<i64>,
+    queue: Option<QueueTurn<'_>>,
 ) -> AppResult<TurnRow> {
     let mut tx = db.begin().await?;
-    sqlx::query("SELECT id FROM prep_sessions WHERE id = $1 FOR UPDATE")
-        .bind(session_id)
-        .execute(&mut *tx)
-        .await?;
+    let teacher_id: Option<i64> =
+        sqlx::query_scalar("SELECT teacher_id FROM prep_sessions WHERE id = $1 FOR UPDATE")
+            .bind(session_id)
+            .fetch_optional(&mut *tx)
+            .await?;
     let running: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM prep_turns WHERE session_id = $1 AND status = 'running'",
     )
@@ -239,8 +241,34 @@ pub async fn start_turn(
         .bind(session_id)
         .execute(&mut *tx)
         .await?;
+    // The turn and its queue entry are one commit: an accepted turn is never without its job.
+    if let (Some(q), Some(teacher_id)) = (queue, teacher_id) {
+        crate::queue::enqueue_tx(
+            &mut tx,
+            crate::queue::NewJob {
+                kind: crate::queue::handlers::KIND_PREP_TURN,
+                teacher_id,
+                priority: 0,
+                params: serde_json::json!({
+                    "turn_id": row.id, "track": q.track, "worksheet_id": q.worksheet_id,
+                }),
+                ref_kind: "prep_turn",
+                ref_id: row.id,
+            },
+            q.max_queued,
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(row)
+}
+
+/// Where a turn that runs through the AI queue gets its job (see [`start_turn`]).
+pub struct QueueTurn<'a> {
+    pub max_queued: usize,
+    pub track: &'a str,
+    /// `revise`: the worksheet to change.
+    pub worksheet_id: Option<i64>,
 }
 
 pub async fn set_worksheet(db: &PgPool, turn_id: i64, worksheet_id: i64) -> sqlx::Result<()> {
@@ -473,7 +501,13 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
             .fetch_optional(db)
             .await?;
     if let Some(teacher_id) = teacher_id {
-        tpl_store::expire_stale(db, teacher_id, tpl_extract::stale_after(state)).await?;
+        tpl_store::expire_stale(
+            db,
+            teacher_id,
+            tpl_extract::stale_after(state),
+            state.config.ai_queue_enabled,
+        )
+        .await?;
     }
     // A turn that waited for its template's sample to be read by OCR counts from when the
     // extraction proper started (the waiting template keeps `extract_started_at` current).
@@ -483,11 +517,21 @@ pub async fn refresh(state: &AppState, session_id: i64) -> AppResult<()> {
             AND GREATEST(p.created_at,
                          COALESCE((SELECT t.extract_started_at FROM worksheet_templates t
                                     WHERE t.id = p.template_id), p.created_at))
-                < now() - make_interval(secs => $3)"
+                < now() - make_interval(secs => $3)
+            -- A turn whose job waits in the AI queue (or runs) is not stale: the queue's
+            -- leases tell whether its server is alive.
+            -- (Only while the queue is on: jobs left in it by an earlier run do not count.)
+            AND NOT ($4 AND EXISTS (SELECT 1 FROM ai_jobs j
+                             WHERE j.status IN ('queued', 'running')
+                               AND ((j.ref_kind = 'prep_turn' AND j.ref_id = p.id)
+                                 OR (j.ref_kind = 'worksheet' AND j.ref_id = p.worksheet_id)
+                                 OR (j.ref_kind = 'worksheet_template'
+                                     AND j.ref_id = p.template_id))))"
     ))
     .bind(session_id)
     .bind(MSG_STALE)
     .bind(stale_after(state))
+    .bind(state.config.ai_queue_enabled)
     .execute(db)
     .await?;
     let open: Vec<(i64, i64)> = sqlx::query_as(&format!(
@@ -991,6 +1035,28 @@ fn turn_progress(
     Progress::of(steps, open)
 }
 
+/// While a running turn's job (or its worksheet's) waits in the AI queue, its progress says where
+/// it stands. A short turn that has no progress of its own gets a one-step one for the wait.
+async fn queue_progress(state: &AppState, turn: &mut Turn) -> sqlx::Result<()> {
+    let mut info = crate::queue::info_for_ref(state, "prep_turn", turn.id).await?;
+    if info.is_none() {
+        if let Some(w) = &turn.worksheet {
+            info = crate::queue::info_for_ref(state, "worksheet", w.id).await?;
+        }
+    }
+    let Some(info) = info else {
+        return Ok(());
+    };
+    let progress = turn.progress.get_or_insert_with(|| Progress {
+        steps: vec![Step::new("wait", "等待處理").with_status(StepStatus::Running)],
+        current: Some(0),
+        status: RunStatus::Running,
+        queue: None,
+    });
+    progress.queue = Some(info);
+    Ok(())
+}
+
 /// The whole session, brought up to date first.
 pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     refresh(state, id).await?;
@@ -998,6 +1064,9 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
     let summary = summary(&state.db, id).await?;
     let rows = turns(&state.db, id).await?;
     let mut checks = selfcheck::latest_of_session(&state.db, id).await?;
+    for check in checks.values_mut() {
+        selfcheck::with_queue(state, check).await?;
+    }
     let now = Utc::now();
     let pictures_window = pictures_window_secs(state);
     let mut pending: Vec<(Turn, Option<TurnRow>)> = Vec::with_capacity(rows.len());
@@ -1103,6 +1172,15 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
             let ws = turn.worksheet.as_ref().and_then(|w| ws_runs.remove(&w.id));
             turn.progress =
                 turn_progress(&r, ws, turn.ocr, turn.siop_check.clone().flatten().as_ref());
+        }
+        if turn.status == STATUS_RUNNING && state.config.ai_queue_enabled {
+            queue_progress(state, &mut turn).await?;
+        }
+        // A done turn whose SIOP check waits in the queue: its progress says so.
+        if let (Some(p), Some(Some(check))) = (&mut turn.progress, &turn.siop_check) {
+            if p.queue.is_none() && p.status == RunStatus::Running {
+                p.queue = check.queue.clone();
+            }
         }
         out.push(turn);
     }

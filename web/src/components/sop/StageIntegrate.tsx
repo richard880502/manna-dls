@@ -155,7 +155,12 @@ export function StageIntegrate({ sop, onGoToStage }: StageProps) {
               placeholder="例如：先找出轉折語，再比較前後兩句"
             />
             {offer?.kind === "pending" && (
-              <RedoPending label={`第 ${p.no} 段`} job={offer.job} onAgain={() => again(p, null)} />
+              <RedoPending
+                label={`第 ${p.no} 段`}
+                job={offer.job}
+                onAgain={() => again(p, null)}
+                onCancelled={() => void sop.refreshJob(offer.job.id)}
+              />
             )}
             {offer?.kind === "entry" && (
               <MannaWell

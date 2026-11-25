@@ -3577,6 +3577,7 @@ interface RunProgress {
   steps: ProgressStep[];       // 依執行順序；略過的步驟（沒勾暖身、圖片關閉…）不列出
   current: number | null;      // 正在做的那一步（教學套件兩部分同時進行時是第一個）；結束後是 null
   status: "running" | "done" | "failed";  // 還有步驟在做或還沒做 → running；之後有一步失敗 → failed，否則 done
+  queue?: { job_id: number; ahead: number; eta_secs: number | null };  // 只在排隊中才有（見「AI 工作佇列」）
 }
 ```
 
@@ -3620,6 +3621,59 @@ interface RunProgress {
 ## 測試用假模型
 
 教材文字裡放 `FAKE_PACED`：每一次呼叫先等 400 ms（在 `ai::execution::attempt`），測試可以一步一步看到進度（`api/tests/progress.rs`）。
+
+# AI 工作佇列
+
+設計與取捨見 [AI_REQUEST_CONTROL.md](AI_REQUEST_CONTROL.md)。Migration `0057_ai_jobs.sql`。環境變數 `AI_QUEUE_ENABLED`（**預設 `false`**）打開後，備課對話的輪次、整份學習單的產生、單區重新產生、逐區修改（提案）、課例 SOP 的各步驟、版型讀取與 SIOP 自我檢核不再當場開始，而是進資料庫的工作佇列（`ai_jobs`），由伺服器的分派器照規則分配；送出的端點照舊回 202（或 201），畫面照舊輪詢。關閉時一切照舊，下面的欄位與端點都不會出現。
+
+## 進度裡的 `queue`
+
+`RunProgress`（`WorksheetState.progress`、`GET /api/worksheets/:id/jobs` 的 `progress`、`PrepTurn.progress`）在這次產生的工作**還在排隊、還沒開始**時多一個欄位：
+
+```ts
+queue?: {
+  job_id: number;          // 取消排隊用：DELETE /api/ai-jobs/{job_id}
+  ahead: number;           // 會比這一個先開始的排隊中工作數（優先級、先來先到；老師之間輪流會讓實際順序略有出入，所以是估計）
+  eta_secs: number | null; // ahead ÷ AI_MAX_RUNNING_JOBS × 最近一小時同類工作的平均執行秒數；沒有資料時 null
+}
+```
+
+開始執行後欄位就消失（`progress.steps` 照常前進）。沒有自己的進度表的短輪次（直接問 AI）在排隊時回一個只有一步「等待處理」（`key: "wait"`）的進度，開始執行後恢復成 `null`。做學習單的輪次（`worksheet`／`assessment`／`comprehension`／`tiered`／`kit`）排隊時顯示的是它的學習單那一次產生的位置。
+
+## 其他功能的 `queue`
+
+和進度裡的 `queue` 同一個形狀（`{ job_id, ahead, eta_secs }`，只在還排隊時才有），出現在這些功能原本就在輪詢的回應：
+
+- 單區重新產生：和整份學習單一樣，在 `progress.queue`。
+- `Proposal.queue`（逐區修改的提案，`GET /api/worksheets/:id/proposals`、`…/proposals/:pid` 與 `POST …/revise` 的 202）：提案 `status = "running"` 而且還在排隊時。
+- `SopJob.queue`（`GET /api/sop-jobs/:id`、`GET /api/lessons/:id/sop` 的 `jobs`，以及各 `POST /api/lessons/:id/sop/…` 的 202）：`status = "running"` 而且還在排隊時；這時 `phase` =「排隊中」。
+- `SiopCheck.queue`（`PrepTurn.siop_check`、`GET/POST …/siop-check`）：`status = "running"` 而且還在排隊時；輪次的 `progress.queue` 同時帶同一個值。
+- 版型讀取（`GET /api/worksheet-templates/:id`）：`status = "extracting"` 而且還在排隊時有 `queue`（建立、重讀的 202 與存檔的回應沒有，因為頁面是靠這個 GET 輪詢）。版型的 `queue.job_id` 同樣可以用 `DELETE /api/ai-jobs/:id` 取消；取消後版型 `status = "failed"`，`error` =「已取消排隊。」。
+
+## `DELETE /api/ai-jobs/{id}`
+
+取消排隊。只有工作的擁有者（別人的或不存在的：404 「找不到這個工作。」）；只有還在排隊的（已經開始或結束：409「這個工作已經開始或結束了，沒辦法取消排隊。」）。成功 204，沒有內容。同時：
+
+- 備課對話的輪次 → `failed`，`error` =「已取消排隊。」；
+- 單區重新產生 → 同學習單的產生（這一次的工作列結束為 `error`，進度 `failed`；不影響備課輪次）；
+- 逐區修改 → 提案 `failed`，`error` =「已取消排隊。」；
+- 課例 SOP 的步驟 → 工作 `done`、`result.status = "error"`、`result.message` =「已取消排隊。」；
+- 版型讀取 → 範本 `failed`，`error` =「已取消排隊。」；
+- SIOP 自我檢核 → 檢核 `failed`，`error` =「已取消排隊。」；
+- 學習單的產生 → 這一次的工作列全部結束為 `error`（`message` =「已取消排隊。」），進度 `failed`，學習單可以再按產生；等著這份學習單的備課輪次也以「已取消排隊。」結束。
+
+## 排隊太多：409
+
+每位老師排隊中（`queued`）的工作最多 `AI_MAX_QUEUED_PER_TEACHER`（預設 10）個。再送一個（產生學習單、送備課對話）→ **409**「你排隊中的工作太多了，等前面的完成再送。」，什麼都沒建立（輪次、工作列、佇列項目是同一個交易；SIOP 檢核與版型讀取的項目是之後才排的，排不進去時該列直接 `failed`，訊息同上）。同一個對象（同一輪、同一份學習單）已經在排隊或執行中時，再排一次也是 409「這個工作已在排隊或執行中。」。這是唯一會被拒絕的情況：其他時候只是排隊，不回 429。
+
+## 行為
+
+- 排序：優先級（備課對話的輪次、單區重新產生、逐區修改 0；整份學習單、課例 SOP 的步驟、版型讀取 1；SIOP 自我檢核 2）→ 目前執行中工作少的老師先 → 先來先到。每位老師同時最多執行 `AI_MAX_RUNNING_PER_TEACHER`（預設 2）個，主持人不限；全站同時最多 `AI_MAX_RUNNING_JOBS`（預設 6，每台伺服器）。
+- 排隊中的輪次與學習單不會因為等太久被 stale 規則判失敗；只看租約：執行中的工作每 1/3 個 `AI_JOB_LEASE_SECS` 延長租約，伺服器停了、租約過期後，可重跑的工作（上面所有種類）自動重新排隊（最多 `AI_JOB_MAX_ATTEMPTS` 次），其餘與超過次數的標 `failed`，並把對應的列（備課輪次、提案、SOP 工作、範本、檢核都是 `failed` 或錯誤結果，學習單工作列是 `error`，進度 `failed`；訊息都是「伺服器重新啟動，這次沒有完成。請按再試一次。」）一起結束。
+- 重跑整份學習單是**從頭重做**（工作列全部設回排隊中、每一步重寫），不是只補沒做完的步驟；唯一會多出東西的情況是「存完新版本、還沒結束工作」之間當機，會留下兩個一樣的版本。
+- 優雅關閉：收到 SIGTERM 後不再接新工作，最多等 `AI_SHUTDOWN_GRACE_SECS`（預設 60）秒讓執行中的工作做完，沒做完的立刻讓租約過期，下一次啟動馬上接手。
+- `usage_logs`：`ai_job_finished` `{job_id, kind, wait_ms, run_ms, status, attempts}`（不含內容）；額度用完進入冷卻時記一次 `ai_quota_exhausted`。
+- 還沒進佇列的背景工作（等 OCR 的版型讀取、等範本的輪次、找教學資源、偵測「要記住這個習慣嗎」）照舊直接執行。
 
 # 我的作品：卡片預覽
 
@@ -3846,6 +3900,7 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
 | `GET /api/admin/ai-model` | PI。`{active, source, changed_by, changed_at, env_default, providers, efforts, timeout_range}`。`active`／`env_default` 為 `{provider, model, effort, timeout_secs}`；`source` 是 `env`（環境變數預設）或 `admin`（後台設定，此時 `changed_by` 為設定者的研究編號、`changed_at` 為時間）；`providers` 是 `[{id, label, available, models, uses_effort}]`（`models` 是建議名稱：`openai` 為 `gpt-5.6-sol`、`gpt-5.6-terra`，`openai_compatible` 為 `gemma-4-31B-it`，再加上環境變數預設的模型；也可以自行輸入）；`timeout_range` 為 `{min: 30, max: 900}` |
 | `PUT /api/admin/ai-model` | PI。`{provider, model, effort?, timeout_secs}`。先驗證（來源、模型名稱 1–100 字元且只含英數與 `. - _ : /`、`effort` 屬於 `low／medium／high／xhigh／max`、秒數 30–900；沒給 `effort` 沿用環境變數的值），再用**新設定**做一次很小的測試呼叫（最多等 120 秒）。測試成功才儲存並立刻生效，回傳與 GET 相同的內容加上 `test_latency_ms`；測試失敗或驗證不過回 400（中文原因，例如模型名稱可能打錯），**什麼都不儲存**，目前的模型不變 |
 | `DELETE /api/admin/ai-model` | PI。刪除後台設定，回到環境變數預設，回傳與 GET 相同的內容；沒有後台設定時什麼也不做 |
+| `GET /api/admin/ai-traffic` | PI。AI 請求流量，只有彙總（沒有老師內容、沒有每位老師的數字）。`{now, last_hour, last_7_days}`：`now` 為 `{max_running, running, queued, oldest_wait_secs, queue_enabled, quota_blocked_secs}`（來自 `ai_jobs` 與設定；佇列沒在用時為 0；`quota_blocked_secs` 是額度冷卻剩餘秒數，沒有冷卻為 `null`）。`last_hour` 為 `{jobs: {done, failed, cancelled}（一小時內結束的工作）, wait_secs: {p50, p95}（started_at − queued_at）, run_secs: {<kind>: {p50, p95}}（finished_at − started_at，只列有工作的 kind）, calls（ai_interactions 筆數）, errors（status 為 error／timeout）, rate_limited, quota, overloaded（依 error_detail 前綴 `rate_limited:`／`quota:`／`overloaded:`，可能與 errors 重疊）, tokens: {prompt, cached, completion, reasoning}, latency_ms: {p50, p95}}`。`last_7_days` 固定 7 筆（今天在最後，沒有資料的日子補 0），日期為 Asia/Taipei：`{date, calls, jobs（當天排入的工作）, prompt_tokens, cached_tokens, completion_tokens}`。百分位數為 `percentile_cont`，四捨五入到小數一位；沒有資料時為 0 |
 
 - **生效時機**：新開始的 AI 工作立刻使用新設定；已經在跑的工作（例如正在產生的學習單）會用開始時的模型跑完，不會半途混用。每次呼叫與每個背景工作（學習單產生、備課對話的一輪及其 SIOP 自我檢核、版型讀取、區塊修改、課程 SOP 分析與目標、記憶索引同步）在開始時取一份設定快照，請求、逾時與 `ai_interactions` 的記錄都用這一份；一個備課對話的輪次（含事後由頁面輪詢觸發的自我檢核）沿用輪次開始時的設定。使用者在頁面按「再試一次」是新的工作，用當時的設定。伺服器重新啟動時會讀回後台設定（沒有就用環境變數），並在啟動記錄寫明使用哪一種來源；若後台設定的來源已不在環境中（例如金鑰被移除）會被忽略並改用環境變數。目前只有一個 API 實例，切換與這些快照都存在該實例的記憶體；若日後有多個實例，需要各自重新讀取 `app_settings`。
 - **研究記錄**：每筆 `ai_interactions` 的 `provider`／`model` 是該次呼叫快照裡實際使用的值。測試呼叫也記成一筆，`module = admin_model_test`（`teacher_id` 是主持人、`input_snapshot` 是固定的測試題目與新設定、失敗時 `status = error／timeout` 並有 `error_detail`），不會混進教師的流程。

@@ -1468,6 +1468,16 @@
   color: var(--color-ink);
 }
 
+.admin-overview .row .meta.is-warn {
+  color: var(--color-warn-ink);
+  font-weight: var(--weight-strong);
+}
+
+.admin-overview .row .meta.is-error {
+  color: var(--color-error);
+  font-weight: var(--weight-strong);
+}
+
 .admin-self-tag {
   margin-left: var(--space-xs);
   vertical-align: middle;

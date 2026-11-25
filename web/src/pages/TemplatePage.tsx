@@ -5,6 +5,7 @@ import type { WsTemplate, WsTemplateDetail, WsTemplateSection } from "../api/typ
 import { ErrorText, Loading } from "../components/common";
 import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { MaterialViewer } from "../components/material/MaterialViewer";
+import { QueueLine } from "../components/RunProgress";
 import { ExtractingLine } from "../components/template/ExtractingLine";
 import { COPY_TEMPLATE, USE_TEMPLATE, VIEW_SOURCE } from "../components/library/labels";
 import { useApp } from "../context/AppContext";
@@ -98,7 +99,10 @@ function TemplateWorkspace({ id }: { id: number }) {
       api
         .getWorksheetTemplate(id)
         .then((next) => {
-          if (!stopped && next.status !== "extracting") take(next);
+          if (stopped) return;
+          // Still waiting or reading: only the queue line changes; the editor keeps what it has.
+          if (next.status !== "extracting") take(next);
+          else setDetail(next);
         })
         .catch(() => {
           // A missed poll is not a failure; the next one tries again.
@@ -249,7 +253,11 @@ function TemplateWorkspace({ id }: { id: number }) {
 
       {detail.status === "extracting" && (
         <div className="manna-well manna-progress">
-          <ExtractingLine />
+          {detail.queue ? (
+            <QueueLine queue={detail.queue} onCancelled={() => setLoadSeq((n) => n + 1)} />
+          ) : (
+            <ExtractingLine />
+          )}
           <p className="why">你可以先離開這一頁，讀好了會留在「學習單範本」的「我的範本」裡。</p>
         </div>
       )}

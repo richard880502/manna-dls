@@ -107,6 +107,7 @@ pub fn parse_response(status: u16, body: &str) -> Result<LlmResponse, ProviderEr
     Ok(LlmResponse {
         json,
         model_version,
+        usage: None,
     })
 }
 
