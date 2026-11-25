@@ -36,7 +36,7 @@ import { KitDownload } from "../components/prep/KitDownload";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
 import { IMAGE_PRIVACY_NOTE } from "../lib/prepImages";
 import { AttachButton, AttachedThumbs, PrepImageThumbs, useImageAttach, useImageDrop } from "../components/prep/ImageAttach";
-import { ActivityCard, AskCard, ResourcesCard, ReviseCard } from "../components/prep/TurnCards";
+import { ActivityCard, AskCard, ChatCard, ResourcesCard, ReviseCard, WorksheetTurnCard } from "../components/prep/TurnCards";
 import { WorksheetCard } from "../components/prep/WorksheetCard";
 import { MemorySuggestionCards, habitWordsSent, useMemorySuggestions } from "../components/memory/MemorySuggestions";
 import { useReadyTemplates } from "../components/template/TemplateSelect";
@@ -44,13 +44,13 @@ import {
   AI_DISCLAIMER,
   DELETE_CONFIRM,
   PREP_SESSIONS_CHANGED,
-  FOLLOW_PLACEHOLDER,
   KIND_LABEL,
   NEXT_LABEL,
-  REVISE_PLACEHOLDER,
+  CHAT_PLACEHOLDER,
   WORKING_LINE,
   activityOf,
   answerOf,
+  chatResult,
   hasWorksheet,
   isNextKind,
   isWorksheetKind,
@@ -59,6 +59,34 @@ import {
   resourcesOf,
   sessionTitle,
 } from "../lib/prep";
+
+/** Below this width the conversation and the worksheet are two tabs of one column (prep.css matches). */
+const NARROW_QUERY = "(max-width: 68.6875rem)";
+
+function useNarrow(): boolean {
+  const read = () => {
+    try {
+      return typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches;
+    } catch {
+      return false;
+    }
+  };
+  const [narrow, setNarrow] = useState(read);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const query = window.matchMedia(NARROW_QUERY);
+    const on = () => setNarrow(query.matches);
+    on();
+    query.addEventListener?.("change", on);
+    return () => query.removeEventListener?.("change", on);
+  }, []);
+  return narrow;
+}
+
+/** The worksheet preview's block, scrolled into view (the preview's blocks carry `sheet-block-<id>`). */
+function scrollToBlock(blockId: string) {
+  document.getElementById(`sheet-block-${blockId}`)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+}
 
 /** How long changed blocks stay highlighted after a revision. */
 const FLASH_MS = 4000;
@@ -76,7 +104,7 @@ function reviseTargets(turns: PrepTurn[]): Map<number, number> {
   let current: number | null = null;
   for (const t of turns) {
     if (isWorksheetKind(t.kind) && t.worksheet) current = t.worksheet.id;
-    if (t.kind === "revise" && current !== null) target.set(t.id, current);
+    if ((t.kind === "revise" || t.kind === "chat") && current !== null) target.set(t.id, current);
   }
   return target;
 }
@@ -100,8 +128,6 @@ function PrepSessionView({ id }: { id: number }) {
   // A taller composer for long instructions (the expand corner, as in chat composers).
   const [composerTall, setComposerTall] = useState(false);
   const [draft, setDraft] = useState("");
-  // With a worksheet in the session the bar edits it by default; 問 Manna asks a question instead.
-  const [barMode, setBarMode] = useState<"revise" | "ask">("revise");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [headError, setHeadError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -110,6 +136,11 @@ function PrepSessionView({ id }: { id: number }) {
   const [flash, setFlash] = useState<{ worksheetId: number; ids: ReadonlySet<string> } | null>(null);
   // 「改這一區」: the bottom bar revises one block of one worksheet instead of the whole worksheet.
   const [target, setTarget] = useState<{ worksheetId: number; blockId: string; name: string } | null>(null);
+  const [undone, setUndone] = useState(0);
+  // The worksheet shown beside the conversation: the turn the teacher chose, else the latest one.
+  const [pickedTurn, setPickedTurn] = useState<number | null>(null);
+  const narrow = useNarrow();
+  const [tab, setTab] = useState<"chat" | "sheet">("chat");
   const [proposalsKey, setProposalsKey] = useState<Record<number, number>>({});
   const draftRef = useRef<HTMLTextAreaElement>(null);
   // 修改課文 / 只選要用的段落 open here; `materialChanged`: the next try uses what was changed.
@@ -127,13 +158,17 @@ function PrepSessionView({ id }: { id: number }) {
     if (before) {
       const fresh = next.turns.find((t) => !before.turns.some((p) => p.id === t.id));
       if (fresh) setArrived(fresh.id);
+      if (fresh && isWorksheetKind(fresh.kind)) setPickedTurn(null);
       const targets = reviseTargets(next.turns);
       for (const t of next.turns) {
         const was = before.turns.find((p) => p.id === t.id);
         const reply = replyOf(t);
+        const chat = chatResult(t);
+        const changedIds =
+          reply?.changed_block_ids ?? (chat ? chat.changes.flatMap((c) => (c.block_id ? [c.block_id] : [])) : []);
         const wsId = targets.get(t.id);
-        if (t.status === "done" && was?.status !== "done" && reply && reply.changed_block_ids.length > 0 && wsId) {
-          setFlash({ worksheetId: wsId, ids: new Set(reply.changed_block_ids) });
+        if (t.status === "done" && was?.status !== "done" && changedIds.length > 0 && wsId) {
+          setFlash({ worksheetId: wsId, ids: new Set(changedIds) });
         }
       }
     }
@@ -185,12 +220,20 @@ function PrepSessionView({ id }: { id: number }) {
     return () => clearTimeout(timer);
   }, [flash]);
 
+  // A chat turn changed blocks: the preview scrolls to the first one once the new version is in.
+  useEffect(() => {
+    const first = flash ? [...flash.ids][0] : undefined;
+    if (!first) return undefined;
+    const timers = [400, 1500].map((ms) => setTimeout(() => scrollToBlock(first), ms));
+    return () => timers.forEach(clearTimeout);
+  }, [flash]);
+
   const onLabels = useCallback((worksheetId: number, map: Record<string, string>) => {
     setLabels((prev) => ({ ...prev, [worksheetId]: map }));
   }, []);
 
-  // Pictures go only with a revision of the worksheet (not a question to Manna).
-  const canAttach = session !== null && hasWorksheet(session) && barMode === "revise";
+  // Pictures go with a worksheet's changes: only when the conversation has a worksheet.
+  const canAttach = session !== null && hasWorksheet(session);
   const drop = useImageDrop(canAttach && !(session?.running || sending), attach.add);
 
   if (loadError && !session) {
@@ -210,6 +253,12 @@ function PrepSessionView({ id }: { id: number }) {
   const targets = reviseTargets(session.turns);
   const next = session.next.filter(isNextKind);
   const sheetIds = new Set(session.turns.flatMap((t) => (t.worksheet ? [t.worksheet.id] : [])));
+  // The worksheets of this conversation, and the one the right pane (and the bar) works on.
+  const sheetTurns = session.turns.filter((t) => isWorksheetKind(t.kind) && (t.worksheet || t.status === "running"));
+  const latestSheet = sheetTurns[sheetTurns.length - 1] ?? null;
+  const sheetTurn = sheetTurns.find((t) => t.id === pickedTurn) ?? latestSheet;
+  const split = sheetTurn !== null;
+  const currentSheet = sheetTurn?.worksheet ?? null;
   const reviseSuggestions = memory.items.filter(
     (c) => c.source === "block_revise" && c.worksheet_id !== null && sheetIds.has(c.worksheet_id),
   );
@@ -219,6 +268,8 @@ function PrepSessionView({ id }: { id: number }) {
     setSendError(null);
     try {
       apply(await api.createPrepTurn(id, body));
+      // What the teacher typed is also read for habits (the suggestions ask again).
+      if (body.kind === "chat") habitWordsSent();
       return true;
     } catch (err) {
       setSendError(errorMessage(err));
@@ -281,11 +332,15 @@ function PrepSessionView({ id }: { id: number }) {
       await reviseTarget(target, text);
       return;
     }
-    // No kind: the server revises the worksheet if there is one, otherwise answers.
-    const body: CreatePrepTurnRequest =
-      session && hasWorksheet(session) && barMode === "ask"
-        ? { kind: "ask", request: text }
-        : { request: text, ...(attach.imageIds.length > 0 ? { image_ids: attach.imageIds } : {}) };
+    // Free text is always a chat turn: Manna answers, changes the worksheet, or both.
+    const body: CreatePrepTurnRequest = {
+      kind: "chat",
+      request: text,
+      ...(sheetTurn?.worksheet && latestSheet && sheetTurn.id !== latestSheet.id
+        ? { worksheet_id: sheetTurn.worksheet.id }
+        : {}),
+      ...(canAttach && attach.imageIds.length > 0 ? { image_ids: attach.imageIds } : {}),
+    };
     if (await send(body)) {
       setDraft("");
       attach.clear();
@@ -296,6 +351,25 @@ function PrepSessionView({ id }: { id: number }) {
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
     e.preventDefault();
     void sendDraft();
+  }
+
+  /** 復原這一輪: the worksheet goes back; the session and the preview are read again. */
+  async function undoTurn(turnId: number) {
+    await api.undoPrepTurn(id, turnId);
+    setUndone((n) => n + 1);
+    apply(await api.getPrepSession(id));
+  }
+
+  /** 「在右邊看」: this worksheet becomes the one beside the conversation (a tab of its own on a narrow screen). */
+  function showSheet(turnId: number) {
+    setPickedTurn(turnId);
+    if (narrow) setTab("sheet");
+  }
+
+  /** A change in 「這一輪改了」: the preview scrolls to that block. */
+  function showBlock(blockId: string) {
+    if (narrow) setTab("sheet");
+    setTimeout(() => scrollToBlock(blockId), narrow ? 80 : 0);
   }
 
   async function patch(body: UpdatePrepSessionRequest) {
@@ -346,23 +420,44 @@ function PrepSessionView({ id }: { id: number }) {
     return turn.id === lastTurn?.id && lastPanel.visible && !!turn.progress;
   }
 
+  /** A worksheet turn's 「進度」 panel shows in the right pane, beside the sheet it makes. */
+  function ownsPane(turn: PrepTurn) {
+    return isWorksheetKind(turn.kind) && turn.kind !== "kit" && turn.id === sheetTurn?.id;
+  }
+
   function worksheetCard(turn: PrepTurn) {
     const wsId = turn.worksheet?.id;
-    const lastRevise = [...session!.turns].reverse().find((t) => t.kind === "revise" && targets.get(t.id) === wsId);
+    const lastRevise = [...session!.turns]
+      .reverse()
+      .find((t) => (t.kind === "revise" || t.kind === "chat") && targets.get(t.id) === wsId);
+    const lastVersion = lastRevise ? (chatResult(lastRevise)?.version_no ?? "") : "";
     return (
       <WorksheetCard
         turn={turn}
         stepsShown={stepsShown(turn)}
-        refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}`}
+        refreshKey={`${turn.worksheet?.version_no ?? 0}-${lastRevise?.id ?? 0}-${lastRevise?.status ?? ""}-${lastVersion}-${undone}`}
         highlight={flash && flash.worksheetId === wsId ? flash.ids : EMPTY}
         onLabels={onLabels}
         target={target && target.worksheetId === wsId ? target.blockId : null}
         onTarget={(worksheetId, blockId, name) => {
           setTarget({ worksheetId, blockId, name });
-          setBarMode("revise");
-          draftRef.current?.focus();
+          setTab("chat");
+          setTimeout(() => draftRef.current?.focus(), 0);
         }}
         proposalsKey={wsId ? proposalsKey[wsId] : undefined}
+      />
+    );
+  }
+
+  /** The worksheet turn in the conversation: a line, not the preview (that is beside it). */
+  function sheetSummary(turn: PrepTurn) {
+    return (
+      <WorksheetTurnCard
+        turn={turn}
+        current={sheetTurn?.id === turn.id}
+        split={split}
+        narrow={narrow}
+        onShow={() => showSheet(turn.id)}
       />
     );
   }
@@ -387,7 +482,7 @@ function PrepSessionView({ id }: { id: number }) {
               </p>
             )
           )}
-          {(turn.worksheet || turn.status === "running") && worksheetCard(turn)}
+          {(turn.worksheet || turn.status === "running") && sheetSummary(turn)}
           {turn.status === "failed" && failed(turn)}
           <SiopCheckPanel sessionId={id} turn={turn} quiet={stepsShown(turn)} />
         </div>
@@ -396,7 +491,7 @@ function PrepSessionView({ id }: { id: number }) {
     if (isWorksheetKind(turn.kind) && (turn.status !== "failed" || turn.worksheet)) {
       return (
         <>
-          {worksheetCard(turn)}
+          {sheetSummary(turn)}
           {turn.status === "failed" && failed(turn)}
           <SiopCheckPanel sessionId={id} turn={turn} quiet={stepsShown(turn)} />
         </>
@@ -423,6 +518,23 @@ function PrepSessionView({ id }: { id: number }) {
     }
     const resources = resourcesOf(turn);
     if (resources) return <ResourcesCard resources={resources} onOpenMaterial={setViewing} />;
+    const chat = chatResult(turn);
+    if (chat) {
+      return (
+        <ChatCard
+          result={chat}
+          interactionId={turn.interaction_id}
+          disabled={locked}
+          onFollowUp={(q) => void send({ kind: "chat", request: q })}
+          onUndo={() => undoTurn(turn.id)}
+          onShowBlock={showBlock}
+          onShowSheet={narrow ? (blockId) => {
+            setTab("sheet");
+            if (blockId) setTimeout(() => scrollToBlock(blockId), 80);
+          } : undefined}
+        />
+      );
+    }
     const answer = answerOf(turn);
     if (answer) {
       return (
@@ -463,7 +575,36 @@ function PrepSessionView({ id }: { id: number }) {
   }
 
   return (
-    <div className={`prep-session${viewing !== null ? " with-viewer" : ""}`}>
+    <div className={`prep-session${viewing !== null ? " with-viewer" : ""}${split ? " is-split" : ""}`}>
+      {split && narrow && (
+        <div className="prep-split-tabs" role="tablist" aria-label="對話或學習單">
+          {(
+            [
+              ["chat", "對話"],
+              ["sheet", "學習單"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              id={`${ids}-tab-${key}`}
+              aria-selected={tab === key}
+              aria-controls={`${ids}-pane-${key}`}
+              className={tab === key ? "is-current" : ""}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      <section
+        id={`${ids}-pane-chat`}
+        className="prep-split-chat"
+        aria-label="對話"
+        hidden={split && narrow && tab !== "chat"}
+      >
       <div className="page-head prep-head">
         <p className="crumbs">
           <Link to="/prep">我的作品</Link>
@@ -578,7 +719,7 @@ function PrepSessionView({ id }: { id: number }) {
             </p>
             <PrepImageThumbs sessionId={id} images={turn.images} />
             <section className="prep-result" aria-label={`${KIND_LABEL[turn.kind]}（第 ${turn.seq} 則）`}>
-              {stepsShown(turn) && turn.progress && (
+              {stepsShown(turn) && turn.progress && !ownsPane(turn) && (
                 <RunProgressPanel
                   progress={turn.progress}
                   error={turn.error}
@@ -634,6 +775,9 @@ function PrepSessionView({ id }: { id: number }) {
         {/* From 「改這一區」 (on a card above or from this bar): asked here, where she is typing. */}
         <MemorySuggestionCards items={reviseSuggestions} onDone={memory.drop} onRemembered={memory.reload} />
         <ErrorText message={sendError} />
+        {currentSheet && !target && (
+          <p className="prep-current-sheet">目前的學習單：{currentSheet.title}</p>
+        )}
         {target && (
           <p className="prep-target" role="status">
             <span className="prep-target-chip">
@@ -705,9 +849,7 @@ function PrepSessionView({ id }: { id: number }) {
                 ? WORKING_LINE
                 : target
                   ? `想怎麼改 ${target.name}？例如：第 2 題太難，改簡單一點`
-                  : hasWorksheet(session) && barMode === "revise"
-                    ? REVISE_PLACEHOLDER
-                    : FOLLOW_PLACEHOLDER
+                  : CHAT_PLACEHOLDER
             }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
@@ -715,29 +857,6 @@ function PrepSessionView({ id }: { id: number }) {
           />
           <div className="prep-composer-tools">
             {canAttach && <AttachButton onFiles={attach.add} disabled={locked} />}
-            {hasWorksheet(session) && (
-              <div className="ws-seg prep-bar-mode" role="radiogroup" aria-label="要改學習單還是問問題">
-                {(
-                  [
-                    ["revise", "改學習單"],
-                    ["ask", "問 Manna"],
-                  ] as const
-                ).map(([mode, label]) => (
-                  <label key={mode}>
-                    <input
-                      type="radio"
-                      name={`${ids}-mode`}
-                      checked={barMode === mode}
-                      onChange={() => {
-                        setBarMode(mode);
-                        if (mode === "ask") setTarget(null);
-                      }}
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-            )}
             <span className="prep-composer-hint" aria-hidden="true">
               Enter 送出・Shift＋Enter 換行
             </span>
@@ -766,6 +885,42 @@ function PrepSessionView({ id }: { id: number }) {
         )}
         <p className="prep-disclaimer">{AI_DISCLAIMER}</p>
       </form>
+      </section>
+
+      {sheetTurn && (
+        <aside
+          id={`${ids}-pane-sheet`}
+          className="prep-split-sheet"
+          aria-label="目前的學習單"
+          hidden={narrow && tab !== "sheet"}
+        >
+          {sheetTurns.length > 1 && (
+            <p className="prep-sheet-picker">
+              <label htmlFor={`${ids}-sheet-pick`}>學習單</label>
+              <select
+                id={`${ids}-sheet-pick`}
+                value={sheetTurn.id}
+                onChange={(e) => setPickedTurn(Number(e.target.value))}
+              >
+                {sheetTurns.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {`第 ${t.seq} 則：${t.worksheet?.title.trim() || KIND_LABEL[t.kind]}`}
+                  </option>
+                ))}
+              </select>
+            </p>
+          )}
+          {stepsShown(sheetTurn) && sheetTurn.progress && ownsPane(sheetTurn) && (
+            <RunProgressPanel
+              progress={sheetTurn.progress}
+              error={sheetTurn.error}
+              onClose={lastPanel.close}
+              className="prep-turn-progress"
+            />
+          )}
+          <div key={sheetTurn.id}>{worksheetCard(sheetTurn)}</div>
+        </aside>
+      )}
 
       {viewing !== null && (
         <MaterialViewer mode="panel" materialId={viewing} open onClose={() => setViewing(null)} />

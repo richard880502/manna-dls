@@ -144,6 +144,7 @@ import type {
   WsBlockHistory,
   PrepImage,
   PrepSession,
+  PrepTurn,
   PrepSessionList,
   CreatePrepSessionRequest,
   ObjectiveDraftProgress,
@@ -612,6 +613,9 @@ export const api = {
   createPrepTurn: (id: number, body: CreatePrepTurnRequest) =>
     post<PrepSession>(`/prep-sessions/${id}/turns`, body),
   /** The URL of a 教學套件 turn's single DOCX (教學流程, each level's student version, 教師版). */
+  /** 復原這一輪（chat）對學習單的修改；之後又改過會是 409（含中文說明）。回傳更新後的這一輪 */
+  undoPrepTurn: (id: number, turnId: number) => post<PrepTurn>(`/prep-sessions/${id}/turns/${turnId}/undo`),
+
   prepKitPath: (id: number, turnId: number) => `/api/prep-sessions/${id}/turns/${turnId}/kit?format=docx`,
   /** 409 while the kit is still being made; 400 for a turn that is not a kit. */
   exportPrepKit: (id: number, turnId: number) =>

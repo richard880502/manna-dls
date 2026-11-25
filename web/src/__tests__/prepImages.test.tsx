@@ -276,18 +276,15 @@ describe("the composer: attaching pictures", () => {
     nextImage = 100;
   });
 
-  it("has 附上圖片 in 改學習單 mode and the privacy note; hidden in 問 Manna mode", async () => {
+  it("has 附上圖片 and the privacy note when there is a worksheet, and no mode toggle", async () => {
     mockApi(pageRoutes());
-    const user = userEvent.setup();
     renderApp("/prep/7");
     await bar();
     expect(screen.getByRole("button", { name: "附上圖片" })).toBeInTheDocument();
     expect(fileInput()).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
     expect(fileInput()).toHaveAttribute("multiple");
     expect(screen.getByText("請不要上傳有學生臉孔或姓名的照片。")).toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "問 Manna" }));
-    expect(screen.queryByRole("button", { name: "附上圖片" })).not.toBeInTheDocument();
-    expect(screen.queryByText("請不要上傳有學生臉孔或姓名的照片。")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "問 Manna" })).not.toBeInTheDocument();
   });
 
   it("a chosen file uploads and shows a thumbnail; the send carries image_ids and clears it", async () => {
@@ -306,6 +303,7 @@ describe("the composer: attaching pictures", () => {
     await user.click(send);
     await waitFor(() => expect(api.callsTo("POST", "/api/prep-sessions/7/turns")).toHaveLength(1));
     expect(api.lastBody("POST", "/api/prep-sessions/7/turns")).toEqual({
+      kind: "chat",
       request: "照這張圖加一張圖",
       image_ids: [100],
     });

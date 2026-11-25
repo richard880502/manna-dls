@@ -237,7 +237,8 @@ describe("the 備課對話", () => {
     });
     renderApp("/prep/7");
     const region = await screen.findByRole("region", { name: "進度" });
-    expect(region.closest(".prep-result")).not.toBeNull();
+    // The worksheet's steps stand in the pane beside the conversation (the sheet is there).
+    expect(region.closest(".prep-split-sheet")).not.toBeNull();
     expect(within(region).getAllByRole("listitem")[1]).toHaveAttribute("aria-current", "step");
   });
 

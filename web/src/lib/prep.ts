@@ -7,6 +7,7 @@ import type {
   ActivityStep,
   LanguageGoalCategory,
   PrepAskResult,
+  PrepChatResult,
   PrepKind,
   PrepResources,
   PrepReviseResult,
@@ -42,6 +43,7 @@ export const KIND_LABEL: Record<PrepKind, string> = {
   ...ACTION_LABEL,
   ask: "問 Manna",
   revise: "修改學習單",
+  chat: "和 Manna 對話",
   comprehension: "閱讀理解題",
   tiered: "差異化學習單",
   kit: "教學套件",
@@ -101,6 +103,21 @@ export function answerOf(turn: PrepTurn): PrepAskResult | null {
   const r = turn.result as Partial<PrepAskResult> | null;
   return turn.kind === "ask" && r && typeof r.answer === "string" ? (r as PrepAskResult) : null;
 }
+
+export function chatResult(turn: PrepTurn): PrepChatResult | null {
+  const r = turn.result as Partial<PrepChatResult> | null;
+  return turn.kind === "chat" && r && typeof r.answer === "string" ? (r as PrepChatResult) : null;
+}
+
+/** An answer's paragraphs: split on blank lines, empty ones dropped. */
+export function paragraphsOf(text: string): string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+export const CHAT_PLACEHOLDER = "問問題，或說要怎麼改學習單（例如：把 C 區第 2 題改成比較表）";
 
 export function replyOf(turn: PrepTurn): PrepReviseResult | null {
   const r = turn.result as Partial<PrepReviseResult> | null;
