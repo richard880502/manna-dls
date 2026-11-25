@@ -1345,6 +1345,20 @@
     margin-left: 0;
   }
 
+  /* 對照教材 beside the worksheet: the worksheet is the left column now, so the material slides
+   * in from the right over the conversation (not needed while comparing) and casts a shadow
+   * there, instead of covering the worksheet it is compared with. */
+  .prep-session.is-split .material-viewer,
+  .prep-session.is-split.with-viewer .material-viewer,
+  :root:has(.shell.is-collapsed) .prep-session.is-split.with-viewer .material-viewer {
+    right: 0;
+    left: auto;
+    width: min(28rem, 100vw - var(--shell-left));
+    border-right: 0;
+    border-left: var(--rule-hair) solid var(--color-rule-strong);
+    box-shadow: -0.25rem 0 1.5rem rgb(0 0 0 / 0.1);
+  }
+
   .prep-split-chat,
   .prep-split-sheet {
     position: sticky;
@@ -1411,5 +1425,17 @@
   .prep-session.is-resizing .prep-split-chat,
   .prep-session.is-resizing .prep-split-sheet {
     pointer-events: none;
+  }
+}
+
+@media (min-width: 68.75rem) and (prefers-reduced-motion: no-preference) {
+  .prep-session.is-split .material-viewer {
+    animation-name: viewer-in-right;
+  }
+}
+
+@keyframes viewer-in-right {
+  from {
+    transform: translateX(100%);
   }
 }
