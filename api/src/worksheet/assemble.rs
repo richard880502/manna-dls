@@ -1161,9 +1161,48 @@ fn has_content(b: &SheetBlock) -> bool {
         && b.teacher_notes.is_none())
 }
 
+/// A block's own number of a question: the `n` of its id `<block>-i<n>`, which is the number
+/// the model saw (and wrote in steps and instructions: 「Restate the phrase in item 2」).
+fn own_number(item_id: &str) -> Option<usize> {
+    item_id.rsplit_once("-i")?.1.parse().ok()
+}
+
+/// 「item 2」「question 1」「items 2 and 3」「questions 1–3」「Q2」: a reference by number.
+static ITEM_REF: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)\b(items?|questions?|q)(\s*#?\s*)(\d{1,2}(?:\s*(?:,\s*(?:and\s+|or\s+)?|and|or|&|–|—|-|to)\s*\d{1,2})*)\b",
+    )
+    .expect("valid regex")
+});
+
+static DIGITS: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\d{1,2}").expect("valid regex"));
+
+/// The sheet numbers its questions through the whole sheet (A: 1–3, B: 4–6 …), but the model
+/// numbers them inside their block, so 「item 2」 in block B is question 5 on paper. Rewrites every
+/// such reference to the number this version prints; a number with no question of the block in
+/// this version stays as it was.
+fn renumber_refs(text: &str, printed: &HashMap<usize, usize>) -> String {
+    if printed.is_empty() || printed.iter().all(|(own, no)| own == no) {
+        return text.to_string();
+    }
+    ITEM_REF
+        .replace_all(text, |c: &regex::Captures<'_>| {
+            let numbers = DIGITS.replace_all(&c[3], |d: &regex::Captures<'_>| {
+                d[0].parse::<usize>()
+                    .ok()
+                    .and_then(|n| printed.get(&n))
+                    .map_or_else(|| d[0].to_string(), |n| n.to_string())
+            });
+            format!("{}{}{}", &c[1], &c[2], numbers)
+        })
+        .into_owned()
+}
+
 /// The sheet one audience gets for one version. Switched-off blocks and blocks with nothing to
 /// print in this version are left out, items and scaffolds follow their `levels`, items are
-/// numbered through the whole sheet. Answers, evidence and teacher notes exist only for
+/// numbered through the whole sheet (and references to a block's questions by number follow
+/// the printed numbers, [`renumber_refs`]). Answers, evidence and teacher notes exist only for
 /// [`Audience::Teacher`].
 pub fn project(title: &str, content: &Content, level: Level, audience: Audience) -> Sheet {
     let teacher = audience == Audience::Teacher;
@@ -1178,6 +1217,15 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
         if b.bloom.is_some() && !b.items.is_empty() && !b.items.iter().any(|i| shown(&i.levels)) {
             continue;
         }
+        // The block's own question numbers and the numbers this version prints for them.
+        let printed: HashMap<usize, usize> = b
+            .items
+            .iter()
+            .filter(|i| shown(&i.levels))
+            .enumerate()
+            .filter_map(|(k, i)| own_number(&i.id).map(|own| (own, no + k + 1)))
+            .collect();
+        let refs = |text: &str| renumber_refs(text, &printed);
         let items = b
             .items
             .iter()
@@ -1192,7 +1240,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     id: i.id.clone(),
                     no,
                     answer_format: i.answer_format.clone(),
-                    prompt: i.prompt.trim().to_string(),
+                    prompt: refs(i.prompt.trim()),
                     options: if uses_choices(i.answer_format.as_deref()) {
                         i.options
                             .iter()
@@ -1205,16 +1253,16 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     lines: answer_lines(i.answer_format.as_deref(), level),
                     table: (i.answer_format.as_deref() == Some(FMT_TABLE))
                         .then(|| SheetTable::of(&i.table_or_default())),
-                    answer: (teacher && !answer.is_empty()).then(|| answer.to_string()),
+                    answer: (teacher && !answer.is_empty()).then(|| refs(answer)),
                     evidence: (teacher && !i.evidence.trim().is_empty())
-                        .then(|| i.evidence.trim().to_string()),
+                        .then(|| refs(i.evidence.trim())),
                     bloom: teacher.then_some(i.bloom),
                     hint: (tier.is_none() && level == Level::Basic && !i.hint.trim().is_empty())
-                        .then(|| i.hint.trim().to_string()),
+                        .then(|| refs(i.hint.trim())),
                     frame: (tier.is_none()
                         && frame_shown(level, &content.levels)
                         && !i.frame.trim().is_empty())
-                    .then(|| i.frame.trim().to_string()),
+                    .then(|| refs(i.frame.trim())),
                     support: tier.and_then(item_support),
                     scoring: tier
                         .filter(|t| teacher && !t.scoring.trim().is_empty())
@@ -1242,13 +1290,13 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
             kind: b.kind,
             label,
             title: b.title.trim().to_string(),
-            instructions: b.instructions.trim().to_string(),
+            instructions: refs(b.instructions.trim()),
             // A procedural scaffold with a heading of its own is a box (below).
             steps: scaffolds
                 .iter()
                 .filter(|s| s.kind_type == ScaffoldType::Procedural && s.own_heading().is_none())
                 .flat_map(|s| s.steps.iter())
-                .map(|s| s.trim().to_string())
+                .map(|s| refs(s.trim()))
                 .filter(|s| !s.is_empty())
                 .collect(),
             vocabulary: b
@@ -1284,7 +1332,7 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                         kind_type: s.kind_type,
                         kind: s.kind.clone(),
                         heading: heading.to_string(),
-                        content: content.to_string(),
+                        content: refs(content),
                     })
                 })
                 .collect(),
@@ -2792,6 +2840,144 @@ mod item_frame_tests {
             project("T", &only, Level::Advanced, Audience::Student).blocks[0].items[0]
                 .frame
                 .is_some()
+        );
+    }
+}
+
+#[cfg(test)]
+mod item_ref_tests {
+    use super::*;
+
+    fn item(id: &str, levels: &[Level], prompt: &str) -> Item {
+        Item {
+            id: id.into(),
+            answer_format: Some("簡答題".into()),
+            prompt: prompt.into(),
+            levels: levels.to_vec(),
+            origin: Origin::Ai,
+            ..Item::default()
+        }
+    }
+
+    fn steps(block: &str, steps: &[&str], levels: &[Level]) -> Scaffold {
+        Scaffold {
+            id: format!("{block}-sp1"),
+            kind_type: ScaffoldType::Procedural,
+            kind: KIND_STEPS.into(),
+            content: String::new(),
+            steps: steps.iter().map(|s| s.to_string()).collect(),
+            levels: levels.to_vec(),
+            auto: true,
+            origin: Origin::Ai,
+            heading: None,
+        }
+    }
+
+    /// A warm-up of three questions (printed 1–3), then a block whose own questions 1–3 print
+    /// as 4–6 (its question 3 is in the advanced version only).
+    fn content() -> Content {
+        let all = Level::ALL.to_vec();
+        let warm = Block {
+            id: WARMUP_ID.into(),
+            kind: BlockKind::Warmup,
+            title: "Warm-up".into(),
+            instructions: "In this activity, you will answer question 1 first.".into(),
+            items: (1..=3)
+                .map(|n| item(&format!("{WARMUP_ID}-i{n}"), &all, "Warm-up question."))
+                .collect(),
+            ..Block::default()
+        };
+        let act = Block {
+            id: "b2".into(),
+            title: "Paragraphs 1–3".into(),
+            instructions:
+                "Paragraphs 1–3 introduce the poet. Watch your teacher answer question 1 first."
+                    .into(),
+            items: vec![
+                item("b2-i1", &all, "Who wrote the poem?"),
+                item(
+                    "b2-i2",
+                    &all,
+                    "Use your answer to item 1. What does the phrase mean?",
+                ),
+                item("b2-i3", &[Level::Advanced], "Why?"),
+            ],
+            scaffolds: vec![steps(
+                "b2",
+                &[
+                    "Reread paragraphs 1–3.",
+                    "Restate the phrase in item 2 in plain English.",
+                    "Compare your answers to items 1 and 2.",
+                    "Check Q2 against paragraph 2.",
+                ],
+                &all,
+            )],
+            ..Block::default()
+        };
+        Content {
+            blocks: vec![warm, act],
+            levels: all,
+            ..Content::default()
+        }
+    }
+
+    #[test]
+    fn references_by_number_follow_the_printed_numbers() {
+        let sheet = project("T", &content(), Level::Standard, Audience::Student);
+        // The first block's numbers are already the printed ones.
+        assert_eq!(
+            sheet.blocks[0].instructions,
+            "In this activity, you will answer question 1 first."
+        );
+        let b = &sheet.blocks[1];
+        assert_eq!(b.items.iter().map(|i| i.no).collect::<Vec<_>>(), vec![4, 5]);
+        assert_eq!(
+            b.instructions,
+            "Paragraphs 1–3 introduce the poet. Watch your teacher answer question 4 first."
+        );
+        assert_eq!(
+            b.steps,
+            vec![
+                "Reread paragraphs 1–3.",
+                "Restate the phrase in item 5 in plain English.",
+                "Compare your answers to items 4 and 5.",
+                "Check Q5 against paragraph 2.",
+            ]
+        );
+        assert_eq!(
+            b.items[1].prompt,
+            "Use your answer to item 4. What does the phrase mean?"
+        );
+    }
+
+    #[test]
+    fn a_question_missing_from_a_version_keeps_its_number() {
+        let mut c = content();
+        c.blocks[1].scaffolds[0].steps = vec!["Answer item 3 last.".into()];
+        let standard = project("T", &c, Level::Standard, Audience::Student);
+        assert_eq!(standard.blocks[1].steps, vec!["Answer item 3 last."]);
+        let advanced = project("T", &c, Level::Advanced, Audience::Student);
+        assert_eq!(advanced.blocks[1].steps, vec!["Answer item 6 last."]);
+    }
+
+    #[test]
+    fn only_question_references_change() {
+        let printed: HashMap<usize, usize> = [(1, 7), (2, 8)].into_iter().collect();
+        assert_eq!(
+            renumber_refs("Questions 1–2, then paragraph 2 and step 1.", &printed),
+            "Questions 7–8, then paragraph 2 and step 1."
+        );
+        assert_eq!(
+            renumber_refs("items 1, 2 and 3", &printed),
+            "items 7, 8 and 3"
+        );
+        assert_eq!(
+            renumber_refs("Ask an inquiry 2 times.", &printed),
+            "Ask an inquiry 2 times."
+        );
+        assert_eq!(
+            renumber_refs("Line 12 of item 1", &printed),
+            "Line 12 of item 7"
         );
     }
 }

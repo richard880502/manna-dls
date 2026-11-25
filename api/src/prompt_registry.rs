@@ -193,7 +193,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "worksheet_warmup",
         name_zh: "暖身活動（一般學習單）",
         group: G_WORKSHEET,
-        description: "一般學習單產生的第 2 步：設計暖身（喚醒背景知識、關鍵字彙）。「照我的學習單做」不會用這一個，它用「照我的學習單做：每一區的題目」。",
+        description: "一般學習單產生的第 2 步：設計暖身（喚醒背景知識、關鍵字彙）。暖身的指示是活動介紹（In this activity, you will …），作答步驟由程序鷹架另外印。「照我的學習單做」不會用這一個，它用「照我的學習單做：每一區的題目」。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -680,7 +680,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_warmup",
         name_zh: "逐步設計第 6 步：暖身與關鍵字彙",
         group: G_SOP,
-        description: "逐步設計第 6 步：設計喚醒背景知識的活動，並從程式依詞彙表挑出的候選字裡選關鍵字彙。字彙級別一律由程式帶入，模型不輸出級別。",
+        description: "逐步設計第 6 步：設計喚醒背景知識的活動，並從程式依詞彙表挑出的候選字裡選關鍵字彙。暖身的指示是活動介紹（In this activity, you will …），不重複作答步驟。字彙級別一律由程式帶入，模型不輸出級別。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),

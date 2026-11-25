@@ -618,7 +618,7 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     json!({
         "background_activities": [{
             "title_en": "Before you read",
-            "instructions_en": "Think on your own first. Then tell a partner.",
+            "instructions_en": "In this activity, you will think about the title and guess what the text is about.",
             "prompts_en": [
                 format!("Look at {about}. What do you think the text is about?"),
                 "Have you ever been in a similar situation? Tell your partner in two sentences.",

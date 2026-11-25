@@ -98,7 +98,7 @@ async fn history_lists_every_version_with_author_note_and_restore_source() {
     let app = test_app!();
     let pi = app.pi_token().await;
     let (_, v) = app
-        .get("/api/admin/prompts/worksheet_warmup/versions", Some(&pi))
+        .get("/api/admin/prompts/prep_ask/versions", Some(&pi))
         .await;
     let original = v[0].clone();
     assert_eq!(original["version_no"], 1);
@@ -110,7 +110,7 @@ async fn history_lists_every_version_with_author_note_and_restore_source() {
         &app,
         &pi,
         json!({
-            "prompt_key": "worksheet_warmup",
+            "prompt_key": "prep_ask",
             "system_text": format!("{system}\n補一句。"),
             "user_template": user,
             "note": "  加一句提醒  ",
@@ -128,7 +128,7 @@ async fn history_lists_every_version_with_author_note_and_restore_source() {
         &app,
         &pi,
         json!({
-            "prompt_key": "worksheet_warmup",
+            "prompt_key": "prep_ask",
             "system_text": system,
             "user_template": user,
             "restored_from": 1,
@@ -140,7 +140,7 @@ async fn history_lists_every_version_with_author_note_and_restore_source() {
     assert_eq!(v3["restored_from"], 1);
 
     let (s, list) = app
-        .get("/api/admin/prompts/worksheet_warmup/versions", Some(&pi))
+        .get("/api/admin/prompts/prep_ask/versions", Some(&pi))
         .await;
     assert_eq!(s, StatusCode::OK);
     let numbers: Vec<i64> = list
@@ -160,7 +160,7 @@ async fn history_lists_every_version_with_author_note_and_restore_source() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|p| p["prompt_key"] == "worksheet_warmup")
+        .find(|p| p["prompt_key"] == "prep_ask")
         .unwrap();
     assert_eq!(latest["version_no"], 3);
 
@@ -174,8 +174,8 @@ async fn history_lists_every_version_with_author_note_and_restore_source() {
     assert_eq!(
         payloads,
         [
-            json!({ "prompt_key": "worksheet_warmup", "version_no": 2, "restored_from": null }),
-            json!({ "prompt_key": "worksheet_warmup", "version_no": 3, "restored_from": 1 }),
+            json!({ "prompt_key": "prep_ask", "version_no": 2, "restored_from": null }),
+            json!({ "prompt_key": "prep_ask", "version_no": 3, "restored_from": 1 }),
         ]
     );
 
