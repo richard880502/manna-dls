@@ -513,6 +513,7 @@ mod tests {
             "sop_analysis",
             "sop_objectives",
             "sop_objective_english",
+            "sop_text_english",
             "sop_paragraph_goals",
             "sop_scaffolds",
             "teacher_memory_extract",

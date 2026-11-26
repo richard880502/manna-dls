@@ -558,7 +558,8 @@ export type ScaffoldCode =
   | "SC-SOP-TASKS"
   | "SC-SOP-WARMUP"
   | "SC-SOP-EXIT"
-  | "SC-SOP-ENGLISH";
+  | "SC-SOP-ENGLISH"
+  | "SC-SOP-TEXT-ENGLISH";
 export type ScaffoldAction = "show" | "expand" | "use" | "skip";
 
 export interface ScaffoldEventRequest {
@@ -1367,6 +1368,8 @@ export interface SopWarmupSuggestion {
   }>;
   candidates_available: number;
   levels_available: boolean;
+  /** 教材裡還有這一組以外的候選字（可以「換一個」）；舊的結果沒有這個欄位 */
+  more_words?: boolean;
 }
 
 export interface SopExitSuggestion {
@@ -1380,12 +1383,22 @@ export interface SopEnglishSuggestion {
   note: string;
 }
 
+/** 幫我修英文 in steps 5–7: which text the teacher wrote (task, warm-up activity, exit-ticket item) */
+export type SopTextField = "task" | "warmup" | "exit";
+
+export interface SopTextEnglishRequest {
+  field: SopTextField;
+  text: string;
+  /** only for a task: the paragraphs it belongs to */
+  paragraph_ids?: string[];
+}
+
 export interface SopProceduralSteps {
   steps: string[];
   text: string;
 }
 
-/** 換一個（objectives）、這一段再建議一次（goals） */
+/** 換一個（每一步的單項建議）、這一段再建議一次（第 2、4 步） */
 export interface SopRedoRequest {
   /** objectives：先推薦內容目標（`content`），有了內容目標之後才依它推薦語言目標（`language`） */
   only_type?: ObjectiveType;

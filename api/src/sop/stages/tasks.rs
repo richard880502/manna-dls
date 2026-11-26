@@ -202,6 +202,33 @@ fn to_block_suggestion(
     }
 }
 
+/// What a 換一個 job tells the model on top of the tasks prompt (its `only_block`): the block
+/// to design again, the one set aside and the tasks of the other blocks not to repeat.
+fn block_redo_note(redo: &super::super::ai::ItemRedo, nos: &[i64], budget: usize) -> String {
+    let prompts_of = |block: &Value| -> Vec<String> {
+        block["tasks"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|t| t["text"].as_str())
+                    .filter(|t| !t.trim().is_empty())
+                    .map(|t| format!("- {}", clip_chars(t.trim(), 200)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    format!(
+        "\n\n【只需要一個區塊】這次只重新設計涵蓋 {} 的那一個區塊：blocks 只輸出 1 筆，paragraph_nos 為 {:?}，核心題約 {budget} 題。教師不要下面這個設計，請換一種問法或不同的任務（資訊處理功能、學生任務或作答方式都可以不同）：\n被換掉的設計：\n{}\n不要與下列其他區塊的題目重複：\n{}",
+        nos_label(nos),
+        nos,
+        lines_or(prompts_of(&redo.declined), "（沒有題目）"),
+        lines_or(
+            redo.others.iter().flat_map(prompts_of).collect(),
+            "（沒有其他區塊）"
+        )
+    )
+}
+
 pub(super) fn existing_tasks_text(content: &SopContent, paragraphs: &[Paragraph]) -> String {
     lines_or(
         content
@@ -249,7 +276,30 @@ pub async fn run_tasks(
         .collect();
     let code_names: Vec<String> = code_ids.iter().map(|(c, _)| c.clone()).collect();
     let passages = texts(paragraphs);
-    let budget = worksheet::item_budget(content.options.minutes, paragraphs.len(), true);
+    // 換一個: the one block again, over the same paragraphs, with about as many tasks.
+    let redo = input.scope.item();
+    let only: Option<Vec<i64>> = redo.map(|r| {
+        let nos: Vec<i64> = r.declined["paragraph_nos"]
+            .as_array()
+            .map(|a| a.iter().filter_map(Value::as_i64).collect())
+            .unwrap_or_default();
+        if nos.is_empty() {
+            paragraphs.iter().map(|p| i64::from(p.no)).collect()
+        } else {
+            nos
+        }
+    });
+    let budget = match redo {
+        Some(r) => r.declined["tasks"]
+            .as_array()
+            .map_or(1, Vec::len)
+            .clamp(1, 6),
+        None => worksheet::item_budget(content.options.minutes, paragraphs.len(), true),
+    };
+    let only_note = match (redo, &only) {
+        (Some(r), Some(nos)) => block_redo_note(r, nos, budget),
+        _ => String::new(),
+    };
     let habits = crate::memory::option_habits(&state.db, input.teacher_id).await?;
     let notes = notes_for_ai(state, input).await?;
     let mut vars = common_vars(input, &codes, notes.clone());
@@ -266,7 +316,7 @@ pub async fn run_tasks(
             "（沒有勾選，請依教材判斷）".to_string(),
         ),
         ("teacher_tasks", existing_tasks_text(content, paragraphs)),
-        ("only_block", String::new()),
+        ("only_block", only_note),
     ]);
     let mut context = base_context(input);
     context
@@ -296,8 +346,9 @@ pub async fn run_tasks(
         "selected_student_tasks": [],
         "selected_answer_formats": [],
         "objective_ids": code_names,
-        "only": null,
-        "run_no": 1,
+        "only": only,
+        // A redo is worded differently from the block it replaces.
+        "run_no": if redo.is_some() { job_id % 50 + 2 } else { 1 },
         "sop": true,
     });
     let call = new_call(
@@ -309,7 +360,7 @@ pub async fn run_tasks(
         fake_context,
         worksheet::ai::tasks_max_tokens(paragraphs.len()),
         temperature,
-        trace(input, json!({ "step": "tasks" })),
+        trace(input, json!({ "step": "tasks", "only": only })),
     );
     let check_codes = code_names_of(&code_ids);
     let tasks = run_call(
@@ -326,7 +377,7 @@ pub async fn run_tasks(
                         paragraphs: &passages,
                         objective_ids: &check_codes,
                         item_budget: budget,
-                        only: None,
+                        only: only.as_deref(),
                         habits,
                     },
                 ),
@@ -427,6 +478,7 @@ pub async fn run_tasks(
         .collect();
     let missing_paragraph_ids = paragraphs
         .iter()
+        .filter(|p| only.as_ref().is_none_or(|o| o.contains(&i64::from(p.no))))
         .filter(|p| !covered.contains(p.id.as_str()))
         .map(|p| p.id.clone())
         .collect();

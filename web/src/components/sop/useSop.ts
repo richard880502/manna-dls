@@ -71,6 +71,47 @@ export function redoFor(jobs: SopJobs, kind: SopJobKind, parentJobId: number | n
   );
 }
 
+/** Where a suggestion of a stage stands now: the whole run's, or the newest 換一個 that was shown. */
+export interface RedoChain<T> {
+  /** The job the visible suggestion comes from. */
+  job: SopJob<T>;
+  /** `item_index` of the suggestion inside that job (the index a decision is logged with). */
+  index: number;
+  /** A 換一個 that is running or did not work (or ended `blocked`): shown instead of the suggestion. */
+  pending: SopJob | null;
+}
+
+/**
+ * Follows 換一個 from one suggestion of the whole run: a redo of a redo uses the redo job as its
+ * parent. `after`: the index a suggestion has inside a redo job (0, or 100 for the word group).
+ */
+export function followRedo<T>(
+  jobs: SopJobs,
+  kind: SopJobKind,
+  whole: SopJob<T>,
+  home: number,
+  after = 0,
+): RedoChain<T> {
+  let job = whole;
+  let index = home;
+  for (;;) {
+    const next = redoFor(jobs, kind, job.id, `${job.id}:${index}`) as SopJob<T> | null;
+    if (!next) return { job, index, pending: null };
+    if (next.status !== "done" || next.result?.status !== "shown") return { job, index, pending: next };
+    job = next;
+    index = after;
+  }
+}
+
+/** 再試一次 after a 換一個 that did not work: the same request again. */
+export function retryRedo(sop: SopController, kind: SopJobKind, failed: SopJob | null) {
+  if (failed?.parent_job_id == null) return;
+  void sop.startJob(kind, {
+    parent_job_id: failed.parent_job_id,
+    item_index: Number((failed.slot ?? "").split(":")[1] ?? 0),
+  });
+}
+
 export interface SopController {
   status: "loading" | "ready" | "error";
   loadError: string | null;

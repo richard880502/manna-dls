@@ -20,7 +20,9 @@ import { ANSWER_FORMATS,STUDENT_TASKS,toggleIn } from "../../lib/worksheet";
 import { ErrorText } from "../common";
 import { AnswerFormatChips,StudentTaskChips } from "../worksheet/Chips";
 import { SupportChoice } from "./Choices";
-import { AskManna,MannaWell,NoMaterialNote,Quote,ScaffoldFields,ScaffoldList } from "./parts";
+import { EnglishFix } from "./EnglishFix";
+import { AskManna,MannaWell,NoMaterialNote,Quote,RedoPending,ScaffoldFields,ScaffoldList } from "./parts";
+import { followRedo,retryRedo } from "./useSop";
 
 import { blank,union,type StageProps } from "./manualShared";
 
@@ -146,6 +148,13 @@ function TaskEditor({
         value={task.text}
         onChange={(e) => onChange({ ...task, text: e.target.value })}
         placeholder="例如：Why did Mrs. Lin start the umbrella stand? Find the sentence that tells you."
+      />
+      <EnglishFix
+        lessonId={lessonId}
+        field="task"
+        text={task.text}
+        paragraphIds={block.paragraph_ids}
+        onUse={(english) => onChange({ ...task, text: english, origin: "ai_edited" })}
       />
       <label className="field-label" htmlFor={`${id}-format`}>
         作答方式
@@ -305,9 +314,18 @@ export function StageTasks({ sop, onGoToStage, lessonId }: StageProps & { lesson
       : [first];
     return members[0] ?? first;
   };
-  const offered = (suggestion?.blocks ?? [])
-    .map((block, index) => ({ block, index }))
-    .filter(({ index }) => !job?.decided.includes(index));
+  /** Where each suggested block stands now (a 換一個 may have replaced it), at the paragraph it belongs to. */
+  const offered = (job && suggestion ? suggestion.blocks.map((block, home) => ({ block, home, ...followRedo(sop.jobs, "tasks", job, home) })) : [])
+    .filter((slot) => slot.pending || !slot.job.decided.includes(slot.index));
+  type Offered = (typeof offered)[number];
+  /** The job of a decision: the whole run's, or the redo job the suggestion came from. */
+  const jobOf = (slot: Offered) => (slot.job.id === job?.id ? undefined : slot.job.id);
+
+  /** 換一個: this block is set aside (logged as 不用) and Manna designs another over the same paragraphs. */
+  function swap(slot: Offered) {
+    decide("tasks", slot.index, "reject", undefined, jobOf(slot));
+    void sop.startJob("tasks", { parent_job_id: slot.job.id, item_index: slot.index });
+  }
 
   const setBlocks = (change: (blocks: SopTaskBlock[]) => SopTaskBlock[]) =>
     update((c) => ({ ...c, task_blocks: change(c.task_blocks) }));
@@ -377,7 +395,7 @@ export function StageTasks({ sop, onGoToStage, lessonId }: StageProps & { lesson
    * Takes a suggested block. The teacher's own tasks stay: the tasks join the block she already has
    * for these paragraphs (her labels stay, Manna's are added with their star), or become a new one.
    */
-  function take(sb: SopBlockSuggestion, index: number, edit: boolean) {
+  function take(sb: SopBlockSuggestion, slot: Offered, edit: boolean) {
     const tasks: SopTask[] = sb.tasks.map((t) => ({
       id: newId("t"),
       function: t.function,
@@ -419,7 +437,7 @@ export function StageTasks({ sop, onGoToStage, lessonId }: StageProps & { lesson
         },
       ];
     });
-    decide("tasks", index, edit ? "revise" : "adopt", edit ? tasks[0]?.text : undefined);
+    decide("tasks", slot.index, edit ? "revise" : "adopt", edit ? tasks[0]?.text : undefined, jobOf(slot));
     if (edit && tasks[0]) setEditingTask(tasks[0].id);
   }
 
@@ -457,19 +475,37 @@ export function StageTasks({ sop, onGoToStage, lessonId }: StageProps & { lesson
 
   function renderSuggestions(paragraphId: string) {
     return offered
-      .filter(({ block }) => hostOf(block) === paragraphId)
-      .map(({ block: sb, index }) => {
+      .filter((slot) => hostOf(slot.block) === paragraphId)
+      .map((slot) => {
+        const sb = slot.pending ? null : slot.job.result?.output?.blocks[slot.index];
+        if (!sb) {
+          const members = slot.block.paragraph_nos;
+          return (
+            <RedoPending
+              key={slot.home}
+              label={members.length > 0 ? `第 ${members.join("、")} 段的問題或任務` : "問題或任務"}
+              job={slot.pending}
+              onCancelled={() => {
+                if (slot.pending) void sop.refreshJob(slot.pending.id);
+              }}
+              onAgain={() => retryRedo(sop, "tasks", slot.pending)}
+            />
+          );
+        }
+        const redoSuggestion = slot.job.result?.output ?? suggestion;
         const members = sb.paragraph_ids
           .map((pid) => byId.get(pid))
           .filter((x): x is SopParagraph => !!x)
           .sort((a, b) => a.no - b.no);
         return (
           <MannaWell
-            key={index}
+            key={slot.home}
             label={paragraphRange(members) || "問題或任務"}
-            onAdopt={() => take(sb, index, false)}
-            onEdit={() => take(sb, index, true)}
-            onDismiss={() => decide("tasks", index, "reject")}
+            onAdopt={() => take(sb, slot, false)}
+            onEdit={() => take(sb, slot, true)}
+            onDismiss={() => decide("tasks", slot.index, "reject", undefined, jobOf(slot))}
+            onAgain={() => swap(slot)}
+            againLabel="換一個"
           >
             {sb.reason && <p className="why">為什麼這樣設計：{sb.reason}</p>}
             {sb.tasks.map((t) => (
@@ -505,7 +541,7 @@ export function StageTasks({ sop, onGoToStage, lessonId }: StageProps & { lesson
               Manna 先選了學生任務：{sb.student_tasks.join("、") || "（沒有）"}；作答方式：
               {sb.answer_formats.join("、") || "（沒有）"}。採用後可以在這一段改。
             </p>
-            {!suggestion?.scaffolds_ok && (
+            {!redoSuggestion?.scaffolds_ok && (
               <p className="why">這次鷹架沒有設計成功，只有系統加上的程序鷹架；可以自己補。</p>
             )}
             <p className="why">採用會把這些任務加在你寫的任務後面，不會改掉你寫的。</p>

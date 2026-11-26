@@ -11,14 +11,15 @@ newId,
 objectiveLabels
 } from "../../lib/sop";
 import { WorksheetChoices } from "./Choices";
-import { AskManna,MannaWell } from "./parts";
-import { type SopController } from "./useSop";
+import { EnglishFix } from "./EnglishFix";
+import { AskManna,MannaWell,RedoPending } from "./parts";
+import { followRedo,retryRedo,type SopController } from "./useSop";
 
 
 // ---------------------------------------------------------------- step 7
 
 /** Step 7, Exit ticket: a few short items for formative checking, reflection or collecting questions. */
-export function StageExit({ sop }: { sop: SopController }) {
+export function StageExit({ sop, lessonId }: { sop: SopController; lessonId: number }) {
   const { content, update, decide } = sop;
   const items = content.exit_ticket.items;
   const labels = objectiveLabels(content.objectives);
@@ -39,12 +40,26 @@ export function StageExit({ sop }: { sop: SopController }) {
   const patchItem = (id: string, patch: Partial<SopExitItem>) =>
     setItems((list) =>
       list.map((i) =>
-        i.id === id ? { ...i, ...patch, origin: i.origin === "ai_adopted" ? "ai_edited" : i.origin } : i,
+        i.id === id
+          ? { ...i, ...patch, origin: patch.origin ?? (i.origin === "ai_adopted" ? "ai_edited" : i.origin) }
+          : i,
       ),
     );
 
-  function take(index: number, edit: boolean) {
-    const s = suggestion?.items[index];
+  /** One place for a suggested item: where it stands now (a 換一個 may have replaced it). */
+  const slots = (job && suggestion ? suggestion.items.map((_, home) => ({ home, ...followRedo(sop.jobs, "exit_ticket", job, home) })) : [])
+    .filter((slot) => slot.pending || !slot.job.decided.includes(slot.index));
+  /** The job of a decision: the whole run's, or the redo job the suggestion came from. */
+  const jobOf = (slotJob: { id: number }) => (slotJob.id === job?.id ? undefined : slotJob.id);
+
+  /** 換一個: this one is set aside (logged as 不用) and Manna thinks of another of the same kind. */
+  function swap(slot: (typeof slots)[number]) {
+    decide("exit_ticket", slot.index, "reject", undefined, jobOf(slot.job));
+    void sop.startJob("exit_ticket", { parent_job_id: slot.job.id, item_index: slot.index });
+  }
+
+  function take(slot: (typeof slots)[number], edit: boolean) {
+    const s = slot.job.result?.output?.items[slot.index];
     if (!s) return;
     const id = newId("e");
     setItems((list) => [
@@ -59,7 +74,7 @@ export function StageExit({ sop }: { sop: SopController }) {
         answer: s.answer,
       },
     ]);
-    decide("exit_ticket", index, edit ? "revise" : "adopt", edit ? s.text : undefined);
+    decide("exit_ticket", slot.index, edit ? "revise" : "adopt", edit ? s.text : undefined, jobOf(slot.job));
     if (edit) focusNext.current = `exit-${id}-text`;
   }
 
@@ -111,6 +126,12 @@ export function StageExit({ sop }: { sop: SopController }) {
               lang="en"
               value={item.text}
               onChange={(e) => patchItem(item.id, { text: e.target.value })}
+            />
+            <EnglishFix
+              lessonId={lessonId}
+              field="exit"
+              text={item.text}
+              onUse={(english) => patchItem(item.id, { text: english, origin: "ai_edited" })}
             />
             {item.kind === "formative" && (
               <>
@@ -168,15 +189,31 @@ export function StageExit({ sop }: { sop: SopController }) {
             </button>
           ))}
         </p>
-        {suggestion?.items.map((s, index) =>
-          !job?.decided.includes(index) ? (
-            // oxlint-disable-next-line react/no-array-index-key -- the decision is logged by this position
+        {slots.map((slot) => {
+          const s = slot.pending ? null : slot.job.result?.output?.items[slot.index];
+          if (!s) {
+            const kind = suggestion?.items[slot.home]?.kind;
+            return (
+              <RedoPending
+                key={slot.home}
+                label={kind ? exitKindLabel(kind) : "題目"}
+                job={slot.pending}
+                onCancelled={() => {
+                  if (slot.pending) void sop.refreshJob(slot.pending.id);
+                }}
+                onAgain={() => retryRedo(sop, "exit_ticket", slot.pending)}
+              />
+            );
+          }
+          return (
             <MannaWell
-              key={index}
+              key={slot.home}
               label={exitKindLabel(s.kind)}
-              onAdopt={() => take(index, false)}
-              onEdit={() => take(index, true)}
-              onDismiss={() => decide("exit_ticket", index, "reject")}
+              onAdopt={() => take(slot, false)}
+              onEdit={() => take(slot, true)}
+              onDismiss={() => decide("exit_ticket", slot.index, "reject", undefined, jobOf(slot.job))}
+              onAgain={() => swap(slot)}
+              againLabel="換一個"
             >
               <p lang="en">{s.text}</p>
               {s.objective_id && (
@@ -192,8 +229,8 @@ export function StageExit({ sop }: { sop: SopController }) {
                 </p>
               )}
             </MannaWell>
-          ) : null,
-        )}
+          );
+        })}
       </section>
 
       <WorksheetChoices sop={sop} />

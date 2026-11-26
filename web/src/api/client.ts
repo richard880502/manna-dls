@@ -87,6 +87,7 @@ import type {
   SopContent,
   ObjectiveType,
   SopEnglishSuggestion,
+  SopTextEnglishRequest,
   SopJob,
   SopJobKind,
   SopProceduralSteps,
@@ -481,6 +482,9 @@ export const api = {
   /** 幫我修英文：一次短呼叫，直接回答 */
   sopObjectiveEnglish: (lessonId: number, body: { type: ObjectiveType; text: string; student_facing_en: string }) =>
     post<AiResult<SopEnglishSuggestion>>(`/lessons/${lessonId}/sop/objective-english`, body),
+  /** 幫我修英文（第 5、6、7 步）：教師寫的題目、暖身活動、Exit ticket 題目；一次短呼叫 */
+  sopTextEnglish: (lessonId: number, body: SopTextEnglishRequest) =>
+    post<AiResult<SopEnglishSuggestion>>(`/lessons/${lessonId}/sop/text-english`, body),
   /** 產生程序鷹架：程式依任務產生，不用模型 */
   sopProceduralSteps: (
     lessonId: number,

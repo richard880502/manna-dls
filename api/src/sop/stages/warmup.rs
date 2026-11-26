@@ -35,6 +35,9 @@ pub struct WarmupSuggestion {
     pub candidates_available: usize,
     /// Whether the CEEC word list was available to give levels.
     pub levels_available: bool,
+    /// Whether the material has other candidate words than this group's (and the teacher's): 換一個
+    /// for the group can only be offered then.
+    pub more_words: bool,
 }
 
 /// `item_index` of the vocabulary group in decisions (the activities are 0, 1, …).
@@ -91,7 +94,35 @@ fn clean_to_suggestion(
         vocabulary,
         candidates_available,
         levels_available,
+        more_words: false,
     }
+}
+
+/// What a 換一個 job without other candidate words says.
+pub const MSG_NO_OTHER_WORDS: &str =
+    "教材裡沒有其他候選字可以換了。可以自己新增關鍵字彙，或請 Manna 再設計一次暖身。";
+
+/// What a 換一個 job tells the model on top of the warm-up prompt (`redo_note`).
+fn warmup_redo_note(
+    redo: &super::super::ai::ItemRedo,
+    vocabulary: bool,
+    declined_words: &[String],
+) -> String {
+    if vocabulary {
+        return format!(
+            "【這次只要換一組關鍵字彙】教師不要上一組字（{}），候選字彙清單已經拿掉它們，請從清單裡另外挑一組。background_activities 照常給 1 個（這次不會用到）。",
+            declined_words.join("、")
+        );
+    }
+    let text_of = |v: &Value| clip_chars(v["text"].as_str().unwrap_or_default().trim(), 400);
+    format!(
+        "【這次只要 1 個暖身活動】教師不要下面這個暖身活動，請另外設計 1 個不同的活動（換一種做法或角度）：\n被換掉的活動：\n{}\n不要與下列已有的活動重複：\n{}\nbackground_activities 只輸出 1 個；key_vocabulary 給空陣列。",
+        text_of(&redo.declined),
+        lines_or(
+            redo.others.iter().map(|o| format!("- {}", text_of(o))).collect(),
+            "（沒有）"
+        )
+    )
 }
 
 fn auto_steps_for_warmup(has_words: bool) -> Vec<String> {
@@ -124,12 +155,40 @@ pub async fn run_warmup(
         .map(|v| v.word.trim().to_string())
         .filter(|w| !w.is_empty())
         .collect();
-    // Candidates and their levels come from the word list (code); the model only picks.
+    // 換一個: one activity again, or another group of words.
+    let redo = input.scope.item();
+    let vocabulary_redo = redo.is_some_and(|r| r.index == VOCABULARY_ITEM_INDEX);
+    let declined_words: Vec<String> = match redo {
+        Some(r) if vocabulary_redo => r
+            .declined
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|v| v["word"].as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    // Candidates and their levels come from the word list (code); the model only picks. The
+    // words of a group set aside are not offered again.
     let lexicon = crate::vocabulary::load_lexicon(&state.db, None)
         .await?
         .filter(|l| !l.is_empty());
-    let (candidates, _hard) =
+    let (mut candidates, _hard) =
         worksheet::ai::key_word_candidates(&passages, lexicon.as_ref(), &teacher_words);
+    // Every candidate but the teacher's own words (they come first): what another group could use.
+    let all_words: Vec<String> = candidates
+        .iter()
+        .map(|c| c.word.to_lowercase())
+        .filter(|w| !teacher_words.iter().any(|t| t.eq_ignore_ascii_case(w)))
+        .collect();
+    candidates.retain(|c| {
+        !declined_words
+            .iter()
+            .any(|w| w.eq_ignore_ascii_case(&c.word))
+    });
     let count = worksheet::vocab_count(content.options.minutes);
     let notes = notes_for_ai(state, input).await?;
     let mut vars = common_vars(input, &codes, notes);
@@ -170,6 +229,11 @@ pub async fn run_warmup(
                 "（沒有候選字彙；key_vocabulary 請給空陣列）",
             ),
         ),
+        (
+            "redo_note",
+            redo.map(|r| warmup_redo_note(r, vocabulary_redo, &declined_words))
+                .unwrap_or_default(),
+        ),
     ]);
     let mut context = base_context(input);
     context.add(
@@ -181,6 +245,12 @@ pub async fn run_warmup(
         },
     );
     let context = context.into_vec();
+    if vocabulary_redo && candidates.is_empty() {
+        return Ok(done::<WarmupSuggestion>(
+            Err(MSG_NO_OTHER_WORDS.to_string()),
+            context,
+        ));
+    }
     let fake_context = json!({
         "task": "worksheet_warmup",
         "title": input.material.title,
@@ -189,8 +259,10 @@ pub async fn run_warmup(
             .map(|c| json!({ "word": c.word, "paragraph_no": c.paragraph_no, "sentence": c.sentence, "pos": c.pos }))
             .collect::<Vec<_>>(),
         "sop": true,
+        // A redo of an activity is worded differently from the one it replaces.
+        "redo": if redo.is_some() && !vocabulary_redo { json!(job_id) } else { Value::Null },
     });
-    let call = new_call(
+    let mut call = new_call(
         KEY_WARMUP,
         SC_WARMUP,
         ws_schemas::WARMUP_SCHEMA_NAME,
@@ -201,6 +273,9 @@ pub async fn run_warmup(
         temperature,
         trace(input, json!({ "candidates": candidates.len() })),
     );
+    if redo.is_some() {
+        call.required.push(("redo_note", "這次只要換一項"));
+    }
     let levels_available = lexicon.is_some();
     let n_candidates = candidates.len();
     let outcome = run_call(
@@ -219,7 +294,20 @@ pub async fn run_warmup(
                 },
             );
             eval_to_checked(eval, |w| {
-                clean_to_suggestion(&w, paragraphs, n_candidates, levels_available)
+                let mut out = clean_to_suggestion(&w, paragraphs, n_candidates, levels_available);
+                out.more_words = all_words.iter().any(|word| {
+                    !out.vocabulary
+                        .iter()
+                        .any(|v| v.word.eq_ignore_ascii_case(word))
+                });
+                // A redo keeps only what was asked for.
+                if vocabulary_redo {
+                    out.background.clear();
+                } else if redo.is_some() {
+                    out.background.truncate(1);
+                    out.vocabulary.clear();
+                }
+                out
             })
         },
     )

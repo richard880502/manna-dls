@@ -10,20 +10,46 @@ emptyScaffolds,
 newId
 } from "../../lib/sop";
 import { GenerationChoice } from "./Choices";
-import { AskManna,MannaWell,ScaffoldFields,ScaffoldList } from "./parts";
-import { type SopController } from "./useSop";
+import { EnglishFix } from "./EnglishFix";
+import { AskManna,MannaWell,RedoPending,ScaffoldFields,ScaffoldList } from "./parts";
+import { followRedo,retryRedo,type SopController } from "./useSop";
 
 
 // ---------------------------------------------------------------- step 6
 
 /** Step 6, 暖身: waking up background knowledge, and the key vocabulary. Both use scaffolds. */
-export function StageWarmup({ sop }: { sop: SopController }) {
+export function StageWarmup({ sop, lessonId }: { sop: SopController; lessonId: number }) {
   const { content, update, decide } = sop;
   const warmup = content.warmup;
   const job = sop.jobs.warmup;
   const suggestion: SopWarmupSuggestion | null =
     job?.status === "done" && job.result?.status === "shown" ? (job.result.output ?? null) : null;
-  const undecided = (index: number) => suggestion !== null && !job?.decided.includes(index);
+  /** The job of a decision: the whole run's, or the redo job the suggestion came from. */
+  const jobOf = (shownJob: { id: number }) => (shownJob.id === job?.id ? undefined : shownJob.id);
+  const activitySlots = (
+    job && suggestion
+      ? suggestion.background.map((_, home) => ({ home, ...followRedo(sop.jobs, "warmup", job, home) }))
+      : []
+  ).filter((slot) => slot.pending || !slot.job.decided.includes(slot.index));
+  type ActivitySlot = (typeof activitySlots)[number];
+  const vocabularySlot =
+    job && suggestion && suggestion.vocabulary.length > 0
+      ? followRedo(sop.jobs, "warmup", job, SOP_VOCABULARY_ITEM_INDEX, SOP_VOCABULARY_ITEM_INDEX)
+      : null;
+  const vocabularyOffer = vocabularySlot?.pending
+    ? null
+    : (vocabularySlot?.job.result?.output?.vocabulary ?? null);
+
+  /** 換一個: this one is set aside (logged as 不用) and Manna thinks of another. */
+  function swapActivity(slot: ActivitySlot) {
+    decide("warmup", slot.index, "reject", undefined, jobOf(slot.job));
+    void sop.startJob("warmup", { parent_job_id: slot.job.id, item_index: slot.index });
+  }
+  function swapVocabulary() {
+    if (!vocabularySlot) return;
+    decide("warmup", SOP_VOCABULARY_ITEM_INDEX, "reject", undefined, jobOf(vocabularySlot.job));
+    void sop.startJob("warmup", { parent_job_id: vocabularySlot.job.id, item_index: SOP_VOCABULARY_ITEM_INDEX });
+  }
   // The field to focus once the edit just made has been drawn.
   const focusNext = useRef<string | null>(null);
   useEffect(() => {
@@ -37,22 +63,22 @@ export function StageWarmup({ sop }: { sop: SopController }) {
   const setVocabulary = (change: (list: SopVocabularyItem[]) => SopVocabularyItem[]) =>
     update((c) => ({ ...c, warmup: { ...c.warmup, vocabulary: change(c.warmup.vocabulary) } }));
 
-  function takeActivity(index: number, edit: boolean) {
-    const s = suggestion?.background[index];
+  function takeActivity(slot: ActivitySlot, edit: boolean) {
+    const s = slot.job.result?.output?.background[slot.index];
     if (!s) return;
     const id = newId("w");
     setBackground((list) => [
       ...list,
       { id, text: s.text, scaffolds: s.scaffolds, origin: edit ? "ai_edited" : "ai_adopted" },
     ]);
-    decide("warmup", index, edit ? "revise" : "adopt", edit ? s.text : undefined);
+    decide("warmup", slot.index, edit ? "revise" : "adopt", edit ? s.text : undefined, jobOf(slot.job));
     if (edit) focusNext.current = `warmup-${id}`;
   }
 
   function takeVocabulary(edit: boolean) {
-    if (!suggestion) return;
+    if (!vocabularySlot || !vocabularyOffer) return;
     const have = new Set(warmup.vocabulary.map((v) => v.word.trim().toLowerCase()));
-    const added: SopVocabularyItem[] = suggestion.vocabulary
+    const added: SopVocabularyItem[] = vocabularyOffer
       .filter((v) => !have.has(v.word.trim().toLowerCase()))
       .map((v) => ({
         id: newId("v"),
@@ -62,7 +88,13 @@ export function StageWarmup({ sop }: { sop: SopController }) {
         level: v.level,
       }));
     setVocabulary((list) => [...list, ...added]);
-    decide("warmup", SOP_VOCABULARY_ITEM_INDEX, edit ? "revise" : "adopt", edit ? added.map((v) => v.word).join("、") : undefined);
+    decide(
+      "warmup",
+      SOP_VOCABULARY_ITEM_INDEX,
+      edit ? "revise" : "adopt",
+      edit ? added.map((v) => v.word).join("、") : undefined,
+      jobOf(vocabularySlot.job),
+    );
     if (edit && added[0]) focusNext.current = `vocab-${added[0].id}-note`;
   }
 
@@ -114,6 +146,16 @@ export function StageWarmup({ sop }: { sop: SopController }) {
               }
               placeholder="例如：看標題和圖片，猜這篇文章在講什麼；或問學生借過傘的經驗"
             />
+            <EnglishFix
+              lessonId={lessonId}
+              field="warmup"
+              text={activity.text}
+              onUse={(english) =>
+                setBackground((list) =>
+                  list.map((a) => (a.id === activity.id ? { ...a, text: english, origin: "ai_edited" } : a)),
+                )
+              }
+            />
             <ScaffoldFields
               idPrefix={`warmup-${activity.id}`}
               value={activity.scaffolds}
@@ -144,15 +186,30 @@ export function StageWarmup({ sop }: { sop: SopController }) {
             ＋ 新增暖身活動
           </button>
         </p>
-        {suggestion?.background.map((s, index) =>
-          undecided(index) ? (
-            // oxlint-disable-next-line react/no-array-index-key -- the decision is logged by this position
+        {activitySlots.map((slot) => {
+          const s = slot.pending ? null : slot.job.result?.output?.background[slot.index];
+          if (!s) {
+            return (
+              <RedoPending
+                key={slot.home}
+                label={`暖身活動 ${slot.home + 1}`}
+                job={slot.pending}
+                onCancelled={() => {
+                  if (slot.pending) void sop.refreshJob(slot.pending.id);
+                }}
+                onAgain={() => retryRedo(sop, "warmup", slot.pending)}
+              />
+            );
+          }
+          return (
             <MannaWell
-              key={index}
-              label={`暖身活動 ${index + 1}`}
-              onAdopt={() => takeActivity(index, false)}
-              onEdit={() => takeActivity(index, true)}
-              onDismiss={() => decide("warmup", index, "reject")}
+              key={slot.home}
+              label={`暖身活動 ${slot.home + 1}`}
+              onAdopt={() => takeActivity(slot, false)}
+              onEdit={() => takeActivity(slot, true)}
+              onDismiss={() => decide("warmup", slot.index, "reject", undefined, jobOf(slot.job))}
+              onAgain={() => swapActivity(slot)}
+              againLabel="換一個"
             >
               <p className="pre-line" lang="en">
                 {s.text}
@@ -160,8 +217,8 @@ export function StageWarmup({ sop }: { sop: SopController }) {
               {s.purpose && <p className="why">為什麼這樣設計：{s.purpose}</p>}
               <ScaffoldList value={s.scaffolds} />
             </MannaWell>
-          ) : null,
-        )}
+          );
+        })}
       </section>
 
       <section className="stage-block" aria-labelledby="warmup-vocabulary-heading">
@@ -222,15 +279,27 @@ export function StageWarmup({ sop }: { sop: SopController }) {
             ＋ 新增關鍵字彙
           </button>
         </p>
-        {suggestion && suggestion.vocabulary.length > 0 && undecided(SOP_VOCABULARY_ITEM_INDEX) && (
+        {vocabularySlot?.pending && (
+          <RedoPending
+            label="關鍵字彙"
+            job={vocabularySlot.pending}
+            onCancelled={() => {
+              if (vocabularySlot.pending) void sop.refreshJob(vocabularySlot.pending.id);
+            }}
+            onAgain={() => retryRedo(sop, "warmup", vocabularySlot.pending)}
+          />
+        )}
+        {vocabularySlot && vocabularyOffer && !vocabularySlot.job.decided.includes(SOP_VOCABULARY_ITEM_INDEX) && (
           <MannaWell
             label="關鍵字彙"
             onAdopt={() => takeVocabulary(false)}
             onEdit={() => takeVocabulary(true)}
-            onDismiss={() => decide("warmup", SOP_VOCABULARY_ITEM_INDEX, "reject")}
+            onDismiss={() => decide("warmup", SOP_VOCABULARY_ITEM_INDEX, "reject", undefined, jobOf(vocabularySlot.job))}
+            onAgain={vocabularySlot.job.result?.output?.more_words === false ? undefined : swapVocabulary}
+            againLabel="換一個"
           >
             <ul className="feature-list">
-              {suggestion.vocabulary.map((v) => (
+              {vocabularyOffer.map((v) => (
                 <li key={v.word}>
                   <strong lang="en">{v.word}</strong>
                   <span className="quiet-term">{levelText(v.level)}</span>
