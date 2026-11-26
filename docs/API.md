@@ -2864,7 +2864,7 @@ type TemplateBrowse = BrowsePage<TemplateCard, { categories: Facet[]; tags: Face
 - 列：`reference` = 平台 + `material`；`mine` = 自己的個人 + `material`。`platform` = 平台範本中 `ready` 的；`mine` = 自己的範本（任何狀態）。
 - `fits_lesson=true`：有文字（`text_status = ready`）且至少 1 段。段數不設上限（以前是 1–40 段）；網頁的篩選名稱是「有文字、可直接出題」。
 - **搜尋** `q`（最多 200 字）：不分大小寫的子字串。教材比對標題、`source_note`、標籤與全文；範本比對標題、分類、標籤、`worksheet_kind` 與範例教材的標題。
-- **facets** 只依 `area` 與 `q` 計算（不看其他篩選），所以每個籤顯示選它會有幾筆。分類依上面的固定清單順序（再來是其他值；空字串不列）；標籤依數量多到少（最多 40 個）；`file_types` 依 pdf、docx、text、image、audio、video、link；`langs` 依 英文、中文、中英並用。只列數量大於 0 的。
+- **facets** 只依 `area` 與 `q` 計算（不看其他篩選），所以每個籤顯示選它會有幾筆。分類依上面的固定清單順序（再來是其他值；空字串不列）；標籤依數量多到少（最多 40 個）；`file_types` 依 pdf、docx、text、image、audio、video、link；`langs` 依 英文、中文、中英並用。只列數量大於 0 的。`facets.all`＝符合 `area` 與 `q` 的全部筆數（「全部」籤；沒有分類的也算，所以可能大於各分類的和）。
 - `total`：符合 `area`、`q` 與所有篩選的總數。
 - **cursor**：穩定的 keyset（`new` 依 `created_at, id` 由新到舊；`title` 依 `title, id`）。不透明字串，照 `next_cursor` 原樣送回；換了 `sort` 的 cursor → 400。
 - 參數值不合（`area`、`file_type`、`lang`、`sort`、`limit` 不是數字、`fits_lesson` 不是 true/false、cursor 讀不懂）→ 400。
