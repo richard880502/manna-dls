@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, Outlet, useLocation, useOutletContext } from "react-router";
 import { useApp } from "../context/AppContext";
-import { loadSidebarCollapsed, saveSidebarCollapsed } from "../lib/storage";
+import { loadSidebarPreference, saveSidebarCollapsed } from "../lib/storage";
 import { DemoBanner, Loading } from "./common";
 import { Icon } from "./Icon";
 import { Sidebar } from "./shell/Sidebar";
@@ -23,6 +23,30 @@ function frameClass(pathname: string): string {
   if (pathname.startsWith("/create/")) return " is-create";
   if (/^\/prep\/\d+/.test(pathname)) return " is-prep";
   return "";
+}
+
+/** Below 80rem the prep page's two panes (worksheet | conversation) are too tight beside the full sidebar. */
+const COMPACT_QUERY = "(max-width: 79.9375rem)";
+const PREP_SESSION_PATH = /^\/prep\/\d+\/?$/;
+
+/** The sidebar's default on the prep page of a laptop-sized window; her own stored choice always wins over it. */
+export function autoCollapsesSidebar(pathname: string, compact: boolean): boolean {
+  return compact && PREP_SESSION_PATH.test(pathname);
+}
+
+function subscribeCompact(onChange: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(COMPACT_QUERY);
+  query.addEventListener?.("change", onChange);
+  return () => query.removeEventListener?.("change", onChange);
+}
+
+function isCompact(): boolean {
+  try {
+    return typeof window.matchMedia === "function" && window.matchMedia(COMPACT_QUERY).matches;
+  } catch {
+    return false;
+  }
 }
 
 interface ShellContext {
@@ -85,7 +109,11 @@ export function Layout() {
   const location = useLocation();
   const { pathname, hash } = location;
   const [topSlot, setTopSlot] = useState<HTMLElement | null>(null);
-  const [collapsed, setCollapsed] = useState(loadSidebarCollapsed);
+  // Her own choice (stored): null until she has used the toggle. The automatic fold on the prep page is
+  // derived at render (no flash, nothing stored), so it never turns into her preference.
+  const [preference, setPreference] = useState(loadSidebarPreference);
+  const compact = useSyncExternalStore(subscribeCompact, isCompact, () => false);
+  const collapsed = preference ?? autoCollapsesSidebar(pathname, compact);
   // The drawer belongs to the location it was opened at: any navigation closes it.
   const [drawerAt, setDrawerAt] = useState<string | null>(null);
   const drawerOpen = drawerAt === location.key;
@@ -119,10 +147,8 @@ export function Layout() {
   }, [drawerOpen]);
 
   const toggleCollapsed = () => {
-    setCollapsed((c) => {
-      saveSidebarCollapsed(!c);
-      return !c;
-    });
+    saveSidebarCollapsed(!collapsed);
+    setPreference(!collapsed);
   };
 
   return (

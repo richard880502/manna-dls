@@ -4,6 +4,16 @@
   gap: var(--space-xs);
 }
 
+/* The toolbar lays itself out by the width it gets (the worksheet pane beside the conversation is
+ * ~32-45rem on a laptop), not the screen's. Its popovers are absolute, and the dialogs it opens are
+ * portaled, so the containment (a containing block for fixed descendants) costs nothing; the z-index
+ * keeps the containment's stacking context where the popovers used to sit. */
+.ws-bar-wrap {
+  container: ws-bar / inline-size;
+  position: relative;
+  z-index: var(--z-raised);
+}
+
 .ws-bar {
   display: flex;
   flex-wrap: wrap;
@@ -31,6 +41,13 @@
 
 .ws-bar-popover .popover {
   min-width: 14rem;
+  max-width: 100cqw;
+}
+
+@container ws-bar (max-width: 40rem) {
+  .ws-bar {
+    gap: var(--space-xs) var(--space-sm);
+  }
 }
 
 .ws-bar-info {
@@ -52,7 +69,7 @@
 .ws-info-panel {
   right: 0;
   left: auto;
-  width: min(26rem, calc(100vw - 2 * var(--gutter)));
+  width: min(26rem, 100cqw);
   gap: var(--space-xs);
   padding: var(--space-sm);
   font-size: var(--text-sm);
