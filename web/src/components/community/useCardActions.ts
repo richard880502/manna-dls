@@ -28,18 +28,25 @@ export function useCardActions(onChange: (id: number, change: Partial<CommunityM
     [onChange],
   );
 
+  // Optimistic, like the 有幫助／不合用 ratings: the tile changes at once and goes back when the
+  // server refuses (a 404 removes it instead, as the worksheet is no longer shared).
   const toggleSave = useCallback(
-    (card: CommunityMeta) =>
-      run(card, async () => {
-        if (card.saved) {
-          await api.community.unsave(card.id);
-          onChange(card.id, { saved: false, saves: Math.max(0, card.saves - 1) });
-        } else {
-          await api.community.save(card.id);
-          onChange(card.id, { saved: true, saves: card.saves + 1 });
-        }
-      }),
-    [run, onChange],
+    async (card: CommunityMeta) => {
+      const saving = !card.saved;
+      setBusyId(card.id);
+      setError(null);
+      onChange(card.id, { saved: saving, saves: saving ? card.saves + 1 : Math.max(0, card.saves - 1) });
+      try {
+        await (saving ? api.community.save(card.id) : api.community.unsave(card.id));
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) onChange(card.id, null);
+        else onChange(card.id, { saved: card.saved, saves: card.saves });
+        setError(errorMessage(err));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [onChange],
   );
 
   const remix = useCallback(

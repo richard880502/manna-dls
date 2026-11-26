@@ -936,3 +936,15 @@ summary {
     min-height: var(--hit);
   }
 }
+
+/* 複製: every result label sits in one grid cell, so the button keeps one width. */
+.copy-labels {
+  display: inline-grid;
+  justify-items: start;
+}
+.copy-labels > span {
+  grid-area: 1 / 1;
+}
+.copy-labels > .is-inactive {
+  visibility: hidden;
+}
