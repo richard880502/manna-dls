@@ -422,6 +422,9 @@ pub struct FacetCount {
 
 #[derive(Debug, Serialize)]
 pub struct MaterialFacets {
+    /// Rows matching the area and the search, whatever their category (「全部」): the category
+    /// counts leave out rows without a category, so their sum can be short.
+    pub all: i64,
     pub categories: Vec<FacetCount>,
     pub tags: Vec<FacetCount>,
     pub file_types: Vec<FacetCount>,
@@ -429,6 +432,8 @@ pub struct MaterialFacets {
 
 #[derive(Debug, Serialize)]
 pub struct TemplateFacets {
+    /// Rows matching the area and the search, whatever their category (「全部」).
+    pub all: i64,
     pub categories: Vec<FacetCount>,
     pub tags: Vec<FacetCount>,
     pub langs: Vec<FacetCount>,
@@ -647,6 +652,10 @@ pub async fn materials(
     query.push_filters(&mut total);
     let total: i64 = total.build_query_scalar().fetch_one(db).await?;
 
+    let mut all = QueryBuilder::new("SELECT COUNT(*) FROM materials m");
+    query.push_base(&mut all);
+    let all: i64 = all.build_query_scalar().fetch_one(db).await?;
+
     let mut categories =
         QueryBuilder::new("SELECT m.category AS key, COUNT(*) AS count FROM materials m");
     query.push_base(&mut categories);
@@ -671,6 +680,7 @@ pub async fn materials(
         items: rows.into_iter().map(|r| r.card(admin)).collect(),
         next_cursor,
         facets: MaterialFacets {
+            all,
             categories: order_categories(&REFERENCE_CATEGORIES, categories),
             tags,
             file_types: order_fixed(&FILE_TYPES, file_types),
@@ -833,6 +843,10 @@ pub async fn templates(
     query.push_filters(&mut total);
     let total: i64 = total.build_query_scalar().fetch_one(db).await?;
 
+    let mut all = QueryBuilder::new(format!("SELECT COUNT(*){TEMPLATE_FROM}"));
+    query.push_base(&mut all);
+    let all: i64 = all.build_query_scalar().fetch_one(db).await?;
+
     let mut categories = QueryBuilder::new(format!(
         "SELECT t.category AS key, COUNT(*) AS count{TEMPLATE_FROM}"
     ));
@@ -858,6 +872,7 @@ pub async fn templates(
         items: rows.into_iter().map(|r| r.card(admin)).collect(),
         next_cursor,
         facets: TemplateFacets {
+            all,
             categories: order_categories(&SAMPLE_CATEGORIES, categories),
             tags,
             langs: order_fixed(&LANGS, langs),

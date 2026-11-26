@@ -59,8 +59,11 @@ describe("CoRe page", () => {
     expect(textarea).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "儲存草稿" }));
-    await waitFor(() => expect(api.callsTo("PUT", DRAFT).length).toBeGreaterThan(0));
-    let body = api.lastBody("PUT", DRAFT) as CoreDraftRequest;
+    let body = {} as CoreDraftRequest;
+    await waitFor(() => {
+      body = api.lastBody("PUT", DRAFT) as CoreDraftRequest;
+      expect(body?.focuses?.[0]?.responses.Q1?.status).toBe("no_idea");
+    });
     expect(body.focuses).toHaveLength(1);
     expect(body.focuses[0]?.id).toBe(11);
     expect(body.focuses[0]?.responses.Q1).toEqual({ answer: "", status: "no_idea", content_source: "self" });

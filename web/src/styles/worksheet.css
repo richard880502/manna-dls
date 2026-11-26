@@ -44,7 +44,7 @@
 .ws-material-head h2 {
   font-size: var(--text-md);
   font-weight: var(--weight-strong);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .ws-material .material-sheet {

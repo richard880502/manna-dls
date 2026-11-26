@@ -639,8 +639,7 @@ describe("編輯器: 改這一區, notes and saving", () => {
     await screen.findByRole("region", { name: "區塊 B" });
     const prompt = await editorBlock().findByRole("textbox", { name: "題目 2" });
     await user.type(prompt, "!");
-    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
-    expect((api.lastBody("PUT", WS) as { base_version_no: number }).base_version_no).toBe(3);
+    await waitFor(() => expect((api.lastBody("PUT", WS) as { base_version_no: number } | undefined)?.base_version_no).toBe(3));
     expect(await screen.findByText(/沒有存到：這份學習單在你編輯的同時有了新的版本/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重新載入" }));
     expect(await screen.findByRole("heading", { name: "Changed elsewhere", level: 1 })).toBeInTheDocument();
@@ -999,9 +998,11 @@ describe("編輯器: 鷹架與字詞表", () => {
     // Every other 刪除 on the block is for something else: the table has its own.
     await user.click(editorBlock().getByRole("button", { name: "刪除字詞表 B" }));
     await waitFor(() => expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0));
-    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
+    // Wait for the save that removed it (an earlier autosave may be the last one for a moment).
+    await waitFor(() =>
+      expect((api.lastBody("PUT", WS) as { content: WorksheetContent } | undefined)?.content.blocks[1]?.vocabulary).toEqual([]),
+    );
     const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content.blocks[1]!;
-    expect(saved.vocabulary).toEqual([]);
     expect(saved.scaffolds).toEqual(before.scaffolds);
     // The 程序鷹架 and the 句型框架 still have theirs.
     expect(editorBlock().getByRole("button", { name: "刪除程序鷹架" })).toBeInTheDocument();
@@ -1029,9 +1030,11 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0);
     // Still editable where it is now.
     expect(within(end).getByRole("textbox", { name: "umbrella 的解釋" })).toHaveValue("雨傘");
-    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
+    // Wait for the save that moved it (an earlier autosave may be the last one for a moment).
+    await waitFor(() =>
+      expect((api.lastBody("PUT", WS) as { content: WorksheetContent } | undefined)?.content.vocabulary_at_end).toBe(true),
+    );
     const saved = (api.lastBody("PUT", WS) as { content: WorksheetContent }).content;
-    expect(saved.vocabulary_at_end).toBe(true);
     expect(saved.blocks[1]!.vocabulary).toEqual(before.vocabulary);
 
     // And back.

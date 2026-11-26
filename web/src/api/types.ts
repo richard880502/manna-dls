@@ -2580,7 +2580,8 @@ export interface MaterialCard {
 export interface MaterialBrowse {
   items: MaterialCard[];
   next_cursor: string | null;
-  facets: { categories: FacetCount[]; tags: FacetCount[]; file_types: FacetCount[] };
+  /** `all`：符合範圍與搜尋的全部筆數（「全部」；沒有分類的也算）。舊伺服器沒有這一欄。 */
+  facets: { all?: number; categories: FacetCount[]; tags: FacetCount[]; file_types: FacetCount[] };
   total: number;
 }
 
@@ -2621,7 +2622,8 @@ export interface TemplateCard {
 export interface TemplateBrowse {
   items: TemplateCard[];
   next_cursor: string | null;
-  facets: { categories: FacetCount[]; tags: FacetCount[]; langs: FacetCount[] };
+  /** `all`：符合範圍與搜尋的全部筆數（「全部」；沒有分類的也算）。舊伺服器沒有這一欄。 */
+  facets: { all?: number; categories: FacetCount[]; tags: FacetCount[]; langs: FacetCount[] };
   total: number;
 }
 

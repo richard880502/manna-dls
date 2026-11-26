@@ -643,3 +643,19 @@ describe("a 平台範本's page", () => {
     expect(screen.queryByRole("button", { name: "另存成我的範本" })).not.toBeInTheDocument();
   });
 });
+
+describe("我的教材：「全部」的數字", () => {
+  it("uses the server's total, which counts materials without a category", async () => {
+    mockApi({
+      ...baseRoutes(),
+      [`GET ${MATERIALS}`]: materialBrowse([paper], {
+        facets: { all: 1, categories: [], tags: [], file_types: [] },
+        total: 1,
+      }),
+    });
+    renderApp("/materials");
+    const chips = await screen.findByRole("group", { name: "分類" });
+    // The count comes with the first page of results.
+    await waitFor(() => expect(within(chips).getByRole("button", { name: /^全部/ })).toHaveTextContent("全部 1"));
+  });
+});

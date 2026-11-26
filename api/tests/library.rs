@@ -1094,6 +1094,7 @@ async fn browsing_filters_counts_facets_and_pages_with_a_cursor() {
         keys(&v["facets"]["categories"]),
         kv(&[("學測英文", 2), ("統測英文", 1), ("課綱", 1)])
     );
+    assert_eq!(v["facets"]["all"], 4);
     assert_eq!(
         keys(&v["facets"]["tags"]),
         kv(&[("114", 2), ("試題", 2), ("113", 1)])
@@ -1196,6 +1197,8 @@ async fn browsing_filters_counts_facets_and_pages_with_a_cursor() {
     assert_eq!(v["items"][0]["owner_label"], "我");
     assert_eq!(v["items"][0]["scope"], "personal");
     assert_eq!(v["facets"]["categories"], json!([]));
+    // 「全部」 counts what has no category too (it read 0 beside 「共 1 份」).
+    assert_eq!(v["facets"]["all"], 1);
     let v = browse(&app, &kb, "/api/browse/materials?area=mine").await;
     assert_eq!(v["total"], 0, "the admin's uploads are not hers");
 
