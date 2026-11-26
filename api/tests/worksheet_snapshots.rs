@@ -1,4 +1,4 @@
-//! 快照 (docs/API.md「快照」): naming the latest version, renaming, removing the name only, the
+//! Named versions (docs/API.md「有名字的版本」, 為這一版命名): naming the latest version, renaming, removing the name only, the
 //! list, ownership, and waiting while Manna or a chat turn works.
 
 #[macro_use]
@@ -187,7 +187,7 @@ async fn snapshots_label_the_latest_version_and_show_in_the_list() {
     // The same version again: 409 saying it already is a snapshot.
     let (s, v) = snap(&app, &t, ws, Some("again"), first_no).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
-    assert!(v.to_string().contains("已經是快照"), "{v}");
+    assert!(v.to_string().contains("已經有名字了"), "{v}");
 
     // A stale base: 409.
     edit_title(&app, &t, ws, &block, "Title two").await;
@@ -196,13 +196,13 @@ async fn snapshots_label_the_latest_version_and_show_in_the_list() {
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
     assert!(v.to_string().contains("新的版本"), "{v}");
 
-    // A blank name: the default 「快照 MM/DD HH:MM」.
+    // A blank name: the default 「版本 MM/DD HH:MM」.
     let (s, b) = snap(&app, &t, ws, Some("   "), latest).await;
     assert_eq!(s, StatusCode::OK, "{b}");
     let default = b["name"].as_str().unwrap().to_string();
     assert!(
-        default.starts_with("快照 ")
-            && default.chars().count() == "快照 11/25 17:30".chars().count()
+        default.starts_with("版本 ")
+            && default.chars().count() == "版本 11/25 17:30".chars().count()
             && default.contains(':')
             && default.contains('/'),
         "{default}"

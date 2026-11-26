@@ -852,7 +852,7 @@ describe("備課對話 (session page)", () => {
     expect(new URLSearchParams(exportUrl.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");
     // (The mock has no file to give: the failure is said.)
     expect(await screen.findByText("測試未定義：GET /api/worksheets/11/export")).toBeInTheDocument();
-    expect(screen.getByLabelText("版本")).toHaveTextContent("第 3 版");
+    expect(screen.getByRole("button", { name: "版本：第 3 版" })).toBeInTheDocument();
     // 教師版 shows the answers.
     await user.click(screen.getByRole("radio", { name: "教師版" }));
     expect(await screen.findByDisplayValue("A stranger once helped her.")).toBeInTheDocument();

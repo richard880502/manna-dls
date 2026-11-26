@@ -1,4 +1,5 @@
-//! 快照 (docs/API.md「快照」): a teacher's name on the latest version of a worksheet, so it can
+//! Named versions (docs/API.md「有名字的版本」; the UI says 為這一版命名, the tables and events keep
+//! the older word "snapshot"): a teacher's name on the latest version of a worksheet, so it can
 //! be found again in the 版本紀錄. Removing a snapshot only removes the name; versions are never
 //! deleted. Every worksheet belongs to one teacher; another teacher's is a 404.
 
@@ -15,10 +16,10 @@ use crate::worksheet::{restore, store};
 use crate::AppState;
 
 pub const MAX_NAME_CHARS: usize = 60;
-const MSG_STALE: &str = "這份學習單在你按下之後又有了新的版本，請再按一次「存成快照」。";
-const MSG_HAS_SNAPSHOT: &str = "這一版已經是快照了，不用再存一次。";
-const MSG_NAME_LONG: &str = "快照名稱最多 60 個字。";
-const MSG_NAME_EMPTY: &str = "快照名稱不能是空的。";
+const MSG_STALE: &str = "你按下之後這份學習單又有了新的版本，請再為最新這一版命名一次。";
+const MSG_HAS_SNAPSHOT: &str = "這一版已經有名字了，可以在版本紀錄裡改名。";
+const MSG_NAME_LONG: &str = "版本名稱最多 60 個字。";
+const MSG_NAME_EMPTY: &str = "版本名稱不能是空的。";
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct Snapshot {
@@ -40,10 +41,10 @@ pub struct RenameRequest {
     pub name: String,
 }
 
-/// 「快照 11/25 17:30」 in Taipei time (no daylight saving, so a fixed +08:00 is exact).
+/// 「版本 11/25 17:30」 in Taipei time (no daylight saving, so a fixed +08:00 is exact).
 pub fn default_name(now: DateTime<Utc>) -> String {
     let taipei = FixedOffset::east_opt(8 * 3600).expect("valid offset");
-    format!("快照 {}", now.with_timezone(&taipei).format("%m/%d %H:%M"))
+    format!("版本 {}", now.with_timezone(&taipei).format("%m/%d %H:%M"))
 }
 
 fn clean_name(raw: &str) -> AppResult<String> {
@@ -124,7 +125,7 @@ pub async fn rename(
     .bind(&name)
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or_else(|| AppError::not_found("找不到這個快照。"))?;
+    .ok_or_else(|| AppError::not_found("找不到這個版本名稱。"))?;
     log_usage(
         &mut *tx,
         teacher.id(),
@@ -151,7 +152,7 @@ pub async fn remove(
     .bind(snapshot_id)
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or_else(|| AppError::not_found("找不到這個快照。"))?;
+    .ok_or_else(|| AppError::not_found("找不到這個版本名稱。"))?;
     log_usage(
         &mut *tx,
         teacher.id(),

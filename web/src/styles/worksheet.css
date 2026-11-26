@@ -349,7 +349,7 @@
 
 /* ================= the sheet ================= */
 .ws {
-  max-width: 47.5rem;
+  max-width: var(--sheet-w);
   margin-top: var(--space-md);
   padding: 2.5rem 3rem 3rem;
   border: var(--rule-hair) solid var(--color-rule);

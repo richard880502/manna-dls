@@ -7,6 +7,7 @@ import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { prepConfig } from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
+import { openBarPopover } from "../test/menus";
 
 const S7 = "/api/prep-sessions/7";
 const WS = "/api/worksheets/11";
@@ -193,12 +194,39 @@ const versionRoutes = (extra: Record<string, unknown> = {}) =>
     ...extra,
   });
 
+/** 版本紀錄 is in the toolbar's 「第 N 版 ▾」 menu. */
+const versionMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+  await screen.findByRole("button", { name: /^版本：第 \d+ 版$/ });
+  return openBarPopover(user, /^版本：第 \d+ 版$/);
+};
+
 const openDialog = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(await screen.findByRole("button", { name: "版本紀錄" }));
+  const menu = await versionMenu(user);
+  await user.click(menu.getByRole("button", { name: "版本紀錄" }));
   return screen.findByRole("dialog", { name: "版本紀錄" });
 };
 
 describe("版本紀錄", () => {
+  it("names the current version from the 「第 N 版」 menu, says so, and gives focus back to the menu", async () => {
+    const api = mockApi(
+      versionRoutes({
+        [`POST ${WS}/snapshots`]: { id: 5, version_no: 3, name: "上課用定稿", created_at: "2026-11-26T08:00:00Z" },
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const menu = await versionMenu(user);
+    await user.click(menu.getByRole("button", { name: "為這一版命名…" }));
+    const dialog = await screen.findByRole("dialog", { name: "為這一版命名" });
+    await user.type(within(dialog).getByRole("textbox", { name: "名稱（選填）" }), "上課用定稿");
+    await user.click(within(dialog).getByRole("button", { name: "儲存名稱" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Nothing was pending: the name goes on the version the page shows.
+    expect(api.lastBody("POST", `${WS}/snapshots`)).toEqual({ name: "上課用定稿", base_version_no: 3 });
+    expect(screen.getByText(/^已把第 3 版命名為「上課用定稿」/)).toHaveAttribute("role", "status");
+    await waitFor(() => expect(screen.getByRole("button", { name: "版本：第 3 版" })).toHaveFocus());
+  });
+
   it("lists every version newest first with what made it, and previews the selected one", async () => {
     const api = mockApi(versionRoutes());
     const user = userEvent.setup();
@@ -255,7 +283,7 @@ describe("版本紀錄", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "版本紀錄" })).not.toBeInTheDocument());
     // The editor beside the conversation shows the restored version.
     expect(await screen.findByDisplayValue("Back to the old one")).toBeInTheDocument();
-    expect(screen.getByLabelText("版本")).toHaveTextContent("第 4 版");
+    expect(screen.getByRole("button", { name: "版本：第 4 版" })).toBeInTheDocument();
   });
 
   it("shows the reason of a 409 inside the dialog and keeps it open", async () => {
@@ -278,9 +306,11 @@ describe("版本紀錄", () => {
     const api = mockApi(versionRoutes({ [`GET ${S7}`]: session([chatTurn("running")]) }));
     const user = userEvent.setup();
     renderApp("/prep/7");
-    const button = await screen.findByRole("button", { name: "版本紀錄" });
+    const menu = await versionMenu(user);
+    const button = menu.getByRole("button", { name: "版本紀錄" });
     expect(button).toHaveAttribute("aria-disabled", "true");
     expect(button).toHaveAccessibleDescription(/備課對話正在處理/);
+    expect(menu.getByRole("button", { name: "為這一版命名…" })).toHaveAttribute("aria-disabled", "true");
     await user.click(button);
     expect(screen.queryByRole("dialog", { name: "版本紀錄" })).not.toBeInTheDocument();
     expect(api.callsTo("GET", `${WS}/versions`)).toHaveLength(0);

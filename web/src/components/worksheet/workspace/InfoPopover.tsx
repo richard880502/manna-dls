@@ -39,7 +39,7 @@ export function InfoPopover({
       ariaLabel="關於這份學習單"
       panelLabel="關於這份學習單"
       panelClassName="ws-info-panel"
-      className="decision-button ws-bar-info"
+      className="ws-bar-tool ws-bar-info"
     >
       <p className="manna-label ws-draft-note">
         <span className="star" aria-hidden="true" />

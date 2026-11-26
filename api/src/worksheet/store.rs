@@ -335,7 +335,7 @@ pub struct VersionSummary {
     /// the source was kept.
     pub source: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
-    /// The teacher's 快照 name on this version, if any.
+    /// The teacher's name on this version (為這一版命名), if any.
     pub snapshot: Option<Json<SnapshotLabel>>,
 }
 
