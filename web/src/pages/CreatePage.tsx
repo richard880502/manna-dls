@@ -24,7 +24,8 @@ import { NO_TEXT_LINE, materialFields, type MaterialChoice } from "../components
 import { WorksheetNotice, type MimicState } from "../components/material/WorksheetNotice";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
-import { ObjectiveDrafts, recordDecisions, useObjectiveDraft, type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
+import type { DraftOutcome } from "../components/objectives/ObjectiveDrafts";
+import { StartDrafts, useStartFlow } from "../components/start/useStartFlow";
 import { ObjectiveFields } from "../components/objectives/ObjectiveFields";
 import { NO_CLASS_LABEL, useActiveClasses } from "../components/prep/ContextChips";
 import { Stepper } from "../components/Stepper";
@@ -38,7 +39,7 @@ import {
 import { TemplateSelect, useReadyTemplates } from "../components/template/TemplateSelect";
 import { useApp } from "../context/AppContext";
 import { objectiveLines, objectiveOptions, type DraftDecision } from "../lib/objectives";
-import { ocrBusyError, ocrBusyLine, ocrOpen } from "../lib/ocr";
+import { ocrBusyLine, ocrOpen } from "../lib/ocr";
 import {
   EXEMPLAR_TEXT,
   LESSON_TEXT_HEADING,
@@ -109,7 +110,6 @@ function Generator({ tool }: { tool: Tool }) {
 
   const [contentObjective, setContentObjective] = useState("");
   const [languageObjective, setLanguageObjective] = useState("");
-  const drafts = useObjectiveDraft();
   /** The panel was opened by 請 Manna 擬一組: its primary fills the fields instead of generating. */
   const [fillMode, setFillMode] = useState(false);
   const carried = (location.state as CreateCarry | null)?.carry;
@@ -132,14 +132,6 @@ function Generator({ tool }: { tool: Tool }) {
   const [materialError, setMaterialError] = useState<string | null>(null);
   /** Materials the teacher said to keep as the article (no worksheet notice for them). */
   const [keptAsText, setKeptAsText] = useState<ReadonlySet<number>>(() => new Set());
-  const [needMaterial, setNeedMaterial] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /**
-   * 產生 was refused because a material is still being read (OCR, 409): said beside the button
-   * for as long as the same material (and sample) are chosen.
-   */
-  const [ocrRefusal, setOcrRefusal] = useState<{ key: string; message: string } | null>(null);
 
   const fields = TOOL_FIELDS[tool];
   const defaultClass = classes?.some((c) => c.id === currentClassId) ? currentClassId : null;
@@ -152,15 +144,17 @@ function Generator({ tool }: { tool: Tool }) {
   const material = picked
     ? materialFields(picked)
     : materialFields({ way: "paste", picked: null, title: "", text });
-  const missing = needMaterial && material === null;
   const mimic = tool === "mimic";
+  const chosenKey = JSON.stringify([material, mimic && sample ? sampleFields(sample) : null]);
+  // 產生 refused while a material is still being read is said beside the button, while the same ones are chosen.
+  const flow = useStartFlow(chosenKey);
+  const { busy, error, ocrBusy, needMaterial, setNeedMaterial, drafts } = flow;
+  const missing = needMaterial && material === null;
   /** 照我的學習單做 waits for a sample, then for the lesson text. */
   const needed = !mimic ? null : sample === null ? NEED_SAMPLE : material === null ? NEED_LESSON_TEXT : null;
   const pickedMaterial = picked?.picked ?? null;
   const worksheetLike =
     pickedMaterial?.looks_like_worksheet === true && !keptAsText.has(pickedMaterial.id) ? pickedMaterial : null;
-  const chosenKey = JSON.stringify([material, mimic && sample ? sampleFields(sample) : null]);
-  const ocrBusy = ocrRefusal?.key === chosenKey ? ocrRefusal.message : null;
 
   /** Takes a handled parameter out of the address (the rest stays). */
   const setParamsRef = useRef(setParams);
@@ -273,7 +267,7 @@ function Generator({ tool }: { tool: Tool }) {
     return () => {
       alive = false;
     };
-  }, [materialParam, drop]);
+  }, [materialParam, drop, setNeedMaterial]);
 
   function chooseSample(next: Sample | null) {
     setSample(next);
@@ -320,33 +314,23 @@ function Generator({ tool }: { tool: Tool }) {
       ...(classId !== null ? { class_id: classId } : {}),
       ...(language ? { stage: "language" as const, content: objectiveLines(contentObjective).slice(0, 2) } : {}),
     };
-    setError(null);
-    setOcrRefusal(null);
     setFillMode(fill);
-    try {
-      const shown = await drafts.start(body);
-      if (!shown && !fill) await send("", "");
-    } catch (err) {
-      const reading = ocrBusyError(err);
-      if (reading) setOcrRefusal({ key: chosenKey, message: reading });
-      else setError(errorMessage(err));
-    }
+    const none = await flow.askDrafts(body);
+    if (none && !fill) await send("", "");
   }
 
   /** 用這組目標: the drafts as the teacher left them go into the two fields, her choices recorded. */
   function fillFields(outcome: DraftOutcome, decisions: DraftDecision[]) {
     if (outcome.has.content) setContentObjective(outcome.content);
     if (outcome.has.language) setLanguageObjective(outcome.language);
-    drafts.close();
-    void recordDecisions(decisions);
+    void flow.adopt(decisions);
   }
 
   /** After the drafts: the fields as the teacher left them, her choices recorded, then 產生. */
   async function adoptDrafts(outcome: DraftOutcome, decisions: DraftDecision[]) {
     setContentObjective(outcome.content);
     setLanguageObjective(outcome.language);
-    drafts.close();
-    await recordDecisions(decisions);
+    await flow.adopt(decisions);
     await send(outcome.content, outcome.language);
   }
 
@@ -362,10 +346,7 @@ function Generator({ tool }: { tool: Tool }) {
     if (fields.formats && picked.length > 0) options.answer_formats = picked;
     Object.assign(options, objectiveOptions(content, language));
 
-    setBusy(true);
-    setError(null);
-    setOcrRefusal(null);
-    try {
+    await flow.submit(async () => {
       const session = await api.createPrepSession(
         asCreateRequest({
           kind: kindOf(tool),
@@ -380,12 +361,7 @@ function Generator({ tool }: { tool: Tool }) {
         }),
       );
       navigate(`/prep/${session.id}`);
-    } catch (err) {
-      const reading = ocrBusyError(err);
-      if (reading) setOcrRefusal({ key: chosenKey, message: reading });
-      else setError(errorMessage(err));
-      setBusy(false);
-    }
+    });
   }
 
   const summary = mimic
@@ -412,23 +388,15 @@ function Generator({ tool }: { tool: Tool }) {
           if (drafts.state) drafts.close();
         }}
       />
-      {drafts.state && (
-        <ObjectiveDrafts
-          embedded
-          fill={fillMode}
-          state={drafts.state}
-          disabled={busy}
-          onUse={(outcome, decisions) => (fillMode ? fillFields(outcome, decisions) : void adoptDrafts(outcome, decisions))}
-          onSkip={(decisions) => {
-            drafts.close();
-            void recordDecisions(decisions);
-            if (!fillMode) void send("", "");
-          }}
-          onAnother={(plan) => void drafts.another(plan)}
-          onLanguage={(plan) => void drafts.toLanguage(plan).catch((err) => setError(errorMessage(err)))}
-          onCancel={drafts.close}
-        />
-      )}
+      <StartDrafts
+        flow={flow}
+        embedded
+        fill={fillMode}
+        onUse={(outcome, decisions) => (fillMode ? fillFields(outcome, decisions) : void adoptDrafts(outcome, decisions))}
+        onSkip={() => {
+          if (!fillMode) void send("", "");
+        }}
+      />
     </>
   );
 

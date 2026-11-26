@@ -22,7 +22,8 @@ import {
   ParagraphPickerDialog,
   SelectionLine,
 } from "../components/material/LongMaterial";
-import { ObjectiveDrafts, recordDecisions, useObjectiveDraft, type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
+import { type DraftOutcome } from "../components/objectives/ObjectiveDrafts";
+import { StartDrafts, useStartFlow } from "../components/start/useStartFlow";
 import { StepwiseDialog } from "../components/home/StepwiseDialog";
 import { OncePerPage } from "../components/OncePerPage";
 import { usePopover } from "../components/Popover";
@@ -71,7 +72,6 @@ import {
   type HomeRestore,
 } from "../lib/longMaterial";
 import { objectiveOptions, type DraftDecision } from "../lib/objectives";
-import { ocrBusyError } from "../lib/ocr";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
 import { formatDateTime } from "../lib/worksheet";
@@ -229,18 +229,8 @@ function QuickBox() {
   /** How many paragraphs pasted text would become (asked of the server, which owns the rule). */
   const [counted, setCounted] = useState<{ text: string; count: number } | null>(null);
   const [dialog, setDialog] = useState<QuickDialog | null>(null);
-  const [needMaterial, setNeedMaterial] = useState(false);
   /** 照我的學習單做 was sent without its sample or its lesson text. */
   const [needSlots, setNeedSlots] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  /** G2: a tool sent without objectives gets Manna's drafts first. */
-  const drafts = useObjectiveDraft();
-  /**
-   * 送出 was refused because a material is still being read (OCR, 409): said beside the arrow
-   * for as long as the same material (and sample) are attached.
-   */
-  const [ocrRefusal, setOcrRefusal] = useState<{ key: string; message: string } | null>(null);
   const articleMenu = usePopover();
   const sampleMenu = usePopover();
   const { triggerRef: articleTrigger } = articleMenu;
@@ -281,14 +271,16 @@ function QuickBox() {
   const tool: Tool | null = isStepwise(tile) ? null : tile;
   const mimic = tool === "mimic";
   const material = choice ? materialFields(choice) : null;
+  const attachedKey = JSON.stringify([material, mimic && sample ? sampleFields(sample) : null]);
+  // 送出 refused while a material is still being read is said beside the arrow, while the same ones are attached.
+  const flow = useStartFlow(attachedKey);
+  const { busy, setBusy, error, setError, ocrBusy, needMaterial, setNeedMaterial, drafts } = flow;
   const typed = text.trim();
   // No tile and no tool word: an attached article makes the first tile's 完整學習單; text alone asks Manna.
   const kind: StartKind | null = stepwise ? null : tool ? kindOf(tool) : material ? "worksheet" : typed ? "ask" : null;
   const missing = needMaterial && material === null && kind !== null && kind !== "ask";
   /** 照我的學習單做 waits for a sample, then for the lesson text. */
   const slotsNeeded = !mimic ? null : sample === null ? QUICK_NEED_SAMPLE : material === null ? QUICK_NEED_LESSON_TEXT : null;
-  const attachedKey = JSON.stringify([material, mimic && sample ? sampleFields(sample) : null]);
-  const ocrBusy = ocrRefusal?.key === attachedKey ? ocrRefusal.message : null;
   const need = (mimic ? (needSlots ? slotsNeeded : null) : missing ? MATERIAL_REQUIRED : null) ?? ocrBusy;
   const picked = choice?.picked ?? null;
   const paragraphCount = choice?.way === "paste" ? pasteCount : (picked?.paragraph_count ?? null);
@@ -318,35 +310,23 @@ function QuickBox() {
       return;
     }
     // A tool: the quick box has no objective fields, so Manna drafts them first (SIOP G2).
-    setError(null);
-    setOcrRefusal(null);
-    try {
-      const shown = await drafts.start({
-        kind: kind as ObjectiveDraftKind,
-        ...material,
-        ...(selection && "material_id" in material ? { paragraph_ids: selection } : {}),
-        ...(typed ? { request: typed } : {}),
-      });
-      if (!shown) await create("", "");
-    } catch (err) {
-      const reading = ocrBusyError(err);
-      if (reading) setOcrRefusal({ key: attachedKey, message: reading });
-      else setError(errorMessage(err));
-    }
+    const none = await flow.askDrafts({
+      kind: kind as ObjectiveDraftKind,
+      ...material,
+      ...(selection && "material_id" in material ? { paragraph_ids: selection } : {}),
+      ...(typed ? { request: typed } : {}),
+    });
+    if (none) await create("", "");
   }
 
   async function adoptDrafts(outcome: DraftOutcome, decisions: DraftDecision[]) {
-    drafts.close();
-    await recordDecisions(decisions);
+    await flow.adopt(decisions);
     await create(outcome.content, outcome.language);
   }
 
   async function create(content: string, language: string) {
     if (kind === null) return;
-    setBusy(true);
-    setError(null);
-    setOcrRefusal(null);
-    try {
+    await flow.submit(async () => {
       const request = typed || (kind === "ask" ? "" : TOOL_CHIP[kind]);
       const options = {
         ...objectiveOptions(content, language),
@@ -365,12 +345,7 @@ function QuickBox() {
       // The conversation's 回上一步 comes back to this box, filled in as it is now.
       rememberOrigin(session.id, draftNow());
       navigate(`/prep/${session.id}`);
-    } catch (err) {
-      const reading = ocrBusyError(err);
-      if (reading) setOcrRefusal({ key: attachedKey, message: reading });
-      else setError(errorMessage(err));
-      setBusy(false);
-    }
+    });
   }
 
   /** The attached material changed (another one, or none): what was chosen of the old one goes. */
@@ -587,21 +562,11 @@ function QuickBox() {
         />
       )}
 
-      {drafts.state && (
-        <ObjectiveDrafts
-          state={drafts.state}
-          disabled={busy}
-          onUse={(outcome, decisions) => void adoptDrafts(outcome, decisions)}
-          onSkip={(decisions) => {
-            drafts.close();
-            void recordDecisions(decisions);
-            void create("", "");
-          }}
-          onAnother={(plan) => void drafts.another(plan)}
-          onLanguage={(plan) => void drafts.toLanguage(plan).catch((err) => setError(errorMessage(err)))}
-          onCancel={drafts.close}
-        />
-      )}
+      <StartDrafts
+        flow={flow}
+        onUse={(outcome, decisions) => void adoptDrafts(outcome, decisions)}
+        onSkip={() => void create("", "")}
+      />
 
       <div className="tool-tiles" role="radiogroup" aria-label="要做什麼">
         {HOME_TOOLS.map((t, i) => (
