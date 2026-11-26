@@ -317,7 +317,7 @@ function ObjectiveForm({
         <div className="manna-well english-proposal" role="group" aria-label="Manna 建議的英文">
           <p className="manna-label">
             <span className="star" aria-hidden="true" />
-            Manna 建議 · 給學生看的英文
+            Manna 建議：給學生看的英文
           </p>
           {hasEnglish && (
             <p className="mine-english" lang="en">

@@ -31,6 +31,7 @@ import {
   teacher,
   type MockCall,
 } from "../test/mockApi";
+import { getMeta } from "../test/metaList";
 
 const TEXT = "Bees carry pollen from flower to flower.";
 const BUSY = "這份檔案正在辨識文字（第 2／5 頁），完成後再試一次。";
@@ -425,7 +426,7 @@ describe("cards while OCR reads them", () => {
 
     expect(await card("Scanned reading").findByText("辨識中 2／3")).toBeInTheDocument();
     // The meta line does not call it unreadable while it is being read.
-    expect(card("Scanned reading").getByText("PDF · 3 頁")).toBeInTheDocument();
+    getMeta(["PDF", "3 頁"]);
     const choose = card("Scanned reading").getByRole("button", { name: "選用「Scanned reading」" });
     expect(choose).toBeDisabled();
     expect(choose).toHaveAttribute("title", "辨識完成後才能選用");
@@ -510,7 +511,7 @@ describe("教材與範本管理: knowledge-base uploads being read", () => {
     await user.upload(tab.getByLabelText("選擇檔案"), [new File(["%PDF-1.4"], "114學測英文_試題.pdf")]);
     await user.click(tab.getByRole("button", { name: "全部上傳" }));
     const upload = within(await screen.findByRole("group", { name: "114學測英文_試題.pdf" }));
-    expect(await upload.findByText("已加入 · 辨識中 1／3")).toBeInTheDocument();
+    expect(await upload.findByText("已加入：辨識中 1／3")).toBeInTheDocument();
 
     const list = within(await screen.findByRole("list", { name: "知識庫教材" }));
     expect(await list.findByText("辨識中 1／3")).toBeInTheDocument();
@@ -520,10 +521,10 @@ describe("教材與範本管理: knowledge-base uploads being read", () => {
 
     server = [row({ ocr: ocr("running", 2, 3) })];
     expect(await list.findByText("辨識中 3／3")).toBeInTheDocument();
-    expect(await upload.findByText("已加入 · 辨識中 3／3")).toBeInTheDocument();
+    expect(await upload.findByText("已加入：辨識中 3／3")).toBeInTheDocument();
 
     server = [row({ text_status: "ready", text_source: "ocr", paragraph_count: 12, word_count: 900, ocr: ocr("done", 3, 3) })];
-    expect(await upload.findByText("已加入 · PDF · 3 頁 · 約 900 字")).toBeInTheDocument();
+    expect(await upload.findByText("已加入：PDF，3 頁，約 900 字")).toBeInTheDocument();
     await waitFor(() => expect(list.queryByText(/辨識中/)).not.toBeInTheDocument());
     const settled = gets();
     await pause(120);

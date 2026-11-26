@@ -25,15 +25,15 @@ function useLoad<T>(fetcher: () => Promise<T>): Load<T> {
 
 function modelText(s: AiModelSettings): string {
   const provider = s.providers.find((p) => p.id === s.active.provider);
-  const effort = provider?.uses_effort ? `・推理強度 ${s.active.effort}` : "";
-  return `${provider?.label ?? s.active.provider}・${s.active.model}${effort}`;
+  const effort = provider?.uses_effort ? `，推理強度 ${s.active.effort}` : "";
+  return `${provider?.label ?? s.active.provider}，${s.active.model}${effort}`;
 }
 
 function memoryText(s: MemorySettings, i: MemoryIndexStatus): string {
   const parts = [s.enabled ? "開啟" : "關閉"];
   if (i.pending > 0) parts.push(`索引待同步 ${i.pending}`);
   if (i.failed > 0) parts.push(`同步失敗 ${i.failed}`);
-  return parts.join("・");
+  return parts.join("，");
 }
 
 /** Queue waits longer than this (seconds) turn the AI row yellow. */
@@ -56,7 +56,7 @@ function trafficText(t: AiTraffic): string {
   }
   parts.push(`進行中 ${now.running}／排隊 ${now.queued}（最久 ${now.oldest_wait_secs} 秒）`);
   parts.push(`近一小時 呼叫 ${hour.calls} 次、太頻繁 ${hour.rate_limited} 次`);
-  return parts.join("・");
+  return parts.join("，");
 }
 
 function Row({ label, to, linkLabel, state, tone = "normal", children }: {

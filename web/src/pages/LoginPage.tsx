@@ -3,8 +3,10 @@ import { Navigate, useNavigate } from "react-router";
 import { errorMessage } from "../api/client";
 import { DemoBanner, ErrorText } from "../components/common";
 import { useApp } from "../context/AppContext";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 export function LoginPage() {
+  useDocumentTitle("教師登入");
   const { login, teacher, token, sessionNotice } = useApp();
   const navigate = useNavigate();
   const [code, setCode] = useState("");
@@ -39,7 +41,7 @@ export function LoginPage() {
         <section className="login-card panel-card" aria-labelledby="login-title">
           <div className="brand login-brand">
             <div className="brand-mark star-mascot" aria-hidden="true">
-              ★
+              <span className="star" />
             </div>
             <div>
               <div className="brand-name">Manna DLS</div>

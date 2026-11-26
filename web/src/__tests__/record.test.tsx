@@ -442,7 +442,7 @@ describe("課後補寫", () => {
       handling: "add_example",
       followup_text: "多給兩個生活例句後就能改寫",
     });
-    expect(await first.findByText("● 已儲存")).toBeInTheDocument();
+    expect(await first.findByText("已儲存")).toBeInTheDocument();
 
     // Everything left blank is a valid save too.
     const second = within(cards[1] as HTMLElement);
@@ -561,7 +561,7 @@ describe("課後補寫 never drops an unsaved bookmark choice (R2c, regression f
     expect(index(api, "PUT", REVIEW_1)).toBeLessThan(index(api, "POST", COMPLETE));
     // Only the edited card is saved; the untouched one is not re-sent.
     expect(api.callsTo("PUT", "/api/runs/9/events/ev-2/review")).toHaveLength(0);
-    expect(await card.findByText("● 已儲存")).toBeInTheDocument();
+    expect(await card.findByText("已儲存")).toBeInTheDocument();
   });
 
   it("does not complete when a pending card cannot be saved, and keeps the choice", async () => {

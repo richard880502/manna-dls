@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { WsAudience, WsExportFormat, WsLevel } from "../../api/types";
 import { saveBlob } from "../../lib/download";
+import { Icon } from "../Icon";
 
 /** The four exports, in the order they are listed: students' copy first. */
 const ITEMS: Array<{ audience: WsAudience; format: WsExportFormat; label: string }> = [
@@ -110,9 +111,7 @@ export function ExportMenu({
         }}
       >
         {busy ? "匯出中…" : "匯出"}
-        <span className="export-caret" aria-hidden="true">
-          ▾
-        </span>
+        <Icon name="chevron" className="is-glyph export-caret" />
       </button>
       {open && !inactive && (
         <div

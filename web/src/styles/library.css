@@ -84,7 +84,7 @@
   width: 100%;
   min-height: var(--control-h-lg);
   padding: 0 3rem 0 3.25rem;
-  border: var(--rule-hair) solid var(--color-rule-strong);
+  border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-pill);
   background: var(--color-field);
   box-shadow: var(--shadow-float);
@@ -92,11 +92,9 @@
 }
 
 .lib-search .lib-search-input:focus-visible {
-  border-color: var(--color-accent);
-  outline: 0;
-  box-shadow:
-    0 0 0 3px var(--color-accent-wash-2),
-    var(--shadow-float);
+  border-color: var(--color-focus);
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 /* The browser's own clear button: ours is the × beside it. */
@@ -162,7 +160,7 @@
 }
 
 .lib-chip[aria-pressed="true"] .lib-chip-count {
-  color: var(--color-accent-wash-2);
+  color: var(--color-accent-ink);
 }
 
 /* ================= 只看： and 標籤： ================= */
@@ -529,17 +527,6 @@
   font-weight: var(--weight-strong);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.lib-owner.is-platform::before {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-right: var(--space-2xs);
-  border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  content: "";
-  vertical-align: 0.1em;
 }
 
 .lib-card-category {

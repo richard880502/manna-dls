@@ -21,6 +21,7 @@ import {
   webSlots,
 } from "../../lib/organizer";
 import { useAutoGrow } from "../../lib/useAutoGrow";
+import { Icon } from "../Icon";
 
 /** What the editor puts in place of the printed texts. */
 export interface OrganizerSlots {
@@ -347,7 +348,7 @@ export function OrganizerEditor({
                 onChange(patchSection(org, si, (s) => ({ ...s, cells: s.cells.filter((_, i) => i !== ci) })))
               }
             >
-              ×
+              <Icon name="close" className="is-glyph" />
             </button>
           </span>
         </div>

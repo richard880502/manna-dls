@@ -3,6 +3,7 @@ import type { AiContextItem } from "../api/types";
 import { useApp } from "../context/AppContext";
 import { hasHardest } from "../lib/preferences";
 import { logScaffold, usePreferenceScaffold } from "../lib/scaffold";
+import { Icon } from "./Icon";
 
 /**
  * 「Manna 已帶入的資訊」: what the platform sent along with this AI call (AiResult.context).
@@ -34,7 +35,7 @@ export function AiContextPanel({ items }: { items: AiContextItem[] | null | unde
         aria-controls={regionId}
         onClick={toggle}
       >
-        <span aria-hidden="true">{open ? "▾" : "▸"}</span> Manna 已帶入的資訊
+        <Icon name={open ? "chevron" : "next"} className="is-glyph" /> Manna 已帶入的資訊
         <span className="ai-context-count">{list.length} 項</span>
       </button>
       {open && (

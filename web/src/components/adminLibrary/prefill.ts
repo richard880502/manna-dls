@@ -176,7 +176,7 @@ function aboutWords(n: number): string {
   return `約 ${rounded.toLocaleString("en-US")} 字`;
 }
 
-/** 「PDF · 7 頁 · 約 2,900 字」, or what is wrong with the text. */
+/** 「PDF」「7 頁」「約 2,900 字」, one item each, or what is wrong with the text. */
 export function materialMeta(m: {
   file_type: string;
   page_count: number | null;
@@ -184,7 +184,7 @@ export function materialMeta(m: {
   word_count: number;
   text_status: string;
   ocr?: { status: string };
-}): string {
+}): string[] {
   const parts = [fileTypeLabel(m.file_type)];
   if (m.page_count) parts.push(`${m.page_count} 頁`);
   if (m.text_status === "ready") parts.push(m.word_count > 0 ? aboutWords(m.word_count) : `${m.paragraph_count} 段`);
@@ -192,15 +192,15 @@ export function materialMeta(m: {
   const reading = m.ocr?.status === "queued" || m.ocr?.status === "running";
   if (m.text_status === "no_text" && !reading) parts.push("讀不到文字（可能是掃描檔）");
   if (m.text_status === "failed") parts.push("文字讀不出來");
-  return parts.join(" · ");
+  return parts;
 }
 
 const LANG_LABEL: Record<string, string> = { 英文: "英文指示", 中文: "中文指示", 中英並用: "中英並用" };
 
-/** 「4 區 · 英文指示 · 閱讀理解」 */
-export function templateMeta(t: { section_count: number; instruction_language: string; category: string }): string {
+/** 「4 區」「英文指示」「閱讀理解」, one item each. */
+export function templateMeta(t: { section_count: number; instruction_language: string; category: string }): string[] {
   const parts = [`${t.section_count} 區`];
   if (t.instruction_language) parts.push(LANG_LABEL[t.instruction_language] ?? t.instruction_language);
   parts.push(t.category || AUTO_CATEGORY_LABEL);
-  return parts.join(" · ");
+  return parts;
 }

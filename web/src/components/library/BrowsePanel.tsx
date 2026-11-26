@@ -267,6 +267,7 @@ function BrowseFrame<T>({
         </div>
       )}
 
+      {items !== null && items.length > 0 && <h2 className="sr-only">{listLabel}</h2>}
       {items !== null && items.length > 0 && (
         <ul
           className={`lib-grid${layout === "wall" ? " is-wall" : ""}${loading ? " is-busy" : ""}`}

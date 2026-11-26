@@ -246,7 +246,7 @@ describe("我的作品 with 逐步設計 lessons", () => {
     expect(names).toEqual(["The Umbrella Stand", "暖身遊戲", "做完的一課"]);
     const first = within(list).getByRole("link", { name: "The Umbrella Stand" });
     expect(first).toHaveAttribute("href", "/lessons/31");
-    expect(first).toHaveAccessibleDescription(/逐步設計.*倒裝句單元 · 第 4 步：逐段整合目標/);
+    expect(first).toHaveAccessibleDescription(/逐步設計.*倒裝句單元，第 4 步：逐段整合目標/);
     expect(within(list).getByRole("link", { name: "做完的一課" })).toHaveAccessibleDescription(/已完成/);
     // Sessions keep their 刪除; the lessons have none.
     expect(within(list).getAllByRole("button", { name: /^刪除/ })).toHaveLength(1);

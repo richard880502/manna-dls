@@ -451,7 +451,7 @@ describe("result editor", () => {
     // Warm-up first, exit ticket last, procedural scaffolds marked as automatic, levels from data.
     const sheet = projectSheet(generatedContent(), "standard", "student");
     expect(sheet.blocks.map((b) => b.label)).toEqual(["A", "B", "C", ""]);
-    expect(blockRegion("A").getByText("程序鷹架 · 自動產生")).toBeInTheDocument();
+    expect(blockRegion("A").getByText("程序鷹架（自動產生）")).toBeInTheDocument();
     expect(blockRegion("A").getByText("第 2 級")).toBeInTheDocument();
     expect(blockRegion("A").getByText("級別未知")).toBeInTheDocument();
     const info = await openBarPopover(userEvent.setup(), "關於這份學習單");
@@ -626,7 +626,7 @@ describe("result editor", () => {
     await screen.findByRole("textbox", { name: "區塊標題 B" });
     await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "調整設定" }));
     // The form, with a way back at the top…
-    await user.click(await screen.findByRole("button", { name: "← 回到學習單" }));
+    await user.click(await screen.findByRole("button", { name: "回到學習單" }));
     expect(await screen.findByRole("textbox", { name: "區塊標題 B" })).toBeInTheDocument();
     // …and beside the generate button.
     await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "調整設定" }));
@@ -866,8 +866,8 @@ describe("詞彙級別檢查", () => {
     expect(dist.getByText("比例的分母＝可對應到詞彙表的詞。")).toBeInTheDocument();
     expect(dist.getByText(/詞彙表版本：CEEC-111/)).toHaveTextContent("計入 120 個詞次、80 個不同的詞");
     expect(dist.getByText(/未計入的詞次：專有名詞 3、未收錄 2/)).toBeInTheDocument();
-    expect(dist.getByRole("row", { name: /第 1 級/ })).toHaveTextContent("56 個 · 70%");
-    expect(dist.getByRole("row", { name: /第 5 級（超出）/ })).toHaveTextContent("2 個 · 2.5%");
+    expect(dist.getByRole("row", { name: /第 1 級/ })).toHaveTextContent("56 個（70%）");
+    expect(dist.getByRole("row", { name: /第 5 級（超出）/ })).toHaveTextContent("2 個（2.5%）");
 
     const above = within(screen.getByRole("region", { name: "超出目標級別的詞" }));
     const row = within(above.getByRole("row", { name: /conserve/ }));

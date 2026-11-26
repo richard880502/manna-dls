@@ -3,6 +3,7 @@ import { MaterialBrowser } from "../components/library/BrowsePanel";
 import { UseMaterialMenu } from "../components/library/Cards";
 import { PREVIEW, cardTitle, unusableReason, usableMaterial } from "../components/library/labels";
 import { MaterialViewer } from "../components/material/MaterialViewer";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /**
  * 平台教材 (/reference): the knowledge base's materials (課綱, 詞彙表, past 學測／統測 papers…).
@@ -10,6 +11,7 @@ import { MaterialViewer } from "../components/material/MaterialViewer";
  * which only she sees, work as on her own materials) and opens a tool with it (用這篇出題 ▾).
  */
 export function ReferencePage() {
+  useDocumentTitle("平台教材");
   const [viewing, setViewing] = useState<number | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
   return (

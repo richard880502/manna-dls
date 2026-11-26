@@ -235,10 +235,10 @@ describe("版本紀錄", () => {
     const list = await within(dialog).findByRole("list", { name: "學習單的版本" });
     const items = within(list).getAllByRole("listitem");
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent("第 3 版・手動編輯");
+    expect(items[0]).toHaveTextContent("第 3 版：手動編輯");
     expect(items[0]).toHaveTextContent("目前");
-    expect(items[1]).toHaveTextContent("第 2 版・重新產生一區");
-    expect(items[2]).toHaveTextContent("第 1 版・Manna 產生");
+    expect(items[1]).toHaveTextContent("第 2 版：重新產生一區");
+    expect(items[2]).toHaveTextContent("第 1 版：Manna 產生");
     // The version before the current one is shown first; its sheet is the one asked for.
     await waitFor(() => expect(api.callsTo("GET", `${WS}/versions/2/sheet`)).toHaveLength(1));
     expect(await within(dialog).findByRole("article", { name: /學生版/ })).toBeInTheDocument();

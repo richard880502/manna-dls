@@ -9,6 +9,8 @@ import { Dialog } from "../components/Dialog";
 import { useApp } from "../context/AppContext";
 import { classSubtitle, focalClass, nextLine } from "../lib/classes";
 import { formatDate, formatShortDate } from "../lib/labels";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const FIRST_CLASS_SKIPPED_KEY = "manna.firstClassSkipped";
 /** 「上完還沒補寫」 shows the latest few; the rest are on the records page. */
@@ -29,12 +31,7 @@ function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
   const next = item.next_action;
   // Following a class's next step means working in that class.
   const enter = () => setCurrentClassId(item.id);
-  const meta = [
-    classSubtitle(item, true),
-    item.unit_count === 0 ? "還沒有單元" : `${item.unit_count} 個單元`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const meta = [...classSubtitle(item, true), item.unit_count === 0 ? "還沒有單元" : `${item.unit_count} 個單元`];
 
   return (
     <li className="row">
@@ -44,7 +41,7 @@ function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
             {item.name}
           </Link>
         </h3>
-        <p className="meta">{meta}</p>
+        <MetaList className="meta" items={meta} />
       </div>
       <p className="side">
         {next?.kind === "add_unit" ? (
@@ -96,6 +93,7 @@ function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
  * skipped.
  */
 export function ClassesPage() {
+  useDocumentTitle("班級");
   const { teacher, preferences } = useApp();
   const navigate = useNavigate();
   const [classes, setClasses] = useState<SchoolClass[] | null>(null);
@@ -177,7 +175,7 @@ export function ClassesPage() {
       {focal && focalNext && focalNext.kind !== "add_unit" ? (
         <NextLesson
           classId={focal.id}
-          kicker={`${focalNext.kind === "resume_run" ? "上課中" : "接下來"} · ${focal.name}`}
+          kicker={[focalNext.kind === "resume_run" ? "上課中" : "接下來", focal.name]}
           next={focalNext}
           detail={
             focalNext.kind === "resume_run"
@@ -279,9 +277,10 @@ export function ClassesPage() {
                       {r.unit_title}　{r.lesson_title}
                     </Link>
                   </h3>
-                  <p className="meta">
-                    {formatShortDate(r.started_at)} 上課 · 順利 {r.good_count} 次 · 卡住 {r.stuck_count} 次
-                  </p>
+                  <MetaList
+                    className="meta"
+                    items={[`${formatShortDate(r.started_at)} 上課`, `順利 ${r.good_count} 次`, `卡住 ${r.stuck_count} 次`]}
+                  />
                 </div>
                 <p className="side">
                   <Link

@@ -116,7 +116,7 @@
   max-width: 100%;
   min-height: var(--control-h-sm);
   padding-left: var(--space-sm);
-  border: var(--rule-hair) solid var(--color-rule-strong);
+  border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-pill);
   background: var(--color-paper);
   color: var(--color-ink-2);
@@ -877,7 +877,8 @@
 
 .prep-composer:focus-within {
   border-color: var(--color-focus);
-  box-shadow: 0 0 0 2px var(--color-focus);
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .prep-composer textarea {
@@ -960,7 +961,7 @@
   font-size: var(--text-sm);
 }
 
-/* Too narrow for 「Enter 送出・Shift＋Enter 換行」 beside the attach and send buttons. */
+/* Too narrow for 「Enter 送出，Shift＋Enter 換行」 beside the attach and send buttons. */
 @container prep-composer (max-width: 22rem) {
   .prep-composer-hint {
     display: none;
@@ -1109,8 +1110,8 @@
   position: absolute;
   top: 0;
   right: 0;
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
   padding: 0;
   border: 0;
   border-radius: var(--radius-pill);
@@ -1361,7 +1362,7 @@
   :root:has(.shell.is-collapsed) .prep-session.is-split.with-viewer .material-viewer {
     right: 0;
     left: auto;
-    width: min(28rem, 100vw - var(--shell-left));
+    width: min(28rem, 100% - var(--shell-left));
     border-right: 0;
     border-left: var(--rule-hair) solid var(--color-rule-strong);
     box-shadow: -0.25rem 0 1.5rem rgb(0 0 0 / 0.1);
@@ -1553,13 +1554,6 @@
   font-weight: var(--weight-strong);
 }
 
-.prep-head-toggle-label::after {
-  content: " ▸";
-}
-
-.prep-head-toggle[aria-expanded="true"] .prep-head-toggle-label::after {
-  content: " ▾";
-}
 
 .prep-head-summary {
   display: -webkit-box;

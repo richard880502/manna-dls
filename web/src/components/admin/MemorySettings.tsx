@@ -33,10 +33,10 @@ export function MemorySettings({ refreshVersion = 0 }: { refreshVersion?: number
         void change(async () => { setSettings(await api.saveMemorySettings(next)); setMessage(next ? "已開放讓出題習慣影響產生結果。" : "已停止在產生時帶入出題習慣。"); });
       }} />讓已確認的出題習慣影響學習單與備課產生
     </label>}
-    {index && <p>索引待同步：{index.pending}・同步失敗待重試：{index.failed}</p>}
+    {index && <p>索引待同步：{index.pending}，同步失敗待重試：{index.failed}</p>}
     {settings?.graph_enabled && index?.providers_ready === false && <Notice>記憶索引需要可用的 OpenAI 相容文字模型與 embeddings，目前只使用 Postgres 的有效習慣；模型設定可用後會自動接續同步。</Notice>}
     {settings?.graph_enabled && index?.compatible === false && <Notice>記憶索引服務未就緒或介面版本不相容，目前只使用 Postgres 的有效習慣；服務恢復後會自動接續同步。</Notice>}
-    {index?.sidecar && <p className="field-hint">記憶介面 v{index.sidecar.api_version}・Graphiti {index.sidecar.graphiti_version}</p>}
+    {index?.sidecar && <p className="field-hint">記憶介面 v{index.sidecar.api_version}，Graphiti {index.sidecar.graphiti_version}</p>}
     {settings?.graph_enabled && <button className="secondary-button" type="button" disabled={busy} onClick={() => void change(async () => {
       await api.rebuildMemoryIndex(); setIndex(await api.memoryIndex()); setMessage("已排入重建，會從已確認的習慣重新建立 Graphiti 索引。");
     })}>從正本重建記憶索引</button>}

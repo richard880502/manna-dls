@@ -18,6 +18,7 @@ import {
 } from "./prefill";
 import { useListPoll } from "./useListPoll";
 import { useUploadQueue, type QueueRow } from "./useUploadQueue";
+import { MetaList } from "../MetaList";
 
 // 自動判斷 by default: the server suggests a category from what it read.
 const prefill = (path: string) => ({ title: titleFromPath(path), category: "", tags: tagsText(guessTags(path)) });
@@ -48,14 +49,14 @@ function ExtractionState({
     return (
       <span className="adlib-state is-working">
         <span className="star is-working" aria-hidden="true" />
-        已上傳 · 讀取中…
+        已上傳：讀取中…
       </span>
     );
   }
   if (template.status === "failed") {
     return (
       <>
-        <span className="adlib-state is-failed">已上傳 · 沒有讀成功</span>
+        <span className="adlib-state is-failed">已上傳：沒有讀成功</span>
         <button
           type="button"
           className="text-link"
@@ -68,7 +69,7 @@ function ExtractionState({
       </>
     );
   }
-  return <span className="adlib-state is-done">已上傳 · {templateMeta(template)}</span>;
+  return <span className="adlib-state is-done">已上傳：{templateMeta(template).join("，")}</span>;
 }
 
 /** 平台範本: bulk upload of example worksheets, their reading status, then the platform templates. */
@@ -144,7 +145,7 @@ export function TemplatesTab({ onBusy }: { onBusy?: (busy: boolean) => void }) {
                 retrying={retrying === row.result.id}
                 onRetry={() => row.result && void retry(row.result)}
               />
-              {retryError?.id === row.result.id && <span className="error-text">{retryError.message}</span>}
+              {retryError?.id === row.result.id && <span key="retry-error" className="error-text">{retryError.message}</span>}
             </>
           )
         }
@@ -157,23 +158,22 @@ export function TemplatesTab({ onBusy }: { onBusy?: (busy: boolean) => void }) {
         filters={filters}
         onFilters={setFilters}
         renderMeta={(t) => (
-          <p className="meta">
-            {t.status === "extracting" && (
-              <span className="adlib-state is-working">
-                <span className="star is-working" aria-hidden="true" />
-                讀取中…
-              </span>
-            )}
-            {t.status === "failed" && <span className="adlib-state is-failed">沒有讀成功</span>}
-            {[
-              t.status === "ready" ? templateMeta(t) : null,
+          <MetaList
+            className="meta"
+            items={[
+              t.status === "extracting" && (
+                <span key="reading" className="adlib-state is-working">
+                  <span className="star is-working" aria-hidden="true" />
+                  讀取中…
+                </span>
+              ),
+              t.status === "failed" && <span key="failed" className="adlib-state is-failed">沒有讀成功</span>,
+              ...(t.status === "ready" ? templateMeta(t) : []),
               t.uploaded_by ? `${t.uploaded_by} 上傳` : null,
               formatDate(t.updated_at),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-            {retryError?.id === t.id && <span className="error-text"> {retryError.message}</span>}
-          </p>
+              retryError?.id === t.id && <span key="retry-error" className="error-text">{retryError.message}</span>,
+            ]}
+          />
         )}
         renderActions={(t) =>
           t.status === "failed" ? (

@@ -7,6 +7,8 @@ import { Dialog, useDialogGuard } from "../components/Dialog";
 import { useApp } from "../context/AppContext";
 import { usedByText } from "../lib/classes";
 import { UNIT_IDEAS_STATUS } from "../lib/labels";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 /** 加到班級: which classes use one unit. Each tick is saved at once. */
 function AssignClasses({
@@ -150,6 +152,7 @@ function NewUnitForm({
  * in play unless only one class uses it.
  */
 export function LibraryPage() {
+  useDocumentTitle("備課庫");
   const { setCurrentClassId } = useApp();
   const navigate = useNavigate();
   const [units, setUnits] = useState<Unit[] | null>(null);
@@ -241,6 +244,7 @@ export function LibraryPage() {
       {loadError && <ErrorText message={loadError} />}
       {!units && !loadError && <Loading />}
       {units && units.length === 0 && <p className="empty-line">備課庫還沒有單元。建立第一個單元就能開始備課。</p>}
+      {units && units.length > 0 && <h2 className="sr-only">單元</h2>}
       {units && units.length > 0 && (
         <ul className="rows is-first" aria-label="單元">
           {units.map((unit) => {
@@ -251,10 +255,13 @@ export function LibraryPage() {
                   <h3>
                     <Link to={`/units/${unit.id}`}>{unit.title}</Link>
                   </h3>
-                  <p className="meta">
-                    {unit.lesson_count === 0 ? "還沒有課例" : `${unit.lesson_count} 節課例`} ·{" "}
-                    {UNIT_IDEAS_STATUS[unit.core_status]}
-                  </p>
+                  <MetaList
+                    className="meta"
+                    items={[
+                      unit.lesson_count === 0 ? "還沒有課例" : `${unit.lesson_count} 節課例`,
+                      UNIT_IDEAS_STATUS[unit.core_status],
+                    ]}
+                  />
                 </div>
                 <p className="side">
                   <span>{usedByText(used)}</span>

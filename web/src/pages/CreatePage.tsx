@@ -65,10 +65,11 @@ import {
   styleLine,
   type Tool,
 } from "../lib/create";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
-/** 「8 題 · 記憶 1・理解 2・應用 2・分析 2・評鑑 1 · 約 20 分鐘」 */
+/** 「8 題，記憶 1、理解 2、應用 2、分析 2、評鑑 1，約 20 分鐘」 */
 export function summaryLine(total: number, counts: BloomCounts): string {
-  return [`${total} 題`, countsLine(counts), minutesLine(total)].filter(Boolean).join(" · ");
+  return [`${total} 題`, countsLine(counts), minutesLine(total)].filter(Boolean).join("，");
 }
 
 /**
@@ -95,6 +96,7 @@ export interface CreateCarry {
 }
 
 function Generator({ tool }: { tool: Tool }) {
+  useDocumentTitle(TOOL_NAME[tool]);
   const ids = useId();
   const navigate = useNavigate();
   const location = useLocation();
@@ -365,10 +367,10 @@ function Generator({ tool }: { tool: Tool }) {
   }
 
   const summary = mimic
-    ? [sample ? styleLine(sampleName(sample)) : null, needed].filter(Boolean).join(" · ")
+    ? [sample ? styleLine(sampleName(sample)) : null, needed].filter(Boolean).join("，")
     : fields.bloom
       ? summaryLine(total, counts)
-      : `${TOOL_NAME[tool]} · ${TOOL_BLURB[tool]}`;
+      : `${TOOL_NAME[tool]}：${TOOL_BLURB[tool]}`;
 
   // Writing her own objectives closes Manna's drafts. The panel opens right under the fields.
   const objectiveField = (

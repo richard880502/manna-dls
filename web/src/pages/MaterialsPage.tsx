@@ -22,6 +22,7 @@ import { useApp } from "../context/AppContext";
 import { formatBytes } from "../lib/materials";
 import { ocrOpen } from "../lib/ocr";
 import { can } from "../lib/permissions";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /** 改名: the title in a small dialog. */
 function RenameDialog({
@@ -117,7 +118,7 @@ function MyMaterials() {
         </div>
         {library && (
           <p className="materials-usage">
-            {library.usage.count} 份 · 檔案已使用 {formatBytes(library.usage.used_bytes)}／
+            {library.usage.count} 份，檔案已使用 {formatBytes(library.usage.used_bytes)}／
             {formatBytes(library.usage.quota_bytes)}
           </p>
         )}
@@ -247,6 +248,7 @@ function MyMaterials() {
 
 /** 我的教材. The old 我的版型 anchor (/materials#templates) now lives at 學習單範本's 我的範本. */
 export function MaterialsPage() {
+  useDocumentTitle("我的教材");
   const { teacher } = useApp();
   const { hash } = useLocation();
   if (hash === "#templates") return <Navigate to="/templates?tab=mine" replace />;

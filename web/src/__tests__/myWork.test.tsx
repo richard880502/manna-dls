@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { PrepSessionSummary, WorksheetSummary } from "../api/types";
 import { baseRoutes, mockApi, renderApp, respond, signIn } from "../test/mockApi";
+import { metaItems } from "../test/metaList";
 
 const SESSIONS = "GET /api/prep-sessions";
 const WORKSHEETS = "GET /api/worksheets";
@@ -211,9 +212,10 @@ describe("我的作品", () => {
     expect(document.querySelector("ul.rows")).not.toBeNull();
     expect(titles()).toEqual(["最新的獨立學習單", "The Umbrella Stand", "暖身遊戲", "獨立的學習單", "環境保護"]);
     // The list says the material only when it is not the title; the date closes the line.
-    expect(list().getByText(/^高一 3 班 · \d+\/15 \d+:\d+$/)).toBeInTheDocument();
-    expect(list().getByText(/^教材：The Umbrella Stand · \d+\/12 /)).toBeInTheDocument();
-    expect(list().queryByText(/教材：The Umbrella Stand · 高一/)).not.toBeInTheDocument();
+    const facts = metaItems(document.querySelector("ul.rows")!).map((f) => f.join("|"));
+    expect(facts).toContainEqual(expect.stringMatching(/(^|\|)高一 3 班\|\d+\/15 \d+:\d+$/));
+    expect(facts).toContainEqual(expect.stringMatching(/(^|\|)教材：The Umbrella Stand\|\d+\/12 /));
+    expect(facts.some((f) => /教材：The Umbrella Stand\|高一/.test(f))).toBe(false);
     expect(list().getByText(/還沒產生/)).toBeInTheDocument();
     expect(window.localStorage.getItem("manna.mywork.view")).toBe("list");
 

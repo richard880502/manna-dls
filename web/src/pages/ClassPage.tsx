@@ -11,6 +11,8 @@ import { useApp } from "../context/AppContext";
 import { CLASS_NOTE_MAX_CHARS, classSubtitle, usedByText } from "../lib/classes";
 import { formatDate, formatShortDate } from "../lib/labels";
 import { CLASS_PROFILE_MAX_CHARS } from "../lib/preferences";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 /** One unit as this class uses it: a ruled row with this class's progress and note. */
 function ClassUnitRow({
@@ -52,7 +54,7 @@ function ClassUnitRow({
     item.lessons_total === 0
       ? "還沒有課例"
       : item.lessons_taught === 0
-        ? `還沒上 · ${item.lessons_total} 節課例`
+        ? `還沒上，共 ${item.lessons_total} 節課例`
         : `已上 ${item.lessons_taught} 節，共 ${item.lessons_total} 節`;
 
   return (
@@ -62,11 +64,14 @@ function ClassUnitRow({
           <span className="num">{index + 1}</span>
           <Link to={`/units/${unit.id}`}>{unit.title}</Link>
         </h3>
-        <p className="meta">
-          {progress}
-          {item.last_run_at ? ` · 最近 ${formatShortDate(item.last_run_at)}` : ""}
-          {item.note ? `　·　這班的備註：${item.note}` : ""}
-        </p>
+        <MetaList
+          className="meta"
+          items={[
+            progress,
+            item.last_run_at ? `最近 ${formatShortDate(item.last_run_at)}` : null,
+            item.note ? `這班的備註：${item.note}` : null,
+          ]}
+        />
       </div>
       <p className="side">
         <button
@@ -159,6 +164,7 @@ export function ClassPage() {
   const ids = useId();
   const { setCurrentClassId } = useApp();
   const [detail, setDetail] = useState<ClassDetail | null>(null);
+  useDocumentTitle(detail?.name ?? "班級");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [runs, setRuns] = useState<LessonRun[]>([]);
 
@@ -334,14 +340,14 @@ export function ClassPage() {
       {showNext ? (
         <NextLesson
           classId={detail.id}
-          kicker={`${detail.name} · ${next.kind === "resume_run" ? "上課中" : next.kind === "plan_unit" ? "下一個單元" : "下一節"}`}
+          kicker={[detail.name, next.kind === "resume_run" ? "上課中" : next.kind === "plan_unit" ? "下一個單元" : "下一節"]}
           next={next}
           headingId="class-heading"
         />
       ) : (
         <div className="page-head">
           <h1 id="class-heading">{detail.name}</h1>
-          {subtitle && <p className="lead">{subtitle}</p>}
+          <MetaList className="lead" items={subtitle} />
         </div>
       )}
 
@@ -404,9 +410,7 @@ export function ClassPage() {
                   <li key={u.id} className="row">
                     <div>
                       <strong>{u.title}</strong>
-                      <p className="meta">
-                        {u.lesson_count} 節課例 · {usedByText(u.classes)}
-                      </p>
+                      <MetaList className="meta" items={[`${u.lesson_count} 節課例`, usedByText(u.classes)]} />
                     </div>
                     <p className="side">
                       <button
@@ -499,10 +503,15 @@ export function ClassPage() {
                         {r.unit_title}　{r.lesson_title}
                       </Link>
                     </h3>
-                    <p className="meta">
-                      {formatShortDate(r.started_at)} · 順利 {r.good_count} 次 · 卡住 {r.stuck_count} 次 ·{" "}
-                      {open ? "上課中" : r.review_completed_at ? "已補寫" : "還沒補寫"}
-                    </p>
+                    <MetaList
+                      className="meta"
+                      items={[
+                        formatShortDate(r.started_at),
+                        `順利 ${r.good_count} 次`,
+                        `卡住 ${r.stuck_count} 次`,
+                        open ? "上課中" : r.review_completed_at ? "已補寫" : "還沒補寫",
+                      ]}
+                    />
                   </div>
                   <p className="side">
                     <Link
@@ -620,10 +629,7 @@ export function ClassPage() {
           />
         ) : (
           <>
-            <p className="lead">
-              {detail.name}
-              {subtitle ? ` · ${subtitle}` : ""}
-            </p>
+            <MetaList className="lead" items={[detail.name, ...subtitle]} />
             {confirmArchive && (
               <div className="notice notice-warn" role="group" aria-label="封存這個班級">
                 <p>

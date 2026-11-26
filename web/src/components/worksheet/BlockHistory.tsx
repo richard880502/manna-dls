@@ -7,6 +7,7 @@ import { printedAnswer, printedOption } from "../../lib/worksheet";
 import { Dialog } from "../Dialog";
 import { ErrorText } from "../common";
 import { useWorksheetImage } from "./SlotPicture";
+import { Icon } from "../Icon";
 
 /**
  * 修改歷程 (docs/API.md「修改歷程與採用過往的版本」): every earlier state of one block, newest
@@ -198,7 +199,7 @@ function BlockHistoryDialog({
                     disabled={position <= 0}
                     onClick={() => go(position - 1)}
                   >
-                    ‹
+                    <Icon name="collapse" className="is-glyph" />
                   </button>
                   <span aria-live="polite">
                     第 {position + 1} 步（共 {steps.length} 步）
@@ -210,7 +211,7 @@ function BlockHistoryDialog({
                     disabled={position >= steps.length - 1}
                     onClick={() => go(position + 1)}
                   >
-                    ›
+                    <Icon name="next" className="is-glyph" />
                   </button>
                 </div>
                 <StepPreview worksheetId={worksheetId} step={step} />

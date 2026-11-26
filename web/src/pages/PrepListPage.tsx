@@ -8,6 +8,8 @@ import { STEPWISE_TAG, TOOL_NAME } from "../lib/create";
 import { stepwiseProgress } from "../lib/sop";
 import { DELETE_CONFIRM, NEXT_LABEL, PREP_SESSIONS_CHANGED, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 /** The filter chips. 學習單 covers every worksheet-making kind and the standalone worksheets. */
 type Filter = "all" | "worksheet" | "activity" | "ask" | "stepwise";
@@ -113,7 +115,7 @@ function cardOf(item: Item): WorkCardData {
       title: sessionTitle(s),
       href: `/prep/${s.id}`,
       tag: s.last_kind ? KIND_TAG[s.last_kind] : null,
-      detail: sessionDetail(s).join(" · "),
+      detail: sessionDetail(s).join("，"),
       when: formatDateTime(s.updated_at),
       worksheet: s.preview_worksheet ?? null,
       text: s.preview_text ?? null,
@@ -125,7 +127,7 @@ function cardOf(item: Item): WorkCardData {
       title: l.title,
       href: `/lessons/${l.id}`,
       tag: STEPWISE_TAG,
-      detail: lessonDetail(l).join(" · "),
+      detail: lessonDetail(l).join("，"),
       when: formatDateTime(l.updated_at),
       worksheet: null,
       // No page to show: the preview says where the lesson stands.
@@ -137,7 +139,7 @@ function cardOf(item: Item): WorkCardData {
     title: worksheetName(w),
     href: `/worksheets/${w.id}`,
     tag: TOOL_NAME.worksheet,
-    detail: worksheetDetail(w).join(" · "),
+    detail: worksheetDetail(w).join("，"),
     when: formatDateTime(w.updated_at),
     // Only a generated worksheet has a first page.
     worksheet: w.generated ? { id: w.id, version_no: w.version_no } : null,
@@ -155,6 +157,7 @@ const time = (iso: string) => {
  * list. Every item has 刪除; a session's takes its worksheets with it.
  */
 export function PrepListPage() {
+  useDocumentTitle("我的作品");
   const [params, setParams] = useSearchParams();
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
   const [worksheets, setWorksheets] = useState<WorksheetSummary[] | null>(null);
@@ -336,6 +339,7 @@ export function PrepListPage() {
               </button>
             </p>
           )}
+          {shown.length > 0 && <h2 className="sr-only">作品清單</h2>}
           {shown.length > 0 && view === "cards" && (
             <ul className="work-grid" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) => (
@@ -369,10 +373,14 @@ function SessionRow({ s, tools }: { s: PrepSessionSummary; tools: ReactNode }) {
         <h3>
           <Link to={`/prep/${s.id}`}>{sessionTitle(s)}</Link>
         </h3>
-        <p className="meta">
-          {s.last_kind && <span className="mywork-tag">{KIND_TAG[s.last_kind]}</span>}
-          {[...sessionDetail(s), formatDateTime(s.updated_at)].filter(Boolean).join(" · ")}
-        </p>
+        <MetaList
+          className="meta"
+          items={[
+            s.last_kind && <span key="tag" className="mywork-tag">{KIND_TAG[s.last_kind]}</span>,
+            ...sessionDetail(s),
+            formatDateTime(s.updated_at),
+          ]}
+        />
       </div>
       <div className="row-tools">{tools}</div>
     </li>
@@ -386,10 +394,10 @@ function LessonRow({ l }: { l: StepwiseLesson }) {
         <h3>
           <Link to={`/lessons/${l.id}`}>{l.title}</Link>
         </h3>
-        <p className="meta">
-          <span className="mywork-tag">{STEPWISE_TAG}</span>
-          {[...lessonDetail(l), formatDateTime(l.updated_at)].join(" · ")}
-        </p>
+        <MetaList
+          className="meta"
+          items={[<span key="tag" className="mywork-tag">{STEPWISE_TAG}</span>, ...lessonDetail(l), formatDateTime(l.updated_at)]}
+        />
       </div>
     </li>
   );
@@ -402,10 +410,10 @@ function WorksheetRow({ w, tools }: { w: WorksheetSummary; tools: ReactNode }) {
         <h3>
           <Link to={`/worksheets/${w.id}`}>{worksheetName(w)}</Link>
         </h3>
-        <p className="meta">
-          <span className="mywork-tag">{TOOL_NAME.worksheet}</span>
-          {[...worksheetDetail(w), formatDateTime(w.updated_at)].filter(Boolean).join(" · ")}
-        </p>
+        <MetaList
+          className="meta"
+          items={[<span key="tag" className="mywork-tag">{TOOL_NAME.worksheet}</span>, ...worksheetDetail(w), formatDateTime(w.updated_at)]}
+        />
       </div>
       <div className="row-tools">{tools}</div>
     </li>

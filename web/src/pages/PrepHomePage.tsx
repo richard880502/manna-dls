@@ -75,6 +75,8 @@ import { objectiveOptions, type DraftDecision } from "../lib/objectives";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
 import { formatDateTime } from "../lib/worksheet";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const RECENT_SHOWN = 5;
 
@@ -112,11 +114,10 @@ function RecentSessions() {
               <h3>
                 <Link to={`/prep/${s.id}`}>{sessionTitle(s)}</Link>
               </h3>
-              <p className="meta">
-                {[s.last_kind ? (KIND_LABEL[s.last_kind] ?? null) : null, formatDateTime(s.updated_at)]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
+              <MetaList
+                className="meta"
+                items={[s.last_kind ? (KIND_LABEL[s.last_kind] ?? null) : null, formatDateTime(s.updated_at)]}
+              />
             </div>
           </li>
         ))}
@@ -699,6 +700,7 @@ function QuickBox() {
  * are offered in the conversation or by typing them; 更多設定 goes to the full form), and the latest prep sessions.
  */
 export function PrepHomePage() {
+  useDocumentTitle(HOME_HEADING);
   return (
     <OncePerPage>
       <div className="home-head">

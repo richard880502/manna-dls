@@ -23,6 +23,7 @@ import {
   titleFromPath,
 } from "../components/adminLibrary/prefill";
 import { baseRoutes, mockApi, renderApp, respond, signIn, teacher, type MockCall } from "../test/mockApi";
+import { getMeta, metaItems } from "../test/metaList";
 
 const LIB = "/api/admin/library";
 const TPL = "/api/admin/library/templates";
@@ -212,12 +213,10 @@ describe("defaults from file and folder names", () => {
   });
 
   it("says what a row is", () => {
-    expect(materialMeta(materialCard())).toBe("Word · 約 2,900 字");
-    expect(materialMeta(materialCard({ file_type: "pdf", page_count: 7, word_count: 0, paragraph_count: 6 }))).toBe(
-      "PDF · 7 頁 · 6 段",
-    );
-    expect(materialMeta(materialCard({ file_type: "pdf", text_status: "no_text" }))).toBe("PDF · 讀不到文字（可能是掃描檔）");
-    expect(templateMeta(ready())).toBe("4 區 · 英文指示 · 自學講義");
+    expect(materialMeta(materialCard())).toEqual(["Word", "約 2,900 字"]);
+    expect(materialMeta(materialCard({ file_type: "pdf", page_count: 7, word_count: 0, paragraph_count: 6 }))).toEqual(["PDF", "7 頁", "6 段"]);
+    expect(materialMeta(materialCard({ file_type: "pdf", text_status: "no_text" }))).toEqual(["PDF", "讀不到文字（可能是掃描檔）"]);
+    expect(templateMeta(ready())).toEqual(["4 區", "英文指示", "自學講義"]);
   });
 
   it("fills each row from a picked folder's paths, and leaves out what cannot be uploaded", async () => {
@@ -384,7 +383,7 @@ describe("全部上傳", () => {
     await answer(added("112 學測英文 試題"));
     // A slot is free: the third goes; never more than two at once.
     await waitFor(() => expect(formsTo(api, LIB)).toHaveLength(3));
-    expect(first.getByText("已加入 · Word · 約 2,900 字")).toBeInTheDocument();
+    expect(first.getByText("已加入：Word，約 2,900 字")).toBeInTheDocument();
     await answer(respond(413, { error: { code: "platform_quota", message: "平台空間已滿，請先刪除不用的檔案。" } }));
     const tve = fileRow("113統測_英文_標準答案.pdf");
     expect(await tve.findByText("上傳失敗")).toBeInTheDocument();
@@ -461,7 +460,7 @@ describe("全部上傳", () => {
     await user.upload(tab.getByLabelText("選擇檔案"), [fileAt("114學測英文_試題.pdf")]);
     await user.click(tab.getByRole("button", { name: "全部上傳" }));
     expect(
-      await fileRow("114學測英文_試題.pdf").findByText("已加入 · PDF · 3 頁 · 讀不到文字（可能是掃描檔）"),
+      await fileRow("114學測英文_試題.pdf").findByText("已加入：PDF，3 頁，讀不到文字（可能是掃描檔）"),
     ).toBeInTheDocument();
   });
 });
@@ -493,7 +492,9 @@ describe("the admin list", () => {
     const list = within(await screen.findByRole("list", { name: "知識庫教材" }));
     expect(list.getByRole("heading", { name: "114學測英文_試題" })).toBeInTheDocument();
     // (The date is local time, so only its shape is checked.)
-    expect(list.getByText(/^學測英文 · Word · 約 2,900 字 · 1\.5 MB · PI-01 上傳 · \d{4}\/\d{2}\/\d{2}$/)).toBeInTheDocument();
+    const facts = metaItems(await screen.findByRole("list", { name: "知識庫教材" }))[0]!;
+    expect(facts.slice(0, 5)).toEqual(["學測英文", "Word", "約 2,900 字", "1.5 MB", "PI-01 上傳"]);
+    expect(facts[5]).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
     expect(list.getByText("試題")).toHaveClass("soft-tag");
 
     // Search and the category filter go to the server.
@@ -524,7 +525,7 @@ describe("the admin list", () => {
     expect(list.getByRole("heading", { name: "114 學測英文試題" })).toBeInTheDocument();
     expect(list.getByText("閱讀")).toBeInTheDocument();
     // The admin fields stay.
-    expect(list.getByText(/1\.5 MB · PI-01 上傳/)).toBeInTheDocument();
+    getMeta(["學測英文", "Word", "約 2,900 字", "1.5 MB", "PI-01 上傳", facts[5]!]);
 
     // Change the category.
     await user.click(list.getByRole("button", { name: "編輯「114 學測英文試題」" }));
@@ -565,7 +566,7 @@ describe("the admin list", () => {
     const user = userEvent.setup();
     renderApp("/admin/library?tab=templates");
     const list = within(await screen.findByRole("list", { name: "平台範本" }));
-    expect(list.getByText(/4 區 · 英文指示 · 自學講義 · KB-01 上傳/)).toBeInTheDocument();
+    expect(metaItems(await screen.findByRole("list", { name: "平台範本" }))[0]!.slice(0, 4)).toEqual(["4 區", "英文指示", "自學講義", "KB-01 上傳"]);
     expect(list.getByRole("link", { name: "看版型" })).toHaveAttribute("href", "/templates/201");
 
     await user.click(list.getByRole("button", { name: "編輯「0001_03_三民-B1L5-自學講義」" }));
@@ -575,7 +576,7 @@ describe("the admin list", () => {
     await user.selectOptions(form.getByLabelText("類別"), "課文講義");
     await user.click(form.getByRole("button", { name: "儲存" }));
     await waitFor(() => expect(api.lastBody("PATCH", `${TPL}/201`)).toEqual({ category: "課文講義" }));
-    expect(await list.findByText(/4 區 · 英文指示 · 課文講義/)).toBeInTheDocument();
+    await waitFor(() => expect(metaItems(screen.getByRole("list", { name: "平台範本" }))[0]!.slice(0, 3)).toEqual(["4 區", "英文指示", "課文講義"]));
 
     await user.click(list.getByRole("button", { name: "刪除「0001_03_三民-B1L5-自學講義」" }));
     await user.click(screen.getByRole("button", { name: "確定刪除" }));
@@ -607,7 +608,7 @@ describe("平台範本 being read", () => {
     await user.upload(tab.getByLabelText("選擇檔案"), [fileAt("0001_03_三民-B1L5-自學講義.pdf")]);
     await user.click(tab.getByRole("button", { name: "全部上傳" }));
     const row = fileRow("0001_03_三民-B1L5-自學講義.pdf");
-    expect(await row.findByText("已上傳 · 讀取中…")).toBeInTheDocument();
+    expect(await row.findByText("已上傳：讀取中…")).toBeInTheDocument();
     const [form] = formsTo(api, TPL);
     // 自動判斷 sends no category.
     expect(form?.get("category")).toBeNull();
@@ -618,10 +619,10 @@ describe("平台範本 being read", () => {
     const list = within(await screen.findByRole("list", { name: "平台範本" }));
     expect(list.getByText("讀取中…")).toBeInTheDocument();
     await waitFor(() => expect(templateGets()).toBeGreaterThanOrEqual(4));
-    expect(row.getByText("已上傳 · 讀取中…")).toBeInTheDocument();
+    expect(row.getByText("已上傳：讀取中…")).toBeInTheDocument();
 
     server = [ready()];
-    expect(await row.findByText("已上傳 · 4 區 · 英文指示 · 自學講義")).toBeInTheDocument();
+    expect(await row.findByText("已上傳：4 區，英文指示，自學講義")).toBeInTheDocument();
     expect(await list.findByRole("link", { name: "看版型" })).toBeInTheDocument();
     const settled = templateGets();
     await act(() => new Promise((r) => setTimeout(r, 120)));
@@ -646,6 +647,6 @@ describe("平台範本 being read", () => {
     expect(await list.findByText("讀取中…")).toBeInTheDocument();
     expect(api.callsTo("POST", `${TPL}/201/retry`)).toHaveLength(1);
     server = [ready()];
-    expect(await list.findByText(/4 區 · 英文指示 · 自學講義/)).toBeInTheDocument();
+    await waitFor(() => expect(metaItems(document.body).flat()).toEqual(expect.arrayContaining(["4 區", "英文指示", "自學講義"])));
   });
 });

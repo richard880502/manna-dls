@@ -799,7 +799,7 @@ export function MaterialViewer({
       style={full ? undefined : { width: `${width}px` }}
     >
       <div className="material-viewer-head">
-        <h2>教材{material?.kind && material.kind !== "text" ? ` · ${KIND_LABEL[material.kind]}` : ""}</h2>
+        <h2>教材{material?.kind && material.kind !== "text" ? `：${KIND_LABEL[material.kind]}` : ""}</h2>
         <div className="material-pane-tools">
           <button type="button" className="text-link is-plain" aria-pressed={full} onClick={() => setFull(!full)}>
             {full ? "離開全螢幕" : "全螢幕"}

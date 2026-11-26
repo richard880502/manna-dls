@@ -1192,38 +1192,39 @@
 /* ================= Bloom 認知層次 (Phase 2.7) =================
  * One colour per level, every one an existing token: light and cool for remembering, warm and
  * dark for evaluating and creating. 未標 is the neutral well with a dashed edge. The pairs below
- * keep 4.5:1 or better for the text on them. */
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-remember {
+ * keep 4.5:1 or better for the text on them. The one palette for every Bloom mark, the 建立
+ * picker's (home.css) included; only custom properties here, so it styles nothing else. */
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-remember {
   --bloom-bg: var(--color-accent-wash-2);
   --bloom-ink: var(--color-accent-press);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-understand {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-understand {
   --bloom-bg: var(--color-accent-rule);
   --bloom-ink: var(--color-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-apply {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-apply {
   --bloom-bg: var(--color-success-rule);
   --bloom-ink: var(--color-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-analyze {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-analyze {
   --bloom-bg: var(--color-manna-rule);
   --bloom-ink: var(--color-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-evaluate {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-evaluate {
   --bloom-bg: var(--color-warn-ink);
   --bloom-ink: var(--color-accent-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-create {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-create {
   --bloom-bg: var(--color-error);
   --bloom-ink: var(--color-accent-ink);
 }
 
-:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot).is-none {
+:is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-none {
   --bloom-bg: var(--color-paper-2);
   --bloom-ink: var(--color-muted);
   --bloom-edge: var(--color-field-edge);
@@ -1285,13 +1286,14 @@
   gap: var(--space-sm);
 }
 
+/* No overflow clip on the bar (it would cut off the focus ring): the end segments carry the
+   rounding, and a bar too narrow for its segments wraps instead of hiding them. */
 .bloom-bar {
   display: flex;
   flex: 1;
+  flex-wrap: wrap;
   gap: 2px;
   min-width: 0;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
 }
 
 .bloom-seg {
@@ -1312,17 +1314,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+.bloom-seg:first-child {
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.bloom-seg:last-child {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+}
+
 button.bloom-seg {
   min-height: var(--control-h-sm);
 }
 
+/* The base focus ring, outside the segment so it never sits on a level's colour; raised so the
+   next segment does not paint over it. */
 button.bloom-seg:focus-visible {
-  outline: 3px solid var(--color-focus);
-  outline-offset: -3px;
+  z-index: 1;
 }
 
-/* A level picked: the others step back. */
-.bloom-bar:has(.is-active) .bloom-seg:not(.is-active) {
+/* A level picked: the others step back (not the focused one, or its ring would fade too). */
+.bloom-bar:has(.is-active) .bloom-seg:not(.is-active, :focus-visible) {
   opacity: 0.4;
 }
 

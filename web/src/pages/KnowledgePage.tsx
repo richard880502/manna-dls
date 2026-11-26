@@ -17,6 +17,8 @@ import { Tabs } from "../components/library/Tabs";
 import { useApp } from "../context/AppContext";
 import { ITEM_TRACK_LABELS, formatDateTime } from "../lib/labels";
 import { can } from "../lib/permissions";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const CATEGORY_LABELS: Record<string, string> = {
   curriculum: "課綱",
@@ -48,6 +50,7 @@ const KB_TABS: ReadonlyArray<readonly [KbTab, string]> = [
  * index (課綱條目與詞彙, `?tab=curriculum`). Files are uploaded in 教材與範本管理 (上傳教材).
  */
 export function KnowledgePage() {
+  useDocumentTitle("知識庫");
   const { teacher } = useApp();
   const ids = useId();
   const [params, setParams] = useSearchParams();
@@ -208,11 +211,14 @@ function StatusSection({
         <li className="row">
           <div>
             <h3>課綱條目</h3>
-            <p className="meta">
-              {curriculum.length === 0
-                ? "還沒有匯入課綱條目。"
-                : byTrack.map((x) => `${ITEM_TRACK_LABELS[x.track]} ${count(x.n)} 條`).join(" · ")}
-            </p>
+            <MetaList
+              className="meta"
+              items={
+                curriculum.length === 0
+                  ? ["還沒有匯入課綱條目。"]
+                  : byTrack.map((x) => `${ITEM_TRACK_LABELS[x.track]} ${count(x.n)} 條`)
+              }
+            />
           </div>
           <p className="side">{count(sum(curriculum))} 條</p>
         </li>
@@ -220,11 +226,12 @@ function StatusSection({
           <li className="row">
             <div>
               <h3>其他條目</h3>
-              <p className="meta">
-                {otherCategories
-                  .map((c) => `${categoryLabel(c)} ${count(sum(others.filter((g) => g.category === c)))} 條`)
-                  .join(" · ")}
-              </p>
+              <MetaList
+                className="meta"
+                items={otherCategories.map(
+                  (c) => `${categoryLabel(c)} ${count(sum(others.filter((g) => g.category === c)))} 條`,
+                )}
+              />
             </div>
             <p className="side">{count(sum(others))} 條</p>
           </li>
@@ -232,13 +239,17 @@ function StatusSection({
         <li className="row">
           <div>
             <h3>詞彙表</h3>
-            <p className="meta">
-              {summary.vocabulary.active_forms === 0
-                ? "還沒有匯入詞彙表；匯入後教師才能分析詞彙級別。"
-                : `${versions.join("、")}：${levels
-                    .map((g) => `第 ${g.level} 級 ${count(g.entries)} 詞條`)
-                    .join(" · ")}${appendix > 0 ? ` · 附錄 ${count(appendix)} 詞` : ""}`}
-            </p>
+            <MetaList
+              className="meta"
+              items={
+                summary.vocabulary.active_forms === 0
+                  ? ["還沒有匯入詞彙表；匯入後教師才能分析詞彙級別。"]
+                  : [
+                      `${versions.join("、")}：${levels.map((g) => `第 ${g.level} 級 ${count(g.entries)} 詞條`).join("、")}`,
+                      appendix > 0 ? `附錄 ${count(appendix)} 詞` : null,
+                    ]
+              }
+            />
           </div>
           <p className="side">{count(summary.vocabulary.active_forms)} 個詞形</p>
         </li>
@@ -256,10 +267,16 @@ function StatusSection({
                     {b.kind === "vocabulary" ? "詞彙表" : "課綱與知識庫條目"}：新增 {count(b.inserted)}、更新{" "}
                     {count(b.updated)}、不變 {count(b.unchanged)}
                   </p>
-                  <p className="meta">
-                    {formatDateTime(b.created_at)} · {b.imported_by ?? "（帳號已移除）"} · 檔案 SHA-256{" "}
-                    <code className="sha">{b.file_sha256}</code>
-                  </p>
+                  <MetaList
+                    className="meta"
+                    items={[
+                      formatDateTime(b.created_at),
+                      b.imported_by ?? "（帳號已移除）",
+                      <>
+                        檔案 SHA-256 <code className="sha">{b.file_sha256}</code>
+                      </>,
+                    ]}
+                  />
                 </div>
               </li>
             ))}
@@ -529,7 +546,7 @@ function ImportSection({
   const groups = (r: KnowledgeImportResult) =>
     Object.entries(r.by_track ?? r.by_level ?? {})
       .map(([k, n]) => `${groupLabel(k)} ${count(n)}`)
-      .join(" · ");
+      .join("、");
   const nothingToDo = shown !== null && shown.inserted + shown.updated === 0;
 
   return (
@@ -773,13 +790,16 @@ function ItemsBrowser({ revision }: { revision: number }) {
                 <div>
                   <h3>{item.title}</h3>
                   <p className="kb-text">{item.content}</p>
-                  <p className="meta">
-                    <code>{item.item_code}</code> · {ITEM_TRACK_LABELS[item.school_track] ?? item.school_track} ·{" "}
-                    {categoryLabel(item.category)}
-                    {item.source_doc && ` · ${item.source_doc}`}
-                    {item.source_version && `（${item.source_version}）`}
-                    {item.source_page && ` 第 ${item.source_page} 頁`} · 第 {item.version} 版
-                  </p>
+                  <MetaList
+                    className="meta"
+                    items={[
+                      <code key="code">{item.item_code}</code>,
+                      ITEM_TRACK_LABELS[item.school_track] ?? item.school_track,
+                      categoryLabel(item.category),
+                      `${item.source_doc ?? ""}${item.source_version ? `（${item.source_version}）` : ""}${item.source_page ? ` 第 ${item.source_page} 頁` : ""}`.trim(),
+                      `第 ${item.version} 版`,
+                    ]}
+                  />
                 </div>
                 {item.retired_at && <p className="side">已停用 {formatDateTime(item.retired_at)}</p>}
               </li>
@@ -854,12 +874,15 @@ function VocabularyBrowser({ revision }: { revision: number }) {
               <li key={`${w.word}-${w.headword}-${w.pos}-${w.kind}-${w.appendix_category}`} className="row">
                 <div>
                   <h3 className="en">{w.word}</h3>
-                  <p className="meta">
-                    {w.kind === "appendix"
-                      ? `附錄：${w.appendix_category}`
-                      : `詞條 ${w.headword}${w.pos ? ` · ${w.pos}` : ""}`}
-                    {w.source_page && ` · 第 ${w.source_page} 頁`} · {w.list_version}
-                  </p>
+                  <MetaList
+                    className="meta"
+                    items={[
+                      w.kind === "appendix" ? `附錄：${w.appendix_category}` : `詞條 ${w.headword}`,
+                      w.kind === "appendix" ? null : w.pos,
+                      w.source_page ? `第 ${w.source_page} 頁` : null,
+                      w.list_version,
+                    ]}
+                  />
                 </div>
                 <p className="side">{w.level === null ? "未分級" : `第 ${w.level} 級`}</p>
               </li>

@@ -41,6 +41,7 @@ import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
 import { openBarPopover } from "../test/menus";
+import { itemTexts } from "../test/metaList";
 
 const WS = "/api/worksheets/5";
 
@@ -182,6 +183,9 @@ const job = (id: number, step: WsJob["step"], extra: Partial<WsJob> = {}): WsJob
 
 // ---------------------------------------------------------------- lib/bloom
 
+/** The facts of 「這次會出」, one item each. */
+const planItems = () => itemTexts(screen.getByRole("status", { name: "這次會出" }));
+
 describe("lib/bloom: presets and counts", () => {
   const fixed = BLOOM_PRESETS.filter((p) => p.percent !== null).map((p) => p.id as FixedPresetId);
 
@@ -266,7 +270,7 @@ describe("lib/bloom: presets and counts", () => {
     expect(
       planFromSettings(settings({ output: "comprehension", bloom: ["understand", "analyze", "evaluate"], question_count: 6 })),
     ).toMatchObject({ preset: "custom", counts: { understand: 2, analyze: 2, evaluate: 2 }, total: 6 });
-    expect(planSummary(countsFor("balanced", 8))).toBe("8 題 · 記憶 1・理解 2・應用 2・分析 1・評鑑 1・創造 1 · 約 20 分鐘");
+    expect(planSummary(countsFor("balanced", 8))).toEqual(["8 題", "記憶 1、理解 2、應用 2、分析 1、評鑑 1、創造 1", "約 20 分鐘"]);
   });
 });
 
@@ -418,9 +422,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
       "自訂",
     ]);
     expect(presets.getByRole("radio", { name: /均衡（預設）/ })).toBeChecked();
-    expect(screen.getByRole("status", { name: "這次會出" })).toHaveTextContent(
-      "8 題 · 記憶 1・理解 2・應用 2・分析 1・評鑑 1・創造 1 · 約 20 分鐘",
-    );
+    expect(planItems()).toEqual(["8 題", "記憶 1、理解 2、應用 2、分析 1、評鑑 1、創造 1", "約 20 分鐘"]);
     expect(within(screen.getByRole("region", { name: "作答方式" })).getAllByRole("checkbox")).toHaveLength(8);
     expect(within(screen.getByRole("region", { name: "版本" })).getAllByRole("checkbox")).toHaveLength(3);
     expect(screen.getByRole("button", { name: "產生閱讀理解題" })).toBeEnabled();
@@ -438,7 +440,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     await user.click(total.getByRole("button", { name: "題數多一題" }));
     await user.click(total.getByRole("button", { name: "題數多一題" }));
     expect(total.getByText("10")).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "這次會出" })).toHaveTextContent("10 題 · 理解 2・應用 2・分析 3・評鑑 2・創造 1 · 約 25 分鐘");
+    expect(planItems()).toEqual(["10 題", "理解 2、應用 2、分析 3、評鑑 2、創造 1", "約 25 分鐘"]);
     await settle();
     expect(lastSave(api).settings).toMatchObject({
       output: "comprehension",
@@ -474,7 +476,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
       bloom: ["understand", "analyze", "create"],
       question_count: 4,
     });
-    expect(screen.getByRole("status", { name: "這次會出" })).toHaveTextContent("4 題 · 理解 1・分析 1・創造 2 · 約 10 分鐘");
+    expect(planItems()).toEqual(["4 題", "理解 1、分析 1、創造 2", "約 10 分鐘"]);
 
     // Back to a preset: its counts at (about) the same total.
     await user.click(presets.getByRole("radio", { name: /基礎鞏固/ }));
@@ -504,7 +506,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
         "差異化學習單固定做基礎版、一般版、進階版三個版本：三個版本目標與題目相同，差在提示與支持的多寡。學生版只印 A、B、C 版，不印程度名稱。",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "這次會出" })).toHaveTextContent(/^6 題 · /);
+    expect(planItems()[0]).toBe("6 題");
     // Only the open answer formats.
     expect(screen.queryByRole("checkbox", { name: "選擇題" })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "簡答題" })).toBeInTheDocument();
@@ -533,7 +535,7 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     const ask = screen.getByRole("textbox", { name: "給 Manna 的要求" });
     expect(ask).toHaveAttribute("maxLength", "2000");
     await user.type(ask, "B1 程度");
-    expect(screen.getByText("選填 · 5/2000")).toBeInTheDocument();
+    expect(screen.getByText("選填：5/2000")).toBeInTheDocument();
     await settle();
     const body = lastSave(api);
     expect(body.settings?.content_objective).toBe("I can explain why.");

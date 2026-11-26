@@ -287,9 +287,13 @@ describe("the 備課對話", () => {
       "GET /api/worksheets/11/jobs": { running: true, version_no: 2, jobs: [], progress },
     });
     renderApp("/prep/7");
-    const region = await screen.findByRole("region", { name: "進度" });
-    // The worksheet's steps stand in the pane beside the conversation (the sheet is there).
-    expect(region.closest(".prep-split-sheet")).not.toBeNull();
+    // The worksheet's steps stand in the pane beside the conversation (the sheet is there). Until the
+    // worksheet has loaded the card in the conversation shows them, so wait for the sheet's own.
+    const region = await waitFor(() => {
+      const found = screen.getByRole("region", { name: "進度" });
+      expect(found.closest(".prep-split-sheet")).not.toBeNull();
+      return found;
+    });
     expect(within(region).getAllByRole("listitem")[1]).toHaveAttribute("aria-current", "step");
   });
 

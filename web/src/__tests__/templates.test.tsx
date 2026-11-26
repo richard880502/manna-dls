@@ -32,6 +32,7 @@ import {
   templateCard,
   type MockCall,
 } from "../test/mockApi";
+import { getMeta } from "../test/metaList";
 
 const TEMPLATES = "/api/worksheet-templates";
 const T9 = `${TEMPLATES}/9`;
@@ -200,7 +201,7 @@ describe("學習單範本: 我的範本", () => {
     expect(tcard("新的版型").getByRole("button", { name: "照這個範本做「新的版型」" })).toBeDisabled();
     expect(tcard("舊的版型").getByText("沒有讀成功")).toBeInTheDocument();
     expect(tcard("舊的版型").getByText("失敗")).toBeInTheDocument();
-    expect(tcard("L2 學習單版型").getByText("3 區 · 英文指示 · 閱讀理解")).toBeInTheDocument();
+    getMeta(["3 區", "英文指示", "閱讀理解"]);
     expect(tcard("L2 學習單版型").getByRole("link", { name: "照這個範本做「L2 學習單版型」" })).toHaveAttribute(
       "href",
       "/create/mimic?template=9",
@@ -423,7 +424,7 @@ describe("學習單範本: 我的範本", () => {
     const asked = api.callsTo("GET", "/api/materials").map(queryOf);
     expect(asked).toContainEqual({ purpose: "worksheet_sample", orphaned: "true" });
     const old = within(section.getByRole("listitem", { name: "舊學習單" }));
-    expect(old.getByText("old-worksheet.docx · 上傳於 2026/11/14")).toBeInTheDocument();
+    getMeta(["old-worksheet.docx", "上傳於 2026/11/14"]);
     expect(within(section.getByRole("listitem", { name: "貼上的學習單" })).getByText("加入於 2026/11/10")).toBeInTheDocument();
 
     // 查看 opens the original in the viewer.
@@ -500,7 +501,7 @@ describe("/templates/:id", () => {
     mockApi({ ...baseRoutes(), [`GET ${T9}`]: detail() });
     renderApp("/templates/9");
     expect(await screen.findByRole("heading", { name: "L2 學習單版型", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("課文深度閱讀 · 指示語：英文 · 抬頭：Name、No、Class · 列出學習目標 · 不附課文")).toBeInTheDocument();
+    getMeta(["課文深度閱讀", "指示語：英文", "抬頭：Name、No、Class", "列出學習目標", "不附課文"]);
     expect(titlesInOrder()).toEqual(["Warm-up: [主題]", "Paragraph [n]: Find", "Video talk"]);
     expect(card(2).getByRole("checkbox", { name: "逐段（每段各做一次）" })).toBeChecked();
     expect(card(3).getByRole("checkbox", { name: "需要我提供素材" })).toBeChecked();

@@ -20,6 +20,8 @@ import {
 import { editOp, removeOp, useRecordSync, type RecordSync, type ViewEvent } from "../lib/recordQueue";
 import { runQueueScope } from "../lib/runs";
 import { logScaffold } from "../lib/scaffold";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 export const FOLLOWUP_MAX_CHARS = 2000;
 
@@ -122,9 +124,7 @@ function ReviewCard({ runId, event, steps, sync, register, onDirtyChange, showPr
           <PolarityIcon polarity={event.polarity} size={16} />
           {POLARITY_LABELS[event.polarity]}
         </span>
-        <span className="unit-meta">
-          {DEVICE_TYPE_LABELS[event.device_type]} · {VIA_LABELS[event.via]}
-        </span>
+        <MetaList className="unit-meta" items={[DEVICE_TYPE_LABELS[event.device_type], VIA_LABELS[event.via]]} />
         {event.pending && <span className="pending-tag">待同步</span>}
       </div>
       {event.note ? <p className="review-note">「{event.note}」</p> : <p className="field-hint">課中沒有加一句話。</p>}
@@ -228,7 +228,7 @@ function ReviewCard({ runId, event, steps, sync, register, onDirtyChange, showPr
           <button type="button" className="secondary-button" onClick={() => void save()} disabled={!dirty || saving}>
             {saving ? "儲存中…" : "儲存這張書籤"}
           </button>
-          {saved && <span className="saved-label">● 已儲存</span>}
+          {saved && <span className="saved-label">已儲存</span>}
           {dirty && <span className="status-pill">尚未儲存</span>}
         </div>
       </fieldset>
@@ -242,6 +242,7 @@ function ReviewCard({ runId, event, steps, sync, register, onDirtyChange, showPr
 export function RunReviewPage() {
   const runId = Number(useParams().runId);
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  useDocumentTitle(detail?.lesson_title ?? "課後補寫");
   const [loadError, setLoadError] = useState<string | null>(null);
   const send = useCallback((ops: Parameters<typeof api.syncRunEvents>[1]) => api.syncRunEvents(runId, ops), [runId]);
   const [state, sync] = useRecordSync(runQueueScope(runId), send);
@@ -357,11 +358,13 @@ export function RunReviewPage() {
         / <Link to={`/lessons/${detail.lesson_id}`}>{detail.lesson_title}</Link> / 課後補寫
       </p>
       <div className="page-head">
-        <p className="kicker">
-          課後補寫 · {detail.class_name ? `${detail.class_name} · ` : ""}
-          {formatDateTime(detail.started_at)}
-          {detail.ended_at ? ` – ${formatClock(detail.ended_at, false)}` : "（進行中）"}
-        </p>
+        <MetaList
+          className="kicker"
+          items={[
+            detail.class_name,
+            `${formatDateTime(detail.started_at)}${detail.ended_at ? ` 到 ${formatClock(detail.ended_at, false)}` : "（進行中）"}`,
+          ]}
+        />
         <h1 id="review-heading">{detail.lesson_title}</h1>
         <p className="lead">
           書籤依時間排列，旁邊是這節課的教案步驟。每張書籤的欄位都可以留白；沒有書籤，也可以直接完成。
@@ -407,7 +410,7 @@ export function RunReviewPage() {
           <div className="card-heading">
             <h2>書籤</h2>
             <span className="soft-tag">
-              順利 {events.filter((e) => e.polarity === "good").length} · 卡住{" "}
+              順利 {events.filter((e) => e.polarity === "good").length}，卡住{" "}
               {events.filter((e) => e.polarity === "stuck").length}
             </span>
           </div>

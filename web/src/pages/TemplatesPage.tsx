@@ -30,6 +30,8 @@ import { mimicTemplatePath } from "../lib/create";
 import { formatDate } from "../lib/labels";
 import { ocrFailed, ocrFailedLine, ocrOpen } from "../lib/ocr";
 import { NO_TEXT_MESSAGE, TEMPLATES_INTRO, templateDeleteConsequences } from "../lib/templates";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
   ["platform", TEMPLATE_AREA_LABEL.platform],
@@ -234,13 +236,13 @@ function OrphanSamples({
         {samples.map((m) => {
           const title = titleOf(m);
           const added = `${m.origin === "upload" ? "上傳" : "加入"}於 ${formatDate(m.created_at)}`;
-          const meta = m.filename && m.filename !== m.title.trim() ? `${m.filename} · ${added}` : added;
+          const meta = m.filename && m.filename !== m.title.trim() ? [m.filename, added] : [added];
           return (
             <li key={m.id} className="orphan-row" aria-label={title}>
-              <span className="orphan-name">
+              <div className="orphan-name">
                 <strong>{title}</strong>
-                <span className="meta">{meta}</span>
-              </span>
+                <MetaList className="meta" items={meta} />
+              </div>
               {(m.has_file || m.text_status === "ready") && (
                 <button
                   type="button"
@@ -482,6 +484,7 @@ function Templates() {
 }
 
 export function TemplatesPage() {
+  useDocumentTitle("學習單範本");
   return (
     <OncePerPage>
       <Templates />

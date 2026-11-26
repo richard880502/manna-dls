@@ -15,6 +15,7 @@ import { ErrorText } from "../components/common";
 import { Tabs } from "../components/library/Tabs";
 import { useApp } from "../context/AppContext";
 import { can } from "../lib/permissions";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 type AdminTab = "overview" | "accounts" | "settings" | "prompts" | "import";
 const ADMIN_TABS: ReadonlyArray<readonly [AdminTab, string]> = [
@@ -31,6 +32,7 @@ function tabFromParam(value: string | null): AdminTab {
 
 /** 後台管理 (/admin, pi): tabs kept in `?tab=` — 總覽 (no param), accounts, settings, prompts, import. */
 export function AdminPage() {
+  useDocumentTitle("後台管理");
   const { teacher } = useApp();
   const ids = useId();
   const [params, setParams] = useSearchParams();

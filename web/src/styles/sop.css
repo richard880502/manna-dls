@@ -485,7 +485,7 @@
   bottom: 0;
   left: var(--shell-left);
   z-index: var(--z-raised);
-  width: min(28rem, 100vw - var(--shell-left));
+  width: min(28rem, 100% - var(--shell-left));
   padding: var(--space-lg) var(--space-lg) var(--space-3xl);
   overflow-y: auto;
   border-right: var(--rule-hair) solid var(--color-rule-strong);

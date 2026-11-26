@@ -105,7 +105,7 @@ export function MineTab() {
                   {item.shared && (
                     <>
                       <p className="com-row-meta">
-                        名稱顯示為「{item.name === "code" ? SHARE_NAME_LABEL.code : ANONYMOUS_NAME}」・
+                        名稱顯示為「{item.name === "code" ? SHARE_NAME_LABEL.code : ANONYMOUS_NAME}」，
                         {item.allow_remix ? "允許改編" : "不開放改編"}
                       </p>
                       <Counts saves={item.saves} remixes={item.remixes} />

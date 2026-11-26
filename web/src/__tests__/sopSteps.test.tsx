@@ -203,7 +203,7 @@ describe("step 3: 換一個 and 幫我修英文", () => {
     await open();
     await goToStep(user, /內容目標與語言目標/);
 
-    const language = within(screen.getByRole("group", { name: "Manna 建議 · 語言目標" }));
+    const language = within(screen.getByRole("group", { name: "Manna 建議：語言目標" }));
     expect(language.getByText("學生能用 however 說明轉折")).toBeInTheDocument();
     await user.click(language.getByRole("button", { name: "換一個" }));
     // Only that one is asked for again; the other suggestion stays.
@@ -215,7 +215,7 @@ describe("step 3: 換一個 and 幫我修英文", () => {
     );
 
     // The replacement takes its place and is adopted with its own interaction's decision.
-    const again = await screen.findByRole("group", { name: "Manna 建議 · 語言目標" });
+    const again = await screen.findByRole("group", { name: "Manna 建議：語言目標" });
     expect(within(again).getByText("學生能用 so 和 therefore 說明結果")).toBeInTheDocument();
     expect(screen.queryByText("學生能用 however 說明轉折")).not.toBeInTheDocument();
     await user.click(within(again).getByRole("button", { name: "採用" }));
@@ -362,7 +362,7 @@ describe("step 4: 逐段整合目標", () => {
     expect(api.lastBody("POST", `${SOP}/goals`)).toEqual({});
 
     const p1 = within(await screen.findByRole("region", { name: "第 1 段" }));
-    const well = within(await p1.findByRole("group", { name: "Manna 建議 · 第 1 段" }));
+    const well = within(await p1.findByRole("group", { name: "Manna 建議：第 1 段" }));
     expect(well.getByText("先找出告示，再說明規則。")).toBeInTheDocument();
     await user.click(well.getByRole("button", { name: "採用" }));
     // Her objective and her note stay; the suggested objective is added.
@@ -370,7 +370,7 @@ describe("step 4: 逐段整合目標", () => {
     expect(p1.getAllByRole("checkbox").filter((c) => (c as HTMLInputElement).checked)).toHaveLength(2);
 
     const p2 = within(screen.getByRole("region", { name: "第 2 段" }));
-    const second = within(p2.getByRole("group", { name: "Manna 建議 · 第 2 段" }));
+    const second = within(p2.getByRole("group", { name: "Manna 建議：第 2 段" }));
     expect(second.getByText("Manna 認為這一段不特別對應目標。")).toBeInTheDocument();
     await user.click(second.getByRole("button", { name: "修改後採用" }));
     expect(p2.getByRole("textbox", { name: "這一段要怎麼帶" })).toHaveValue("這一段只是過場，不特別對應目標。");
@@ -417,7 +417,7 @@ describe("step 4: 逐段整合目標", () => {
     // The other paragraph's suggestion is still there.
     expect(screen.getByText("這一段只是過場，不特別對應目標。")).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/ai/91/decision").map((c) => c.body)).toEqual([{ item_index: 1, decision: "reject" }]);
-    await user.click(within(p1.getByRole("group", { name: "Manna 建議 · 第 1 段" })).getByRole("button", { name: "採用" }));
+    await user.click(within(p1.getByRole("group", { name: "Manna 建議：第 1 段" })).getByRole("button", { name: "採用" }));
     expect(api.callsTo("POST", "/api/ai/95/decision").map((c) => c.body)).toEqual([{ item_index: 1, decision: "adopt" }]);
   });
 
@@ -513,7 +513,7 @@ describe("step 5: 逐段問題或任務", () => {
     const p1 = within(screen.getByRole("region", { name: "第 1 段" }));
     // Her own task first, then Manna's, with the options and the answer for her.
     expect(p1.getByText("What did the sign say?")).toBeInTheDocument();
-    const well = within(p1.getByRole("group", { name: "Manna 建議 · 第 1 段" }));
+    const well = within(p1.getByRole("group", { name: "Manna 建議：第 1 段" }));
     expect(well.getByText("Why did Mrs. Lin put the stand outside?")).toBeInTheDocument();
     expect(well.getByText("To help people", { selector: "li" })).toBeInTheDocument();
     expect(well.getByText(/Manna 先選了學生任務：理解內容、推論／預測/)).toBeInTheDocument();
@@ -620,9 +620,9 @@ describe("step 6: 暖身", () => {
     const user = userEvent.setup();
     await open();
     await goToStep(user, /暖身/);
-    const activity = within(screen.getByRole("group", { name: "Manna 建議 · 暖身活動 1" }));
+    const activity = within(screen.getByRole("group", { name: "Manna 建議：暖身活動 1" }));
     await user.click(activity.getByRole("button", { name: "採用" }));
-    const words = within(screen.getByRole("group", { name: "Manna 建議 · 關鍵字彙" }));
+    const words = within(screen.getByRole("group", { name: "Manna 建議：關鍵字彙" }));
     // The level is the word list's: a word it does not have says so.
     expect(words.getByText("大考中心詞彙表第 2 級")).toBeInTheDocument();
     expect(words.getByText("詞彙表裡沒有這個字")).toBeInTheDocument();
@@ -663,10 +663,10 @@ describe("step 7: Exit ticket and 產生學習單", () => {
     await open();
     await goToStep(user, /Exit ticket/);
     expect(screen.getByText(/這次沒有檢核到：語言目標 1/)).toBeInTheDocument();
-    const first = within(screen.getByRole("group", { name: "Manna 建議 · 形成性評量" }));
+    const first = within(screen.getByRole("group", { name: "Manna 建議：形成性評量" }));
     expect(first.getByText("To help people.")).toBeInTheDocument();
     await user.click(first.getByRole("button", { name: "採用" }));
-    await user.click(within(screen.getByRole("group", { name: "Manna 建議 · 學生反思" })).getByRole("button", { name: "不用" }));
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：學生反思" })).getByRole("button", { name: "不用" }));
     await settleAutosave();
     expect(lastSaved(api).exit_ticket.items).toEqual([
       {

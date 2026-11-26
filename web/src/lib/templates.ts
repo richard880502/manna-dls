@@ -52,14 +52,14 @@ export const SUPPORT_ROLE_LABEL: Record<WsTemplateSupportRole, string> = {
 /** 「Sentence Frame for Sharing（分享句型）」: a support box as the template page lists it. */
 export const supportLine = (s: WsTemplateSupport) => `${s.heading}（${SUPPORT_ROLE_LABEL[s.role] ?? s.role}）`;
 
-/** 「4 區 · 第 2 版」, 「讀取中」, 「沒有讀成功」: what a row says under the title. */
-export function templateMeta(t: WsTemplateSummary): string {
-  if (t.status === "extracting") return "讀取中";
-  if (t.status === "failed") return "沒有讀成功";
+/** 「4 區」「第 2 版」, one item each, or 「讀取中」 / 「沒有讀成功」: what a row says under the title. */
+export function templateMeta(t: WsTemplateSummary): string[] {
+  if (t.status === "extracting") return ["讀取中"];
+  if (t.status === "failed") return ["沒有讀成功"];
   const parts = [`${t.section_count} 區`];
   if (t.version_no) parts.push(`第 ${t.version_no} 版`);
   parts.push(t.source_material ? `來自「${t.source_material.title.trim() || "未命名教材"}」` : "原本的檔案已刪除");
-  return parts.join(" · ");
+  return parts;
 }
 
 /** Only materials with text can be read as a worksheet or used as a worksheet's material. */

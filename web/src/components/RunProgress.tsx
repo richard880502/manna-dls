@@ -4,6 +4,7 @@ import { api, errorMessage } from "../api/client";
 import { PROGRESS_WORDS, QUEUE_WORDS, announcement, queueText, stepText } from "../lib/progress";
 import { useConfirmFocus } from "../lib/useConfirmFocus";
 import { ErrorText } from "./common";
+import { Icon } from "./Icon";
 
 /** 「排隊中…」 with 取消排隊 (an in-page confirm); `onCancelled` refreshes the page after the job is cancelled. */
 export function QueueLine({ queue, onCancelled }: { queue: QueueInfo; onCancelled?: () => void }) {
@@ -116,7 +117,7 @@ export function RunProgressPanel({ progress, error, onClose, onCancelled, classN
           {folded && <span className="run-progress-summary">：{PROGRESS_WORDS.doneLine(progress.steps.length)}</span>}
         </p>
         <button type="button" className="run-progress-close" aria-label={PROGRESS_WORDS.close} onClick={onClose}>
-          <span aria-hidden="true">×</span>
+          <Icon name="close" className="is-glyph" />
         </button>
       </div>
       {progress.status === "running" && progress.queue && <QueueLine queue={progress.queue} onCancelled={onCancelled} />}

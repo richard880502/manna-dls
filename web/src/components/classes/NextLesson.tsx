@@ -6,6 +6,7 @@ import { useApp } from "../../context/AppContext";
 import { nextLessonTitle } from "../../lib/classes";
 import { startOrResumeRun } from "../../lib/runs";
 import { ErrorText } from "../common";
+import { MetaList } from "../MetaList";
 
 /** Starts a lesson in a class, which is already known here: nothing is asked. */
 export function useStartInClass(classId: number) {
@@ -31,8 +32,8 @@ export function useStartInClass(classId: number) {
 
 interface NextLessonProps {
   classId: number;
-  /** The quiet line above the title, e.g. 「接下來 · 高一 3 班」. */
-  kicker: string;
+  /** The quiet facts above the title, one item each, e.g. 「接下來」「高一 3 班」. */
+  kicker: string[];
   next: Exclude<ClassNextAction, { kind: "add_unit" }>;
   /** One quiet sentence under the title, e.g. 「上一節 11/12 上完。」. */
   detail?: string;
@@ -51,7 +52,7 @@ export function NextLesson({ classId, kicker, next, detail, headingId }: NextLes
   return (
     <section className="next" aria-labelledby={headingId}>
       <div>
-        <p className="kicker">{kicker}</p>
+        <MetaList className="kicker" items={kicker} />
         <h1 id={headingId}>{next.kind === "plan_unit" ? next.unit_title : nextLessonTitle(next)}</h1>
         {next.kind === "plan_unit" ? <p>這個單元還沒有課例。先備第一節課。</p> : detail ? <p>{detail}</p> : null}
         <ErrorText message={error} />

@@ -24,6 +24,8 @@ import {
   templateTitle,
 } from "../lib/templates";
 import { ANSWER_FORMATS, BLOCK_KIND_LABEL, toggleIn } from "../lib/worksheet";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const ITEM_COUNTS = Array.from({ length: MAX_ITEMS - MIN_ITEMS + 1 }, (_, i) => MIN_ITEMS + i);
 
@@ -60,6 +62,7 @@ function TemplateWorkspace({ id }: { id: number }) {
   const { teacher } = useApp();
   const manager = can(teacher, "manage_knowledge");
   const [detail, setDetail] = useState<WsTemplateDetail | null>(null);
+  useDocumentTitle(detail ? templateTitle(detail) : "版型");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadSeq, setLoadSeq] = useState(0);
@@ -507,7 +510,7 @@ function TemplateFacts({ content }: { content: WsTemplate }) {
   ].filter((f) => f !== "");
   return (
     <div className="template-facts">
-      <p className="meta">{facts.join(" · ")}</p>
+      <MetaList className="meta" items={facts} />
       {content.generation_options.length > 0 && (
         <p className="meta">產生設定：{content.generation_options.join("、")}</p>
       )}

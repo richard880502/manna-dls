@@ -97,10 +97,10 @@ export function aboutWords(n: number): string {
 export const cardTitle = (c: { title: string }) => c.title.trim() || "未命名教材";
 export const templateCardTitle = (c: { title: string }) => c.title.trim() || "未命名的範本";
 
-/** 「PDF · 7 頁 · 約 2,900 字」, 「貼上的文字 · 6 段」, 「圖片」. */
-export function materialCardMeta(c: MaterialCard): string {
+/** The facts a card lists, one item each: 「PDF」「7 頁」「約 2,900 字」; 「貼上的文字」「6 段」; 「圖片」. */
+export function materialCardMeta(c: MaterialCard): string[] {
   const hasText = c.text_status === "ready";
-  if (c.kind === "text") return ["貼上的文字", hasText ? `${c.paragraph_count} 段` : null].filter(Boolean).join(" · ");
+  if (c.kind === "text") return ["貼上的文字", hasText ? `${c.paragraph_count} 段` : ""].filter(Boolean);
   const parts: string[] = [];
   if (c.kind === "document" && c.file_type === "text") parts.push("文字檔");
   else parts.push(fileTypeLabel(c.file_type));
@@ -110,17 +110,17 @@ export function materialCardMeta(c: MaterialCard): string {
   // While Manna reads a scan, the badge says so; 「沒有可選取的文字」 would soon be wrong.
   if (c.text_status === "no_text" && !ocrOpen(c.ocr)) parts.push("沒有可選取的文字");
   if (c.text_status === "failed") parts.push("文字讀不出來");
-  return parts.join(" · ");
+  return parts;
 }
 
 /** 「英文指示」, 「中英並用指示」. */
 export const langLabel = (lang: string) => (lang ? `${lang}指示` : "");
 
-/** 「4 區 · 英文指示 · 閱讀理解」; 「讀取中」 and 「沒有讀成功」 while it is not ready. */
-export function templateCardMeta(c: TemplateCard): string {
-  if (c.status === "extracting") return "讀取中";
-  if (c.status === "failed") return "沒有讀成功";
-  return [`${c.section_count} 區`, langLabel(c.instruction_language), c.category].filter(Boolean).join(" · ");
+/** 「4 區」「英文指示」「閱讀理解」, one item each; 「讀取中」 and 「沒有讀成功」 while it is not ready. */
+export function templateCardMeta(c: TemplateCard): string[] {
+  if (c.status === "extracting") return ["讀取中"];
+  if (c.status === "failed") return ["沒有讀成功"];
+  return [`${c.section_count} 區`, langLabel(c.instruction_language), c.category].filter(Boolean);
 }
 
 /** A material can go into an article slot only with text, and not while OCR is reading it. */

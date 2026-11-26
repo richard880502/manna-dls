@@ -22,6 +22,7 @@ import {
   unitWith,
   type MockCall,
 } from "../test/mockApi";
+import { itemTexts, metaItems, rowItems } from "../test/metaList";
 
 const class3 = schoolClass({ id: 3, name: "高一 3 班", class_profile: "三班：不太敢開口" });
 const class7 = schoolClass({ id: 7, name: "高一 7 班", class_profile: "七班：活潑、愛發言", position: 2 });
@@ -99,18 +100,18 @@ describe("班級 (home)", () => {
 
     // The one focal block: the class that is in a lesson right now, and its one filled action.
     const next = within(await screen.findByRole("region", { name: /L3 倒裝句\s+第 1 節/ }));
-    expect(next.getByText("上課中 · 高一 7 班")).toBeInTheDocument();
+    expect(itemTexts(next.getByRole("list"))).toEqual(["上課中", "高一 7 班"]);
     expect(next.getByRole("heading", { level: 1 })).toHaveTextContent(/L3 倒裝句\s+第 1 節/);
     expect(next.getByRole("link", { name: "回到課堂" })).toHaveAttribute("href", "/runs/9");
     expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
 
     const list = within(screen.getByRole("region", { name: "我的班級" }));
-    const rows = list.getAllByRole("listitem");
+    const rows = rowItems(list.getAllByRole("listitem"));
     expect(rows).toHaveLength(3);
 
     const first = within(rows[0] as HTMLElement);
     expect(first.getByRole("link", { name: "高一 3 班" })).toHaveAttribute("href", "/classes/3");
-    expect(first.getByText("高一 · 普高 · 英文閱讀選修 · 2 個單元")).toBeInTheDocument();
+    expect(itemTexts(first.getByRole("list"))).toEqual(["高一", "普高", "英文閱讀選修", "2 個單元"]);
     expect(first.getByText("下一節：第 2 節")).toBeInTheDocument();
     expect(first.getByRole("button", { name: "高一 3 班：開始上課" })).toBeInTheDocument();
 
@@ -127,8 +128,9 @@ describe("班級 (home)", () => {
 
     // Taught, not written up yet: only the run without a completed review.
     const todo = within(screen.getByRole("region", { name: "上完還沒補寫" }));
-    expect(todo.getAllByRole("listitem")).toHaveLength(1);
-    expect(todo.getByText(/順利 4 次 · 卡住 2 次/)).toBeInTheDocument();
+    expect(rowItems(todo.getAllByRole("listitem"))).toHaveLength(1);
+    expect(todo.getByText("順利 4 次")).toBeInTheDocument();
+    expect(todo.getByText("卡住 2 次")).toBeInTheDocument();
     expect(todo.getByRole("link", { name: /^補寫/ })).toHaveAttribute("href", "/runs/22/review");
     expect(todo.getByRole("link", { name: "全部上課紀錄" })).toHaveAttribute("href", "/record");
   });
@@ -147,7 +149,7 @@ describe("班級 (home)", () => {
     });
     renderApp("/classes");
     const block = within(await screen.findByRole("region", { name: /第 3 節/ }));
-    expect(block.getByText("接下來 · 高一 7 班")).toBeInTheDocument();
+    expect(itemTexts(block.getByRole("list"))).toEqual(["接下來", "高一 7 班"]);
     expect(block.getByText("上一節 11/12 上完。")).toBeInTheDocument();
     expect(block.getByRole("button", { name: "開始上課" })).toBeInTheDocument();
     expect(block.getByRole("link", { name: "繼續備課" })).toHaveAttribute("href", "/lessons/9");
@@ -223,10 +225,10 @@ describe("班級 (home)", () => {
 
     expect(await screen.findByRole("heading", { name: "我的班級", level: 1 })).toBeInTheDocument();
     const units = within(screen.getByRole("region", { name: "這班的單元" }));
-    const rows = units.getAllByRole("listitem");
+    const rows = rowItems(units.getAllByRole("listitem"));
     expect(rows).toHaveLength(2);
     expect(within(rows[0] as HTMLElement).getByRole("link", { name: "L1 舊單元" })).toHaveAttribute("href", "/units/1");
-    expect(within(rows[0] as HTMLElement).getByText(/已上 1 節，共 2 節 · 最近 11\/12/)).toBeInTheDocument();
+    expect(itemTexts(within(rows[0] as HTMLElement).getByRole("list"))).toEqual(["已上 1 節，共 2 節", expect.stringMatching(/^最近 11\/12/)]);
     expect(within(rows[1] as HTMLElement).getByText("還沒有課例")).toBeInTheDocument();
     // The profile carried over from the legacy unit is the class's, and editable.
     const profile = within(screen.getByRole("region", { name: "班級特性" }));
@@ -410,7 +412,8 @@ describe("class page", () => {
   }
 
   const unitsSection = () => within(screen.getByRole("region", { name: "這班的單元" }));
-  const unitRows = () => within(unitsSection().getByRole("list")).getAllByRole("listitem");
+  const unitRows = () =>
+    rowItems(within(unitsSection().getAllByRole("list")[0]!).getAllByRole("listitem"));
 
   async function openClass() {
     const rendered = renderApp("/classes/3");
@@ -443,14 +446,14 @@ describe("class page", () => {
     const { router } = renderApp("/classes/3");
 
     const next = within(await screen.findByRole("region", { name: /L3 倒裝句\s+第 2 節/ }));
-    expect(next.getByText("高一 3 班 · 下一節")).toBeInTheDocument();
+    expect(itemTexts(next.getByRole("list"))).toEqual(["高一 3 班", "下一節"]);
     expect(next.getByRole("link", { name: "繼續備課" })).toHaveAttribute("href", "/lessons/7");
     expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
 
     const records = within(await screen.findByRole("region", { name: "上課紀錄" }));
-    const rows = records.getAllByRole("listitem");
+    const rows = rowItems(records.getAllByRole("listitem"));
     expect(rows).toHaveLength(2);
-    expect(within(rows[0] as HTMLElement).getByText(/11\/12 · 順利 5 次 · 卡住 1 次 · 還沒補寫/)).toBeInTheDocument();
+    expect(itemTexts(within(rows[0] as HTMLElement).getByRole("list"))).toEqual(["11/12", "順利 5 次", "卡住 1 次", "還沒補寫"]);
     expect(within(rows[0] as HTMLElement).getByRole("link", { name: /^補寫/ })).toHaveAttribute("href", "/runs/31/review");
     expect(within(rows[1] as HTMLElement).getByRole("link", { name: /^回顧/ })).toHaveAttribute("href", "/runs/30/review");
 
@@ -570,14 +573,14 @@ describe("備課庫", () => {
     renderApp("/units");
 
     expect(await screen.findByRole("heading", { name: "備課庫", level: 1 })).toBeInTheDocument();
-    const rows = await within(await screen.findByRole("list", { name: "單元" })).findAllByRole("listitem");
+    const rows = rowItems(await within(await screen.findByRole("list", { name: "單元" })).findAllByRole("listitem"));
     expect(rows).toHaveLength(2);
     const first = within(rows[0] as HTMLElement);
     expect(first.getByRole("link", { name: "L3 倒裝句" })).toHaveAttribute("href", "/units/1");
-    expect(first.getByText("1 節課例 · 單元想法寫了一些")).toBeInTheDocument();
+    expect(itemTexts(first.getAllByRole("list")[0]!)).toEqual(["1 節課例", "單元想法寫了一些"]);
     expect(first.getByText("高一 3 班、高一 7 班在用")).toBeInTheDocument();
     const second = within(rows[1] as HTMLElement);
-    expect(second.getByText("還沒有課例 · 單元想法還沒寫")).toBeInTheDocument();
+    expect(itemTexts(second.getAllByRole("list")[0]!)).toEqual(["還沒有課例", "單元想法還沒寫"]);
     expect(second.getByText("還沒有班級在用")).toBeInTheDocument();
     // One filled action on the page.
     expect(document.querySelectorAll(".primary-button")).toHaveLength(1);
@@ -822,7 +825,7 @@ describe("開始上課: the class is asked once, and only when it is not known",
     await waitFor(() => expect(api.lastBody("POST", "/api/lessons/7/runs")).toEqual({ class_id: 7 }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/runs/9"));
     // The console says which class it is.
-    expect(await screen.findByText(/高一 7 班 · L3 倒裝句/)).toBeInTheDocument();
+    await waitFor(() => expect(metaItems()).toContainEqual(["高一 7 班", "L3 倒裝句"]));
     expect(window.sessionStorage.getItem(CURRENT_CLASS_STORAGE_KEY)).toBe("7");
   });
 
@@ -912,7 +915,7 @@ describe("全部上課紀錄", () => {
       "/runs/20",
     );
     const seven = within(screen.getByRole("region", { name: "高一 7 班" }));
-    expect(seven.getAllByRole("listitem")).toHaveLength(2);
+    expect(rowItems(seven.getAllByRole("listitem"))).toHaveLength(2);
     expect(seven.getByRole("link", { name: /^補寫/ })).toHaveAttribute("href", "/runs/21/review");
     expect(seven.getByRole("link", { name: /^回顧/ })).toHaveAttribute("href", "/runs/24/review");
 

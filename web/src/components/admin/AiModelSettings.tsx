@@ -24,7 +24,7 @@ function initialForm(s: Settings) {
 function describe(s: Settings, value: Settings["active"]): string {
   const label = s.providers.find((p) => p.id === value.provider)?.label ?? value.provider;
   const uses = s.providers.find((p) => p.id === value.provider)?.uses_effort;
-  return `${label}・${value.model}${uses ? `・推理強度 ${value.effort}` : ""}・等待上限 ${value.timeout_secs} 秒`;
+  return `${label}，${value.model}${uses ? `，推理強度 ${value.effort}` : ""}，等待上限 ${value.timeout_secs} 秒`;
 }
 
 /** 後台管理 → 平台設定 → 文字模型（docs/API.md「文字模型設定」）。 */

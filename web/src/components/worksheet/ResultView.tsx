@@ -80,6 +80,7 @@ import { GlossaryBox } from "./Glossary";
 import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
 import type { WorksheetController } from "./useWorksheet";
+import { Icon } from "../Icon";
 
 function LevelChips({
   name,
@@ -635,7 +636,7 @@ function BlockSection({
           }}
           onDragEnd={() => setDragging(null)}
         >
-          ⠿
+          <Icon name="drag" className="is-glyph" />
         </span>
         <SectionTools
           name={`區塊 ${name}`}
@@ -777,7 +778,7 @@ function BlockSection({
         <p className="manna-label ws-origin" lang="zh-Hant">
           <span className="star" aria-hidden="true" />
           {block.origin === "ai" ? "Manna 產生" : "Manna 產生，你改過"}
-          {block.info_function ? ` · ${INFO_FUNCTION_LABEL[block.info_function]}` : ""}
+          {block.info_function ? `，${INFO_FUNCTION_LABEL[block.info_function]}` : ""}
         </p>
       )}
       {block.message &&
@@ -845,7 +846,7 @@ function BlockSection({
           <p className="ws-support-head" lang="zh-Hant">
             <span className={s.auto ? "ws-auto" : ""}>
               {SCAFFOLD_TYPE_LABEL.procedural}
-              {s.auto ? " · 自動產生" : ""}
+              {s.auto ? "（自動產生）" : ""}
             </span>
             <LevelChips
               name="這個鷹架"
@@ -891,7 +892,7 @@ function BlockSection({
         <div key={s.id} className="ws-support" role="group" aria-label={`鷹架 ${s.kind}`}>
           <p className="ws-support-head" lang="zh-Hant">
             <span>
-              {SCAFFOLD_TYPE_LABEL[s.type]} · {s.kind}
+              {SCAFFOLD_TYPE_LABEL[s.type]}：{s.kind}
             </span>
             <LevelChips
               name="這個鷹架"
@@ -1322,7 +1323,7 @@ export function ResultView({
       {tagged > 0 && (
         <section className="ws-bloom" aria-label="Bloom 層次">
           <p className="ws-sub">
-            Bloom 層次 · {LEVEL_LABEL[current]}共 {bloomTally.total} 題
+            Bloom 層次：{LEVEL_LABEL[current]}共 {bloomTally.total} 題
           </p>
           <BloomDistribution tally={bloomTally} filter={filter} onFilter={setBloomFilter} />
           {filter !== null && (

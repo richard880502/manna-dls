@@ -234,7 +234,7 @@ describe("照我的學習單做: where it is", () => {
     await waitFor(() => expect(heading()).toHaveTextContent("來做一份 完整學習單"));
     expect(await screen.findByRole("combobox", { name: "版型" })).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "文章或主題" }), "Bees are busy.");
-    const link = screen.getByRole("link", { name: "或上傳你的學習單範本 →" });
+    const link = screen.getByRole("link", { name: "或上傳你的學習單範本" });
     expect(link).toHaveAttribute("href", "/create/mimic");
     await user.click(link);
     await waitFor(() => expect(router.state.location.pathname).toBe("/create/mimic"));
@@ -244,7 +244,7 @@ describe("照我的學習單做: where it is", () => {
   it("完整學習單 without templates still links to 照我的學習單做", async () => {
     mockApi(routes({ "GET /api/worksheet-templates": { templates: [] } }));
     renderApp("/create/worksheet");
-    expect(await screen.findByRole("link", { name: "或上傳你的學習單範本 →" })).toHaveAttribute("href", "/create/mimic");
+    expect(await screen.findByRole("link", { name: "或上傳你的學習單範本" })).toHaveAttribute("href", "/create/mimic");
   });
 });
 
@@ -276,7 +276,7 @@ describe("照我的學習單做: the sample and the request", () => {
     const sent = upload?.[1]?.body as FormData;
     expect(sent.get("purpose")).toBe("worksheet_sample");
     expect(generate()).toBeDisabled();
-    expect(summaryText()).toBe("照「期中學習單」的樣式 · 先放這節課的課文");
+    expect(summaryText()).toBe("照「期中學習單」的樣式，先放這節課的課文");
 
     await user.click(lessonCard().getByRole("button", { name: "用範例試試" }));
     expect(lessonCard().getByRole("textbox", { name: "這節課的課文" })).toHaveValue(EXEMPLAR_TEXT);
@@ -324,7 +324,7 @@ describe("照我的學習單做: the sample and the request", () => {
     const view = sampleCard().getByRole("link", { name: "看版型內容" });
     expect(view).toHaveAttribute("href", "/templates/9");
     expect(view).toHaveAttribute("target", "_blank");
-    expect(summaryText()).toBe("照「L2 學習單版型」的樣式 · 先放這節課的課文");
+    expect(summaryText()).toBe("照「L2 學習單版型」的樣式，先放這節課的課文");
 
     await user.type(lessonCard().getByRole("textbox", { name: "這節課的課文" }), "Bees are busy.");
     expect(summaryText()).toBe("照「L2 學習單版型」的樣式");

@@ -76,8 +76,8 @@ describe("後台管理 tabs", () => {
     mockApi(routes());
     renderApp("/admin");
     const list = within(await screen.findByRole("list", { name: "目前設定" }));
-    expect(await list.findByText("國網中心（NCHC）・gemma-4-31B-it")).toBeInTheDocument();
-    expect(await list.findByText("開啟・索引待同步 2")).toBeInTheDocument();
+    expect(await list.findByText("國網中心（NCHC），gemma-4-31B-it")).toBeInTheDocument();
+    expect(await list.findByText("開啟，索引待同步 2")).toBeInTheDocument();
     expect(await list.findByText("固定順序")).toBeInTheDocument();
     expect(await list.findByText("1 個帳號")).toBeInTheDocument();
     expect(await list.findByText("2 個提示詞")).toBeInTheDocument();
@@ -98,7 +98,7 @@ describe("後台管理 tabs", () => {
     mockApi(routes());
     renderApp("/admin");
     const list = within(await screen.findByRole("list", { name: "目前設定" }));
-    const text = await list.findByText("進行中 4／排隊 7（最久 38 秒）・近一小時 呼叫 488 次、太頻繁 0 次");
+    const text = await list.findByText("進行中 4／排隊 7（最久 38 秒），近一小時 呼叫 488 次、太頻繁 0 次");
     expect(text).not.toHaveClass("is-warn");
     expect(text).not.toHaveClass("is-error");
   });
