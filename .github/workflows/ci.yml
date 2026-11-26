@@ -12,9 +12,9 @@ concurrency:
 
 # Saving Actions minutes (private repo, 2,000 free minutes/month per account):
 #   * jobs run only when their part of the repo changed (docs-only changes run nothing);
-#   * the Docker image is built on pull requests only. After merge, main runs the
-#     tests again and deploys; Coolify builds the image itself and the deploy job
-#     fails if that build or the live health check fails.
+#   * Docker builds on PRs and main. Main seeds the default-branch cache, which
+#     every PR can read (PR-only GHA caches are isolated to that PR's merge ref).
+#     Coolify still builds and deploys independently after the tests pass.
 jobs:
   changes:
     name: Detect changed paths
@@ -175,9 +175,9 @@ jobs:
   docker:
     name: Docker image builds
     needs: [changes, web, api, memory]
-    # PRs only; skipped/absent web or api results are fine, failures are not.
+    # Main also builds to seed a shared cache; skipped tests are fine, failures are not.
     if: >-
-      always() && github.event_name == 'pull_request' &&
+      always() &&
       (needs.changes.outputs.app == 'true' || needs.changes.outputs.ci == 'true') &&
       !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
@@ -188,8 +188,10 @@ jobs:
         with:
           context: .
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Use the same scope on main and PRs. mode=max includes cargo-chef's
+          # intermediate dependency layer, not just the final runtime image.
+          cache-from: type=gha,scope=manna-image
+          cache-to: type=gha,scope=manna-image,mode=max
 
   # Deployment flow (development happens through PRs; see README):
   #   1. A fully green run on main fast-forwards the `deploy` branch (GITHUB_TOKEN).

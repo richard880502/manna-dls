@@ -10,13 +10,23 @@ RUN pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# ---------- backend ----------
-FROM rust:1-bookworm AS api
+# ---------- backend dependencies ----------
+# All Rust stages inherit the same toolchain. Keep dependency artifacts in image layers:
+# external BuildKit caches do not export the contents of RUN cache mounts.
+FROM rust:1-bookworm AS chef
+RUN cargo install cargo-chef --version 0.1.74 --locked
 WORKDIR /src/api
+
+FROM chef AS planner
 COPY api/ ./
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/api/target \
-    cargo build --release --locked \
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS api
+COPY --from=planner /src/api/recipe.json recipe.json
+# The recipe captures manifests, Cargo.lock and target layout, without source contents.
+RUN cargo chef cook --release --locked --recipe-path recipe.json
+COPY api/ ./
+RUN cargo build --release --locked \
  && cp target/release/manna-api /usr/local/bin/manna-api
 
 # ---------- runtime ----------
