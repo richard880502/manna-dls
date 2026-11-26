@@ -17,10 +17,10 @@ import {
 function BloomBar({ shares }: { shares: readonly number[] }) {
   const sum = shares.reduce((a, b) => a + b, 0);
   return (
-    <span className={`bloom-bar${sum === 0 ? " is-empty" : ""}`} aria-hidden="true">
+    <span className={`bloom-picker-bar${sum === 0 ? " is-empty" : ""}`} aria-hidden="true">
       {BLOOM_LEVELS.map((level, i) =>
         (shares[i] ?? 0) > 0 ? (
-          <span key={level} className={`bloom-seg is-${level}`} style={{ flexGrow: shares[i] }} />
+          <span key={level} className={`bloom-picker-seg is-${level}`} style={{ flexGrow: shares[i] }} />
         ) : null,
       )}
     </span>
@@ -59,9 +59,9 @@ export function BloomPicker({
   return (
     <fieldset className="bloom-picker" disabled={disabled}>
       <legend className="field-label">認知層次（Bloom）</legend>
-      <div className="bloom-presets">
+      <div className="bloom-picker-presets">
         {BLOOM_PRESETS.map((p) => (
-          <label key={p.id} className="bloom-preset">
+          <label key={p.id} className="bloom-picker-preset">
             <input
               type="radio"
               name={`${ids}-preset`}
@@ -70,11 +70,11 @@ export function BloomPicker({
               aria-describedby={`${ids}-${p.id}`}
               onChange={() => onPreset(p.id)}
             />
-            <span className="bloom-preset-name">{p.label}</span>
+            <span className="bloom-picker-name">{p.label}</span>
             <BloomBar shares={p.pct} />
           </label>
         ))}
-        <label className="bloom-preset">
+        <label className="bloom-picker-preset">
           <input
             type="radio"
             name={`${ids}-preset`}
@@ -82,7 +82,7 @@ export function BloomPicker({
             checked={preset === "custom"}
             onChange={() => onPreset("custom")}
           />
-          <span className="bloom-preset-name">{CUSTOM_LABEL}</span>
+          <span className="bloom-picker-name">{CUSTOM_LABEL}</span>
           <BloomBar shares={preset === "custom" ? customShares : []} />
         </label>
       </div>
@@ -96,7 +96,7 @@ export function BloomPicker({
         ))}
       </div>
 
-      <ul className="bloom-legend" aria-label="顏色說明">
+      <ul className="bloom-picker-legend" aria-label="顏色說明">
         {BLOOM_LEVELS.map((l) => (
           <li key={l}>
             <span className={`bloom-dot is-${l}`} aria-hidden="true" />

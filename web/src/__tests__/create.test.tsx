@@ -224,7 +224,7 @@ describe("建立: the generator", () => {
     const user = userEvent.setup();
     await open("/create/comprehension");
     const bloom = within(screen.getByRole("group", { name: "認知層次（Bloom）" }));
-    expect(bloom.getAllByRole("radio").map((r) => r.closest("label")?.querySelector(".bloom-preset-name")?.textContent)).toEqual([
+    expect(bloom.getAllByRole("radio").map((r) => r.closest("label")?.querySelector(".bloom-picker-name")?.textContent)).toEqual([
       "基礎鞏固",
       "均衡（預設）",
       "思考挑戰",
