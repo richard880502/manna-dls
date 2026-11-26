@@ -505,7 +505,7 @@
 .dialog-confirm {
   margin-top: var(--space-md);
   padding: var(--space-sm) var(--space-md);
-  border-left: 3px solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
   background: var(--color-warn-wash);
 }
 

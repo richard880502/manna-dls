@@ -206,10 +206,11 @@
 }
 
 /* A block that needs the teacher's own video, recording, image or text: said plainly, in the
-   warning ink, with a rule on the left so it is found while scrolling the sheet. */
+   warning ink on a warning wash (no side stripe) so it is found while scrolling the sheet. */
 .ws-message.is-needs-material {
   padding: var(--space-xs) var(--space-sm);
-  border-left: 3px solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
+  background: var(--color-warn-wash);
   color: var(--color-ink);
 }
 
@@ -221,8 +222,9 @@
 
 .ws-needs-summary {
   margin-top: var(--space-xs);
-  padding-left: var(--space-sm);
-  border-left: 3px solid var(--color-warn-rule);
+  padding: var(--space-3xs) var(--space-sm);
+  border-radius: var(--radius-control);
+  background: var(--color-warn-wash);
   color: var(--color-warn-ink);
   font-size: var(--text-sm);
   line-height: var(--leading-ui);

@@ -298,7 +298,7 @@ mark.anno.is-focused {
 
 .anno-placing {
   padding: var(--space-xs) var(--space-sm);
-  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-control);
   background: var(--color-accent-wash);
   font-size: var(--text-sm);
 }
@@ -521,7 +521,7 @@ mark.anno.is-focused {
 
 .material-warning {
   padding: var(--space-sm) var(--space-md);
-  border-left: 3px solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
   background: var(--color-warn-wash);
   color: var(--color-ink);
   font-size: var(--text-sm);
@@ -591,7 +591,7 @@ mark.anno.is-focused {
   gap: var(--space-xs);
   max-width: 44rem;
   padding: var(--space-md);
-  border-left: 3px solid var(--color-error);
+  border-radius: var(--radius-control);
   background: var(--color-error-wash);
   line-height: var(--leading-ui);
 }

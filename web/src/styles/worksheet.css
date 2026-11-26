@@ -607,7 +607,7 @@
 .ws-table-warning {
   margin-top: var(--space-3xs);
   padding: var(--space-3xs) var(--space-xs);
-  border-left: 3px solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
   background: var(--color-warn-wash);
   color: var(--color-warn-ink);
   font-family: var(--font-body);
@@ -966,7 +966,7 @@
   max-width: var(--measure);
   margin-top: var(--space-md);
   padding: var(--space-sm) var(--space-md);
-  border-left: 3px solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
   background: var(--color-warn-wash);
   color: var(--color-warn-ink);
   line-height: var(--leading-body);

@@ -1493,7 +1493,7 @@
   gap: var(--space-xs);
   max-width: 44rem;
   padding: var(--space-md);
-  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-control);
   background: var(--color-accent-wash);
   line-height: var(--leading-ui);
 }
