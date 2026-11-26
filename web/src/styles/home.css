@@ -715,7 +715,7 @@
   gap: var(--space-xs);
   min-height: 4.25rem;
   padding: var(--space-sm);
-  border: var(--rule-hair) solid var(--color-rule-strong);
+  border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-control);
   background: var(--color-field);
   color: var(--color-ink);

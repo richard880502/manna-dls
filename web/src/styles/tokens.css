@@ -40,6 +40,15 @@
   --color-manna-wash-2: #fbf0cc;
   --color-manna-rule: #dcc16f;
   --color-manna-ink: #6b4a0c;
+  --color-manna-mark: #a8841c; /* gold for a stripe that is the only cue Manna changed something (3.5:1 on white) */
+
+  /* ---------- colour: Bloom levels (one violet ramp, light to dark; 1-3 take dark ink, 4-6 white) ---------- */
+  --color-bloom-1: #beaae5; /* 記憶 */
+  --color-bloom-2: #aa90da; /* 理解 */
+  --color-bloom-3: #9777cd; /* 應用 */
+  --color-bloom-4: #734bac; /* 分析 */
+  --color-bloom-5: #5c3590; /* 評鑑 */
+  --color-bloom-6: #45236f; /* 創造 */
 
   /* ---------- colour: states (functional, calm) ---------- */
   --color-success: #2c6a4c;

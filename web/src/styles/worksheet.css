@@ -1190,37 +1190,37 @@
 }
 
 /* ================= Bloom 認知層次 (Phase 2.7) =================
- * One colour per level, every one an existing token: light and cool for remembering, warm and
- * dark for evaluating and creating. 未標 is the neutral well with a dashed edge. The pairs below
- * keep 4.5:1 or better for the text on them. The one palette for every Bloom mark, the 建立
+ * One colour per level: a single violet ramp, light for remembering and dark for creating (the
+ * --color-bloom-* tokens), so no level borrows a status, accent or Manna colour. 未標 is the
+ * neutral well with a dashed edge. The pairs below keep 4.5:1 or better for the text on them. The one palette for every Bloom mark, the 建立
  * picker's (home.css) included; only custom properties here, so it styles nothing else. */
 :is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-remember {
-  --bloom-bg: var(--color-accent-wash-2);
-  --bloom-ink: var(--color-accent-press);
+  --bloom-bg: var(--color-bloom-1);
+  --bloom-ink: var(--color-ink);
 }
 
 :is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-understand {
-  --bloom-bg: var(--color-accent-rule);
+  --bloom-bg: var(--color-bloom-2);
   --bloom-ink: var(--color-ink);
 }
 
 :is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-apply {
-  --bloom-bg: var(--color-success-rule);
+  --bloom-bg: var(--color-bloom-3);
   --bloom-ink: var(--color-ink);
 }
 
 :is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-analyze {
-  --bloom-bg: var(--color-manna-rule);
-  --bloom-ink: var(--color-ink);
+  --bloom-bg: var(--color-bloom-4);
+  --bloom-ink: var(--color-accent-ink);
 }
 
 :is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-evaluate {
-  --bloom-bg: var(--color-warn-ink);
+  --bloom-bg: var(--color-bloom-5);
   --bloom-ink: var(--color-accent-ink);
 }
 
 :is(.bloom-chip, .bloom-seg, .bloom-swatch, .bloom-dot, .bloom-picker-seg).is-create {
-  --bloom-bg: var(--color-error);
+  --bloom-bg: var(--color-bloom-6);
   --bloom-ink: var(--color-accent-ink);
 }
 
@@ -1334,9 +1334,11 @@ button.bloom-seg:focus-visible {
   z-index: 1;
 }
 
-/* A level picked: the others step back (not the focused one, or its ring would fade too). */
+/* A level picked: the others step back by colour, not opacity, so their counts keep 4.5:1 (not
+   the focused one, or its ring would fade too). */
 .bloom-bar:has(.is-active) .bloom-seg:not(.is-active, :focus-visible) {
-  opacity: 0.4;
+  background-color: color-mix(in srgb, var(--bloom-bg) 35%, var(--color-paper));
+  color: var(--color-ink-2);
 }
 
 .bloom-all {
