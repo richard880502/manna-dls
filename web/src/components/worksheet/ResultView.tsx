@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type {
   WsAudience,
   WsBlock,
@@ -53,6 +54,8 @@ import { useConfirmFocus } from "../../lib/useConfirmFocus";
 import { holdsBlock, type SheetSelection } from "../../lib/blockRevise";
 import { editorBlockText } from "../../lib/blockText";
 import { needsMaterial } from "../../lib/templates";
+import { flip } from "../../lib/flip";
+import { prefersReducedMotion } from "../../lib/scroll";
 import { ErrorText } from "../common";
 import { MenuItem, SectionTools, menuButtonOf } from "../prep/SectionTools";
 import { BloomDistribution, BloomSelect } from "./Bloom";
@@ -567,7 +570,29 @@ function BlockSection({
       ...b,
       scaffolds: b.scaffolds.map((s) => (s.id === id ? { ...change(s), origin: editedOrigin(s.origin) } : s)),
     }));
-  const move = (to: number) => ws.setContent((c) => ({ ...c, blocks: moveBlock(c.blocks, block.id, to) }));
+  /** Whether the last click inside this block came from a pointer (keyboard activation has detail 0). */
+  const pointerClick = useRef(false);
+  const [moved, setMoved] = useState(false);
+  useEffect(() => {
+    if (!moved) return undefined;
+    const timer = setTimeout(() => setMoved(false), MOVED_MS);
+    return () => clearTimeout(timer);
+  }, [moved]);
+  // 上移／下移: the blocks that changed place slide there (pointer only; the keyboard gets the
+  // result at once), and the moved block is kept in view. Reduced motion: lit for a moment instead.
+  const move = (to: number) => {
+    const reduced = prefersReducedMotion();
+    const root = toolsRef.current?.closest(".ws-result") ?? document;
+    flip({
+      items: () => Array.from(root.querySelectorAll<HTMLElement>("[data-block]")),
+      change: () =>
+        flushSync(() => ws.setContent((c) => ({ ...c, blocks: moveBlock(c.blocks, block.id, to) }))),
+      animate: pointerClick.current && !reduced,
+    });
+    if (reduced) setMoved(true);
+    const el = document.getElementById(`sheet-block-${block.id}`);
+    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+  };
 
   const procedural = view.scaffolds.filter((s) => s.type === "procedural");
   const supports = view.scaffolds.filter((s) => s.type !== "procedural");
@@ -577,8 +602,11 @@ function BlockSection({
     <section
       id={`sheet-block-${block.id}`}
       data-block={block.id}
-      className={`ws-block${isFromManna(block.origin) ? " is-manna" : ""}${over ? " is-drop" : ""}${changed ? " is-changed" : ""}${targeted ? " is-targeted" : ""}`}
+      className={`ws-block${isFromManna(block.origin) ? " is-manna" : ""}${over ? " is-drop" : ""}${changed || moved ? " is-changed" : ""}${targeted ? " is-targeted" : ""}`}
       aria-label={`區塊 ${name}`}
+      onClickCapture={(e) => {
+        pointerClick.current = e.detail > 0;
+      }}
       onDragOver={(e) => {
         if (dragging && dragging !== block.id) {
           e.preventDefault();
@@ -1172,6 +1200,8 @@ const NO_BLOCKS: ReadonlySet<string> = new Set();
 const NO_INTERACTION = () => null;
 /** How long a block stays lit after Manna changed it (採用, a restored step). */
 const FLASH_MS = 4000;
+/** How long a moved block stays lit when the movement itself is not played (reduced motion). */
+const MOVED_MS = 1000;
 
 /**
  * The generated worksheet, edited in place: the version tabs (when there are several), block tools,
