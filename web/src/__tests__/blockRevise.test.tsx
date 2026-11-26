@@ -3,7 +3,7 @@
 // are listed under their block, and Manna's proposal waits for 採用／放棄／再改一次; in the editor
 // the same with 改這一區, 加註記 and 註記 on a question, the block held while a proposal waits, and
 // a save over a newer version offering 重新載入.
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
@@ -429,6 +429,106 @@ const editorRoutes = (state: WorksheetState, extra: Record<string, unknown> = {}
 });
 
 const editorBlock = () => within(screen.getByRole("region", { name: "區塊 B" }));
+
+/** Selects characters [from, to) of a field as the keyboard (Shift+arrows) would. */
+function selectChars(field: HTMLElement, from: number, to: number) {
+  const ta = field as HTMLTextAreaElement;
+  ta.focus();
+  ta.setSelectionRange(from, to);
+  fireEvent.select(ta);
+}
+
+describe("編輯器: 選取文字加註記", () => {
+  const open = async (extra: Record<string, unknown> = {}) => {
+    const api = mockApi(
+      editorRoutes(worksheet(), {
+        [`POST ${WS}/comments`]: note({ id: 42 }),
+        [`POST ${WS}/blocks/b2/revise`]: proposal("running", { comment_ids: [42] }),
+        ...extra,
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/worksheets/11");
+    await screen.findByRole("region", { name: "區塊 B" });
+    return { api, user };
+  };
+  const NOTE_BUTTON = { name: "為選取的文字加註記" };
+
+  it("part of a question prompt offers 加註記; it opens the note with the word-snapped quote and saves it", async () => {
+    const { api, user } = await open();
+    const prompt = await editorBlock().findByRole("textbox", { name: "題目 3" });
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull();
+    selectChars(prompt, 13, 19); // "neighb" of "neighbors"
+    await user.click(await screen.findByRole("button", NOTE_BUTTON));
+    const draft = within(screen.getByRole("form", { name: "新增註記" }));
+    expect(draft.getByText("第 3 題")).toBeInTheDocument();
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull();
+    await user.type(draft.getByRole("textbox", { name: "註記內容" }), "這題太難，改簡單一點");
+    await user.click(draft.getByRole("button", { name: "儲存並請 Manna 改" }));
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/blocks/b2/revise`)).toHaveLength(1));
+    expect(api.lastBody("POST", `${WS}/comments`)).toEqual({
+      block_id: "b2",
+      field: "item",
+      item_id: "b2-2",
+      start: 13,
+      end: 22,
+      quote: "neighbors",
+      note: "這題太難，改簡單一點",
+      share_with_ai: true,
+    });
+    expect(api.lastBody("POST", `${WS}/blocks/b2/revise`)).toEqual({ comment_ids: [42] });
+  });
+
+  it("a mouse selection offers it too, next to the pointer; the title and instructions keep their own field", async () => {
+    const { api, user } = await open();
+    const title = await editorBlock().findByRole("textbox", { name: "區塊標題 B" });
+    const value = (title as HTMLTextAreaElement).value;
+    fireEvent.mouseDown(title);
+    selectChars(title, 0, value.length);
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull(); // still dragging
+    fireEvent.mouseUp(title, { clientX: 50, clientY: 40 });
+    await user.click(await screen.findByRole("button", NOTE_BUTTON));
+    const draft = within(screen.getByRole("form", { name: "新增註記" }));
+    expect(draft.getByText("標題")).toBeInTheDocument();
+    await user.type(draft.getByRole("textbox", { name: "註記內容" }), "換個標題");
+    await user.click(draft.getByRole("button", { name: "儲存註記" }));
+    await waitFor(() => expect(api.callsTo("POST", `${WS}/comments`)).toHaveLength(1));
+    expect(api.lastBody("POST", `${WS}/comments`)).toMatchObject({ field: "title", start: 0, end: value.length, quote: value });
+  });
+
+  it("is reachable with Tab and Enter, and Escape or a collapsed selection hides it", async () => {
+    const { user } = await open();
+    const prompt = await editorBlock().findByRole("textbox", { name: "題目 3" });
+    selectChars(prompt, 0, 4);
+    const button = await screen.findByRole("button", NOTE_BUTTON);
+    expect(prompt.nextElementSibling).toBe(button);
+    await user.tab();
+    expect(button).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("form", { name: "新增註記" })).toBeInTheDocument();
+
+    selectChars(prompt, 0, 4);
+    await screen.findByRole("button", NOTE_BUTTON);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull();
+    selectChars(prompt, 1, 4);
+    await screen.findByRole("button", NOTE_BUTTON);
+    selectChars(prompt, 2, 2);
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull();
+    selectChars(prompt, 0, 5);
+    await screen.findByRole("button", NOTE_BUTTON);
+    fireEvent.scroll(window);
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull();
+  });
+
+  it("offers nothing while the block is held by a proposal", async () => {
+    await open({ [`GET ${WS}/proposals`]: [proposal("proposed")] });
+    const prompt = await editorBlock().findByRole("textbox", { name: "題目 3" });
+    await waitFor(() => expect(prompt).toBeDisabled());
+    selectChars(prompt, 0, 4);
+    expect(screen.queryByRole("button", NOTE_BUTTON)).toBeNull();
+  });
+});
 
 describe("編輯器: 改這一區, notes and saving", () => {
   it("改這一區 asks Manna for this block; the block is held until 採用, which takes the new version", async () => {

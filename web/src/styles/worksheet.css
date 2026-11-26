@@ -2569,3 +2569,17 @@ button.bloom-seg:focus-visible {
 .ws-pane-material:has(.material-pane.is-full) {
   z-index: var(--z-overlay);
 }
+
+/* The button that follows a text selection in the editor (加註記 on the selected words). */
+.ws-note-pop {
+  position: fixed;
+  z-index: calc(var(--z-sticky) + 50);
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-field);
+  box-shadow: var(--shadow-float);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
