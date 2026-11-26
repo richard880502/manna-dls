@@ -5,7 +5,6 @@ import type {
   WsProposal,
   WsProposalStatus,
 } from "../api/types";
-import { snapToWords } from "./materials";
 
 /** How often a running block revision is asked for. Tests shorten it. */
 export const blockReviseConfig = { pollMs: 2000 };
@@ -75,68 +74,6 @@ export interface SheetSelection {
   end?: number;
   /** The selected text (always set). */
   quote: string;
-}
-
-/** The part of `range` inside `el`, as offsets into `el`'s text. */
-function clampToElement(range: Range, el: Element): { start: number; end: number } {
-  const length = (el.textContent ?? "").length;
-  const offsetOf = (node: Node, offset: number, fallback: number): number => {
-    if (!el.contains(node)) return fallback;
-    const probe = document.createRange();
-    probe.selectNodeContents(el);
-    probe.setEnd(node, offset);
-    return probe.toString().length;
-  };
-  return {
-    start: offsetOf(range.startContainer, range.startOffset, 0),
-    end: offsetOf(range.endContainer, range.endOffset, length),
-  };
-}
-
-const elementOf = (node: Node): Element | null => (node instanceof Element ? node : node.parentElement);
-
-/**
- * The browser selection as a place on the sheet in `root`. Blocks carry `data-block`, a question
- * `data-item`, and the texts a selection is measured in (title, instructions, a question's prompt)
- * `data-field`. A selection inside one of those gives its offsets (snapped to whole English
- * words); inside a question elsewhere (options, answer) it is a note on the question; across
- * texts of one block it is a note on the block. Returns "multi" across blocks, null when
- * nothing of the sheet is selected.
- */
-export function selectionOnSheet(root: HTMLElement | null): SheetSelection | "multi" | null {
-  const selection = typeof window !== "undefined" ? window.getSelection() : null;
-  if (!root || !selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
-  const range = selection.getRangeAt(0);
-  const start = elementOf(range.startContainer);
-  const end = elementOf(range.endContainer);
-  if (!start || !end || !root.contains(start) || !root.contains(end)) return null;
-  const text = range.toString().replace(/\s+/g, " ").trim();
-  if (!text) return null;
-  const quote = text.slice(0, QUOTE_MAX);
-  const block = start.closest<HTMLElement>("[data-block]");
-  if (!block || block !== end.closest("[data-block]")) return block ? "multi" : null;
-  const blockId = block.dataset.block ?? "";
-  const holder = start.closest<HTMLElement>("[data-field]");
-  const item = start.closest<HTMLElement>("[data-item]");
-  if (holder && holder === end.closest("[data-field]")) {
-    const full = holder.textContent ?? "";
-    const snapped = snapToWords(full, clampToElement(range, holder));
-    const field = (holder.dataset.field ?? "block") as WsCommentField;
-    const itemId = field === "item" ? item?.dataset.item : undefined;
-    if (field === "item" && !itemId) return { block_id: blockId, field: "block", quote };
-    return {
-      block_id: blockId,
-      field,
-      ...(itemId ? { item_id: itemId } : {}),
-      start: snapped.start,
-      end: snapped.end,
-      quote: full.slice(snapped.start, snapped.end),
-    };
-  }
-  if (item?.dataset.item && item === end.closest("[data-item]")) {
-    return { block_id: blockId, field: "item", item_id: item.dataset.item, quote };
-  }
-  return { block_id: blockId, field: "block", quote };
 }
 
 /** 「第 6 題」「標題」… for a selection, before it is saved. */

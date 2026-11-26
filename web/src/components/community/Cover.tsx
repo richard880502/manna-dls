@@ -29,7 +29,7 @@ export function Cover({ sheet, tint }: { sheet: WsSheet | null; tint: number }) 
     <div className={`com-cover com-tint-${tint % 6}`} ref={box} aria-hidden="true">
       {sheet ? (
         <div className="com-cover-stage" style={{ width: DESIGN_WIDTH, transform: `scale(${scale})` }}>
-          <SheetPreview sheet={sheet} highlight={NO_HIGHLIGHT} interactionFor={NO_INTERACTION} readOnly={NO_PICTURES} />
+          <SheetPreview sheet={sheet} pictures={NO_PICTURES} />
         </div>
       ) : (
         <p className="com-cover-empty">還沒有內容</p>
@@ -37,6 +37,3 @@ export function Cover({ sheet, tint }: { sheet: WsSheet | null; tint: number }) 
     </div>
   );
 }
-
-const NO_HIGHLIGHT: ReadonlySet<string> = new Set();
-const NO_INTERACTION = () => null;
