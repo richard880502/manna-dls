@@ -823,12 +823,20 @@ async fn run(state: &AppState, job: Job) -> AppResult<()> {
         .map(|p| p.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    // The sheet's objectives (and the two fields, for a worksheet stored before they were
+    // copied into it): a question the revision writes must not copy one.
+    let objectives = crate::worksheet::checks::objective_lines(
+        crate::objectives::ensured(&content.objectives, &ws.settings)
+            .iter()
+            .map(|o| (o.text.as_str(), o.student_facing_en.as_str())),
+    );
     let section_ctx = SectionCtx {
         passage: &passage,
         item_count: max,
         needs_external,
         tables_asked: false,
         english_tables: false,
+        objectives: &objectives,
     };
     let taken: HashSet<String> = content
         .blocks

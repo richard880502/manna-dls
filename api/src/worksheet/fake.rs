@@ -46,6 +46,8 @@
 //! | `FAKE_TPL_BAD_SHAPES`    | generation, call 1: a 是非題 asking an opinion first, the sharing frame as two questions at the end (one wrapped in "Write … using the frame:"), and directions with a "Use this frame:" lead in the first box of frames (or the scaffold) while the Directions and sharing boxes stay empty (repaired by the second) |
 //! | `FAKE_TPL_BAD_SHAPES_ALWAYS` | generation: the same in both calls (the server splits, lifts and rewrites) |
 //! | `FAKE_TPL_TERMS`         | generation: odd paragraphs say "expository writing", even ones "informative writing" in the instructions (the server keeps one) |
+//! | `FAKE_TPL_OBJECTIVE_ITEM` | generation, call 1: the first item is the worksheet's first objective with its last word blanked, as a 填空題 (`ctx.objectives`; repaired by the second) |
+//! | `FAKE_TPL_OBJECTIVE_ITEM_ALWAYS` | generation: the same in call 1, and in call 2 with a 「Complete the content-goal self-assessment statement with the key idea:」 lead, as a real model repaired it (the server drops the item) |
 //!
 //! Generated items carry a Bloom level (prompt version 2): a writing item `create`, the others
 //! `remember`, `understand`, `analyze` in turn; the scaffold is an array of lines. A section with
@@ -1121,6 +1123,29 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
             "answer": "Answers will vary.", "bloom": "analyze",
         }));
     }
+    // `FAKE_TPL_OBJECTIVE_ITEM`: what a real model wrote for a block labelled 自我評量 with
+    // 填空題 (an objective with a word blanked), and how it repaired it (a lead in front).
+    let always = has("FAKE_TPL_OBJECTIVE_ITEM_ALWAYS");
+    if !external && (always || (has("FAKE_TPL_OBJECTIVE_ITEM") && attempt == 1)) {
+        if let Some((prompt, answer)) = ctx["objectives"]
+            .as_array()
+            .and_then(|o| o.first())
+            .and_then(Value::as_str)
+            .and_then(blanked_objective)
+        {
+            let prompt = if attempt == 1 {
+                prompt
+            } else {
+                format!("Complete the content-goal self-assessment statement with the key idea: {prompt}")
+            };
+            if let Some(first) = items.first_mut() {
+                *first = json!({
+                    "answer_format": FMT_BLANK, "prompt": prompt, "options": [],
+                    "answer": answer, "bloom": "remember",
+                });
+            }
+        }
+    }
     // `FAKE_TPL_TERMS`: odd paragraphs call the genre by another name.
     let genre = if has("FAKE_TPL_TERMS") && no % 2 == 1 {
         " Notice how this expository writing is built."
@@ -1192,6 +1217,13 @@ pub fn template_section(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -
 }
 
 const TIER_CORE_LABEL: &str = "core";
+
+/// An objective with its last word blanked (「I can explain how … ______.」) and that word.
+fn blanked_objective(objective: &str) -> Option<(String, String)> {
+    let text = objective.trim().trim_end_matches(['.', '!', '?']);
+    let (head, last) = text.rsplit_once(' ')?;
+    Some((format!("{head} ______."), last.to_string()))
+}
 
 // ---------------------------------------------------------------- per Bloom level
 

@@ -831,6 +831,15 @@ impl Run {
         self.objectives.iter().map(|(c, _)| c.clone()).collect()
     }
 
+    /// The objectives' text and students' lines, for the check that no question copies one.
+    fn objective_texts(&self) -> Vec<String> {
+        checks::objective_lines(
+            self.objectives
+                .iter()
+                .map(|(_, o)| (o.text.as_str(), o.student_facing_en.as_str())),
+        )
+    }
+
     /// SIOP E1: what the teacher is told when the exit ticket still leaves objectives unchecked
     /// after the repair call (nothing when it checks them all).
     fn uncovered_notice(&self, items: &[RawExitItem]) -> Option<String> {
@@ -1532,6 +1541,7 @@ async fn step_tasks(
         ),
     ]);
     let codes = run.objective_codes();
+    let objectives = run.objective_texts();
     // Option counts the teacher's confirmed habits allow (none while the PI switch is off).
     let habits =
         crate::memory::option_habits(&run.state.db, run.input.worksheet.teacher_id).await?;
@@ -1554,6 +1564,7 @@ async fn step_tasks(
                     item_budget: budget,
                     only: only_nos.as_deref(),
                     habits,
+                    objectives: &objectives,
                 },
             )
         },
@@ -1861,6 +1872,7 @@ async fn step_exit(
         ("tasks_summary", tasks_summary(tasks)),
     ]);
     let codes = run.objective_codes();
+    let objectives = run.objective_texts();
     let passage = run.paragraphs.join("\n");
     let fake_context = json!({
         "task": EXIT.key,
@@ -1885,6 +1897,7 @@ async fn step_exit(
                     objective_ids: &codes,
                     task_prompts,
                     passage: &passage,
+                    objectives: &objectives,
                 },
             )
         },

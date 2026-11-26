@@ -1164,13 +1164,16 @@ struct RevisePlan {
 /// a 表格整理 item's table like a generated one (real English headings, row labels; a placeholder
 /// heading is repaired from the headings the question names, else the change fails). A 表格整理
 /// question copied back without a table keeps the one `block` has while the question is the same.
-/// `passage` is the material's text.
+/// `passage` is the material's text; `objectives` the sheet's objectives
+/// ([`crate::worksheet::checks::objective_lines`]), which no question may copy
+/// (`checks::copied_objective`).
 /// Returns the cleaned change, or why it cannot be applied (one line per failed check; nothing is
 /// written anywhere).
 pub(crate) fn check_block_change(
     change: &RawChange,
     block: &Block,
     passage: &str,
+    objectives: &[String],
 ) -> Result<CleanSection, Vec<String>> {
     let ctx = SectionCtx {
         passage,
@@ -1179,6 +1182,7 @@ pub(crate) fn check_block_change(
         // A revision may write a 表格整理 table; students read English only.
         tables_asked: true,
         english_tables: true,
+        objectives,
     };
     let mut items = change.items.clone();
     for (k, it) in items.iter_mut().enumerate() {
@@ -1208,6 +1212,16 @@ pub(crate) fn check_block_change(
             })
         }
     }
+}
+
+/// The sheet's objectives as the check of a block change reads them.
+pub(crate) fn sheet_objectives(content: &Content) -> Vec<String> {
+    crate::worksheet::checks::objective_lines(
+        content
+            .objectives
+            .iter()
+            .map(|o| (o.text.as_str(), o.student_facing_en.as_str())),
+    )
 }
 
 /// Checks every change like a template block (fixed labels, well-formed closed items, no
@@ -1250,6 +1264,7 @@ fn check_revision(
     if !picture_notes.is_empty() {
         tracing::debug!(notes = ?picture_notes, "picture actions were trimmed");
     }
+    let objectives = sheet_objectives(content);
     let mut problems = Vec::new();
     let mut seen = HashSet::new();
     for change in raw.changes.iter().take(CHANGES_MAX) {
@@ -1266,7 +1281,7 @@ fn check_revision(
         };
         let label = labels.get(id).cloned().unwrap_or_default();
         let name = block_name(&label, &block.title);
-        match check_block_change(change, block, passage) {
+        match check_block_change(change, block, passage, &objectives) {
             Ok(out) => plan.accepted.push(Accepted {
                 block_id: id.to_string(),
                 section: out,
@@ -1957,6 +1972,7 @@ mod tests {
             ),
             block,
             "text",
+            &[],
         )
         .unwrap();
         let t = ok.items[0].table.clone().unwrap();
@@ -1969,6 +1985,7 @@ mod tests {
             &table_change(named, &["Column 1", "Column 2"], &["Claim"]),
             block,
             "text",
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -1980,19 +1997,21 @@ mod tests {
             &table_change("Complete the table.", &["Column 1", "Column 2"], &[]),
             block,
             "text",
+            &[],
         );
         assert!(!bad.unwrap_err().is_empty());
         // Chinese headings are not for students.
         assert!(check_block_change(
             &table_change(named, &["優點", "Cons"], &["Claim"]),
             block,
-            "text"
+            "text",
+            &[]
         )
         .is_err());
         // A table on another format is dropped, not stored.
         let mut other = table_change(named, &["A", "B"], &["Claim"]);
         other.items[0].answer_format = FMT_SHORT.into();
-        let out = check_block_change(&other, block, "text").unwrap();
+        let out = check_block_change(&other, block, "text", &[]).unwrap();
         assert!(revised_table(None, &out.items[0]).is_none());
     }
 
@@ -2010,7 +2029,7 @@ mod tests {
         c.blocks[0].items[0].table = Some(stored.clone());
         let mut change = table_change(prompt, &[], &[]);
         change.items[0].table = None;
-        let out = check_block_change(&change, &c.blocks[0], "text").unwrap();
+        let out = check_block_change(&change, &c.blocks[0], "text", &[]).unwrap();
         let b = revised_block(&c.blocks[0], &out, &[Level::Standard], 9, 1);
         assert_eq!(b.items[0].table, Some(stored), "rows and headings stay");
     }

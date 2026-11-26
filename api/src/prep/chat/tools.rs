@@ -659,7 +659,8 @@ impl<'a> Work<'a> {
         change: RawChange,
         no: usize,
     ) -> Result<Block, Vec<String>> {
-        let out = check_block_change(&change, old, &self.passage)?;
+        let objectives = crate::prep::run::sheet_objectives(&self.content);
+        let out = check_block_change(&change, old, &self.passage, &objectives)?;
         Ok(revised_block(old, &out, &self.levels, self.turn_id, no))
     }
 

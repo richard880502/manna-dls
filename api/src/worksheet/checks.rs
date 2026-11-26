@@ -197,27 +197,32 @@ pub struct TasksCtx<'a> {
     /// Option counts the teacher's confirmed habits allow besides the defaults (empty while
     /// the teacher-memory switch is off, which keeps the default rules exactly).
     pub habits: OptionHabits,
+    /// The sheet's learning objectives ([`objective_lines`]): no question may copy one so that it
+    /// gives the answer away ([`copied_objective`], [`CHECK_NOT_AN_OBJECTIVE`]).
+    pub objectives: &'a [String],
 }
 
-const TASK_CHECKS: [&str; 10] = [
+const TASK_CHECKS: [&str; 11] = [
     "labels_from_spec_sets",
     "english_only",
     "evidence_verbatim",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "objective_refs_valid",
     "all_paragraphs_covered",
     "blocks_in_paragraph_order",
     "at_least_3_info_functions",
 ];
-const TASK_CHECKS_WITH_BUDGET: [&str; 12] = [
+const TASK_CHECKS_WITH_BUDGET: [&str; 13] = [
     "labels_from_spec_sets",
     "english_only",
     "evidence_verbatim",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "objective_refs_valid",
     "all_paragraphs_covered",
     "blocks_in_paragraph_order",
@@ -810,11 +815,277 @@ fn frame_check(prompt: &str, passage: &str, iname: &str, field: &str, t: &mut Ta
     t.fail(
         "items_wellformed",
         format!(
-            "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題。{field} 要寫出要學生做什麼（完整的題目或指示，例如 \"Explain one feature of narrative writing in paragraph 3.\"）；不要只寫句型框架，也不要用 Hi!、Hello! 這類招呼語開頭。",
+            "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題。{field} 要換成一題針對課文內容的題目，寫出要學生做什麼（完整的題目或指示，例如 \"Explain one feature of narrative writing in paragraph 3.\"）；{FRAME_PREFIX_NOTE}；也不要用 Hi!、Hello! 這類招呼語開頭。",
             clip_chars(prompt, 80)
         ),
         "句型框架移出題號，印在這一區的 Sentence frames 方框（不編號）",
     );
+}
+
+/// What the repair call of a question that is only a sentence frame is told about a lead such as
+/// 「Complete the statement:」: a frame with a lead is still a frame (a copied objective with one
+/// is refused by [`objective_check`]).
+const FRAME_PREFIX_NOTE: &str = "只在句型框架前面加上「Complete the statement:」「Complete the self-assessment statement:」這類開頭，它還是句型框架，不是題目";
+
+// ---------------------------------------------------------------- a learning objective is not a question
+
+/// The check that refuses a question copied from a learning objective ([`objective_check`]).
+pub const CHECK_NOT_AN_OBJECTIVE: &str = "not_a_copy_of_objective";
+
+/// A question that shares this many words in a row with a learning objective copies it (in
+/// Chinese, every two characters count as one word).
+pub const OBJECTIVE_COPY_WORDS: usize = 6;
+
+/// The objectives a sheet has, as [`objective_check`] reads them: the teacher's text and the
+/// students' line of each objective (`(text, student_facing_en)`), one line each, trimmed,
+/// without duplicates.
+pub fn objective_lines<'a>(
+    objectives: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (text, en) in objectives {
+        for line in text.lines().chain(en.lines()).map(str::trim) {
+            if !line.is_empty() && !out.iter().any(|o| o == line) {
+                out.push(line.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The words the copy check compares: lowercase letters and digits (an apostrophe inside a word
+/// kept), each CJK character a word of its own, punctuation dropped. `None` is a blank to write
+/// in (「______」「( )」).
+fn copy_words(text: &str) -> Vec<Option<String>> {
+    let marked = BLANK_MARKER.replace_all(text, " \u{1} ");
+    let chars: Vec<char> = marked.chars().collect();
+    let mut out: Vec<Option<String>> = Vec::new();
+    let mut word = String::new();
+    fn flush(word: &mut String, out: &mut Vec<Option<String>>) {
+        if !word.is_empty() {
+            out.push(Some(std::mem::take(word)));
+        }
+    }
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '\u{1}' {
+            flush(&mut word, &mut out);
+            out.push(None);
+        } else if crate::retrieval::is_cjk(c) {
+            flush(&mut word, &mut out);
+            out.push(Some(c.to_string()));
+        } else if c.is_alphanumeric() {
+            word.extend(c.to_lowercase());
+        } else if matches!(c, '\'' | '’')
+            && !word.is_empty()
+            && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric())
+        {
+            word.push('\'');
+        } else {
+            flush(&mut word, &mut out);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
+/// An English word weighs 2, a CJK character 1: a run of [`OBJECTIVE_COPY_WORDS`] words is
+/// twice that weight.
+fn copy_weight(word: &str) -> usize {
+    if word.chars().all(crate::retrieval::is_cjk) {
+        1
+    } else {
+        2
+    }
+}
+
+/// A word of a question as the copy check reads it: `None` is a blank; `true` marks the place of
+/// the answer (the blank, or the answer's words put back into it).
+type CopyWord = (Option<String>, bool);
+
+/// A run of words a question shares with an objective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SharedRun {
+    weight: usize,
+    /// The run takes in the place of the answer: the blank stands for a word of the objective.
+    answer: bool,
+}
+
+/// The runs of `objective`'s words that `prompt` has in a row (a blank stands for any one word)
+/// that are at least [`OBJECTIVE_COPY_WORDS`] long and not word for word in the material
+/// (`passage`, see [`spaced_words`]: a cloze of a line the objective quotes is a question about
+/// the text). Returns the heaviest, one that takes in the answer's place first.
+fn shared_run(prompt: &[CopyWord], objective: &[String], passage: &str) -> Option<SharedRun> {
+    let threshold = OBJECTIVE_COPY_WORDS * 2;
+    let mut best: Option<SharedRun> = None;
+    // (weight, length, takes in the answer's place) of the common run ending at the previous
+    // prompt word and objective word j.
+    let mut prev = vec![(0usize, 0usize, false); objective.len() + 1];
+    for (word, answer) in prompt {
+        let mut cur = vec![(0usize, 0usize, false); objective.len() + 1];
+        for (j, o) in objective.iter().enumerate() {
+            let weight = match word {
+                None => 0,
+                Some(w) if w == o => copy_weight(w),
+                Some(_) => continue,
+            };
+            let (w, len, a) = prev[j];
+            cur[j + 1] = (w + weight, len + 1, a || *answer);
+            let (weight, len, answer) = cur[j + 1];
+            let run = SharedRun { weight, answer };
+            let better = best.is_none_or(|b| (run.answer, run.weight) > (b.answer, b.weight));
+            if weight >= threshold && better {
+                let words = objective[j + 1 - len..=j].join(" ");
+                if !passage.contains(&format!(" {words} ")) {
+                    best = Some(run);
+                }
+            }
+        }
+        prev = cur;
+    }
+    best
+}
+
+/// The words of `text` joined with single spaces, with a space at each end (blanks left out).
+fn spaced_words(text: &str) -> String {
+    let words: Vec<String> = copy_words(text).into_iter().flatten().collect();
+    format!(" {} ", words.join(" "))
+}
+
+/// `prompt`'s words with its blanks filled in from `answer`: one blank takes the whole answer;
+/// several take the answer's parts (between commas, semicolons, slashes), in order, when there
+/// are as many. `None` when there is no blank or nothing to fill it with.
+fn filled_words(prompt: &[Option<String>], answer: &str) -> Option<Vec<CopyWord>> {
+    let blanks = prompt.iter().filter(|w| w.is_none()).count();
+    if blanks == 0 {
+        return None;
+    }
+    let parts: Vec<Vec<Option<String>>> = if blanks == 1 {
+        vec![copy_words(answer)]
+    } else {
+        answer
+            .split([',', ';', '/', '|', '\n', '，', '；', '、'])
+            .map(copy_words)
+            .filter(|w| !w.is_empty())
+            .collect()
+    };
+    if parts.len() != blanks || parts.iter().any(Vec::is_empty) {
+        return None;
+    }
+    let mut parts = parts.into_iter();
+    let mut out = Vec::new();
+    for w in prompt {
+        match w {
+            Some(w) => out.push((Some(w.clone()), false)),
+            None => out.extend(
+                parts
+                    .next()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|w| (w, true)),
+            ),
+        }
+    }
+    Some(out)
+}
+
+/// An answer that is no answer: a self-rating or a reflection has none (「Answers will vary.」).
+fn open_answer(answer: &str) -> bool {
+    let a = norm(answer).to_lowercase();
+    let a = a.trim_matches(|c: char| !c.is_alphanumeric());
+    a.is_empty()
+        || [
+            "answers will vary",
+            "answers may vary",
+            "answer will vary",
+            "answer may vary",
+            "open answer",
+            "open-ended",
+            "students' own",
+            "student's own",
+            "依學生",
+            "學生自行",
+            "自由作答",
+            "答案不一",
+            "無標準答案",
+            "沒有標準答案",
+        ]
+        .iter()
+        .any(|p| a.starts_with(p))
+}
+
+/// The objective a question copies so that the objective gives its answer away, if any. The
+/// prompt shares a run of [`OBJECTIVE_COPY_WORDS`] words or more with the objective (any case and
+/// punctuation; a blank stands for any one word, or is filled with the answer; not a run that is
+/// word for word in the material), the question has an answer ([`open_answer`]: a self-rating or
+/// a reflection with none may quote an objective), and either
+/// * the run takes in the blank (the blank is a word of the objective: 「I can explain how the
+///   two roads symbolize life ______.」, a lead in front or not),
+/// * the answer is only words of that objective (at most four), or
+/// * it is a 是非題 whose statement is mostly the objective (two thirds of its words).
+///
+/// A question about the text that shares words with an objective but whose answer the
+/// objective does not give (「Mrs. Lin kept the umbrella stand because ______.」 under 「I can
+/// explain why Mrs. Lin kept the umbrella stand.」) is not a copy.
+pub(crate) fn copied_objective<'o>(
+    format: &str,
+    prompt: &str,
+    answer: &str,
+    objectives: &'o [String],
+    passage: &str,
+) -> Option<&'o str> {
+    if objectives.is_empty() || open_answer(answer) {
+        return None;
+    }
+    let words = copy_words(prompt);
+    let plain: Vec<CopyWord> = words.iter().map(|w| (w.clone(), w.is_none())).collect();
+    let filled = filled_words(&words, answer);
+    let prompt_weight: usize = words.iter().flatten().map(|w| copy_weight(w)).sum();
+    let answer_words: Vec<String> = copy_words(answer).into_iter().flatten().collect();
+    let passage = spaced_words(passage);
+    objectives.iter().map(String::as_str).find(|objective| {
+        let target: Vec<String> = copy_words(objective).into_iter().flatten().collect();
+        let runs: Vec<SharedRun> = std::iter::once(plain.as_slice())
+            .chain(filled.as_deref())
+            .filter_map(|p| shared_run(p, &target, &passage))
+            .collect();
+        let Some(heaviest) = runs.iter().map(|r| r.weight).max() else {
+            return false;
+        };
+        let blank_in_run = runs.iter().any(|r| r.answer);
+        let from_objective = !answer_words.is_empty()
+            && answer_words.iter().map(|w| copy_weight(w)).sum::<usize>() <= 8
+            && answer_words.iter().all(|w| target.contains(w));
+        let statement = format.trim() == FMT_TRUE_FALSE && heaviest * 3 >= prompt_weight * 2;
+        blank_in_run || from_objective || statement
+    })
+}
+
+/// The repair note of a question copied from a learning objective.
+pub fn objective_copy_note(iname: &str, objective: &str) -> String {
+    format!(
+        "{iname} 照抄了學習目標（{}）：學習目標只供理解教學重點，學生在學習單上方已看得到，請換成一題針對課文內容的題目。",
+        clip_chars(objective, 120)
+    )
+}
+
+/// A question copied from a learning objective ([`copied_objective`]) fails
+/// [`CHECK_NOT_AN_OBJECTIVE`] and is dropped (the objectives print at the top of the sheet: its
+/// answer is right there). Returns whether the question is kept.
+fn objective_check(
+    (format, prompt, answer): (&str, &str, &str),
+    iname: &str,
+    (objectives, passage): (&[String], &str),
+    t: &mut Tally,
+) -> bool {
+    let Some(objective) = copied_objective(format, prompt, answer, objectives, passage) else {
+        return true;
+    };
+    t.fail(
+        CHECK_NOT_AN_OBJECTIVE,
+        objective_copy_note(iname, objective),
+        "拿掉這一題",
+    );
+    false
 }
 
 // ---------------------------------------------------------------- 是非題: a statement to judge
@@ -1243,6 +1514,14 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
                 (&iname, "prompt_en"),
                 &mut t,
             );
+            if !objective_check(
+                (&item.answer_format, &item.prompt_en, &item.answer_en),
+                &iname,
+                (ctx.objectives, &passage),
+                &mut t,
+            ) {
+                continue;
+            }
             frame_check(&item.prompt_en, &passage, &iname, "prompt_en", &mut t);
             if let Err(why) = item_wellformed(&item, ctx.habits) {
                 t.fail(
@@ -2127,12 +2406,16 @@ pub struct ExitCtx<'a> {
     pub task_prompts: &'a [String],
     /// The material, paragraphs joined (a cloze of it is not a sentence frame).
     pub passage: &'a str,
+    /// The sheet's learning objectives ([`objective_lines`]): no question may copy one so that it
+    /// gives the answer away ([`copied_objective`], [`CHECK_NOT_AN_OBJECTIVE`]).
+    pub objectives: &'a [String],
 }
 
-const EXIT_CHECKS: [&str; 9] = [
+const EXIT_CHECKS: [&str; 10] = [
     "labels_from_spec_sets",
     "english_only",
     "items_wellformed",
+    CHECK_NOT_AN_OBJECTIVE,
     "not_a_repeat_of_main_task",
     "item_count_2_4",
     "has_formative_item",
@@ -2226,6 +2509,21 @@ pub fn evaluate_exit_items(
             (&name, "prompt_en"),
             &mut t,
         );
+        // A reflection or a question for the teacher has no right answer: it may quote one.
+        if item.purpose == formative
+            && !objective_check(
+                (
+                    &item.answer_format,
+                    &item.prompt_en,
+                    item.sample_answer_en.as_deref().unwrap_or_default(),
+                ),
+                &name,
+                (ctx.objectives, ctx.passage),
+                &mut t,
+            )
+        {
+            continue;
+        }
         frame_check(&item.prompt_en, ctx.passage, &name, "prompt_en", &mut t);
         if item.answer_format == FMT_CHOICE && item.options.len() < 2 {
             t.fail(
@@ -2342,6 +2640,9 @@ pub struct SectionCtx<'a> {
     /// Headings and row labels of those tables are student-facing English (a revision of a
     /// worksheet), so a Chinese one is refused.
     pub english_tables: bool,
+    /// The sheet's learning objectives ([`objective_lines`]): no question may copy one so that it
+    /// gives the answer away ([`copied_objective`], [`CHECK_NOT_AN_OBJECTIVE`]).
+    pub objectives: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2369,11 +2670,12 @@ pub struct CleanSection {
     pub items: Vec<CleanSectionItem>,
 }
 
-const SECTION_CHECKS: [&str; 8] = [
+const SECTION_CHECKS: [&str; 9] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "item_count_within_template",
     "has_items",
     "no_invented_material",
@@ -2609,11 +2911,12 @@ fn finish_section<T>(
 
 // ---------------------------------------------------------------- a template block's support boxes
 
-const TEMPLATE_SECTION_CHECKS: [&str; 9] = [
+const TEMPLATE_SECTION_CHECKS: [&str; 10] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "item_count_within_template",
     "has_items",
     "no_invented_material",
@@ -2953,7 +3256,7 @@ fn lift_template_frames(
             t.fail(
                 "items_wellformed",
                 format!(
-                    "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題，寫在句型框架的提示框；prompt 要寫出要學生做什麼（完整的題目或指示）。",
+                    "{iname} 只有句型框架（「{}」），沒有題目：句型框架是語言鷹架，不是一題，寫在句型框架的提示框；prompt 要換成一題針對課文內容的題目，寫出要學生做什麼（完整的題目或指示）；{FRAME_PREFIX_NOTE}。",
                     clip_chars(&item.prompt, 80)
                 ),
                 "句型框架移出題號，印在這一區的句型框架方框（不編號）",
@@ -3045,6 +3348,14 @@ fn section_item(
     if !item_checks(&mut item, iname, t) {
         return None;
     }
+    if !objective_check(
+        (&item.answer_format, &item.prompt, &item.answer),
+        iname,
+        (ctx.objectives, ctx.passage),
+        t,
+    ) {
+        return None;
+    }
     // A template may be in Chinese; a revision (no organizer in its schema) keeps the stored one.
     item.organizer = organizer_of(
         &item.answer_format,
@@ -3086,11 +3397,12 @@ fn section_item(
 
 // ---------------------------------------------------------------- one block revised (逐區修改)
 
-const REVISION_CHECKS: [&str; 6] = [
+const REVISION_CHECKS: [&str; 7] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "no_invented_material",
     "syllables_match_dictionary",
 ];
@@ -3167,6 +3479,9 @@ pub struct BloomCtx<'a> {
     /// "P1"…, in material order.
     pub paragraph_codes: &'a [String],
     pub count: usize,
+    /// The sheet's learning objectives ([`objective_lines`]): no question may copy one so that it
+    /// gives the answer away ([`copied_objective`], [`CHECK_NOT_AN_OBJECTIVE`]).
+    pub objectives: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3216,11 +3531,12 @@ pub struct CleanBloomLevel {
     pub items: Vec<CleanBloomItem>,
 }
 
-const BLOOM_CHECKS: [&str; 9] = [
+const BLOOM_CHECKS: [&str; 10] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "evidence_verbatim",
     "item_count_within_plan",
     "has_items",
@@ -3228,11 +3544,12 @@ const BLOOM_CHECKS: [&str; 9] = [
     "steps_written",
 ];
 
-const TIERED_CHECKS: [&str; 14] = [
+const TIERED_CHECKS: [&str; 15] = [
     "labels_from_spec_sets",
     "items_wellformed",
     "organizer_wellformed",
     "answer_not_in_prompt",
+    CHECK_NOT_AN_OBJECTIVE,
     "evidence_verbatim",
     "item_count_within_plan",
     "has_items",
@@ -3299,6 +3616,14 @@ fn shared_item(
         item.options = vec!["True".to_string(), "False".to_string()];
     }
     if !item_checks(&mut item, iname, t) {
+        return None;
+    }
+    if !objective_check(
+        (&item.answer_format, &item.prompt, &item.answer),
+        iname,
+        (ctx.objectives, ctx.passage),
+        t,
+    ) {
         return None;
     }
     let evidence = clean(raw.evidence);
@@ -4065,6 +4390,7 @@ mod tests {
             needs_external: false,
             tables_asked: false,
             english_tables: false,
+            objectives: &[],
         };
         let e = evaluate_section(&raw, &ctx);
         let out = e.output.unwrap();
@@ -4127,6 +4453,7 @@ mod tests {
                 needs_external: false,
                 tables_asked: false,
                 english_tables: false,
+                objectives: &[],
             },
         );
         assert!(e.needs_repair());
@@ -4165,6 +4492,7 @@ mod tests {
                 needs_external: true,
                 tables_asked: false,
                 english_tables: false,
+                objectives: &[],
             },
         );
         let out = e.output.unwrap();
@@ -4183,6 +4511,7 @@ mod tests {
                 needs_external: true,
                 tables_asked: false,
                 english_tables: false,
+                objectives: &[],
             },
         );
         assert!(e.output.is_none() && e.needs_repair());
@@ -4248,6 +4577,7 @@ mod tests {
             item_budget: 6,
             only: None,
             habits: OptionHabits::default(),
+            objectives: &[],
         }
     }
 
@@ -4682,6 +5012,7 @@ mod tests {
             needs_external: false,
             tables_asked: false,
             english_tables: false,
+            objectives: &[],
         };
         let e = evaluate_section(&raw, &ctx);
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -4713,6 +5044,7 @@ mod tests {
                 objective_ids: &[],
                 task_prompts: &[],
                 passage: "",
+                objectives: &[],
             },
         );
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -4772,6 +5104,7 @@ mod tests {
                 objective_ids: &[],
                 task_prompts: &[],
                 passage: &paragraphs().join("\n"),
+                objectives: &[],
             },
         );
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -5196,6 +5529,7 @@ mod tests {
             objective_ids: &objectives,
             task_prompts: &prompts,
             passage: "",
+            objectives: &[],
         };
         let good = RawExit {
             estimated_minutes: 3,
@@ -5252,6 +5586,7 @@ mod tests {
             objective_ids: &objectives,
             task_prompts: &[],
             passage: "",
+            objectives: &[],
         };
         let raw = RawExit {
             estimated_minutes: 3,
@@ -5285,6 +5620,7 @@ mod tests {
             objective_ids: &[],
             task_prompts: &[],
             passage: "",
+            objectives: &[],
         };
         assert!(!evaluate_exit(&raw, &none).needs_repair());
     }
@@ -5319,6 +5655,7 @@ mod tests {
             passage: &passage,
             paragraph_codes: &codes,
             count,
+            objectives: &[],
         };
         fn bloom_formats(b: Bloom) -> &'static [&'static str] {
             b.formats()
@@ -5520,6 +5857,7 @@ mod tests {
             passage,
             paragraph_codes: codes,
             count,
+            objectives: &[],
         }
     }
 
@@ -5823,6 +6161,7 @@ mod tests {
             needs_external: false,
             tables_asked: false,
             english_tables: false,
+            objectives: &[],
         };
         let e = evaluate_section(&raw, &ctx);
         assert_eq!(failed(&e.results), ["items_wellformed"]);
@@ -5943,6 +6282,7 @@ mod tests {
             needs_external: false,
             tables_asked: false,
             english_tables: false,
+            objectives: &[],
         };
         // Written well: each box under its heading, in the sample's order (matched by heading).
         let raw = crate::worksheet::template::RawSectionOut {
@@ -6061,6 +6401,7 @@ mod tests {
             needs_external: false,
             tables_asked: false,
             english_tables: false,
+            objectives: &[],
         };
         let raw = crate::worksheet::template::RawSectionOut {
             title: "Paragraph 1".into(),
@@ -6253,5 +6594,479 @@ mod item_frame_tests {
         assert!(!e.needs_repair());
         let s = &e.output.unwrap()[0];
         assert!(s.item_frames.is_empty() && s.item_hints.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod objective_copy_tests {
+    use super::*;
+
+    /// The teacher's two objectives of the reported sheet (a poem; the sheet printed both).
+    const CONTENT: &str = "I can explain how the two roads symbolize life choices.";
+    const LANGUAGE: &str = "I can use clues such as \"both,\" \"one,\" \"Yet,\" and \"ever\" to infer that choices have limits and cannot be reversed.";
+    const POEM: &str = "Two roads diverged in a yellow wood, And sorry I could not travel both. \
+         Then took the other, as just as fair, And having perhaps the better claim, Because it \
+         was grassy and wanted wear. Yet knowing how way leads on to way, I doubted if I should \
+         ever come back. I took the one less traveled by, And that has made all the difference.";
+
+    fn objectives() -> Vec<String> {
+        vec![CONTENT.to_string(), LANGUAGE.to_string()]
+    }
+
+    fn copied(format: &str, prompt: &str, answer: &str) -> Option<String> {
+        copied_objective(format, prompt, answer, &objectives(), POEM).map(str::to_string)
+    }
+
+    fn out_item(
+        format: &str,
+        prompt: &str,
+        answer: &str,
+    ) -> crate::worksheet::template::RawOutItem {
+        crate::worksheet::template::RawOutItem {
+            answer_format: format.into(),
+            prompt: prompt.into(),
+            options: Vec::new(),
+            answer: answer.into(),
+            bloom: None,
+            organizer: None,
+            table: None,
+        }
+    }
+
+    fn failed(e: &[CheckResult]) -> Vec<&'static str> {
+        e.iter().filter(|r| !r.passed).map(|r| r.name).collect()
+    }
+
+    /// Items 3 and 4 of the reported sheet, as the repair call wrote them (a lead in front of the
+    /// blanked objective), and as the first call did (the bare frame).
+    const REPAIRED_CONTENT: &str = "Complete the content-goal self-assessment statement with the key idea: I can explain how the two roads symbolize life ______.";
+    const REPAIRED_LANGUAGE: &str = "Complete the language-goal self-assessment statement: I can use clues such as \"both,\" \"one,\" \"Yet,\" and \"ever\" to infer that choices have ______ and cannot be reversed.";
+
+    #[test]
+    fn the_reported_items_copy_the_objectives() {
+        assert_eq!(
+            copied(FMT_BLANK, REPAIRED_CONTENT, "choices").as_deref(),
+            Some(CONTENT)
+        );
+        assert_eq!(
+            copied(FMT_BLANK, REPAIRED_LANGUAGE, "limits").as_deref(),
+            Some(LANGUAGE)
+        );
+        // The first call's bare frames, and the same as other closed formats.
+        assert_eq!(
+            copied(
+                FMT_BLANK,
+                "I can explain how the two roads symbolize life ______.",
+                "choices"
+            )
+            .as_deref(),
+            Some(CONTENT)
+        );
+        assert!(copied(
+            FMT_TRUE_FALSE,
+            "I can explain how the two roads symbolize life choices.",
+            "True"
+        )
+        .is_some());
+        assert!(copied(
+            FMT_CHOICE,
+            "Which word completes the goal: I can explain how the two roads symbolize life ______?",
+            "choices"
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn a_self_rating_or_reflection_without_an_answer_may_quote_an_objective() {
+        for answer in ["", "Answers will vary.", "answers may vary", "依學生回答"] {
+            assert_eq!(
+                copied(FMT_BLANK, REPAIRED_CONTENT, answer),
+                None,
+                "{answer}"
+            );
+            assert_eq!(
+                copied(
+                    FMT_SHORT,
+                    "Rate yourself from 1 to 4: I can explain how the two roads symbolize life choices.",
+                    answer
+                ),
+                None,
+                "{answer}"
+            );
+        }
+        // No objectives: nothing to copy.
+        assert_eq!(
+            copied_objective(FMT_BLANK, REPAIRED_CONTENT, "choices", &[], POEM),
+            None
+        );
+    }
+
+    #[test]
+    fn a_question_about_the_text_passes() {
+        for (format, prompt, answer) in [
+            // A cloze of the poem.
+            (
+                FMT_BLANK,
+                "The road the speaker took was grassy and wanted ______.",
+                "wear",
+            ),
+            (FMT_BLANK, "Two roads diverged in a yellow ______.", "wood"),
+            // Five words of an objective in a row are not a copy.
+            (FMT_BLANK, "Explain how the two roads ______.", "differ"),
+            // Six words of the objective, but the objective does not give the answer away.
+            (
+                FMT_BLANK,
+                "The two roads symbolize life choices because ______.",
+                "the speaker can take only one",
+            ),
+            (
+                FMT_TRUE_FALSE,
+                "The two roads symbolize life choices that the speaker can easily undo later.",
+                "False",
+            ),
+            (
+                FMT_CHOICE,
+                "What do the two roads stand for in the poem?",
+                "Choices in life",
+            ),
+            // An open question that asks what the objective aims at, with a real answer.
+            (
+                FMT_SHORT,
+                "Explain how the two roads symbolize life choices.",
+                "Each road stands for a choice; once the speaker takes one, he cannot go back.",
+            ),
+        ] {
+            assert_eq!(copied(format, prompt, answer), None, "{prompt}");
+        }
+    }
+
+    #[test]
+    fn a_line_the_objective_quotes_from_the_text_is_not_a_copy() {
+        let objectives =
+            vec!["I can explain what \"I took the one less traveled by\" means.".to_string()];
+        assert_eq!(
+            copied_objective(
+                FMT_BLANK,
+                "I took the one less traveled ______.",
+                "by",
+                &objectives,
+                POEM
+            ),
+            None
+        );
+        // Without the poem it would be one.
+        assert!(copied_objective(
+            FMT_BLANK,
+            "I took the one less traveled ______.",
+            "by",
+            &objectives,
+            ""
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn case_punctuation_and_blanks_do_not_hide_a_copy() {
+        for (prompt, answer) in [
+            (
+                "i CAN explain—how the TWO roads symbolize life (   )",
+                "choices",
+            ),
+            (
+                "I can explain how the two roads symbolize life ＿＿＿＿.",
+                "choices",
+            ),
+            (
+                "\"I can explain how the two roads, symbolize life:\" ________",
+                "choices",
+            ),
+            // The blank in the middle: it stands for the word it took away.
+            (
+                "Infer that choices have ______ and cannot be reversed.",
+                "limits",
+            ),
+            // A blank for two words is filled with the answer.
+            (
+                "Infer that choices ______ and cannot be reversed.",
+                "have limits",
+            ),
+            // Two blanks, two parts.
+            (
+                "To infer that choices ______ limits and cannot be ______.",
+                "have, reversed",
+            ),
+        ] {
+            assert!(copied(FMT_BLANK, prompt, answer).is_some(), "{prompt}");
+        }
+    }
+
+    #[test]
+    fn an_open_question_fails_only_when_its_answer_is_a_word_of_the_objective() {
+        let prompt =
+            "Which word finishes the goal \"I can explain how the two roads symbolize life\"?";
+        assert_eq!(
+            copied(FMT_SHORT, prompt, "choices").as_deref(),
+            Some(CONTENT)
+        );
+        assert_eq!(
+            copied(FMT_SHORT, prompt, "Life choices.").as_deref(),
+            Some(CONTENT)
+        );
+        assert_eq!(
+            copied(FMT_SHORT, prompt, "The speaker has to pick one road."),
+            None
+        );
+    }
+
+    #[test]
+    fn chinese_counts_two_characters_as_a_word() {
+        let objectives = vec!["能說明兩條路如何象徵人生的選擇".to_string()];
+        assert!(copied_objective(
+            FMT_BLANK,
+            "能說明兩條路如何象徵人生的______",
+            "選擇",
+            &objectives,
+            ""
+        )
+        .is_some());
+        assert!(copied_objective(FMT_BLANK, "兩條路象徵______", "選擇", &objectives, "").is_none());
+    }
+
+    #[test]
+    fn the_lines_of_the_objectives_are_read_once() {
+        let lines = objective_lines([
+            (CONTENT, CONTENT),
+            ("學生能說明兩條路的象徵\n學生能推論", " I can infer. "),
+            ("", ""),
+        ]);
+        assert_eq!(
+            lines,
+            [
+                CONTENT,
+                "學生能說明兩條路的象徵",
+                "學生能推論",
+                "I can infer."
+            ]
+        );
+    }
+
+    #[test]
+    fn the_repair_note_says_why_and_what_to_write_instead() {
+        assert_eq!(
+            objective_copy_note("第 3 題", CONTENT),
+            format!("第 3 題 照抄了學習目標（{CONTENT}）：學習目標只供理解教學重點，學生在學習單上方已看得到，請換成一題針對課文內容的題目。")
+        );
+    }
+
+    #[test]
+    fn a_template_block_drops_a_copied_objective_even_with_a_lead() {
+        let objectives = objectives();
+        let ctx = SectionCtx {
+            passage: POEM,
+            item_count: 3,
+            needs_external: false,
+            tables_asked: false,
+            english_tables: false,
+            objectives: &objectives,
+        };
+        let sup = SupportsCtx {
+            supports: &[],
+            legacy: (ScaffoldType::Verbal, KIND_FRAMES),
+        };
+        let content = out_item(
+            FMT_BLANK,
+            "The speaker chose the road that was grassy and wanted ______.",
+            "wear",
+        );
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Concept Introduction".into(),
+            instructions: "Complete the sentences.".into(),
+            scaffold: String::new(),
+            supports: Vec::new(),
+            items: vec![
+                content.clone(),
+                out_item(FMT_BLANK, REPAIRED_CONTENT, "choices"),
+                out_item(FMT_BLANK, REPAIRED_LANGUAGE, "limits"),
+            ],
+        };
+        let e = evaluate_template_section(&raw, &ctx, &sup);
+        assert_eq!(failed(&e.results), [CHECK_NOT_AN_OBJECTIVE]);
+        assert_eq!(
+            e.problems,
+            [
+                objective_copy_note("第 2 題", CONTENT),
+                objective_copy_note("第 3 題", LANGUAGE)
+            ]
+        );
+        assert!(e.repairs.iter().all(|r| r.starts_with("拿掉這一題")));
+        let out = e.output.unwrap();
+        assert_eq!(out.section.items.len(), 1);
+        assert_eq!(out.section.items[0].prompt, content.prompt);
+
+        // The first call's bare frame: refused as a copy, not lifted into the frames box.
+        let bare = crate::worksheet::template::RawSectionOut {
+            items: vec![
+                content.clone(),
+                out_item(
+                    FMT_BLANK,
+                    "I can explain how the two roads symbolize life ______.",
+                    "choices",
+                ),
+            ],
+            ..raw.clone()
+        };
+        let e = evaluate_template_section(&bare, &ctx, &sup);
+        assert_eq!(failed(&e.results), [CHECK_NOT_AN_OBJECTIVE]);
+        let out = e.output.unwrap();
+        assert_eq!(out.section.items.len(), 1);
+        assert!(out
+            .supports
+            .iter()
+            .all(|s| s.lines.iter().all(|l| !l.contains("symbolize"))));
+
+        // A self-rating with no answer stays (here a frame of its own: lifted as before).
+        let rating = crate::worksheet::template::RawSectionOut {
+            items: vec![
+                content,
+                out_item(
+                    FMT_SHORT,
+                    "Rate yourself from 1 to 4: I can explain how the two roads symbolize life choices.",
+                    "Answers will vary.",
+                ),
+            ],
+            ..raw
+        };
+        let e = evaluate_template_section(&rating, &ctx, &sup);
+        assert!(!e.needs_repair(), "{:?}", e.problems);
+        assert_eq!(e.output.unwrap().section.items.len(), 2);
+    }
+
+    #[test]
+    fn a_frame_note_asks_for_a_question_about_the_text_not_a_lead() {
+        let ctx = SectionCtx {
+            passage: POEM,
+            item_count: 3,
+            needs_external: false,
+            tables_asked: false,
+            english_tables: false,
+            objectives: &[],
+        };
+        let sup = SupportsCtx {
+            supports: &[],
+            legacy: (ScaffoldType::Verbal, KIND_FRAMES),
+        };
+        let raw = crate::worksheet::template::RawSectionOut {
+            title: "Concept Introduction".into(),
+            instructions: "Complete the sentences.".into(),
+            scaffold: String::new(),
+            supports: Vec::new(),
+            items: vec![out_item(
+                FMT_SHORT,
+                "I think the speaker feels ______ because ______.",
+                "Answers will vary.",
+            )],
+        };
+        let e = evaluate_template_section(&raw, &ctx, &sup);
+        assert_eq!(failed(&e.results), ["items_wellformed"]);
+        assert!(e.problems[0].contains("只有句型框架"), "{:?}", e.problems);
+        assert!(e.problems[0].contains("換成一題針對課文內容的題目"));
+        assert!(e.problems[0].contains("Complete the statement:"));
+    }
+
+    #[test]
+    fn tasks_and_exit_tickets_drop_a_copied_objective() {
+        let paragraphs = vec![POEM.to_string()];
+        let objectives = objectives();
+        let mut copy = RawItem {
+            item_id: "x".into(),
+            answer_format: FMT_BLANK.into(),
+            tier: "core".into(),
+            prompt_en: REPAIRED_CONTENT.into(),
+            options: vec![],
+            organizer: None,
+            table: None,
+            answer_en: "choices".into(),
+            evidence: None,
+            bloom: None,
+        };
+        let mut fine = copy.clone();
+        fine.prompt_en = "The speaker chose the road that was grassy and wanted ______.".into();
+        fine.answer_en = "wear".into();
+        let raw = RawTasks {
+            blocks: vec![RawBlock {
+                block_id: "B1".into(),
+                paragraph_nos: vec![1],
+                title_en: "Read".into(),
+                info_function: "分析資訊".into(),
+                practice: None,
+                student_tasks: vec!["理解內容".into()],
+                objective_refs: vec![],
+                instructions_en: "Answer.".into(),
+                items: vec![fine.clone(), copy.clone()],
+                design_reason_zh: "理由".into(),
+                image_slots: Vec::new(),
+            }],
+        };
+        let only = [1];
+        let ctx = TasksCtx {
+            paragraphs: &paragraphs,
+            objective_ids: &[],
+            item_budget: 6,
+            only: Some(&only),
+            habits: OptionHabits::default(),
+            objectives: &objectives,
+        };
+        let e = evaluate_tasks(&raw, &ctx);
+        assert_eq!(failed(&e.results), [CHECK_NOT_AN_OBJECTIVE]);
+        assert_eq!(e.problems, [objective_copy_note("B1 第 2 題", CONTENT)]);
+        assert_eq!(e.output.unwrap()[0].items.len(), 1);
+        // The same item without an answer is a self-rating: kept.
+        copy.answer_en = "Answers will vary.".into();
+        let raw = RawTasks {
+            blocks: vec![RawBlock {
+                items: vec![fine, copy],
+                ..raw.blocks[0].clone()
+            }],
+        };
+        assert!(failed(&evaluate_tasks(&raw, &ctx).results).is_empty());
+
+        // Exit ticket: a formative item may not copy; a reflection may quote.
+        let exit_item = |purpose: &str, prompt: &str, answer: Option<&str>| RawExitItem {
+            item_id: "E".into(),
+            purpose: purpose.into(),
+            prompt_en: prompt.into(),
+            answer_format: FMT_SHORT.into(),
+            options: vec![],
+            student_tasks: vec![],
+            objective_refs: vec![],
+            sample_answer_en: answer.map(str::to_string),
+        };
+        let exit = RawExit {
+            estimated_minutes: 3,
+            items: vec![
+                exit_item(
+                    "形成性評量",
+                    "Why does the speaker say the choice made all the difference?",
+                    Some("Because he cannot go back."),
+                ),
+                exit_item("形成性評量", REPAIRED_LANGUAGE, Some("limits")),
+                exit_item(
+                    "學生反思",
+                    "How sure are you? I can explain how the two roads symbolize life choices. (1–4)",
+                    Some("4"),
+                ),
+            ],
+        };
+        let ctx = ExitCtx {
+            objective_ids: &[],
+            task_prompts: &[],
+            passage: POEM,
+            objectives: &objectives,
+        };
+        let e = evaluate_exit(&exit, &ctx);
+        assert_eq!(failed(&e.results), [CHECK_NOT_AN_OBJECTIVE]);
+        assert_eq!(e.problems, [objective_copy_note("第 2 題", LANGUAGE)]);
+        let kept: Vec<String> = e.output.unwrap().into_iter().map(|i| i.purpose).collect();
+        assert_eq!(kept, ["形成性評量", "學生反思"]);
     }
 }

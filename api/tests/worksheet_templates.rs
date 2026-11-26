@@ -1750,6 +1750,133 @@ async fn a_template_read_before_supports_prints_directions_and_the_sharing_frame
     no_numbered_greeting(&sheet);
 }
 
+/// The teacher's objective (printed at the top of the sheet) is never a question
+/// (docs/API.md「學習目標不是題目」). The reported block: labelled 自我評量 with 填空題 only, the
+/// model blanked the objective; the repair call put a lead in front of it.
+#[tokio::test]
+async fn a_question_copied_from_an_objective_is_sent_back_and_then_dropped() {
+    const OBJECTIVE: &str = "I can explain why Mrs. Lin kept the umbrella stand open.";
+    let app = test_app!();
+    let t = app.teacher("T-TPL-OBJ-1", "general").await;
+    let tpl = ready_template(&app, &t).await;
+    let id = tpl["id"].as_i64().unwrap();
+    let mut s = section("s1", "Concept Introduction", "activity", &["填空題"], 3);
+    s["student_tasks"] = json!(["自我評量", "字彙練習"]);
+    let mut c = content(vec![s]);
+    c["shows_objectives"] = json!(true);
+    let (st, v) = put_content(&app, &t, id, c).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let with_objective = |marker: &'static str| {
+        json!({
+            "template_id": id,
+            "material": { "title": "Bees", "text": format!("{} {marker}", passage()) },
+            "settings": { "content_objective": OBJECTIVE },
+        })
+    };
+    let copies = |b: &Value| {
+        b["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| {
+                i["prompt"]
+                    .as_str()
+                    .unwrap()
+                    .contains("I can explain why Mrs. Lin kept the umbrella stand")
+            })
+            .count()
+    };
+    let calls = |app: &common::TestApp| {
+        let db = app.db.clone();
+        async move {
+            let rows: Vec<(i32, String, Value, Value)> = sqlx::query_as(
+                "SELECT attempt, status, check_results, input_snapshot FROM ai_interactions
+                  WHERE module = 'worksheet_template_section' ORDER BY id",
+            )
+            .fetch_all(&db)
+            .await
+            .unwrap();
+            rows
+        }
+    };
+    let failed = |report: &Value| -> Vec<String> {
+        report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["passed"] == false)
+            .map(|c| c["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Call 1 blanks the objective: sent back with why; the second call is used.
+    let (st, ws) = app
+        .post(
+            "/api/worksheets",
+            Some(&t),
+            with_objective("FAKE_TPL_OBJECTIVE_ITEM"),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{ws}");
+    let ws = ws["id"].as_i64().unwrap();
+    let state = generate(&app, &t, ws).await;
+    assert_eq!(state["settings"]["content_objective"], OBJECTIVE);
+    let b = &blocks(&state)[0];
+    assert_eq!(copies(b), 0, "{b}");
+    assert_eq!(b["items"].as_array().unwrap().len(), 3);
+    let rows = calls(&app).await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[0].0, rows[0].1.as_str()), (1, "blocked"));
+    assert_eq!(failed(&rows[0].2), ["not_a_copy_of_objective"]);
+    let snap = &rows[1].3;
+    assert_eq!(snap["prompt"]["version_no"], 7);
+    assert!(snap["prompt"]["system"]
+        .as_str()
+        .unwrap()
+        .contains("學習目標不是題目"));
+    assert!(snap["prompt"]["user"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("學習目標（教師寫的）：內容目標：{OBJECTIVE}")));
+    let note = snap["repair_note"].as_str().unwrap();
+    assert!(
+        note.contains(&format!(
+            "第 1 題 照抄了學習目標（{OBJECTIVE}）：學習目標只供理解教學重點，學生在學習單上方已看得到，請換成一題針對課文內容的題目。"
+        )),
+        "{note}"
+    );
+    assert_eq!((rows[1].0, rows[1].1.as_str()), (2, "shown"));
+    assert!(failed(&rows[1].2).is_empty());
+
+    // Still a copy after the repair call (a lead in front): the item is dropped, the rest stay.
+    let (st, ws) = app
+        .post(
+            "/api/worksheets",
+            Some(&t),
+            with_objective("FAKE_TPL_OBJECTIVE_ITEM_ALWAYS"),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{ws}");
+    let ws = ws["id"].as_i64().unwrap();
+    let state = generate(&app, &t, ws).await;
+    let b = &blocks(&state)[0];
+    assert_eq!(copies(b), 0, "{b}");
+    assert_eq!(
+        b["items"].as_array().unwrap().len(),
+        3,
+        "the fake writes one more"
+    );
+    let rows = calls(&app).await;
+    assert_eq!(rows.len(), 4);
+    assert_eq!((rows[3].0, rows[3].1.as_str()), (2, "shown"));
+    assert_eq!(failed(&rows[3].2), ["not_a_copy_of_objective"]);
+    let sheet = student_sheet(&app, &t, ws).await;
+    assert_eq!(sheet["objectives"], json!([OBJECTIVE]));
+    for it in sheet["blocks"][0]["items"].as_array().unwrap() {
+        assert!(!it["prompt"].as_str().unwrap().contains("I can"), "{it}");
+    }
+}
+
 #[tokio::test]
 async fn one_sheet_uses_the_templates_name_for_the_genre() {
     let app = test_app!();
