@@ -222,8 +222,10 @@ describe("the worksheet pane of the 備課對話", () => {
     expect((title as HTMLTextAreaElement).value.endsWith("!")).toBe(true);
     fireEvent.change(title, { target: { value: "Night Markets\nin Taiwan" } });
     expect(title).toHaveValue("Night Markets in Taiwan");
-    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
-    expect((api.lastBody("PUT", WS) as SaveWorksheetRequest).title).toBe("Night Markets in Taiwan");
+    // The "!" typed above may already have been saved on its own: wait for the save of the pasted title.
+    await waitFor(() =>
+      expect((api.lastBody("PUT", WS) as SaveWorksheetRequest | undefined)?.title).toBe("Night Markets in Taiwan"),
+    );
   });
 
   it("sending a message saves the pending edit first", async () => {
