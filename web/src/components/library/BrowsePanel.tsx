@@ -294,7 +294,7 @@ const toggleIn = (list: string[], key: string) => (list.includes(key) ? list.fil
 
 // ---------------------------------------------------------------- materials
 
-type MaterialFacets = { categories: FacetCount[]; tags: FacetCount[]; file_types: FacetCount[] };
+type MaterialFacets = { all?: number; categories: FacetCount[]; tags: FacetCount[]; file_types: FacetCount[] };
 
 /**
  * 平台教材 (area=reference) or 我的教材 (area=mine) as a marketplace: search, category chips with
@@ -396,7 +396,7 @@ export function MaterialBrowser({
       }
       search={search}
       categories={categoryChips(REFERENCE_CATEGORIES, facets?.categories ?? [], category)}
-      allCount={sumOf(facets?.categories)}
+      allCount={facets?.all ?? sumOf(facets?.categories)}
       category={category}
       onCategory={setCategory}
       filters={filters}
@@ -433,7 +433,7 @@ export function MaterialBrowser({
 
 // ---------------------------------------------------------------- templates
 
-type TemplateFacets = { categories: FacetCount[]; tags: FacetCount[]; langs: FacetCount[] };
+type TemplateFacets = { all?: number; categories: FacetCount[]; tags: FacetCount[]; langs: FacetCount[] };
 
 /**
  * 平台範本 (area=platform) or 我的範本 (area=mine) as a marketplace. 我的範本 is asked for again
@@ -502,7 +502,7 @@ export function TemplateBrowser({
       searchPlaceholder="搜尋範本的標題、區塊或標籤，例如：閱讀理解、三民"
       search={search}
       categories={categoryChips(SAMPLE_CATEGORIES, facets?.categories ?? [], category)}
-      allCount={sumOf(facets?.categories)}
+      allCount={facets?.all ?? sumOf(facets?.categories)}
       category={category}
       onCategory={setCategory}
       filters={TEMPLATE_FILTERS.map((f) => ({ id: f.id, label: f.label, icon: f.icon, pressed: lang === f.lang }))}

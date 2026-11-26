@@ -9,8 +9,11 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-xs);
-  min-height: var(--banner-h);
-  padding: var(--space-2xs) var(--gutter);
+  /* Exactly --banner-h tall and one line: everything sticky below is placed by that height, so a
+   * second line (a 320px phone) would slide under it. */
+  height: var(--banner-h);
+  padding: 0 var(--gutter);
+  white-space: nowrap;
   border-bottom: var(--rule-hair) solid var(--color-warn-rule);
   background: var(--color-warn-wash);
   color: var(--color-warn-ink);
@@ -29,6 +32,14 @@
   border-radius: var(--radius-pill);
   font-size: var(--text-xs);
   line-height: 1;
+}
+
+/* The narrowest phones: a smaller line keeps the warning whole on one line. */
+@media (max-width: 22.5rem) {
+  .demo-banner {
+    padding-inline: var(--space-sm);
+    font-size: var(--text-xs);
+  }
 }
 
 /* ================= the shell: a sidebar beside the page ================= */

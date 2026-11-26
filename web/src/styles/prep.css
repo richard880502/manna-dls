@@ -345,7 +345,8 @@
 
 .prep-sheet {
   max-width: none;
-  overflow-wrap: anywhere;
+  /* The printed English sheet: break a word only when it alone is wider than the line. */
+  overflow-wrap: break-word;
 }
 
 .prep-sheet-title {
@@ -1353,6 +1354,13 @@
   .prep-split-chat {
     grid-area: 1 / 3;
     padding-bottom: 0;
+  }
+
+  /* A wide screen with the sidebar folded can make the conversation 80rem wide: its cards, goal
+   * tables and composer keep a readable column in the middle of the pane instead. */
+  .prep-split-chat > * {
+    max-width: var(--container-narrow);
+    margin-inline: auto;
   }
 
   .prep-split-sheet {
