@@ -193,6 +193,7 @@
   color: var(--color-manna-ink);
   font-weight: var(--weight-strong);
   line-height: 1.25;
+  white-space: nowrap;
 }
 
 .manna-button:disabled {

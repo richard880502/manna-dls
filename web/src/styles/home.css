@@ -18,7 +18,7 @@
   gap: var(--space-xs);
   min-width: 0;
   padding: var(--space-sm) var(--space-sm) var(--space-xs) var(--space-md);
-  border: var(--rule-hair) solid var(--color-rule-strong);
+  border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-mark);
   background: var(--color-field);
 }
@@ -27,19 +27,19 @@
  * 附上 controls bottom-left, a round arrow bottom-right; the box carries the border and focus ring. */
 .compose-card.is-quick {
   margin-top: var(--space-lg);
-  border-color: var(--color-field-edge);
 }
 
 .compose-card.is-quick:focus-within {
   border-color: var(--color-focus);
-  box-shadow: 0 0 0 2px var(--color-focus);
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .compose-card:not(.is-quick):has(.prompt-input:focus-visible) {
-  border-color: var(--color-accent);
-  box-shadow:
-    0 0 0 3px var(--color-accent-wash-2),
-    var(--shadow-float);
+  border-color: var(--color-focus);
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-float);
 }
 
 .compose-card.is-missing {
@@ -202,6 +202,7 @@
 }
 
 .attach-chip-remove {
+  position: relative;
   display: grid;
   place-items: center;
   flex: none;
@@ -653,7 +654,7 @@
 .stepper {
   display: inline-flex;
   align-items: center;
-  border: var(--rule-hair) solid var(--color-rule-strong);
+  border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-pill);
   background: var(--color-field);
 }

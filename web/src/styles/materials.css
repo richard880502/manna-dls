@@ -432,7 +432,6 @@ mark.anno.is-focused {
   background: transparent;
   color: var(--color-ink-2);
   font-size: var(--text-sm);
-  letter-spacing: 0.12em;
   cursor: pointer;
 }
 
@@ -460,7 +459,7 @@ mark.anno.is-focused {
   z-index: var(--z-overlay);
   max-width: none;
   max-height: none;
-  padding: var(--space-lg) max(var(--gutter), calc((100vw - 52rem) / 2)) 0;
+  padding: var(--space-lg) max(var(--gutter), calc((100% - 52rem) / 2)) 0;
   border-right: 0;
   background: var(--color-paper);
 }
@@ -632,7 +631,7 @@ mark.anno.is-focused {
     bottom: 0;
     left: var(--shell-left);
     z-index: var(--z-raised);
-    width: min(28rem, 100vw - var(--shell-left)) !important;
+    width: min(28rem, 100% - var(--shell-left)) !important;
     max-width: none;
     max-height: none;
     padding: var(--space-lg) var(--space-lg) 0;
