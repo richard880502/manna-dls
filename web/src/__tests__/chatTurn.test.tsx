@@ -495,7 +495,7 @@ describe("the conversation and the worksheet side by side", () => {
 
 describe("the divider between the worksheet and the conversation", () => {
   const KEY = "manna.prepSplitSheetShare";
-  // 1200px container, 16px rem: the worksheet (left) may take 42.67% (32rem) to 73.33% (100% - 20rem).
+  // 1200px container, 16px rem: the worksheet (left) may take 42.67% (32rem) to 70.67% (100% - 22rem).
   const page = (el: HTMLElement) => el.closest<HTMLElement>(".prep-session")!;
   const share = (el: HTMLElement) => /minmax\(0(?:px)?, ([\d.]+)%\)/.exec(page(el).style.gridTemplateColumns)?.[1] ?? "";
   let narrowWidth = 1200;
@@ -547,12 +547,12 @@ describe("the divider between the worksheet and the conversation", () => {
     const user = userEvent.setup();
     const sep = await open();
     expect(sep).toHaveAttribute("aria-valuemin", "43");
-    expect(sep).toHaveAttribute("aria-valuemax", "73");
+    expect(sep).toHaveAttribute("aria-valuemax", "70");
     sep.focus();
     await user.keyboard("{End}");
-    expect(Number(share(sep))).toBeCloseTo(73.33, 1);
+    expect(Number(share(sep))).toBeCloseTo(70.67, 1);
     await user.keyboard("{Shift>}{ArrowRight}{/Shift}");
-    expect(Number(share(sep))).toBeCloseTo(73.33, 1);
+    expect(Number(share(sep))).toBeCloseTo(70.67, 1);
     await user.keyboard("{Home}");
     expect(Number(share(sep))).toBeCloseTo(42.67, 1);
     await user.keyboard("{Shift>}{ArrowLeft}{/Shift}");
@@ -598,8 +598,8 @@ describe("the divider between the worksheet and the conversation", () => {
       expect(frames).toHaveLength(1);
       expect(share(sep)).toBe("60"); // nothing written until the frame runs
       flush();
-      // 930 - 10 (grab offset) = 920 → 76.67%, clamped to 73.33%
-      expect(Number(share(sep))).toBeCloseTo(73.33, 1);
+      // 930 - 10 (grab offset) = 920 → 76.67%, clamped to 70.67%
+      expect(Number(share(sep))).toBeCloseTo(70.67, 1);
       expect(sep).toHaveAttribute("aria-valuenow", "60"); // React state untouched mid-drag
       expect(setItem).not.toHaveBeenCalled();
       ptr("pointermove", 630); // 620 → 51.67%
@@ -632,7 +632,7 @@ describe("the divider between the worksheet and the conversation", () => {
   });
 
   it("is not a draggable divider when the container is too narrow for both panes", async () => {
-    narrowWidth = 800; // 32rem + 20rem = 832px > 800px
+    narrowWidth = 800; // 32rem + 22rem = 864px > 800px
     mockApi({ ...baseRoutes(), ...sheetRoutes(), [`GET ${S7}`]: session([sheetTurn(101, "學習單一")]) });
     renderApp("/prep/7");
     const sep = await screen.findByRole("separator", { name: "調整對話與學習單的寬度" });
@@ -652,7 +652,7 @@ describe("the divider between the worksheet and the conversation", () => {
     await user.keyboard("{ArrowRight}{ArrowRight}{Enter}");
     expect(sep).toHaveAttribute("aria-valuenow", "60");
     await user.keyboard("{End}");
-    expect(sep).toHaveAttribute("aria-valuenow", "73");
+    expect(sep).toHaveAttribute("aria-valuenow", "71");
     await user.dblClick(sep);
     expect(sep).toHaveAttribute("aria-valuenow", "60");
     expect(window.localStorage.getItem(KEY)).toBe("60");
@@ -666,7 +666,7 @@ describe("the divider between the worksheet and the conversation", () => {
   it("clamps a remembered share that is too big or too small", async () => {
     window.localStorage.setItem(KEY, "90");
     const sep = await open();
-    expect(sep).toHaveAttribute("aria-valuenow", "73");
+    expect(sep).toHaveAttribute("aria-valuenow", "71");
   });
 
   it("clamps a remembered share that is too small", async () => {

@@ -4,7 +4,7 @@
 // old addresses keep working.
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PrepSessionSummary } from "../api/types";
 import {
   baseRoutes,
@@ -316,5 +316,57 @@ describe("app shell: the sidebar", () => {
     expect(await screen.findByRole("heading", { name: HOME, level: 1 })).toBeInTheDocument();
     expect(screen.queryByText(/初次使用設定/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "備課偏好" })).toHaveAttribute("href", "/preferences");
+  });
+
+  describe("the automatic fold on the prep page (laptop width)", () => {
+    afterEach(() => vi.unstubAllGlobals());
+    const stubWidth = (compact: boolean) =>
+      vi.stubGlobal("matchMedia", (q: string) => ({
+        matches: compact && q.includes("max-width: 79.9375rem"),
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+    // The session is not mocked: only the shell around the page is under test.
+    const routes = () => baseRoutes();
+
+    it("folds to icons without storing it as her choice", async () => {
+      signIn();
+      stubWidth(true);
+      mockApi(routes());
+      renderApp("/prep/7");
+      const toggle = await screen.findByRole("button", { name: "側邊欄" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(document.querySelector(".shell")).toHaveClass("is-collapsed");
+      expect(window.localStorage.getItem("manna.sidebarCollapsed")).toBeNull();
+    });
+
+    it("stays open on a wide window, and a stored 'open' beats the automatic fold", async () => {
+      signIn();
+      stubWidth(false);
+      mockApi(routes());
+      const { unmount } = renderApp("/prep/7");
+      expect(await screen.findByRole("button", { name: "側邊欄" })).toHaveAttribute("aria-expanded", "true");
+      unmount();
+
+      stubWidth(true);
+      window.localStorage.setItem("manna.sidebarCollapsed", "0");
+      mockApi(routes());
+      renderApp("/prep/7");
+      expect(await screen.findByRole("button", { name: "側邊欄" })).toHaveAttribute("aria-expanded", "true");
+    });
+
+    it("other pages stay open on a narrow window, and her own toggle is what gets stored", async () => {
+      signIn();
+      stubWidth(true);
+      mockApi(routes());
+      const user = userEvent.setup();
+      renderApp("/");
+      const toggle = await screen.findByRole("button", { name: "側邊欄" });
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      await user.click(toggle);
+      expect(window.localStorage.getItem("manna.sidebarCollapsed")).toBe("1");
+      await user.click(toggle);
+      expect(window.localStorage.getItem("manna.sidebarCollapsed")).toBe("0");
+    });
   });
 });

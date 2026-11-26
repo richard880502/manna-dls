@@ -3,8 +3,10 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Poin
 
 export const DEFAULT_SHARE = 60; // the worksheet on the left, 3:2
 export const SPLIT_KEY = "manna.prepSplitSheetShare";
-const MIN_CHAT_REM = 20;
-const MIN_SHEET_REM = 32;
+// The panes pad 1.5rem per side (not the 2.5rem page gutter), so 22rem leaves ~19rem of conversation: the
+// composer, the goals table and the cards still fit. 24rem would leave only ~13pt of drag at 1100px.
+export const MIN_CHAT_REM = 22;
+export const MIN_SHEET_REM = 32;
 const STEP = 2;
 const BIG_STEP = 10;
 
