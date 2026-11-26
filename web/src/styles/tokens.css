@@ -78,6 +78,7 @@
   /* Fixed app scale, ratio about 1.18 from a 16px body. No fluid heads. */
   --text-xs: 0.8125rem; /* 13px: tags, mono codes */
   --text-sm: 0.875rem; /* 14px: labels, hints, meta */
+  --text-sm-plus: 0.9375rem; /* 15px: compact body, worksheet and prep fields */
   --text-md: 1rem; /* 16px: body, inputs, buttons */
   --text-lg: 1.125rem; /* 18px: row titles, the big action */
   --text-xl: 1.3125rem; /* 21px: section heads (h2) */
@@ -104,6 +105,7 @@
   --space-4xl: 6rem; /* 96 */
 
   /* ---------- shape ---------- */
+  --radius-xs: 0.25rem; /* 4: bars, small chips, media corners */
   --radius-sm: 0.5rem; /* 8: code chips, inset wells in a well */
   --radius-control: 0.625rem; /* 10: buttons, inputs, wells, choice tiles */
   --radius-card: 1rem; /* 16: cards, dialogs */
@@ -115,6 +117,8 @@
   --shadow-overlay: 0 -0.5rem 1.5rem rgb(0 0 0 / 0.1); /* the help sheet over a narrow screen */
   --shadow-dialog: 0 1.5rem 4rem rgb(0 0 0 / 0.18); /* the choose-a-class dialog */
   --shadow-float: 0 0.25rem 1rem rgb(0 0 0 / 0.08); /* the prompt card, popovers, the generator's sticky bar */
+  --shadow-side: -0.25rem 0 1.5rem rgb(0 0 0 / 0.1); /* the material viewer panel docked at the right edge */
+  --shadow-under: 0 0.5rem 0.5rem -0.5rem rgb(0 0 0 / 0.08); /* a sticky bar the list scrolls under */
   --color-scrim: rgb(0 0 0 / 0.4);
 
   /* ---------- controls ---------- */
@@ -144,6 +148,8 @@
   --top-h: var(--top-bar-h); /* what sticky things clear at the top: the top bar, when there is one */
   --shell-left: 0rem; /* where the page starts: fixed panels sit right of the sidebar */
   --bottom-nav-h: 0rem; /* no bottom navigation any more; kept so older rules still compute */
+  --container-narrow: 50rem; /* 800: one-column pages (the home, the create flow, the shell's narrow views) */
+  --container-prep: 54rem; /* 864: the prep conversation column */
   --container: 65rem; /* 1040: list pages */
   --container-wide: 75rem; /* 1200: working pages with two columns */
   --container-gallery: 80rem; /* 1280: 我的作品, a wall of cards (four across at 1280) */

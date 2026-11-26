@@ -34,9 +34,10 @@
   color: var(--color-accent-ink);
 }
 
-/* The alternate action: white with a light grey border; the blue stays on the filled action. */
+/* The alternate action: the quiet outline on the paper, with the edge that reads at 3:1; the blue
+ * stays on the filled action. */
 .secondary-button {
-  border-color: var(--color-rule-strong);
+  border-color: var(--color-field-edge);
   background: var(--color-field);
   color: var(--color-ink);
 }
@@ -72,9 +73,9 @@
     background: var(--color-accent-hover);
   }
 
-  .secondary-button:hover {
-    border-color: var(--color-field-edge);
-    background: var(--color-paper-2);
+  .secondary-button:not(:disabled):hover {
+    border-color: var(--color-ink);
+    background: var(--color-field);
   }
 
   .ghost-button:hover {
@@ -93,7 +94,7 @@
 }
 
 /* Pressed: the control gives a little under the finger. */
-:is(.primary-button, .secondary-button, .ghost-button, .decision-button, .prep-chip, .prep-send):not(
+:is(.primary-button, .secondary-button, .ghost-button, .decision-button, .prep-chip, .prep-send, .send-button):not(
     :disabled,
     [aria-disabled="true"]
   ):active {
@@ -106,6 +107,43 @@
 .decision-button:disabled,
 .static-fieldset button:disabled {
   opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* The round send arrow: the home composer and the prep conversation. */
+.send-button,
+.prep-send {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :is(.send-button, .prep-send):hover:not(:disabled) {
+    background: var(--color-accent-hover);
+  }
+}
+
+:is(.send-button, .prep-send):active:not(:disabled) {
+  background: var(--color-accent-press);
+}
+
+:is(.send-button, .prep-send):focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+:is(.send-button, .prep-send):disabled {
+  background: var(--color-paper-3);
+  color: var(--color-muted);
   cursor: not-allowed;
 }
 
@@ -150,6 +188,7 @@
   .decision-button,
   .prep-chip,
   .prep-send,
+  .send-button,
   .logout-button,
   .menu-toggle {
     transition:
@@ -399,7 +438,7 @@ input[type="file"]::file-selector-button {
 .route-option:has(input:focus-visible),
 .siop-choice:has(input:focus-visible),
 .output-choice:has(input:focus-visible) {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -657,12 +696,14 @@ summary {
 }
 
 /* ================= panels ================= */
+/* `panel-card` is retired (DESIGN.md). Screens not rebuilt yet still carry the class; views.css
+ * parts one from the one before it by space and one hairline. */
 .panel-card {
   min-width: 0;
-  padding: var(--card-pad);
-  border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-card);
-  background: var(--color-paper);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
 }
 
 .card-heading {
@@ -922,7 +963,7 @@ summary {
 
 .run-progress-summary {
   color: var(--color-muted);
-  font-weight: var(--weight-normal, 400);
+  font-weight: var(--weight-regular);
 }
 
 [aria-disabled="true"]:is(.text-link, .primary-button, .secondary-button, .ghost-button, .decision-button) {

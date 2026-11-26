@@ -4,11 +4,11 @@
  * Manna made. */
 
 .workspace.is-home {
-  max-width: 52rem;
+  max-width: var(--container-narrow);
 }
 
 .workspace.is-create {
-  max-width: 50rem;
+  max-width: var(--container-narrow);
   padding-bottom: var(--space-2xl);
 }
 
@@ -146,31 +146,9 @@
   cursor: not-allowed;
 }
 
-/* The round send arrow. */
+/* The round send arrow (shared look: .send-button, .prep-send in components.css). */
 .send-button {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 2.5rem;
-  height: 2.5rem;
   margin-left: auto;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
-  cursor: pointer;
-}
-
-.send-button:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.send-button:disabled {
-  background: var(--color-paper-3);
-  color: var(--color-muted);
-  cursor: not-allowed;
 }
 
 /* The attached material: its title and ×. */
@@ -330,10 +308,6 @@
     color: var(--color-accent-text);
   }
 
-  .send-button:not(:disabled):hover {
-    background: var(--color-accent-hover);
-  }
-
   .popover-item:hover,
   .attach-chip-remove:hover {
     background: var(--color-paper-2);
@@ -411,7 +385,7 @@
 }
 
 .tool-tile:focus-visible {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 

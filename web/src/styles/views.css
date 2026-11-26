@@ -165,19 +165,6 @@
   font-size: var(--text-lg);
 }
 
-/* The quiet outline: on the paper, with the edge that reads at 3:1. */
-.secondary-button {
-  border-color: var(--color-field-edge);
-  color: var(--color-ink);
-}
-
-@media (hover: hover) {
-  .secondary-button:not(:disabled):hover {
-    border-color: var(--color-ink);
-    background: var(--color-field);
-  }
-}
-
 /* Asking Manna is a gold outline: clearly hers, clearly not the page's main action. */
 .manna-button {
   display: inline-flex;
@@ -433,7 +420,7 @@
   gap: var(--space-2xs);
   padding: 0.625rem 0;
   border-top: var(--rule-hair) solid var(--color-rule);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
   line-height: var(--leading-ui);
 }
 
@@ -549,14 +536,8 @@
 }
 
 /* ================= panels lose their frame =================
-   `panel-card` is retired (DESIGN.md). Screens not rebuilt yet still carry the class; here it is
-   only a block parted from the one before it by space and one hairline. */
-.panel-card {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
-}
+   `panel-card` is retired (DESIGN.md; its base rule is in components.css). Here it is only a block
+   parted from the one before it by space and one hairline. */
 
 .panel-card + .panel-card,
 .unit-stack > .panel-card + .panel-card {
@@ -710,7 +691,7 @@
 /* ================= unit page ================= */
 .materials-panel,
 .route-card {
-  max-width: 50rem;
+  max-width: var(--container-narrow);
 }
 
 .materials-panel .head-row,
@@ -874,7 +855,7 @@
   gap: var(--space-2xs) var(--space-sm);
   padding: 0.625rem 0;
   border-top: var(--rule-hair) solid var(--color-rule);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
   line-height: 1.6;
 }
 

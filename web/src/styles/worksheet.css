@@ -48,7 +48,7 @@
 }
 
 .ws-material .material-sheet {
-  padding: var(--space-lg) var(--space-lg) var(--space-lg) 3rem;
+  padding: var(--space-lg) var(--space-lg) var(--space-lg) var(--space-2xl);
   font-size: var(--text-md);
 }
 
@@ -128,7 +128,7 @@
   display: inline-flex;
   align-items: center;
   min-height: var(--control-h-sm);
-  padding: 0.25rem 0.875rem;
+  padding: var(--space-2xs) 0.875rem;
   border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-pill);
   background: var(--color-field);
@@ -351,9 +351,9 @@
 .ws {
   max-width: var(--sheet-w);
   margin-top: var(--space-md);
-  padding: 2.5rem 3rem 3rem;
+  padding: 2.5rem var(--space-2xl) var(--space-2xl);
   border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--space-3xs);
+  border-radius: var(--radius-xs);
   background: var(--color-sheet);
   color: var(--color-ink);
   font-family: var(--font-print);
@@ -368,7 +368,7 @@
   width: 100%;
   min-height: 0;
   margin: 0;
-  padding: 0.0625rem 0.25rem;
+  padding: 0.0625rem var(--space-2xs);
   border: var(--rule-hair) solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -396,7 +396,7 @@
 
 .ws .ws-title {
   font-size: 1.5rem;
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .ws-meta {
@@ -431,18 +431,18 @@
   gap: 0.375rem;
   font-family: var(--font-print);
   font-size: var(--text-md);
-  font-weight: 700;
+  font-weight: var(--weight-display);
   line-height: 1.5;
 }
 
 .ws-text.is-title {
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .ws-text.is-steps {
   margin-top: var(--space-2xs);
   color: var(--color-ink-2);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
 }
 
 .ws-text.is-options {
@@ -584,7 +584,7 @@
 }
 
 .ws .ws-answer-table th {
-  padding: 0.125rem 0.25rem;
+  padding: var(--space-3xs) var(--space-2xs);
 }
 
 .ws .ws-answer-table td,
@@ -633,7 +633,7 @@
 
 .ws-answer-grid th,
 .ws-answer-grid td {
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2xs) var(--space-xs);
   border: var(--rule-hair) solid var(--color-field-edge);
   text-align: left;
 }
@@ -697,7 +697,7 @@
   background: var(--color-manna-wash);
   color: var(--color-manna-ink);
   font-family: var(--font-body);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
 }
 
 .ws-answer-row {
@@ -720,12 +720,12 @@
   width: 100%;
   margin-top: var(--space-xs);
   border-collapse: collapse;
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
 }
 
 .ws th,
 .ws td {
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-2xs) var(--space-xs);
   border: var(--rule-hair) solid var(--color-field-edge);
   text-align: left;
   vertical-align: top;
@@ -733,7 +733,7 @@
 
 .ws th {
   background: var(--color-paper-2);
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 /* Key Vocabulary: Content and Academic side by side, stacked on a narrow screen. */
@@ -757,8 +757,8 @@
 
 .ws-keyvocab-title {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
+  font-size: var(--text-md);
+  font-weight: var(--weight-display);
 }
 
 .ws-keyvocab-cols {
@@ -773,7 +773,7 @@
 
 .ws-keyvocab-group {
   margin: var(--space-xs) 0 0;
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .ws-keyvocab-pos {
@@ -1025,7 +1025,7 @@
   min-width: 2px;
   height: 0.875rem;
   margin-top: 0.375rem;
-  border-radius: var(--space-3xs);
+  border-radius: var(--radius-xs);
   background: var(--color-accent);
 }
 
@@ -1409,13 +1409,13 @@ button.bloom-seg:focus-visible {
 .ws-hint .ws-text {
   color: var(--color-ink-2);
   font-family: var(--font-print);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
 }
 
 .ws-hint-print {
   margin-top: var(--space-2xs);
   color: var(--color-ink-2);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
   font-style: italic;
 }
 
@@ -1465,7 +1465,7 @@ button.bloom-seg:focus-visible {
 .ws-version {
   margin-left: auto;
   color: var(--color-ink);
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 /* ---------- settings: 要做什麼, presets, steppers ---------- */
@@ -1849,7 +1849,7 @@ button.bloom-seg:focus-visible {
   margin-left: var(--space-xs);
   color: var(--color-muted);
   font-size: var(--text-xs);
-  font-weight: normal;
+  font-weight: var(--weight-regular);
 }
 
 .ws-history-step .ws-history-time {
@@ -2021,7 +2021,7 @@ button.bloom-seg:focus-visible {
   width: 100%;
   height: auto;
   border: var(--rule-hair) solid var(--color-rule);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: var(--color-sheet);
 }
 
@@ -2034,7 +2034,7 @@ button.bloom-seg:focus-visible {
   min-height: 9rem;
   padding: var(--space-sm);
   border: 2px dashed var(--color-rule-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--color-paper-2);
   color: var(--color-muted);
   font-family: var(--font-body);
@@ -2102,7 +2102,7 @@ button.bloom-seg:focus-visible {
 }
 
 .ws-picture-upload:focus-within {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -2127,13 +2127,13 @@ button.bloom-seg:focus-visible {
 .ws-org {
   margin: var(--space-xs) 0 var(--space-sm);
   font-family: var(--font-print);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
   line-height: 1.45;
 }
 
 .ws-org-title {
   margin-bottom: var(--space-2xs);
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .ws-org-box,
@@ -2148,7 +2148,7 @@ button.bloom-seg:focus-visible {
 
 .ws-org-label,
 .ws-org-head {
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .ws-org-head {
@@ -2222,13 +2222,13 @@ button.bloom-seg:focus-visible {
 }
 
 .ws-org-no {
-  margin-right: 0.125rem;
+  margin-right: var(--space-3xs);
 }
 
 .ws-org-chain .ws-org-label {
   display: flex;
   align-items: baseline;
-  gap: 0.125rem;
+  gap: var(--space-3xs);
 }
 
 /* Two overlapping circles (Venn): only A | both | only B, the labels above. */
@@ -2245,7 +2245,7 @@ button.bloom-seg:focus-visible {
   position: relative;
   min-height: 9rem;
   align-items: center;
-  padding-block: 1.5rem;
+  padding-block: var(--space-lg);
 }
 
 .ws-org-venn-circles {
@@ -2339,26 +2339,26 @@ button.bloom-seg:focus-visible {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem 0.5rem;
+  gap: var(--space-2xs) var(--space-xs);
   color: var(--color-muted);
   font-family: var(--font-body);
   font-size: 0.75rem;
   font-style: normal;
-  font-weight: 400;
+  font-weight: var(--weight-regular);
 }
 
 .ws-org-cell-tools label {
   display: inline-flex;
   align-items: center;
-  gap: 0.125rem;
+  gap: var(--space-3xs);
 }
 
 .ws-org-section-tools {
-  margin-top: 0.25rem;
+  margin-top: var(--space-2xs);
 }
 
 .ws .ws-text.is-org-label {
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .ws-org-columns .ws-text.is-org-label,
@@ -2378,7 +2378,7 @@ button.bloom-seg:focus-visible {
   }
 
   .ws-org {
-    font-size: 0.8125rem;
+    font-size: var(--text-xs);
   }
 
   .ws-org-venn-labels,
@@ -2505,7 +2505,7 @@ button.bloom-seg:focus-visible {
   margin-left: auto;
   font-family: var(--font-body);
   font-size: var(--text-sm);
-  font-weight: 400;
+  font-weight: var(--weight-regular);
   white-space: nowrap;
 }
 

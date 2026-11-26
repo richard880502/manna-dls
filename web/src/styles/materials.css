@@ -157,7 +157,7 @@
   max-width: 100%;
   max-height: 70vh;
   border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--space-3xs);
+  border-radius: var(--radius-xs);
   background: var(--color-sheet);
 }
 
@@ -330,7 +330,7 @@ mark.anno.is-focused {
 .material-media-title {
   font-family: var(--font-print);
   font-size: var(--text-lg);
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 /* In 備課庫 the panel lies over the list (there is no step to sit beside). */
@@ -370,7 +370,7 @@ mark.anno.is-focused {
 }
 
 .material-pane .material-sheet {
-  padding: var(--space-lg) var(--space-lg) var(--space-lg) 3rem;
+  padding: var(--space-lg) var(--space-lg) var(--space-lg) var(--space-2xl);
   font-size: var(--text-md);
 }
 
