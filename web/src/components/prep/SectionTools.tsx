@@ -75,15 +75,36 @@ export function SectionTools({
     triggerRef.current?.focus();
   }, [close, triggerRef]);
 
+  const copyLabels = [
+    { label: "複製", on: copied !== true },
+    { label: "已複製", on: copied === true },
+  ];
   const copy = (
+    <>
+      {/* The accessible name stays 「複製…」; the result is announced by the status below. 複製 and 已複製
+          share one grid cell, so the button keeps one width; the rare failure text just replaces them. */}
       <button
         type="button"
         className={itemClass}
         aria-label={`複製${name}`}
         onClick={() => void copyText(text).then(setCopied)}
       >
-        {copied === true ? "已複製" : copied === false ? "沒有複製成功" : "複製"}
+        {copied === false ? (
+          "沒有複製成功"
+        ) : (
+          <span className="copy-labels">
+            {copyLabels.map(({ label, on }) => (
+              <span key={label} className={on ? undefined : "is-inactive"} aria-hidden={on ? undefined : true}>
+                {label}
+              </span>
+            ))}
+          </span>
+        )}
       </button>
+      <span className="sr-only" role="status">
+        {copied === true ? "已複製" : copied === false ? "沒有複製成功" : ""}
+      </span>
+    </>
   );
   const rating = interactionId !== null && (
     <>

@@ -90,10 +90,12 @@ export function PreviewOverlay({
                 type="button"
                 className="secondary-button"
                 aria-pressed={card.saved}
-                disabled={busy}
-                onClick={() => onToggleSave(card)}
+                aria-disabled={busy || undefined}
+                onClick={() => {
+                  if (!busy) onToggleSave(card);
+                }}
               >
-                {card.saved ? "已收藏" : "收藏"}
+                收藏
               </button>
               {card.allow_remix ? (
                 <button type="button" className="primary-button" disabled={busy} onClick={() => onRemix(card)}>

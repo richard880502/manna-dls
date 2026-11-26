@@ -39,7 +39,7 @@ export function Card({
                 if (!busy) onToggleSave(card);
               }}
             >
-              {card.saved ? "已收藏" : "收藏"}
+              收藏
             </button>
           )}
           {!card.is_mine && card.allow_remix && (

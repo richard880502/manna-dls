@@ -872,6 +872,9 @@ describe("備課對話 (session page)", () => {
     await user.click(copy);
     expect(await navigator.clipboard.readText()).toBe(goalsText(plan));
     expect(copy).toHaveTextContent("已複製");
+    // The name stays 「複製…」 and the result is announced by a status instead.
+    expect(copy).toHaveAccessibleName("複製學習目標");
+    expect(screen.getAllByRole("status").some((el) => el.textContent === "已複製")).toBe(true);
     const warm = within(screen.getByRole("region", { name: "引起動機：雨天經驗" }));
     expect(warm.getByText("5 分鐘")).toBeInTheDocument();
     expect(warm.getByText("教學思路")).toBeInTheDocument();

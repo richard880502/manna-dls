@@ -163,13 +163,28 @@ describe("社群: tabs and explore", () => {
     renderApp("/community");
     const grid = within(await screen.findByRole("list", { name: "分享的學習單" }));
     await user.click(grid.getByRole("button", { name: "收藏" }));
-    const saved = await grid.findByRole("button", { name: "已收藏" });
-    expect(saved).toHaveAttribute("aria-pressed", "true");
+    const saved = await grid.findByRole("button", { name: "收藏", pressed: true });
     expect(grid.getByLabelText("3 次收藏")).toBeInTheDocument();
     await user.click(saved);
-    expect(await grid.findByRole("button", { name: "收藏" })).toHaveAttribute("aria-pressed", "false");
+    expect(await grid.findByRole("button", { name: "收藏", pressed: false })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/community/worksheets/11/save")).toHaveLength(1);
     expect(api.callsTo("DELETE", "/api/community/worksheets/11/save")).toHaveLength(1);
+  });
+
+  it("shows 收藏 at once and takes it back, with the error, when the server refuses", async () => {
+    signIn();
+    mockApi(
+      on({
+        "POST /api/community/worksheets/11/save": respond(500, { error: { code: "boom", message: "收藏失敗了。" } }),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/community");
+    const grid = within(await screen.findByRole("list", { name: "分享的學習單" }));
+    await user.click(grid.getByRole("button", { name: "收藏" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("收藏失敗了。");
+    expect(grid.getByRole("button", { name: "收藏", pressed: false })).toBeInTheDocument();
+    expect(grid.getByLabelText("2 次收藏")).toBeInTheDocument();
   });
 
   it("remixes into a private copy and goes to it", async () => {
@@ -207,7 +222,7 @@ describe("社群: tabs and explore", () => {
     renderApp("/community?tab=saved");
     expect(await screen.findByRole("heading", { name: "雨傘架的故事" })).toBeInTheDocument();
     expect(screen.getByText(/有 2 份收藏的學習單已經取消分享/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "已收藏" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "收藏", pressed: true })).toBeInTheDocument();
   });
 });
 
@@ -256,7 +271,7 @@ describe("社群: the preview", () => {
     expect(within(dialog).getByText("這份學習單的老師沒有開放改編。")).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "拿來改" })).toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "收藏" }));
-    expect(await within(dialog).findByRole("button", { name: "已收藏" })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("button", { name: "收藏", pressed: true })).toBeInTheDocument();
   });
 
   it("shows the error when the worksheet was withdrawn meanwhile", async () => {
