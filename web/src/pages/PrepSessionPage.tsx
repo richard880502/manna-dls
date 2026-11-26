@@ -313,16 +313,6 @@ function PrepSessionView({ id }: { id: number }) {
   const canAttach = session !== null && hasWorksheet(session);
   const drop = useImageDrop(canAttach && !(session?.running || sending), attach.add);
 
-  if (loadError && !session) {
-    return (
-      <>
-        <ErrorText message={loadError} />
-        <p className="after-rows">
-          <Link to="/prep">回我的作品</Link>
-        </p>
-      </>
-    );
-  }
   const turnRunning = !!session?.running;
   const foldedWide = chatCollapsed && !narrow;
   useEffect(() => {
@@ -336,6 +326,18 @@ function PrepSessionView({ id }: { id: number }) {
     focusAfter.current = null;
     (to === "expand" ? expandRef : collapseRef).current?.focus();
   }, [chatCollapsed]);
+
+  // After every hook: a load that fails must not change how many hooks run.
+  if (loadError && !session) {
+    return (
+      <>
+        <ErrorText message={loadError} />
+        <p className="after-rows">
+          <Link to="/prep">回我的作品</Link>
+        </p>
+      </>
+    );
+  }
 
   if (!session) return <Loading />;
 

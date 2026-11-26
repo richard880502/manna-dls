@@ -320,16 +320,3 @@ export function webSlots(n: number): number[] {
 /** The rows of a columns layout: the most cells of any section. */
 export const organizerRows = (org: WsSheetOrganizer) =>
   Math.max(1, ...org.sections.map((s) => s.cells.length));
-
-/** An organizer as plain lines, for 複製. */
-export function organizerText(org: WsSheetOrganizer): string[] {
-  const lines: string[] = [];
-  if (org.title) lines.push(`   ${org.title}`);
-  if (org.center) lines.push(`   Centre: ${org.center}`);
-  org.sections.forEach((s, i) => {
-    const cells = s.cells.map((c) => c.given || (c.answer ? `（${c.answer}）` : "______"));
-    const name = organizerFamily(org.type) === "chain" ? `${i + 1}. ${s.label}` : s.label;
-    lines.push(`   ${name}: ${cells.join(" / ")}`);
-  });
-  return lines;
-}
