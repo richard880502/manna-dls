@@ -81,7 +81,7 @@
 }
 
 .com-cover-btn:focus-visible {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -184,33 +184,17 @@
   aspect-ratio: 4 / 3;
   overflow: hidden;
   border-radius: var(--radius-sm);
-  background: var(--color-accent-wash);
+  background: var(--color-paper-2);
   color: var(--color-ink);
   text-align: left;
 }
 
 .com-tint-0 {
-  background: var(--color-accent-wash);
+  background: var(--color-paper-2);
 }
 
 .com-tint-1 {
-  background: var(--color-manna-wash);
-}
-
-.com-tint-2 {
-  background: var(--color-success-wash);
-}
-
-.com-tint-3 {
-  background: var(--color-warn-wash);
-}
-
-.com-tint-4 {
   background: var(--color-paper-3);
-}
-
-.com-tint-5 {
-  background: var(--color-accent-wash-2);
 }
 
 /* The sheet is laid out at a fixed width and scaled down to the cover (see Cover.tsx); the
@@ -336,7 +320,7 @@
 }
 
 .com-switch:focus-visible {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
@@ -365,11 +349,12 @@
 
 .com-switch[aria-checked="true"] .com-switch-track {
   border-color: var(--color-accent);
-  background: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  background: var(--color-accent-wash);
 }
 
 .com-switch[aria-checked="true"] .com-switch-track::after {
-  background: var(--color-accent-ink);
+  background: var(--color-accent);
   transform: translateX(1.4rem);
 }
 

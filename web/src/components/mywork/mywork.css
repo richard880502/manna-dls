@@ -43,8 +43,9 @@
 }
 
 .view-switch button[aria-pressed="true"] {
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  background: var(--color-accent-wash);
+  box-shadow: inset 0 0 0 1px var(--color-accent), 0 0 0 1px var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 @media (hover: hover) {
@@ -89,19 +90,12 @@
   border: var(--rule-hair) solid var(--color-rule);
   border-radius: var(--radius-card);
   background: var(--color-field);
-  transition:
-    border-color var(--dur-micro) var(--ease-out),
-    background-color var(--dur-micro) var(--ease-out);
+  transition: border-color var(--dur-micro) var(--ease-out);
 }
 
 @media (hover: hover) {
   .work-card:hover {
     border-color: var(--color-accent-rule);
-    background: var(--color-accent-wash);
-  }
-
-  .work-card:hover .work-card-title {
-    color: var(--color-accent-text);
   }
 }
 

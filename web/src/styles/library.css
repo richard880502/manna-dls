@@ -83,7 +83,7 @@
 .lib-search .lib-search-input:focus-visible {
   width: 100%;
   min-height: var(--control-h-lg);
-  padding: 0 3rem 0 3.25rem;
+  padding: 0 var(--space-2xl) 0 3.25rem;
   border: var(--rule-hair) solid var(--color-field-edge);
   border-radius: var(--radius-pill);
   background: var(--color-field);
@@ -134,7 +134,7 @@
   align-items: baseline;
   gap: var(--space-2xs);
   min-height: var(--control-h);
-  padding: 0.5rem var(--space-md);
+  padding: var(--space-xs) var(--space-md);
   border: var(--rule-hair) solid var(--color-rule-strong);
   border-radius: var(--radius-pill);
   background: var(--color-field);
@@ -155,12 +155,13 @@
 
 .lib-chip[aria-pressed="true"] {
   border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-text);
 }
 
 .lib-chip[aria-pressed="true"] .lib-chip-count {
-  color: var(--color-accent-ink);
+  color: var(--color-accent-text);
 }
 
 /* ================= 只看： and 標籤： ================= */
@@ -209,7 +210,8 @@
 }
 
 .lib-filter[aria-pressed="true"] {
-  border-color: var(--color-accent-rule);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
   background: var(--color-accent-wash);
   color: var(--color-accent-text);
 }
@@ -301,7 +303,7 @@
   flex-direction: column;
   height: 100%;
   border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--radius-mark);
+  border-radius: var(--radius-card);
   background: var(--color-field);
 }
 
@@ -312,7 +314,7 @@
   padding: var(--space-lg) var(--space-lg) 0;
   overflow: hidden;
   /* The card's corners (the card itself does not clip: its menus open past its edge). */
-  border-radius: calc(var(--radius-mark) - var(--rule-hair)) calc(var(--radius-mark) - var(--rule-hair)) 0 0;
+  border-radius: calc(var(--radius-card) - var(--rule-hair)) calc(var(--radius-card) - var(--rule-hair)) 0 0;
   background: var(--color-paper-2);
 }
 
@@ -329,6 +331,7 @@
   font-family: var(--font-print);
   font-size: var(--text-xs);
   line-height: 1.55;
+  /* #000 is the opaque stop of an alpha mask, not a colour. */
   mask-image: linear-gradient(to bottom, #000 55%, transparent 100%);
 }
 

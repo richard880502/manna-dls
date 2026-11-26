@@ -409,7 +409,7 @@
 }
 
 .workspace.is-narrow {
-  max-width: 50rem;
+  max-width: var(--container-narrow);
 }
 
 /* 我的作品: the cards are the page, so they get the room (previews are unreadable at 185px). */

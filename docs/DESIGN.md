@@ -97,6 +97,7 @@ CJK rules: body never under 16px; prose `line-height` 1.75, UI 1.55, heads 1.3; 
 - **Panels** (`panel-card`): **retired.** Screens not rebuilt yet still carry the class; it is now only a block parted from the one before it by space and one hairline. Do not use it in new code. A page has at most one layer of filled surface.
 - **Tags** (`soft-tag`, `status-pill`, `record-pill`): 13px, only where they carry a fact (a mark's kind, a selection count). No 「選用」「可略過」 labels: what can be skipped is said once, in a sentence.
 - **Notices:** a tinted well (`info`, `success`, `warn`), ink text, no side stripe.
+- **左側色條：** 提示、警告、確認、刪除提示一律用 `Notice`（淺底、無色條；CSS-only 的同類方塊同樣只用淺底加圓角），不再用色條表示狀態。只留兩種線：①「Manna 改了這一區」用 `--color-manna-mark`，這是區塊裡唯一的判讀線索，所以要夠深（對白底 3:1 以上）；② Manna 內容旁的細線（`.material-excerpt`、`.prep-goal-relation`、`.ws-revise-form`，用 `--color-manna-rule`）與列印學習單的縮排線（`.ws-procedure`、`.ws-support`、`.prep-script`），旁邊已有文字說明或屬版面結構，只是裝飾。
 - **Leave confirm** (`leave-confirm`): when a page with unsaved work is left, a dialog over the scrim asks 儲存後離開 / 留在這頁 (focused first, also Escape) / 不儲存，直接離開. Never `window.confirm`.
 - **In-class console:** the lesson title with the clock (44px sans, tabular figures) at its right; two big marks (順利 green, 卡住 amber; 2px outline, an icon, the word and a short caption; 200px tall, a quarter of the screen each on a phone); then what was marked, newest first, as ruled rows with quiet corrections.
 

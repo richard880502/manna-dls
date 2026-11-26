@@ -3,7 +3,7 @@
  * worksheet as print. Action chips ask Manna, so they carry the gold outline. */
 
 .workspace.is-prep {
-  max-width: 54rem;
+  max-width: var(--container-prep);
 }
 
 /* 教材 open beside the conversation. The sheet is fixed at the page's left (28rem, sop.css).
@@ -12,7 +12,7 @@
  * shadow, until it is closed. 74rem / 62.75rem: 26rem of conversation + the sheet + gutters,
  * beside the full sidebar / the sidebar folded to icons. */
 .workspace.is-prep:has(.prep-session.with-viewer) {
-  --prep-frame: calc(54rem + 28rem + var(--space-xl));
+  --prep-frame: calc(var(--container-prep) + 28rem + var(--space-xl));
 }
 
 .prep-session.with-viewer .material-viewer {
@@ -25,7 +25,7 @@
   }
 
   .prep-session.with-viewer {
-    max-width: calc(54rem - 2 * var(--gutter));
+    max-width: calc(var(--container-prep) - 2 * var(--gutter));
     margin-left: max(
       0px,
       calc(28rem + var(--space-xl) - var(--gutter) - max(0px, (100vw - var(--shell-left) - var(--prep-frame)) / 2))
@@ -43,7 +43,7 @@
   }
 
   :root:has(.shell.is-collapsed) .prep-session.with-viewer {
-    max-width: calc(54rem - 2 * var(--gutter));
+    max-width: calc(var(--container-prep) - 2 * var(--gutter));
     margin-left: max(
       0px,
       calc(28rem + var(--space-xl) - var(--gutter) - max(0px, (100vw - var(--shell-left) - var(--prep-frame)) / 2))
@@ -350,13 +350,13 @@
 
 .prep-sheet-title {
   font-size: 1.5rem;
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 .prep-sheet-steps {
   margin-top: var(--space-2xs);
   color: var(--color-ink-2);
-  font-size: 0.9375rem;
+  font-size: var(--text-sm-plus);
 }
 
 .prep-sheet-options {
@@ -929,7 +929,7 @@
 }
 
 .prep-composer-size:focus-visible {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 1px;
 }
 
@@ -975,41 +975,6 @@
   }
 }
 
-.prep-send {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
-  cursor: pointer;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .prep-send:hover:not(:disabled) {
-    background: var(--color-accent-hover);
-  }
-}
-
-.prep-send:active:not(:disabled) {
-  background: var(--color-accent-press);
-}
-
-.prep-send:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
-}
-
-.prep-send:disabled {
-  background: var(--color-paper-3);
-  color: var(--color-muted);
-  cursor: not-allowed;
-}
-
 .prep-bottom-status {
   margin-top: var(--space-2xs);
 }
@@ -1049,7 +1014,7 @@
 }
 
 .prep-attach:focus-visible {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 1px;
 }
 
@@ -1123,7 +1088,7 @@
 }
 
 .prep-attached-remove:focus-visible {
-  outline: 2px solid var(--color-focus);
+  outline: 3px solid var(--color-focus);
   outline-offset: 1px;
 }
 
@@ -1249,7 +1214,7 @@
 }
 
 .prep-bar-mode {
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-xs);
 }
 
 /* Tool chat: the worksheet the bar works on, what a turn changed, what it could not change. */
@@ -1365,7 +1330,7 @@
     width: min(28rem, 100% - var(--shell-left));
     border-right: 0;
     border-left: var(--rule-hair) solid var(--color-rule-strong);
-    box-shadow: -0.25rem 0 1.5rem rgb(0 0 0 / 0.1);
+    box-shadow: var(--shadow-side);
   }
 
   .prep-split-chat,
@@ -1466,7 +1431,7 @@
   }
 
   .prep-split-divider:focus-visible {
-    outline: 2px solid var(--color-focus);
+    outline: 3px solid var(--color-focus);
     outline-offset: -2px;
   }
 

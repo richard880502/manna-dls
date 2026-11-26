@@ -157,7 +157,7 @@
   max-width: 100%;
   max-height: 70vh;
   border: var(--rule-hair) solid var(--color-rule);
-  border-radius: var(--space-3xs);
+  border-radius: var(--radius-xs);
   background: var(--color-sheet);
 }
 
@@ -298,7 +298,7 @@ mark.anno.is-focused {
 
 .anno-placing {
   padding: var(--space-xs) var(--space-sm);
-  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-control);
   background: var(--color-accent-wash);
   font-size: var(--text-sm);
 }
@@ -330,7 +330,7 @@ mark.anno.is-focused {
 .material-media-title {
   font-family: var(--font-print);
   font-size: var(--text-lg);
-  font-weight: 700;
+  font-weight: var(--weight-display);
 }
 
 /* In 備課庫 the panel lies over the list (there is no step to sit beside). */
@@ -370,7 +370,7 @@ mark.anno.is-focused {
 }
 
 .material-pane .material-sheet {
-  padding: var(--space-lg) var(--space-lg) var(--space-lg) 3rem;
+  padding: var(--space-lg) var(--space-lg) var(--space-lg) var(--space-2xl);
   font-size: var(--text-md);
 }
 
@@ -521,7 +521,7 @@ mark.anno.is-focused {
 
 .material-warning {
   padding: var(--space-sm) var(--space-md);
-  border-left: 3px solid var(--color-warn-rule);
+  border-radius: var(--radius-control);
   background: var(--color-warn-wash);
   color: var(--color-ink);
   font-size: var(--text-sm);
@@ -591,7 +591,7 @@ mark.anno.is-focused {
   gap: var(--space-xs);
   max-width: 44rem;
   padding: var(--space-md);
-  border-left: 3px solid var(--color-error);
+  border-radius: var(--radius-control);
   background: var(--color-error-wash);
   line-height: var(--leading-ui);
 }

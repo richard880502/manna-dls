@@ -200,7 +200,7 @@
 /* Manna changed this block in the last chat turn (and the one the bottom bar will revise). */
 .ws-block.is-changed {
   background: var(--color-manna-wash);
-  box-shadow: inset 3px 0 0 var(--color-manna-rule);
+  box-shadow: inset 3px 0 0 var(--color-manna-mark);
 }
 
 .ws-block.is-targeted {
