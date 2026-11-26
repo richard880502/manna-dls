@@ -61,18 +61,24 @@ export const CURRENT_CLASS_STORAGE_KEY = CURRENT_CLASS_KEY;
 // The sidebar folded to icons (wide screens): a per-browser convenience, so localStorage.
 const SIDEBAR_KEY = "manna.sidebarCollapsed";
 
-export function loadSidebarCollapsed(): boolean {
+/** What the teacher chose herself: true (folded), false (open), or null (never touched the toggle). */
+export function loadSidebarPreference(): boolean | null {
   try {
-    return window.localStorage.getItem(SIDEBAR_KEY) === "1";
+    const v = window.localStorage.getItem(SIDEBAR_KEY);
+    return v === "1" ? true : v === "0" ? false : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
+export function loadSidebarCollapsed(): boolean {
+  return loadSidebarPreference() === true;
+}
+
+/** Only her own toggle is stored; "open" is stored too, so it can tell her choice from "never chose". */
 export function saveSidebarCollapsed(collapsed: boolean): void {
   try {
-    if (collapsed) window.localStorage.setItem(SIDEBAR_KEY, "1");
-    else window.localStorage.removeItem(SIDEBAR_KEY);
+    window.localStorage.setItem(SIDEBAR_KEY, collapsed ? "1" : "0");
   } catch {
     // ignore: it only lasts this visit
   }

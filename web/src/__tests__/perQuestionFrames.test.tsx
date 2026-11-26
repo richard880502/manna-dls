@@ -13,7 +13,6 @@ import type {
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent, frameShown } from "../lib/worksheet";
-import { sheetBlockText } from "../components/prep/SheetPreview";
 import { baseRoutes, mockApi, renderApp, respond, signIn, type MockCall } from "../test/mockApi";
 
 const WS = "/api/worksheets/5";
@@ -187,25 +186,5 @@ describe("the sheet's own frame", () => {
     expect(frameShown("standard", ["basic", "standard", "advanced"])).toBe(true);
     expect(frameShown("advanced", ["basic", "standard", "advanced"])).toBe(false);
     expect(frameShown("advanced", ["advanced"])).toBe(true);
-  });
-
-  it("is in the copied text under its question", () => {
-    const text = sheetBlockText({
-      id: "b1",
-      kind: "activity",
-      label: "A",
-      title: "Look Closer",
-      instructions: "",
-      steps: [],
-      vocabulary: [],
-      supports: [],
-      items: [
-        { id: "q1", no: 1, answer_format: "簡答題", prompt: "Why?", options: [], lines: 3, frame: FRAME, hint: "Look again." },
-      ],
-    });
-    const lines = text.split("\n");
-    expect(lines.indexOf("1. Why?")).toBeGreaterThan(-1);
-    expect(lines).toContain(`   Sentence frame: ${FRAME}`);
-    expect(lines.indexOf(`   Sentence frame: ${FRAME}`)).toBeGreaterThan(lines.indexOf("   Hint: Look again."));
   });
 });

@@ -32,6 +32,7 @@ import {
   materialBrowse,
   mockApi,
   renderApp,
+  respond,
   schoolClass,
   signIn,
   type MockCall,
@@ -727,6 +728,17 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
 // ---------------------------------------------------------------- session page
 
 describe("備課對話 (session page)", () => {
+  it("a conversation that can't be loaded shows the error and the way back (no crash)", async () => {
+    signIn();
+    mockApi({
+      ...baseRoutes(),
+      [`GET ${S7}`]: respond(404, { error: { code: "not_found", message: "找不到這個備課對話。" } }),
+    });
+    renderApp("/prep/7");
+    expect(await screen.findByText("找不到這個備課對話。")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "回我的作品" })).toHaveAttribute("href", "/prep");
+  });
+
   it("a worksheet turn shows the job progress while it runs", async () => {
     signIn();
     mockApi({
@@ -872,6 +884,9 @@ describe("備課對話 (session page)", () => {
     await user.click(copy);
     expect(await navigator.clipboard.readText()).toBe(goalsText(plan));
     expect(copy).toHaveTextContent("已複製");
+    // The name stays 「複製…」 and the result is announced by a status instead.
+    expect(copy).toHaveAccessibleName("複製學習目標");
+    expect(screen.getAllByRole("status").some((el) => el.textContent === "已複製")).toBe(true);
     const warm = within(screen.getByRole("region", { name: "引起動機：雨天經驗" }));
     expect(warm.getByText("5 分鐘")).toBeInTheDocument();
     expect(warm.getByText("教學思路")).toBeInTheDocument();

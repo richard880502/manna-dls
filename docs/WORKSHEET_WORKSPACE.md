@@ -48,4 +48,4 @@ components/worksheet/workspace/
 - `/worksheets/:id`（完整編輯頁）＝ 教材欄 ＋ `WorksheetWorkspace`；調整設定（OptionsView）仍在這一頁。
 - 備課頁左邊＝ `WorksheetWorkspace`（產生中顯示 `WorksheetCard` 的進度，好了換成工作區）。拿掉 `SheetModeToggle`、`sheetMode` 儲存。
 - `SheetPreview`（伺服器投影）只留做唯讀呈現：版本預覽、列印樣式預覽、對話卡片。預覽獨有的功能搬進編輯器：每區評分（`item_index`＝區塊位置，資料格式不變）、Manna 改過的區塊標示、「這一輪改了」的捲動目標（區塊元素 id 不變）。
-- 之後（另一個 PR）：首頁與 `/create` 的開始流程抽成共用的 `useStartFlow`。
+- 已完成：首頁與 `/create` 共用的開始流程抽成 `components/start/useStartFlow.tsx`（忙碌／錯誤、OCR 辨識中的拒絕、擬目標）。

@@ -371,19 +371,6 @@
   border-radius: var(--radius-sm);
 }
 
-.prep-sheet-block.is-changed {
-  background: var(--color-manna-wash);
-  box-shadow: inset 3px 0 0 var(--color-manna-rule);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .prep-sheet-block {
-    transition:
-      background-color var(--dur-short) var(--ease-out),
-      box-shadow var(--dur-short) var(--ease-out);
-  }
-}
-
 /* ---------- 規劃教學活動 ---------- */
 .prep-result-title {
   margin-bottom: var(--space-xs);
@@ -417,6 +404,18 @@
 
 .prep-goals td:last-child {
   width: 30%;
+}
+
+/* The goals table lays itself out by the room its card has (a conversation pane can be ~20rem wide on a
+ * wide screen), not by the screen: the section around it is the container. */
+.prep-section:has(> .prep-goals) {
+  container: prep-goals / inline-size;
+}
+
+@container prep-goals (max-width: 30rem) {
+  .prep-goals td:last-child {
+    width: auto;
+  }
 }
 
 /* 內容目標／語言目標: a label row above each group's goals. */
@@ -863,6 +862,9 @@
 /* The composer: one rounded box holding the text, the mode switch and the send button, the way
    chat composers look elsewhere. The box carries the border and the focus ring, not the textarea. */
 .prep-composer {
+  /* The tools row below lays itself out by the box's own width (the conversation pane is narrow on a
+   * laptop), not the screen's. Nothing inside is position: fixed, so the containment is safe here. */
+  container: prep-composer / inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -956,6 +958,20 @@
   margin-left: auto;
   color: var(--color-muted);
   font-size: var(--text-sm);
+}
+
+/* Too narrow for 「Enter 送出・Shift＋Enter 換行」 beside the attach and send buttons. */
+@container prep-composer (max-width: 22rem) {
+  .prep-composer-hint {
+    display: none;
+  }
+
+  .prep-composer-wait {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .prep-send {
@@ -1209,10 +1225,6 @@
     margin-left: 0;
   }
 
-  .prep-goals td:last-child {
-    width: auto;
-  }
-
   /* Labels above their values on a phone. */
   .prep-plan-fields > div,
   .prep-step-meta > div {
@@ -1362,7 +1374,14 @@
     height: calc(100dvh - var(--banner-h));
     overflow-y: auto;
     min-width: 0;
-    padding: var(--space-xl) var(--gutter) var(--space-lg);
+    /* Each pane is only part of the screen: the page gutter (2.5rem) per side would eat a third of a
+     * 22rem conversation, so the panes use the tighter step. */
+    padding: var(--space-xl) var(--space-lg) var(--space-lg);
+  }
+
+  /* The worksheet paper's own side padding (3rem) is the biggest cost in a ~32rem pane. */
+  .prep-split-sheet .ws {
+    padding-inline: var(--space-xl);
   }
 
   .prep-split-chat {
@@ -1438,7 +1457,7 @@
     transition-delay: 0ms;
   }
 
-  /* Touch: a 44px target, reaching 22px into each pane's 2.5rem gutter (never over content). */
+  /* Touch: a 44px target, reaching 22px into each pane's 1.5rem padding (never over content). */
   @media (pointer: coarse) {
     .prep-split-divider {
       margin-inline: -1.375rem;

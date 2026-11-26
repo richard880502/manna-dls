@@ -3,8 +3,10 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type Poin
 
 export const DEFAULT_SHARE = 60; // the worksheet on the left, 3:2
 export const SPLIT_KEY = "manna.prepSplitSheetShare";
-const MIN_CHAT_REM = 20;
-const MIN_SHEET_REM = 32;
+// The panes pad 1.5rem per side (not the 2.5rem page gutter), so 22rem leaves ~19rem of conversation: the
+// composer, the goals table and the cards still fit. 24rem would leave only ~13pt of drag at 1100px.
+export const MIN_CHAT_REM = 22;
+export const MIN_SHEET_REM = 32;
 const STEP = 2;
 const BIG_STEP = 10;
 
@@ -62,13 +64,17 @@ export function useSplitResize() {
     if (!el) return undefined;
     const measure = () => setBounds(boundsFor(el.getBoundingClientRect().width));
     measure();
+    // The container's own size is what matters (the sidebar folds and unfolds without a window
+    // resize). Measuring on window resize as well read a passing width: the window grew past 80rem
+    // while the sidebar was still folded, and nothing measured again once it unfolded to the same
+    // width as before. The window is only the fallback without ResizeObserver.
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(el);
+      return () => observer.disconnect();
+    }
     window.addEventListener("resize", measure);
-    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
-    observer?.observe(el);
-    return () => {
-      window.removeEventListener("resize", measure);
-      observer?.disconnect();
-    };
+    return () => window.removeEventListener("resize", measure);
   }, [container]);
 
   const share = clamp(wanted, bounds.min, bounds.max);

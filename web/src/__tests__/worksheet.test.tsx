@@ -4,7 +4,7 @@
 // and the vocabulary-level check.
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   SaveWorksheetRequest,
   SopSyncPreview,
@@ -588,6 +588,35 @@ describe("result editor", () => {
     expect(body.content?.blocks[2]?.title).toBe("Read and find");
     // The sheet follows: what was C is now B.
     expect(screen.getByRole("textbox", { name: "區塊標題 B" })).toHaveValue("Paragraph 2: Compare");
+  });
+
+  it("上移 slides the blocks that changed place for a pointer, and not for the keyboard", async () => {
+    mockApi(routes(generated()));
+    const user = userEvent.setup();
+    const animate = vi.fn(() => ({ cancel: () => undefined }) as unknown as Animation);
+    // jsdom has no layout: a block's top is its place among the blocks.
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const all = Array.from(document.querySelectorAll("[data-block]"));
+      return { top: all.indexOf(this) * 100 } as DOMRect;
+    });
+    Object.defineProperty(HTMLElement.prototype, "animate", { value: animate, configurable: true, writable: true });
+    try {
+      renderApp("/worksheets/5");
+      await screen.findByRole("textbox", { name: "區塊標題 B" });
+
+      await clickBlockMore(user, blockRegion("C"), "上移");
+      expect(animate).toHaveBeenCalledTimes(2);
+
+      animate.mockClear();
+      const menu = await openBlockMore(user, blockRegion("C"));
+      menu.getByRole("button", { name: "上移" }).focus();
+      await user.keyboard("{Enter}");
+      await settle();
+      expect(animate).not.toHaveBeenCalled();
+    } finally {
+      rect.mockRestore();
+      Reflect.deleteProperty(HTMLElement.prototype, "animate");
+    }
   });
 
   it("調整設定 can be left without generating: 回到學習單 at the top and beside the generate button", async () => {

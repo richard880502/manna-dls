@@ -5,12 +5,14 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { WorksheetContent, WorksheetState, WsBlock, WsScaffold, WsSheet, WsSheetWord, WsVocab } from "../api/types";
-import { SheetPreview, sheetBlockText } from "../components/prep/SheetPreview";
+import { SheetPreview } from "../components/prep/SheetPreview";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import { autosaveConfig } from "../lib/useAutosave";
-import { bankWithText, emptyBrief, emptySettings, keyVocabularyText, parseWordList, vocabMeaning } from "../lib/worksheet";
+import { bankWithText, emptyBrief, emptySettings, parseWordList, vocabMeaning } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
 import { openBarPopover } from "../test/menus";
+
+const NO_PICTURES = { worksheetId: 1, load: () => Promise.reject(new Error("no pictures")) };
 beforeEach(() => {
   signIn();
   worksheetConfig.pollMs = 20;
@@ -53,7 +55,7 @@ const sheetWith = (vocabulary: WsSheetWord[], end_words?: WsSheetWord[]): WsShee
 });
 
 const preview = (sheet: WsSheet) =>
-  render(<SheetPreview sheet={sheet} highlight={new Set()} interactionFor={() => null} />);
+  render(<SheetPreview sheet={sheet} pictures={NO_PICTURES} />);
 
 describe("Key Vocabulary on the sheet", () => {
   const both = [
@@ -99,16 +101,12 @@ describe("Key Vocabulary on the sheet", () => {
     expect(within(table).getByRole("cell", { name: "umbrella" })).toBeInTheDocument();
   });
 
-  it("is printed once after the last block with the same two columns, and copied as text", () => {
+  it("is printed once after the last block with the same two columns", () => {
     preview(sheetWith([], both));
     const end = screen.getByRole("region", { name: "字詞表（學習單最後）" });
     expect(within(end).getByRole("heading", { name: "Key Vocabulary" })).toBeInTheDocument();
     expect(within(end).getByRole("table", { name: "字詞表（Content）" })).toBeInTheDocument();
     expect(within(end).getByRole("table", { name: "字詞表（Academic）" })).toBeInTheDocument();
-    const text = sheetBlockText(sheetWith(both).blocks[0]!);
-    expect(text).toContain("Key Vocabulary\nContent\n  umbrella (n.): a thing that keeps rain off you");
-    expect(text).toContain("Academic\n  compare (v.): to look at how things are the same and different");
-    expect(keyVocabularyText([])).toEqual([]);
   });
 });
 

@@ -8,8 +8,6 @@ import { SheetPreview } from "../prep/SheetPreview";
 import { Counts } from "./Counts";
 import { outputLabel } from "./labels";
 
-const NO_HIGHLIGHT: ReadonlySet<string> = new Set();
-const NO_INTERACTION = () => null;
 
 /**
  * The near full-screen preview of one shared worksheet: what is printed on it (student version,
@@ -59,9 +57,7 @@ export function PreviewOverlay({
           {preview && (
             <SheetPreview
               sheet={preview.sheet}
-              highlight={NO_HIGHLIGHT}
-              interactionFor={NO_INTERACTION}
-              readOnly={{ worksheetId: card.id, load }}
+              pictures={{ worksheetId: card.id, load }}
             />
           )}
         </div>
@@ -94,10 +90,12 @@ export function PreviewOverlay({
                 type="button"
                 className="secondary-button"
                 aria-pressed={card.saved}
-                disabled={busy}
-                onClick={() => onToggleSave(card)}
+                aria-disabled={busy || undefined}
+                onClick={() => {
+                  if (!busy) onToggleSave(card);
+                }}
               >
-                {card.saved ? "已收藏" : "收藏"}
+                收藏
               </button>
               {card.allow_remix ? (
                 <button type="button" className="primary-button" disabled={busy} onClick={() => onRemix(card)}>
