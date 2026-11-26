@@ -315,7 +315,7 @@ describe("lesson workspace: steps", () => {
     const first = await openLesson();
 
     expect(stageTitle()).toHaveTextContent("閱讀教材");
-    expect(rail().getByRole("button", { name: /閱讀教材/ })).toHaveTextContent("3 段 · 46 字");
+    expect(rail().getByRole("button", { name: /閱讀教材/ })).toHaveTextContent("3 段，46 字");
     expect(rail().getByRole("button", { name: /內容目標與語言目標/ })).toHaveTextContent("1 項目標");
     expect(rail().getByRole("button", { name: /Exit ticket/ })).toHaveTextContent("1 題");
     // Empty steps carry no state and no warning: nothing is required.
@@ -414,7 +414,7 @@ describe("lesson workspace: quiet saving", () => {
     // The teacher keeps typing in the same fields; the step says how the text was split.
     expect(screen.getByRole("textbox", { name: "教材文字" })).toHaveValue(material.text);
     expect(screen.getByText("目前分成 3 段。")).toBeInTheDocument();
-    expect(rail().getByRole("button", { name: /閱讀教材/ })).toHaveTextContent("3 段 · 46 字");
+    expect(rail().getByRole("button", { name: /閱讀教材/ })).toHaveTextContent("3 段，46 字");
 
     await user.click(screen.getByRole("button", { name: "改好了，看分段結果" }));
     expect(screen.getByText(P3)).toBeInTheDocument();
@@ -565,7 +565,7 @@ describe("lesson workspace: Manna's suggestions", () => {
     expect(api.lastBody("POST", `${SOP}/analysis`)).toEqual({});
 
     const p1 = within(screen.getByRole("region", { name: "第 1 段" }));
-    const well1 = within(await p1.findByRole("group", { name: "Manna 建議 · 第 1 段" }));
+    const well1 = within(await p1.findByRole("group", { name: "Manna 建議：第 1 段" }));
     expect(screen.queryByText("Manna 正在處理")).not.toBeInTheDocument();
     expect(well1.getByText("A sign said, Take one if you need it.")).toBeInTheDocument();
     expect(screen.getByText("Manna 分析了 3 段，建議在各段下方。")).toBeInTheDocument();
@@ -574,7 +574,7 @@ describe("lesson workspace: Manna's suggestions", () => {
 
     // 採用: the teacher's own words stay, the suggestion fills in the rest.
     await user.click(well1.getByRole("button", { name: "採用" }));
-    expect(p1.queryByRole("group", { name: "Manna 建議 · 第 1 段" })).not.toBeInTheDocument();
+    expect(p1.queryByRole("group", { name: "Manna 建議：第 1 段" })).not.toBeInTheDocument();
     expect(p1.getByText("我寫的功能")).toBeInTheDocument();
     expect(p1.getByText("林太太在店外放了傘架")).toBeInTheDocument();
     await waitFor(() => expect(api.callsTo("POST", "/api/ai/91/decision")).toHaveLength(1));
@@ -582,7 +582,7 @@ describe("lesson workspace: Manna's suggestions", () => {
 
     // 修改後採用: the suggestion opens as a form; it is written in only when the teacher is done.
     const p2 = within(screen.getByRole("region", { name: "第 2 段" }));
-    await user.click(within(p2.getByRole("group", { name: "Manna 建議 · 第 2 段" })).getByRole("button", { name: "修改後採用" }));
+    await user.click(within(p2.getByRole("group", { name: "Manna 建議：第 2 段" })).getByRole("button", { name: "修改後採用" }));
     const fn = p2.getByRole("textbox", { name: "這一段在全文中的功能" });
     expect(fn).toHaveValue("鄰居的預測");
     await user.clear(fn);
@@ -598,14 +598,14 @@ describe("lesson workspace: Manna's suggestions", () => {
 
     // 不用: gone from the page, nothing written.
     const p3 = within(screen.getByRole("region", { name: "第 3 段" }));
-    await user.click(within(p3.getByRole("group", { name: "Manna 建議 · 第 3 段" })).getByRole("button", { name: "不用" }));
+    await user.click(within(p3.getByRole("group", { name: "Manna 建議：第 3 段" })).getByRole("button", { name: "不用" }));
     expect(p3.queryByRole("group")).not.toBeInTheDocument();
     expect(p3.getByText(/這一段還沒有分析。/)).toBeInTheDocument();
     await waitFor(() => expect(api.callsTo("POST", "/api/ai/91/decision")).toHaveLength(3));
     expect(api.lastBody("POST", "/api/ai/91/decision")).toEqual({ item_index: 3, decision: "reject" });
 
     // The whole-text suggestion only fills what the teacher left empty.
-    await user.click(within(screen.getByRole("group", { name: "Manna 建議 · 全文" })).getByRole("button", { name: "採用" }));
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：全文" })).getByRole("button", { name: "採用" }));
     expect(screen.getByRole("textbox", { name: "主旨" })).toHaveValue("我自己寫的主旨");
     expect(screen.getByRole("textbox", { name: "結構" })).toHaveValue("開場 → 鄰居的預測 → 轉折");
 
@@ -647,7 +647,7 @@ describe("lesson workspace: Manna's suggestions", () => {
     await act(async () => {
       answers[1]?.(job("analysis", shown(analysisOutput)));
     });
-    expect(await screen.findByRole("group", { name: "Manna 建議 · 第 1 段" })).toBeInTheDocument();
+    expect(await screen.findByRole("group", { name: "Manna 建議：第 1 段" })).toBeInTheDocument();
     expect(screen.queryByText("Manna 正在處理")).not.toBeInTheDocument();
     expect(screen.queryByText(/正在補上/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "請 Manna 再分析一次" })).toBeEnabled();
@@ -661,7 +661,7 @@ describe("lesson workspace: Manna's suggestions", () => {
     await openLesson();
     await goToStep(user, /分析寫作特色/);
     expect(screen.getAllByRole("group", { name: /^Manna 建議/ })).toHaveLength(1);
-    await user.click(within(screen.getByRole("group", { name: "Manna 建議 · 第 1 段" })).getByRole("button", { name: "採用" }));
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：第 1 段" })).getByRole("button", { name: "採用" }));
     await settleAutosave();
     expect(lastSaved(api).analysis.paragraphs).toEqual([
       {
@@ -693,21 +693,21 @@ describe("lesson workspace: Manna's suggestions", () => {
 
     const content = within(screen.getByRole("region", { name: /^內容目標/ }));
     const language = within(screen.getByRole("region", { name: /^語言目標/ }));
-    const linked = within(content.getByRole("group", { name: "Manna 建議 · 內容目標" }));
+    const linked = within(content.getByRole("group", { name: "Manna 建議：內容目標" }));
     expect(linked.getByText("學生能比較鄰居的預期和實際發生的事")).toBeInTheDocument();
     expect(linked.getByText("為什麼建議：第 3 段用 However 轉折，前後對比清楚")).toBeInTheDocument();
     // The code shown is the one printed in the curriculum, not the knowledge base's own.
     expect(linked.getByText("3-Ⅴ-11")).toBeInTheDocument();
     expect(linked.getByText("能閱讀不同體裁、不同主題的文章。")).toBeInTheDocument();
     expect(linked.getByText("來源：十二年國教課綱語文領域－英語文，107 年發布版，第 17 頁")).toBeInTheDocument();
-    const unlinked = within(language.getByRole("group", { name: "Manna 建議 · 語言目標" }));
+    const unlinked = within(language.getByRole("group", { name: "Manna 建議：語言目標" }));
     expect(unlinked.getByText("尚未完成課綱連結")).toBeInTheDocument();
     expect(language.getByText("Manna 另外想到 1 項")).toBeInTheDocument();
     // The teacher's objective is listed first and untouched.
     expect(language.getByText("學生能用 Not only … but also 倒裝句")).toBeInTheDocument();
 
     await user.click(linked.getByRole("button", { name: "採用" }));
-    expect(content.queryByRole("group", { name: "Manna 建議 · 內容目標" })).not.toBeInTheDocument();
+    expect(content.queryByRole("group", { name: "Manna 建議：內容目標" })).not.toBeInTheDocument();
     expect(content.getByText("已連結 108 課綱")).toBeInTheDocument();
     await user.click(content.getByRole("button", { name: "看原文" }));
     expect(content.getByText("能閱讀不同體裁、不同主題的文章。")).toBeInTheDocument();

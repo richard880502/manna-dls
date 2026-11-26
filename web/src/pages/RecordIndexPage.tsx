@@ -5,6 +5,7 @@ import type { LessonRun, SchoolClass } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { formatShortDate } from "../lib/labels";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 function RunRow({ run, showClass }: { run: LessonRun; showClass: boolean }) {
   const open = run.ended_at === null;
@@ -19,10 +20,15 @@ function RunRow({ run, showClass }: { run: LessonRun; showClass: boolean }) {
             {run.unit_title}　{run.lesson_title}
           </Link>
         </h3>
-        <p className="meta">
-          {formatShortDate(run.started_at)} · 順利 {run.good_count} 次 · 卡住 {run.stuck_count} 次 ·{" "}
-          {open ? "上課中" : run.review_completed_at ? "已補寫" : "還沒補寫"}
-        </p>
+        <MetaList
+          className="meta"
+          items={[
+            formatShortDate(run.started_at),
+            `順利 ${run.good_count} 次`,
+            `卡住 ${run.stuck_count} 次`,
+            open ? "上課中" : run.review_completed_at ? "已補寫" : "還沒補寫",
+          ]}
+        />
       </div>
       <p className="side">
         <Link

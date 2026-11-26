@@ -961,7 +961,7 @@
   font-size: var(--text-sm);
 }
 
-/* Too narrow for 「Enter 送出・Shift＋Enter 換行」 beside the attach and send buttons. */
+/* Too narrow for 「Enter 送出，Shift＋Enter 換行」 beside the attach and send buttons. */
 @container prep-composer (max-width: 22rem) {
   .prep-composer-hint {
     display: none;

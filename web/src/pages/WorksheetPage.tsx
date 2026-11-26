@@ -65,7 +65,7 @@ function WorksheetPageBody({ id, materialPane }: { id: number; materialPane: Mat
         <div>
           {state.prep_session_id ? (
             <p className="crumbs prep-back">
-              <Link to={`/prep/${state.prep_session_id}`}>← 回到備課對話</Link>
+              <Link to={`/prep/${state.prep_session_id}`}>回到備課對話</Link>
             </p>
           ) : null}
           <p className="crumbs">

@@ -21,6 +21,7 @@ import {
   teacher,
   type MockCall,
 } from "../test/mockApi";
+import { getMeta, itemTexts } from "../test/metaList";
 
 const manager = { ...teacher, research_id: "KB-01", role: "kb_manager" as const };
 const pi = { ...teacher, research_id: "PI-01", role: "pi" as const };
@@ -192,16 +193,17 @@ describe("知識庫：課綱條目與詞彙", () => {
     await user.click(await screen.findByRole("tab", { name: "課綱條目與詞彙" }));
     expect(router.state.location.search).toBe("?tab=curriculum");
     const status = within(await screen.findByRole("list", { name: "目前內容" }));
-    expect(status.getByText("普高 4 條 · 綜高 2 條")).toBeInTheDocument();
+    getMeta(["普高 4 條", "綜高 2 條"], document.body);
     expect(status.getByText("6 條")).toBeInTheDocument();
-    expect(status.getByText(/TEST LIST v1：第 1 級 1 詞條 · 附錄 1 詞/)).toBeInTheDocument();
+    getMeta(["TEST LIST v1：第 1 級 1 詞條", "附錄 1 詞"]);
     expect(status.getByText("16 條使用中")).toBeInTheDocument();
     expect(within(screen.getByRole("list", { name: "最近的匯入" })).getByText(/新增 6、更新 0、不變 0/)).toBeInTheDocument();
 
     const items = within(await screen.findByRole("list", { name: "條目" }));
     expect(items.getByRole("heading", { name: "◎3-Ⅴ-2 學習表現｜測試閱讀" })).toBeInTheDocument();
     expect(items.getByText("能讀懂測試用的短文並找出主旨。")).toBeInTheDocument();
-    expect(items.getByText(/測試領綱\.pdf（測試版） 第 12 頁 · 第 1 版/)).toBeInTheDocument();
+    expect(items.getByText("測試領綱.pdf（測試版） 第 12 頁")).toBeInTheDocument();
+    expect(items.getByText("第 1 版")).toBeInTheDocument();
     expect(screen.getByText("顯示 1／1 條")).toBeInTheDocument();
     const words = within(await screen.findByRole("list", { name: "詞彙" }));
     expect(words.getByRole("heading", { name: "conserve" })).toBeInTheDocument();
@@ -254,7 +256,7 @@ describe("知識庫：課綱條目與詞彙", () => {
     const csv = "item_code,category,school_track,title,content,source_doc,source_version,source_page\nA,curriculum,general,t,c,d,v,1\n";
     await user.upload(section.getByLabelText("選擇 CSV 檔案"), new File([csv], "kb.csv", { type: "text/csv" }));
     await user.click(section.getByRole("button", { name: "預覽" }));
-    expect(await section.findByText(/預覽（尚未寫入）：檔案共 3 列（普高 2 · 綜高 1）。新增 2、更新 1、不變 0。/)).toBeInTheDocument();
+    expect(await section.findByText(/預覽（尚未寫入）：檔案共 3 列（普高 2、綜高 1）。新增 2、更新 1、不變 0。/)).toBeInTheDocument();
     expect(section.getByText("d".repeat(64))).toBeInTheDocument();
     const dry = api.callsTo("POST", "/api/admin/knowledge/import")[0];
     expect(dry?.url).toContain("dry_run=true");
@@ -288,7 +290,7 @@ describe("知識庫：課綱條目與詞彙", () => {
     const file = new File(["word\n"], "v.csv", { type: "text/csv" });
     await user.upload(section.getByLabelText("選擇 CSV 檔案"), file);
     await user.click(section.getByRole("button", { name: "預覽" }));
-    expect(await section.findByText(/第 1 級 13 · 附錄 1/)).toBeInTheDocument();
+    expect(await section.findByText(/第 1 級 13、附錄 1/)).toBeInTheDocument();
     expect(section.getByText(/檔案內容和目前資料相同，不需要匯入。/)).toBeInTheDocument();
     expect(section.queryByRole("button", { name: "確認匯入" })).not.toBeInTheDocument();
     await user.click(section.getByRole("button", { name: "關閉預覽" }));
@@ -531,7 +533,8 @@ describe("知識庫：教材牆", () => {
     await waitFor(() => expect(thumbSrc(paperPdf.title)).toBe("blob:thumb-7"));
     expect(api.callsTo("GET", "/api/materials/7/thumbnail")[0]?.headers.Authorization).toBe("Bearer test-token");
     const pdf = within(galleryCard(paperPdf.title));
-    expect(pdf.getByText("學測英文 · PDF · 8 頁 · 約 2,900 字")).toBeInTheDocument();
+    expect(pdf.getByText("約 2,900 字")).toBeInTheDocument();
+    getMeta(["學測英文", "PDF", "8 頁", "約 2,900 字"]);
     expect(pdf.getByText("+1")).toBeInTheDocument();
     // A Word file has no preview image: its first lines are the preview.
     expect(within(galleryCard(answerDocx.title)).getByText(answerDocx.excerpt)).toBeInTheDocument();
@@ -575,7 +578,7 @@ describe("知識庫：教材牆", () => {
     const dialog = within(await screen.findByRole("dialog", { name: paperPdf.title }));
     expect(dialog.getByRole("img", { name: `「${paperPdf.title}」的第 1 頁` })).toHaveAttribute("src", "blob:thumb-7");
     expect(dialog.getByText("第 1 頁（共 8 頁）")).toBeInTheDocument();
-    expect(dialog.getByText("學測英文 · PDF · 8 頁 · 約 2,900 字")).toBeInTheDocument();
+    expect(itemTexts(document.querySelector(".kb-preview-meta")!)).toEqual(["學測英文", "PDF", "8 頁", "約 2,900 字"]);
     expect(dialog.getAllByRole("listitem").map((li) => li.textContent)).toEqual(expect.arrayContaining(["114", "閱讀"]));
     expect(await dialog.findByText("Bees do a much bigger job than most people think.")).toBeInTheDocument();
     expect(await dialog.findByRole("link", { name: "下載原檔" })).toHaveAttribute(

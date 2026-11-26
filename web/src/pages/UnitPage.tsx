@@ -67,7 +67,7 @@ function NewLessonForm({
             id={`${ids}-title`}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="例如：第 2 節・句型練習"
+            placeholder="例如：第 2 節：句型練習"
             disabled={creating}
           />
         </div>

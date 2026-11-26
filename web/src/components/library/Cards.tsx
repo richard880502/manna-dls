@@ -14,6 +14,7 @@ import {
   templateCardMeta,
   templateCardTitle,
 } from "./labels";
+import { MetaList } from "../MetaList";
 
 const TAGS_SHOWN = 3;
 
@@ -101,7 +102,7 @@ export function MaterialCard({ card, actions }: { card: MaterialCardData; action
           <h3 className="lib-card-title" id={`${ids}-title`}>
             {cardTitle(card)}
           </h3>
-          <p className="lib-card-meta">{materialCardMeta(card)}</p>
+          <MetaList className="lib-card-meta" items={materialCardMeta(card)} />
           <TagList tags={card.tags} />
           <p className="lib-card-foot">
             <span className={`lib-owner${card.scope === "platform" ? " is-platform" : ""}`}>{card.owner_label}</span>
@@ -116,7 +117,7 @@ export function MaterialCard({ card, actions }: { card: MaterialCardData; action
 
 /**
  * A template as a card: its sections on paper with 平台範本／我的 (and 讀取中／失敗) in the
- * corners, the title, 「4 區 · 英文指示 · 閱讀理解」, tags, and actions.
+ * corners, the title, 「4 區」「英文指示」「閱讀理解」, tags, and actions.
  */
 export function TemplateCard({ card, actions }: { card: TemplateCardData; actions: ReactNode }) {
   const ids = useId();
@@ -135,7 +136,7 @@ export function TemplateCard({ card, actions }: { card: TemplateCardData; action
           <h3 className="lib-card-title" id={`${ids}-title`}>
             {templateCardTitle(card)}
           </h3>
-          <p className="lib-card-meta">{templateCardMeta(card)}</p>
+          <MetaList className="lib-card-meta" items={templateCardMeta(card)} />
           <TagList tags={card.tags} />
           <p className="lib-card-foot">
             <span className={`lib-owner${card.scope === "platform" ? " is-platform" : ""}`}>{card.owner_label}</span>

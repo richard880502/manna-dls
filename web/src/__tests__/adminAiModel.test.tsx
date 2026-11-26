@@ -26,7 +26,7 @@ describe("文字模型 settings", () => {
     mockApi({ "GET /api/admin/ai-model": base });
     render(<AiModelSettings />);
     expect(await screen.findByText("環境變數預設")).toBeInTheDocument();
-    expect(screen.getByText(/國網中心（NCHC）・gemma-4-31B-it・等待上限 120 秒/)).toBeInTheDocument();
+    expect(screen.getByText(/國網中心（NCHC），gemma-4-31B-it，等待上限 120 秒/)).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /OpenAI（海外）/ })).toBeDisabled();
     expect(screen.getByRole("option", { name: "國網中心（NCHC）" })).toBeEnabled();
     expect(screen.getByText(/已經在跑的工作（例如正在產生的學習單）會用開始時的模型跑完/)).toBeInTheDocument();

@@ -137,7 +137,7 @@ export const LOOKS_LIKE_WORKSHEET = "這份看起來是一份學習單。要照�
 export const USE_AS_SAMPLE = "照這份的樣式做";
 export const KEEP_AS_TEXT = "不用，當成課文";
 /** On 完整學習單, beside the 版型 select. */
-export const MIMIC_LINK = "或上傳你的學習單範本 →";
+export const MIMIC_LINK = "或上傳你的學習單範本";
 
 /** The home quick box with 照我的學習單做: its two attach slots, their chips and what is missing. */
 export const ATTACH_SAMPLE = "附上學習單範本";

@@ -247,18 +247,18 @@ export function settingsFromPlan(plan: BloomPlan): Pick<WorksheetSettings, "bloo
   };
 }
 
-/** 「記憶 1・理解 2・應用 2」: the levels with questions. */
+/** 「記憶 1、理解 2、應用 2」: the levels with questions. */
 export const countsLine = (counts: BloomCounts) =>
   levelsOf(counts)
     .map((l) => `${BLOOM_LABEL[l]} ${counts[l]}`)
-    .join("・");
+    .join("、");
 
 export const estimatedMinutes = (total: number) => Math.round(total * MINUTES_PER_ITEM);
 
-/** 「8 題 · 記憶 1・理解 2… · 約 20 分鐘」 */
-export function planSummary(counts: BloomCounts): string {
+/** 「8 題」「記憶 1、理解 2…」「約 20 分鐘」, one item each. */
+export function planSummary(counts: BloomCounts): string[] {
   const total = countsTotal(counts);
-  return [`${total} 題`, countsLine(counts), `約 ${estimatedMinutes(total)} 分鐘`].filter(Boolean).join(" · ");
+  return [`${total} 題`, countsLine(counts), `約 ${estimatedMinutes(total)} 分鐘`].filter(Boolean);
 }
 
 // ---------------------------------------------------------------- distribution

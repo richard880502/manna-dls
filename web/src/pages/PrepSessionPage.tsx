@@ -512,7 +512,7 @@ function PrepSessionView({ id }: { id: number }) {
     session.template ? `版型：${session.template.title}` : null,
   ]
     .filter(Boolean)
-    .join("・");
+    .join("，");
   const templateOptions: WsTemplateSummary[] =
     templates && templates.length > 0 && session.template && !templates.some((t) => t.id === session.template?.id)
       ? [
@@ -934,7 +934,7 @@ function PrepSessionView({ id }: { id: number }) {
                 {session.material.title.trim() || "未命名教材"}
               </button>
               {typeof session.material_selected === "number" && typeof session.material_paragraphs === "number" && (
-                <span className="prep-selected"> · {selectedLine(session.material_selected, session.material_paragraphs)}</span>
+                <span className="prep-selected">，{selectedLine(session.material_selected, session.material_paragraphs)}</span>
               )}
               <button type="button" className="text-link is-plain" disabled={locked} onClick={() => setFix("edit")}>
                 {EDIT_TEXT}
@@ -1140,7 +1140,7 @@ function PrepSessionView({ id }: { id: number }) {
             {canAttach && <AttachButton onFiles={attach.add} disabled={locked} />}
             {!running && (
               <span className="prep-composer-hint" aria-hidden="true">
-                Enter 送出・Shift＋Enter 換行
+                Enter 送出，Shift＋Enter 換行
               </span>
             )}
             {/* Always present, so the line is announced when it appears. */}

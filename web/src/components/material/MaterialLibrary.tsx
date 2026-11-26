@@ -13,6 +13,7 @@ import { OCR_NOT_YET, ocrOpen } from "../../lib/ocr";
 import { ErrorText } from "../common";
 import { useDialogGuard } from "../Dialog";
 import { useFirstOnPage } from "../OncePerPage";
+import { MetaList } from "../MetaList";
 
 /** The teacher's library as the server reports it: materials, usage, limits, whether uploads work. */
 export function useMaterialLibrary() {
@@ -288,7 +289,7 @@ export function MaterialPicker({
         <li key={m.id} className="row">
           <div>
             <h3>{titleOf(m)}</h3>
-            <p className="meta">{materialMeta(m)}</p>
+            <MetaList className="meta" items={materialMeta(m)} />
           </div>
           <p className="side">
             {m.id === currentId ? (

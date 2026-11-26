@@ -597,7 +597,7 @@ function ExtraChanges({ changes, before, after }: { changes: WsProposalExtraChan
           <li key={`${c.group}-${c.id}-${c.change}`} className={`is-${c.change}`}>
             <span className="anno-flag is-quiet">{CHANGE_LABEL[c.change]}</span>{" "}
             <span lang="zh-Hant">
-              {EXTRA_GROUP_LABEL[c.group]}・{c.label}
+              {EXTRA_GROUP_LABEL[c.group]}（{c.label}）
             </span>
             {text !== null && (
               <>

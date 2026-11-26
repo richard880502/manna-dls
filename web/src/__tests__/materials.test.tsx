@@ -17,6 +17,7 @@ import {
   signIn,
   type MockCall,
 } from "../test/mockApi";
+import { getMeta } from "../test/metaList";
 
 const P1 = "Mrs. Lin put an umbrella stand outside her shop.";
 const P2 = "In the first month, twelve umbrellas did disappear. However, something unexpected followed.";
@@ -117,10 +118,10 @@ describe("我的教材 (the material library page)", () => {
     const api = mockApi({ ...baseRoutes(), "GET /api/materials": library(), "GET /api/browse/materials": browse() });
     const section = await openLibrary();
     const card = within(await section.findByRole("article", { name: "The Umbrella Stand" }));
-    expect(card.getByText("貼上的文字 · 2 段")).toBeInTheDocument();
+    getMeta(["貼上的文字", "2 段"]);
     expect(card.getByText("文字")).toBeInTheDocument();
     expect(card.getByText("我")).toBeInTheDocument();
-    expect(await section.findByText("1 份 · 檔案已使用 3 MB／1 GB")).toBeInTheDocument();
+    expect(await section.findByText("1 份，檔案已使用 3 MB／1 GB")).toBeInTheDocument();
     expect(api.callsTo("GET", "/api/browse/materials").map((c) => c.url)).toEqual(["/api/browse/materials?area=mine"]);
   });
 

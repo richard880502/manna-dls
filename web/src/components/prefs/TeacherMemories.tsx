@@ -146,7 +146,7 @@ export function TeacherMemories() {
           {history.length === 0 && <p>尚無已停止使用的版本。</p>}
           <ul className="memory-list">{history.map((m) => <li key={m.id}><div>
             <strong>{m.statement}</strong>
-            <small>{formatDateTime(m.valid_at)} 至 {formatDateTime(m.invalid_at!)}・{m.superseded_by ? "已被新習慣取代" : "已停止使用"}</small>
+            <small>{formatDateTime(m.valid_at)} 至 {formatDateTime(m.invalid_at!)}，{m.superseded_by ? "已被新習慣取代" : "已停止使用"}</small>
             {m.superseded_by && <span>後續版本：{data.memories.find((next) => next.id === m.superseded_by)?.statement}</span>}
           </div></li>)}</ul>
         </details>

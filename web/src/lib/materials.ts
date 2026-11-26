@@ -39,8 +39,8 @@ export function formatBytes(bytes: number): string {
   return `${text} ${units[unit]}`;
 }
 
-/** 「文件 · 3 段 · 1.2 MB」: what a row in the library says under the title (「辨識中 2／8」 while OCR reads it). */
-export function materialMeta(m: Material): string {
+/** 「文件」「3 段」「1.2 MB」, one item each: what a row in the library says under the title (「辨識中 2／8」 while OCR reads it). */
+export function materialMeta(m: Material): string[] {
   const parts: string[] = [KIND_LABEL[m.kind]];
   const reading = ocrOpen(m.ocr);
   if (reading) parts.push(ocrBadge(m.ocr) ?? "辨識中");
@@ -50,7 +50,7 @@ export function materialMeta(m: Material): string {
   if (m.page_count) parts.push(`${m.page_count} 頁`);
   if (m.has_file) parts.push(formatBytes(m.size_bytes));
   if (m.annotation_count > 0) parts.push(`${m.annotation_count} 則註記`);
-  return parts.join(" · ");
+  return parts;
 }
 
 /** 「用在：L3 第 2 節、…」 or 「還沒有用在課例」. */

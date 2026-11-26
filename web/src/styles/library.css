@@ -529,17 +529,6 @@
   white-space: nowrap;
 }
 
-.lib-owner.is-platform::before {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  margin-right: var(--space-2xs);
-  border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  content: "";
-  vertical-align: 0.1em;
-}
-
 .lib-card-category {
   flex: none;
   color: var(--color-muted);

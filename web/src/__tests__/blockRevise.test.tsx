@@ -971,10 +971,10 @@ describe("編輯器: 鷹架與字詞表", () => {
     const list = within(panel.getByRole("list", { name: "鷹架與字詞表的修改" }));
     const rows = list.getAllByRole("listitem");
     expect(rows).toHaveLength(3);
-    expect(rows[0]).toHaveTextContent("修改 鷹架・句型框架：The opening event is ___.");
+    expect(rows[0]).toHaveTextContent("修改 鷹架（句型框架）：The opening event is ___.");
     expect(rows[0]).toHaveTextContent("原本：The first event is ___.");
-    expect(rows[1]).toHaveTextContent("刪除 字詞表・umbrella：雨傘");
-    expect(rows[2]).toHaveTextContent("刪除 字詞表・identify");
+    expect(rows[1]).toHaveTextContent("刪除 字詞表（umbrella）：雨傘");
+    expect(rows[2]).toHaveTextContent("刪除 字詞表（identify）");
     expect(within(rows[1]!).getByText("雨傘").tagName).toBe("DEL");
 
     await user.click(panel.getByRole("button", { name: "採用" }));

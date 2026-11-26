@@ -90,7 +90,7 @@ export function PromptsEditor() {
     <section className="panel-card prompts-panel" aria-labelledby="prompts-heading">
       <div className="card-heading">
         <h2 id="prompts-heading">提示詞版本</h2>
-        <span className="soft-tag">{list ? `${list.prompts.length} 個提示詞 · 每個顯示最新版` : "每個提示詞的最新版"}</span>
+        <span className="soft-tag">{list ? `${list.prompts.length} 個提示詞，每個顯示最新版` : "每個提示詞的最新版"}</span>
       </div>
       <p className="field-hint">
         按下提示詞展開來編輯。每次儲存都會新增一個版本，舊版本都留著，可以查看、比較或還原。
@@ -303,7 +303,7 @@ function PromptCard({
       <div className="card-heading">
         <strong>{prompt.prompt_key}</strong>
         <span className="soft-tag">
-          {prompt.version_no > 0 ? `v${prompt.version_no} · ${formatDateTime(prompt.created_at)}` : "新 key"}
+          {prompt.version_no > 0 ? `v${prompt.version_no}，${formatDateTime(prompt.created_at)}` : "新 key"}
         </span>
       </div>
       {info ? (
@@ -442,9 +442,9 @@ function History({ prompt, onRestored }: { prompt: PromptVersion; onRestored: (p
                     <strong>v{v.version_no}</strong>
                     {v.version_no === prompt.version_no && <span className="soft-tag">使用中</span>}
                     <span className="version-meta">
-                      {formatDateTime(v.created_at)} ·{" "}
+                      {formatDateTime(v.created_at)}，
                       {v.by_me ? "你" : v.created_by_research_id ? v.created_by_research_id : "初始版本"}
-                      {v.restored_from ? ` · 還原自 v${v.restored_from}` : ""}
+                      {v.restored_from ? `，還原自 v${v.restored_from}` : ""}
                     </span>
                     {v.version_no !== prompt.version_no && (
                       <button

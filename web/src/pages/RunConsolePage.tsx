@@ -16,6 +16,7 @@ import { runQueueScope } from "../lib/runs";
 import { logScaffold } from "../lib/scaffold";
 import { useTapper } from "../lib/useTapper";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 /** The console re-reads the run this often while class is on (bookmarks from a paired phone). */
 export const RUN_POLL_MS = 20_000;
@@ -105,7 +106,7 @@ export function RunConsolePage() {
   if (loadError) return <ErrorText message={loadError} />;
   if (!detail) return <Loading />;
 
-  const context = [detail.class_name, detail.unit_title].filter(Boolean).join(" · ");
+  const context = [detail.class_name, detail.unit_title];
 
   if (!open) {
     return (
@@ -122,7 +123,7 @@ export function RunConsolePage() {
         </p>
         <div className="page-head">
           <h1 id="run-heading">{detail.lesson_title}</h1>
-          <p className="lead">{context}</p>
+          <MetaList className="lead" items={context} />
         </div>
         <Notice tone="info">
           這節課已在 {formatClock(detail.ended_at, false)} 結束。書籤可以在回顧頁補寫或更正。{" "}
@@ -137,7 +138,7 @@ export function RunConsolePage() {
   return (
     <section aria-labelledby="run-heading">
       <TopBarSlot>
-        <span className="top-status">上課中 · {state.pending === 0 ? "已同步" : `${state.pending} 筆待同步`}</span>
+        <span className="top-status">上課中，{state.pending === 0 ? "已同步" : `${state.pending} 筆待同步`}</span>
         <button
           type="button"
           className="text-link is-plain top-exit"
@@ -165,7 +166,7 @@ export function RunConsolePage() {
 
       <div className="console-top">
         <div>
-          <p className="quiet-note">{context}</p>
+          <MetaList className="quiet-note" items={context} />
           <h1 id="run-heading">{detail.lesson_title}</h1>
         </div>
         <time className="clock" aria-label="已上課時間">

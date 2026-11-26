@@ -8,6 +8,7 @@ import { useApp } from "../context/AppContext";
 import { usedByText } from "../lib/classes";
 import { UNIT_IDEAS_STATUS } from "../lib/labels";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 /** 加到班級: which classes use one unit. Each tick is saved at once. */
 function AssignClasses({
@@ -254,10 +255,13 @@ export function LibraryPage() {
                   <h3>
                     <Link to={`/units/${unit.id}`}>{unit.title}</Link>
                   </h3>
-                  <p className="meta">
-                    {unit.lesson_count === 0 ? "還沒有課例" : `${unit.lesson_count} 節課例`} ·{" "}
-                    {UNIT_IDEAS_STATUS[unit.core_status]}
-                  </p>
+                  <MetaList
+                    className="meta"
+                    items={[
+                      unit.lesson_count === 0 ? "還沒有課例" : `${unit.lesson_count} 節課例`,
+                      UNIT_IDEAS_STATUS[unit.core_status],
+                    ]}
+                  />
                 </div>
                 <p className="side">
                   <span>{usedByText(used)}</span>

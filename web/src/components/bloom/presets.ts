@@ -71,11 +71,11 @@ export function nonZeroCounts(counts: BloomCounts): Partial<BloomCounts> {
   return out;
 }
 
-/** 「記憶 1・理解 2・應用 2」 */
+/** 「記憶 1、理解 2、應用 2」 */
 export const countsLine = (counts: BloomCounts): string =>
   BLOOM_LEVELS.filter((l) => counts[l] > 0)
     .map((l) => `${BLOOM_ZH[l]} ${counts[l]}`)
-    .join("・");
+    .join("、");
 
 /** 「約 20 分鐘」 */
 export const minutesLine = (total: number): string => `約 ${Math.round(total * MINUTES_PER_QUESTION)} 分鐘`;

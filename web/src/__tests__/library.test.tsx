@@ -23,6 +23,7 @@ import {
   templateCard,
   type MockCall,
 } from "../test/mockApi";
+import { getMeta } from "../test/metaList";
 
 const MATERIALS = "/api/browse/materials";
 const TEMPLATES = "/api/browse/templates";
@@ -334,7 +335,7 @@ describe("平台教材 (/reference)", () => {
     const exam = card(paper.title);
     expect(exam.getByText("PDF", { selector: ".lib-badge" })).toBeInTheDocument();
     expect(exam.getByText("學習單？", { selector: ".lib-badge" })).toBeInTheDocument();
-    expect(exam.getByText("PDF · 7 頁 · 約 2,900 字")).toBeInTheDocument();
+    getMeta(["PDF", "7 頁", "約 2,900 字"]);
     expect(within(exam.getByRole("list", { name: "標籤" })).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
       "114",
       "試題",
@@ -348,12 +349,12 @@ describe("平台教材 (/reference)", () => {
 
     const pasted = card(syllabus.title);
     expect(pasted.getByText("文字", { selector: ".lib-badge" })).toBeInTheDocument();
-    expect(pasted.getByText("貼上的文字 · 6 段")).toBeInTheDocument();
+    getMeta(["貼上的文字", "6 段"]);
     expect(pasted.queryByText("學習單？")).not.toBeInTheDocument();
 
     // Without text it cannot be used for questions.
     const scanned = card(scan.title);
-    expect(scanned.getByText("PDF · 2 頁 · 沒有可選取的文字")).toBeInTheDocument();
+    getMeta(["PDF", "2 頁", "沒有可選取的文字"]);
     expect(scanned.getByRole("button", { name: `用這篇出題「${scan.title}」` })).toBeDisabled();
   });
 
@@ -524,7 +525,7 @@ describe("從教材挑選 (the picker)", () => {
     const dialog = within(await screen.findByRole("dialog", { name: "從範本挑選" }));
     const tcard = within(await dialog.findByRole("article", { name: platformTemplate.title }));
     expect(tcard.getByText("平台範本", { selector: ".lib-badge" })).toBeInTheDocument();
-    expect(tcard.getByText("4 區 · 英文指示 · 閱讀理解")).toBeInTheDocument();
+    getMeta(["4 區", "英文指示", "閱讀理解"]);
     expect(tcard.getByText("Manna 範本")).toBeInTheDocument();
     expect(Array.from(tcard.getByText("Main idea").closest("ol")!.children).map((li) => li.textContent)).toEqual([
       "Warm-up: [主題]",

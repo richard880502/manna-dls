@@ -381,7 +381,7 @@ function DraftField({
         <label className="manna-label" htmlFor={id}>
           <span className="star" aria-hidden="true" />
           {name}
-          {draft.category ? ` · ${CATEGORY_LABEL[draft.category]}` : ""}
+          {draft.category ? `：${CATEGORY_LABEL[draft.category]}` : ""}
         </label>
         <label className="objective-draft-use">
           <input

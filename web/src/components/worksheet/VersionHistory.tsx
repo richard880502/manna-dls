@@ -249,7 +249,7 @@ export function VersionHistoryDialog({
           onClick={() => pick(r.version_no)}
         >
           <span className="ws-history-label">
-            第 {r.version_no} 版・{versionLabel(r, r.version_no === oldest)}
+            第 {r.version_no} 版：{versionLabel(r, r.version_no === oldest)}
           </span>
           {r.snapshot && (
             <span className="ws-history-snap">
@@ -316,7 +316,7 @@ export function VersionHistoryDialog({
                             })
                           }
                         >
-                          手動編輯 ×{e.rows.length}・{clock(first.created_at)}–{clock(e.rows[0]!.created_at)}
+                          手動編輯 ×{e.rows.length}，{clock(first.created_at)} 到 {clock(e.rows[0]!.created_at)}
                         </button>
                         {expanded && <ol className="ws-history-sublist">{e.rows.map(renderRow)}</ol>}
                       </li>

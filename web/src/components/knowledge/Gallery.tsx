@@ -9,6 +9,7 @@ import { cardTitle, fileTypeLabel, materialCardMeta } from "../library/labels";
 import { Dialog } from "../Dialog";
 import { MaterialContent } from "../material/MaterialViewer";
 import "./knowledge.css";
+import { MetaList } from "../MetaList";
 
 /** Uploaded PDFs and images have a preview image (docs/API.md「知識庫：教材牆與預覽圖」). */
 export const hasThumbnail = (card: Pick<MaterialCardData, "file_type">) =>
@@ -120,7 +121,7 @@ function GalleryCard({ card, onOpen }: { card: MaterialCardData; onOpen: (opened
               <span className="kb-card-title-text">{cardTitle(card)}</span>
             </button>
           </h3>
-          <p className="lib-card-meta">{[card.category, materialCardMeta(card)].filter(Boolean).join(" · ")}</p>
+          <MetaList className="lib-card-meta" items={[card.category, ...materialCardMeta(card)]} />
           <div className="kb-card-tags">
             <TagList tags={card.tags} />
           </div>
@@ -143,7 +144,7 @@ function PreviewDialog({ opened, onClose }: { opened: Opened; onClose: () => voi
   const page = card.file_type === "pdf" ? thumb : null;
   return (
     <Dialog title={title} size="large" returnFocus={returnFocus} onClose={onClose}>
-      <p className="kb-preview-meta">{[card.category, materialCardMeta(card), ocr].filter(Boolean).join(" · ")}</p>
+      <MetaList className="kb-preview-meta" items={[card.category, ...materialCardMeta(card), ocr]} />
       {card.tags.length > 0 && (
         <ul className="lib-tags" aria-label="標籤">
           {card.tags.map((t) => (

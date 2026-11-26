@@ -5,6 +5,7 @@ import type { Pairing, RemoteDevice } from "../../api/types";
 import { DEVICE_TYPE_LABELS, formatClock } from "../../lib/labels";
 import { logScaffold } from "../../lib/scaffold";
 import { ErrorText, Notice } from "../common";
+import { MetaList } from "../MetaList";
 
 /** Draws `value` as a QR code (SVG rects, no innerHTML). */
 export function QrCode({ value, label, size = 220 }: { value: string; label: string; size?: number }) {
@@ -136,8 +137,13 @@ export function QrPanel({ runId, remotes, onChanged }: QrPanelProps) {
         <ul className="remote-list">
           {remotes.map((r) => (
             <li key={r.id}>
-              {DEVICE_TYPE_LABELS[r.device_type]} · {formatClock(r.paired_at, false)} 配對
-              {r.last_seen_at ? ` · 最近連線 ${formatClock(r.last_seen_at, false)}` : ""}
+              <MetaList
+                items={[
+                  DEVICE_TYPE_LABELS[r.device_type],
+                  `${formatClock(r.paired_at, false)} 配對`,
+                  r.last_seen_at ? `最近連線 ${formatClock(r.last_seen_at, false)}` : null,
+                ]}
+              />
             </li>
           ))}
         </ul>

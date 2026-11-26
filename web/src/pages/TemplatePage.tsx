@@ -25,6 +25,7 @@ import {
 } from "../lib/templates";
 import { ANSWER_FORMATS, BLOCK_KIND_LABEL, toggleIn } from "../lib/worksheet";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const ITEM_COUNTS = Array.from({ length: MAX_ITEMS - MIN_ITEMS + 1 }, (_, i) => MIN_ITEMS + i);
 
@@ -509,7 +510,7 @@ function TemplateFacts({ content }: { content: WsTemplate }) {
   ].filter((f) => f !== "");
   return (
     <div className="template-facts">
-      <p className="meta">{facts.join(" · ")}</p>
+      <MetaList className="meta" items={facts} />
       {content.generation_options.length > 0 && (
         <p className="meta">產生設定：{content.generation_options.join("、")}</p>
       )}

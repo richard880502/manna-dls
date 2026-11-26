@@ -147,7 +147,7 @@ export function WorksheetMaterialPane(props: MaterialPaneProps) {
   return (
     <section className="ws-material" aria-label="教材">
       <div className="ws-material-head">
-        <h2>教材{material.title.trim() ? ` · ${material.title.trim()}` : ""}</h2>
+        <h2>教材{material.title.trim() ? `：${material.title.trim()}` : ""}</h2>
         {!empty && (
           <button type="button" className="text-link is-plain" aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? "收起" : "展開"}

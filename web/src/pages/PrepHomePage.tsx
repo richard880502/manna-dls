@@ -76,6 +76,7 @@ import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
 import { formatDateTime } from "../lib/worksheet";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 const RECENT_SHOWN = 5;
 
@@ -113,11 +114,10 @@ function RecentSessions() {
               <h3>
                 <Link to={`/prep/${s.id}`}>{sessionTitle(s)}</Link>
               </h3>
-              <p className="meta">
-                {[s.last_kind ? (KIND_LABEL[s.last_kind] ?? null) : null, formatDateTime(s.updated_at)]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </p>
+              <MetaList
+                className="meta"
+                items={[s.last_kind ? (KIND_LABEL[s.last_kind] ?? null) : null, formatDateTime(s.updated_at)]}
+              />
             </div>
           </li>
         ))}

@@ -20,6 +20,7 @@ import {
 } from "./prefill";
 import { useListPoll } from "./useListPoll";
 import { useUploadQueue, type QueueRow } from "./useUploadQueue";
+import { MetaList } from "../MetaList";
 
 const prefill = (path: string) => ({
   title: titleFromPath(path),
@@ -71,11 +72,11 @@ function OcrState({ material, prefix = "" }: { material: AdminLibraryMaterial; p
 
 /** What an uploaded row says: added, and whether its text could be read (or is being read). */
 function Uploaded({ material }: { material: AdminLibraryMaterial }) {
-  if (ocrOpen(material.ocr) || ocrFailed(material.ocr)) return <OcrState material={material} prefix="已加入 · " />;
+  if (ocrOpen(material.ocr) || ocrFailed(material.ocr)) return <OcrState material={material} prefix="已加入：" />;
   const unreadable = material.text_status === "no_text" || material.text_status === "failed";
   return (
     <span className={`adlib-state ${unreadable ? "is-warn" : "is-done"}`}>
-      已加入 · {materialMeta(material)}
+      已加入：{materialMeta(material).join("，")}
     </span>
   );
 }
@@ -139,18 +140,17 @@ export function MaterialsTab({ onBusy }: { onBusy?: (busy: boolean) => void }) {
         filters={filters}
         onFilters={setFilters}
         renderMeta={(m) => (
-          <p className="meta">
-            <OcrState material={m} />
-            {[
+          <MetaList
+            className="meta"
+            items={[
+              (ocrOpen(m.ocr) || ocrFailed(m.ocr)) && <OcrState key="ocr" material={m} />,
               m.category || "未分類",
-              materialMeta(m),
+              ...materialMeta(m),
               m.size_bytes > 0 ? formatBytes(m.size_bytes) : null,
               m.uploaded_by ? `${m.uploaded_by} 上傳` : null,
               formatDate(m.created_at),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
+            ]}
+          />
         )}
         save={adminLibraryApi.updateMaterial}
         remove={adminLibraryApi.deleteMaterial}

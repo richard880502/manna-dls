@@ -36,7 +36,7 @@ interface MannaWellProps {
  * of it is written into the lesson until the teacher presses 採用 or finishes 修改後採用.
  */
 export function MannaWell({ label, children, onAdopt, onEdit, onDismiss, onAgain, againLabel = "換一個" }: MannaWellProps) {
-  const name = `Manna 建議 · ${label}`;
+  const name = `Manna 建議：${label}`;
   return (
     <div className="manna-well" role="group" aria-label={name}>
       <p className="manna-label">
@@ -250,10 +250,10 @@ export function RedoPending({
   if (!job) return null;
   if (job.status === "running") {
     return (
-      <div className="manna-well manna-progress" role="status" aria-label={`Manna 正在重新建議 · ${label}`}>
+      <div className="manna-well manna-progress" role="status" aria-label={`Manna 正在重新建議：${label}`}>
         <p className="manna-label">
           <span className="star is-working" aria-hidden="true" />
-          Manna 正在重新建議 · {label}
+          Manna 正在重新建議：{label}
         </p>
         {job.queue ? (
           <QueueLine queue={job.queue} onCancelled={onCancelled} />
@@ -268,7 +268,7 @@ export function RedoPending({
     <div className="manna-well" role="status">
       <p className="manna-label">
         <span className="star" aria-hidden="true" />
-        Manna 建議 · {label}
+        Manna 建議：{label}
       </p>
       <AiStatusMessage status={job.result?.status ?? "error"} message={job.result?.message ?? null} />
       <div className="decide">

@@ -133,7 +133,7 @@ describe("版本紀錄裡有名字的版本", () => {
     // 8 stays a row; 7 is a lone edit between 8 and the snapshot 6, so it stays a row too; 5+4 fold.
     expect(within(list).getByRole("button", { name: /第 8 版/ })).toBeInTheDocument();
     expect(within(list).getByRole("button", { name: /第 7 版/ })).toBeInTheDocument();
-    const group = within(list).getByRole("button", { name: "手動編輯 ×2・17:02–17:05" });
+    const group = within(list).getByRole("button", { name: "手動編輯 ×2，17:02 到 17:05" });
     expect(group).toHaveAttribute("aria-expanded", "false");
     expect(within(list).queryByRole("button", { name: /第 5 版/ })).not.toBeInTheDocument();
     await user.click(group);

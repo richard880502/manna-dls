@@ -18,7 +18,7 @@ function ListedWords({ title, note, words }: { title: string; note: string; word
       </h3>
       <p className="quiet-note">{note}</p>
       <p className="en ws-word-run">
-        {words.map((w) => (w.count > 1 ? `${w.word} ×${w.count}` : w.word)).join(" · ")}
+        {words.map((w) => (w.count > 1 ? `${w.word} ×${w.count}` : w.word)).join(", ")}
       </p>
     </section>
   );
@@ -219,10 +219,10 @@ export function VocabCheckPanel({ id, ctl, inDialog = false }: { id: number; ctl
                     <i style={{ width: `${Math.round((d.types / maxTypes) * 100)}%` }} />
                   </td>
                   <td>
-                    {d.types} 個 · {percent(d.type_ratio)}
+                    {d.types} 個（{percent(d.type_ratio)}）
                   </td>
                   <td>
-                    {d.tokens} 次 · {percent(d.token_ratio)}
+                    {d.tokens} 次（{percent(d.token_ratio)}）
                   </td>
                 </tr>
               ))}
@@ -306,7 +306,7 @@ export function VocabCheckPanel({ id, ctl, inDialog = false }: { id: number; ctl
               <p className="en ws-word-run">
                 {a.ambiguous_forms
                   .map((f) => `${f.word} → ${f.base}（${f.level}${f.also_listed_level ? `／${f.also_listed_level}` : ""}）`)
-                  .join(" · ")}
+                  .join(", ")}
               </p>
             </section>
           )}
@@ -315,7 +315,7 @@ export function VocabCheckPanel({ id, ctl, inDialog = false }: { id: number; ctl
               <h3>規則衍生的推定對應（{a.derived_matches.length}）</h3>
               <p className="quiet-note">詞彙表不列規則衍生詞，這些是依字首字尾規則推回原詞的級別。</p>
               <p className="en ws-word-run">
-                {a.derived_matches.map((f) => `${f.word} → ${f.base}（${f.level}）`).join(" · ")}
+                {a.derived_matches.map((f) => `${f.word} → ${f.base}（${f.level}）`).join(", ")}
               </p>
             </section>
           )}
@@ -324,7 +324,7 @@ export function VocabCheckPanel({ id, ctl, inDialog = false }: { id: number; ctl
               <h3>多級別詞（{a.multi_level_words.length}）</h3>
               <p className="quiet-note">詞彙表把這些詞列在不只一級，取最低級。</p>
               <p className="en ws-word-run">
-                {a.multi_level_words.map((m) => `${m.base}（${m.levels.join("／")}，用 ${m.used_level}）`).join(" · ")}
+                {a.multi_level_words.map((m) => `${m.base}（${m.levels.join("／")}，用 ${m.used_level}）`).join(", ")}
               </p>
             </section>
           )}

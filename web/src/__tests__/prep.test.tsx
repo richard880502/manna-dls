@@ -1135,7 +1135,7 @@ describe("the shell around a session", () => {
       "GET /api/materials/5/annotations": [],
     });
     renderApp("/worksheets/11");
-    expect(await screen.findByRole("link", { name: "← 回到備課對話" })).toHaveAttribute("href", "/prep/7");
+    expect(await screen.findByRole("link", { name: "回到備課對話" })).toHaveAttribute("href", "/prep/7");
   });
 });
 

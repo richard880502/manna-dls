@@ -196,7 +196,7 @@ describe("建立: the generator", () => {
     mockApi(routes());
     await open("/create/tiered");
     expect(within(screen.getByRole("group", { name: "題數" })).getByText("6")).toBeInTheDocument();
-    expect(summaryText()).toBe("6 題 · 記憶 1・理解 1・應用 1・分析 1・評鑑 1・創造 1 · 約 15 分鐘");
+    expect(summaryText()).toBe("6 題，記憶 1、理解 1、應用 1、分析 1、評鑑 1、創造 1，約 15 分鐘");
   });
 
   it("差異化學習單: the renamed title, the new subtitle, and only open answer formats", async () => {
@@ -241,14 +241,14 @@ describe("建立: the generator", () => {
       "評鑑",
       "創造",
     ]);
-    expect(summaryText()).toBe("8 題 · 記憶 1・理解 2・應用 2・分析 1・評鑑 1・創造 1 · 約 20 分鐘");
+    expect(summaryText()).toBe("8 題，記憶 1、理解 2、應用 2、分析 1、評鑑 1、創造 1，約 20 分鐘");
     // A label on the spec's forbidden list (§5) never shows.
     expect(screen.queryByText(/高層次思考/)).not.toBeInTheDocument();
 
     await user.click(bloom.getByRole("radio", { name: "深度思考" }));
-    expect(summaryText()).toBe("8 題 · 分析 2・評鑑 3・創造 3 · 約 20 分鐘");
+    expect(summaryText()).toBe("8 題，分析 2、評鑑 3、創造 3，約 20 分鐘");
     await user.click(screen.getByRole("button", { name: "題數：少一題" }));
-    expect(summaryText()).toBe("7 題 · 分析 2・評鑑 3・創造 2 · 約 18 分鐘");
+    expect(summaryText()).toBe("7 題，分析 2、評鑑 3、創造 2，約 18 分鐘");
   });
 
   it("自訂 starts from the chosen preset, has a stepper per level, and holds 產生 back outside 3–30", async () => {
@@ -266,7 +266,7 @@ describe("建立: the generator", () => {
     expect(screen.queryByRole("group", { name: "題數" })).not.toBeInTheDocument();
 
     await user.click(custom.getByRole("button", { name: "創造：多一題" }));
-    expect(summaryText()).toBe("9 題 · 記憶 3・理解 3・應用 2・創造 1 · 約 23 分鐘");
+    expect(summaryText()).toBe("9 題，記憶 3、理解 3、應用 2、創造 1，約 23 分鐘");
 
     for (const level of ["記憶", "記憶", "記憶", "理解", "理解", "理解", "應用", "應用"]) {
       await user.click(custom.getByRole("button", { name: `${level}：少一題` }));
@@ -441,7 +441,7 @@ describe("建立: the generator", () => {
     } else {
       expect(screen.queryByRole("combobox", { name: "版型" })).not.toBeInTheDocument();
     }
-    if (!shows.bloom) expect(summaryText()).toBe("課堂活動 · 引起動機到統整的一節課流程");
+    if (!shows.bloom) expect(summaryText()).toBe("課堂活動：引起動機到統整的一節課流程");
 
     await user.click(screen.getByRole("button", { name: "用範例試試" }));
     await user.click(generate());

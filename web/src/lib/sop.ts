@@ -143,7 +143,7 @@ const blank = (s: string | null | undefined) => !s || !s.trim();
 export function stageSummary(step: number, material: SopMaterial | null, content: SopContent): string | null {
   switch (step) {
     case 1:
-      return material ? `${material.paragraphs.length} 段 · ${material.word_count} 字` : null;
+      return material ? `${material.paragraphs.length} 段，${material.word_count} 字` : null;
     case 2: {
       const a = content.analysis;
       const n = a.paragraphs.filter((p) => !blank(p.function) || !blank(p.summary) || p.features.length > 0).length;
@@ -166,7 +166,7 @@ export function stageSummary(step: number, material: SopMaterial | null, content
       const activities = content.warmup.background.filter((b) => !blank(b.text)).length;
       const words = content.warmup.vocabulary.filter((v) => !blank(v.word)).length;
       if (activities === 0 && words === 0) return null;
-      return [activities > 0 ? `${activities} 個活動` : "", words > 0 ? `${words} 個字彙` : ""].filter(Boolean).join(" · ");
+      return [activities > 0 ? `${activities} 個活動` : "", words > 0 ? `${words} 個字彙` : ""].filter(Boolean).join("，");
     }
     case 7: {
       const n = content.exit_ticket.items.filter((i) => !blank(i.text)).length;

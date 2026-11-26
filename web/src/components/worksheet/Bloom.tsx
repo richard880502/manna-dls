@@ -120,7 +120,7 @@ export function BloomDistribution({
                 type="button"
                 className={`bloom-seg ${bloomClass(s.id)}${filter === s.id ? " is-active" : ""}`}
                 style={{ flexGrow: s.count }}
-                title={`${s.title} · ${s.count}`}
+                title={`${s.title}：${s.count}`}
                 aria-label={`只看${s.label}（${s.count} 題）`}
                 aria-pressed={filter === s.id}
                 onClick={() => onFilter(filter === s.id ? null : s.id)}
@@ -136,7 +136,7 @@ export function BloomDistribution({
                 key={s.id}
                 className={`bloom-seg ${bloomClass(s.id)}`}
                 style={{ flexGrow: s.count }}
-                title={`${s.title} · ${s.count}`}
+                title={`${s.title}：${s.count}`}
               >
                 {s.count}
               </span>

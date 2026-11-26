@@ -82,7 +82,7 @@ export function HelpPanel({
     <aside className="help-panel is-open" aria-label="需要協助" aria-live="polite">
       <div className="card-heading">
         <div>
-          <p className="eyebrow warm">需要協助 · {focusLabel}</p>
+          <p className="eyebrow warm">{focusLabel}</p>
           <h3>
             {question.id} {question.prompt}
           </h3>

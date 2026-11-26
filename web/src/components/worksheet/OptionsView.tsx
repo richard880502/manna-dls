@@ -44,6 +44,7 @@ import { Chip } from "./Chips";
 import { scrollToEl } from "../../lib/scroll";
 import { TemplateOption } from "./TemplateOption";
 import type { WorksheetController } from "./useWorksheet";
+import { MetaList } from "../MetaList";
 
 type ListField = "material_types" | "student_tasks" | "answer_formats" | "generation";
 
@@ -271,7 +272,7 @@ export function OptionsView({ ws, onGenerated, onBack, onEditText, onPickParagra
       {onBack && !running && (
         <p className="ws-options-back">
           <button type="button" className="secondary-button small-button" onClick={onBack}>
-            ← 回到學習單
+            回到學習單
           </button>
           <span className="quiet-note">不重新產生，學習單維持現在的樣子。</span>
         </p>
@@ -431,7 +432,7 @@ export function OptionsView({ ws, onGenerated, onBack, onEditText, onPickParagra
             onChange={(e) => ws.setRequest(e.target.value)}
           />
           <p className="field-hint ws-count" id={`${ids}-ask-count`}>
-            選填 · {request.length}/{REQUEST_MAX}
+            選填：{request.length}/{REQUEST_MAX}
           </p>
         </div>
       </section>
@@ -631,9 +632,7 @@ export function OptionsView({ ws, onGenerated, onBack, onEditText, onPickParagra
         </div>
       ) : (
         <div className="ws-gen-bar">
-          <p className="ws-summary" role="status" aria-label="這次會出">
-            {planSummary(plan.counts)}
-          </p>
+          <MetaList className="ws-summary" role="status" aria-label="這次會出" items={planSummary(plan.counts)} />
           <span className="ws-grow" />
           {onBack && !running && (
             <button type="button" className="ghost-button" onClick={onBack}>

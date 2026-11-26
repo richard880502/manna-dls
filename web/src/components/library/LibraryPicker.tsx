@@ -70,7 +70,7 @@ function PickerPreview({ preview, onBack }: { preview: Preview; onBack: () => vo
     <section className="picker-preview" aria-label={`${PREVIEW}「${preview.title}」`}>
       <div className="picker-preview-bar">
         <button ref={backRef} type="button" className="text-link is-plain" onClick={onBack}>
-          ← 回到列表
+          回到列表
         </button>
         {preview.choose && (
           <button type="button" className="primary-button small-button" onClick={preview.choose}>

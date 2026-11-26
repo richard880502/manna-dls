@@ -9,6 +9,7 @@ import { useApp } from "../context/AppContext";
 import { formatDateTime } from "../lib/labels";
 import { PREFERENCE_SOURCE_LABELS, answersFrom } from "../lib/preferences";
 import { useDocumentTitle } from "../lib/useDocumentTitle";
+import { MetaList } from "../components/MetaList";
 
 /**
  * 我的備課偏好: edit P1–P5; every save creates a new version (source "settings"). It is optional
@@ -50,18 +51,22 @@ export function PreferencesPage() {
     }
   }
 
-  let versionLabel = "尚未設定";
-  if (preferences) {
-    versionLabel = `目前第 ${preferences.version_no} 版（${formatDateTime(preferences.created_at)}・${
-      PREFERENCE_SOURCE_LABELS[preferences.source] ?? preferences.source
-    }${preferences.skipped ? "・當時略過" : ""}）`;
-  }
+  const versionFacts = preferences
+    ? [
+        `目前第 ${preferences.version_no} 版`,
+        <time key="saved" dateTime={preferences.created_at}>
+          {formatDateTime(preferences.created_at)}
+        </time>,
+        PREFERENCE_SOURCE_LABELS[preferences.source] ?? preferences.source,
+        preferences.skipped ? "當時略過" : null,
+      ]
+    : ["尚未設定"];
 
   return (
     <section aria-labelledby="prefs-heading">
       <div className="page-intro">
-        <p className="eyebrow">{versionLabel}</p>
         <h1 id="prefs-heading">我的備課偏好</h1>
+        <MetaList className="quiet-note" items={versionFacts} />
         <p>
           想填再填。這些回答幫 Manna 調整建議的方式與長度；偏好只改「預設」，不會隱藏任何功能，每次儲存都會保留舊版本。班級特性寫在各班的班級頁。
         </p>

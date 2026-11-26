@@ -161,7 +161,7 @@ describe("建立: 內容目標與語言目標", () => {
     expect(drafts.getByText(`怎麼檢核：${content.check_zh}`)).toBeInTheDocument();
     // The 語言目標: its kind (strategy first) and how it serves the 內容目標.
     const l1 = within(drafts.getByRole("group", { name: "語言目標 L1" }));
-    expect(l1.getByText(/語言目標 L1 · 學習策略/)).toBeInTheDocument();
+    expect(l1.getByText(/語言目標 L1：學習策略/)).toBeInTheDocument();
     expect(l1.getByText(language.relation_zh!)).toBeInTheDocument();
     expect(drafts.queryByRole("button", { name: /^(採用|修改|改寫)/ })).not.toBeInTheDocument();
 

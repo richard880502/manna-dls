@@ -118,7 +118,7 @@ function MyMaterials() {
         </div>
         {library && (
           <p className="materials-usage">
-            {library.usage.count} 份 · 檔案已使用 {formatBytes(library.usage.used_bytes)}／
+            {library.usage.count} 份，檔案已使用 {formatBytes(library.usage.used_bytes)}／
             {formatBytes(library.usage.quota_bytes)}
           </p>
         )}

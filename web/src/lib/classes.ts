@@ -30,15 +30,14 @@ export function useActiveClass(unit: Pick<Unit, "classes"> | null | undefined): 
   return { classes, active, choose: setCurrentClassId };
 }
 
-/** 「高一 · 普高 · 英文閱讀選修 · 115 上學期」: only the parts that are filled in. */
+/** 「高一」「普高」「英文閱讀選修」「115 學年度 上學期」, one item each: only the parts that are filled in. */
 export function classSubtitle(
   c: Pick<SchoolClass, "grade" | "school_track" | "course_label" | "school_year" | "term">,
   withTrack = false,
-): string {
+): string[] {
   const yearTerm = [c.school_year && `${c.school_year} 學年度`, c.term].filter(Boolean).join(" ");
   return [c.grade, withTrack ? SCHOOL_TRACK_LABELS[c.school_track] : "", c.course_label, yearTerm]
-    .filter(Boolean)
-    .join(" · ");
+    .filter(Boolean);
 }
 
 /** 「高一 3 班、高一 7 班在用」 / 「還沒有班級在用」. */

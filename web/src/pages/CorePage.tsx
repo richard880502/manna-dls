@@ -519,7 +519,7 @@ export function CorePage() {
             <p className="field-hint">留白或選「目前沒有想法」都可以完成；完成後仍可回來修改。</p>
             <p className="core-next">
               <Link to={`/units/${unitId}`}>
-                {route === "activity" ? "下一步：回到單元頁繼續寫課例 →" : "下一步：到單元頁建立或打開課例 →"}
+                {route === "activity" ? "下一步：回到單元頁繼續寫課例" : "下一步：到單元頁建立或打開課例"}
               </Link>
             </p>
           </div>
