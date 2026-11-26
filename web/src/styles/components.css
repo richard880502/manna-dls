@@ -948,3 +948,11 @@ summary {
 .copy-labels > .is-inactive {
   visibility: hidden;
 }
+
+/* An Icon standing where a text symbol (×, ‹, ▾ …) used to be: one em, so the button around it keeps its size. */
+.ui-icon.is-glyph {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+}

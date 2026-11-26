@@ -4,6 +4,7 @@ import { api, errorMessage } from "../api/client";
 import type { LessonRun, SchoolClass } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { formatShortDate } from "../lib/labels";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 function RunRow({ run, showClass }: { run: LessonRun; showClass: boolean }) {
   const open = run.ended_at === null;
@@ -69,6 +70,7 @@ export function groupRunsByClass(runs: LessonRun[], classes: SchoolClass[]): Run
  * each class page shows its own records, and this page also holds the ones without a class.
  */
 export function RecordIndexPage() {
+  useDocumentTitle("上課紀錄");
   const ids = useId();
   const [runs, setRuns] = useState<LessonRun[] | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);

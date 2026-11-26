@@ -33,6 +33,7 @@ import { ErrorText } from "../common";
 import { QueueLine } from "../RunProgress";
 import { habitWordsSent } from "../memory/MemorySuggestions";
 import { PictureOutcomeList, PrepImageThumbs } from "../prep/ImageAttach";
+import { Icon } from "../Icon";
 
 // ---------------------------------------------------------------- state
 
@@ -692,7 +693,7 @@ export function ProposalPanel({
             disabled={ctl.busy || at === 0}
             onClick={() => go(at - 1)}
           >
-            ‹
+            <Icon name="collapse" className="is-glyph" />
           </button>
           <span role="status" aria-live="polite" aria-atomic="true">
             第 {at + 1} 次（共 {attempts.length} 次）
@@ -704,7 +705,7 @@ export function ProposalPanel({
             disabled={ctl.busy || at === attempts.length - 1}
             onClick={() => go(at + 1)}
           >
-            ›
+            <Icon name="next" className="is-glyph" />
           </button>
         </div>
       )}

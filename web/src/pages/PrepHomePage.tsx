@@ -75,6 +75,7 @@ import { objectiveOptions, type DraftDecision } from "../lib/objectives";
 import { KIND_LABEL, sessionTitle } from "../lib/prep";
 import { useAutoGrow } from "../lib/useAutoGrow";
 import { formatDateTime } from "../lib/worksheet";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const RECENT_SHOWN = 5;
 
@@ -699,6 +700,7 @@ function QuickBox() {
  * are offered in the conversation or by typing them; 更多設定 goes to the full form), and the latest prep sessions.
  */
 export function PrepHomePage() {
+  useDocumentTitle(HOME_HEADING);
   return (
     <OncePerPage>
       <div className="home-head">

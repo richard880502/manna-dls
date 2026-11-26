@@ -63,7 +63,7 @@ export function HelpPanel({
       <aside className="help-panel is-idle" aria-label="需要協助">
         <div className="manna-dialog">
           <div className="manna-avatar star-mascot" aria-hidden="true">
-            ★
+            <span className="star" />
           </div>
           <div>
             <strong>需要協助時再找我</strong>

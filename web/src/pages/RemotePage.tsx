@@ -6,6 +6,7 @@ import { SyncStatus } from "../components/record/EventControls";
 import { TapPad } from "../components/record/TapPad";
 import { detectDeviceType, useRecordSync } from "../lib/recordQueue";
 import { useTapper } from "../lib/useTapper";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const REMOTE_KEY = "manna_dls_remote";
 export const REMOTE_POLL_MS = 30_000;
@@ -61,7 +62,7 @@ function RemoteShell({ title, children }: { title: string; children: ReactNode }
       <main className="remote-shell">
         <header className="remote-head">
           <div className="brand-mark star-mascot" aria-hidden="true">
-            ★
+            <span className="star" />
           </div>
           <div>
             <strong>Manna 遙控器</strong>
@@ -128,6 +129,7 @@ function RemoteConsole({
 
 /** /remote — the phone remote opened from the QR code. No teacher login. */
 export function RemotePage() {
+  useDocumentTitle("Manna 遙控器");
   const deviceType = useMemo(() => detectDeviceType(), []);
   const [code] = useState(() => pairingCodeFromHash(window.location.hash));
   const [session, setSession] = useState<RemoteSession | null>(() => (code ? null : loadRemoteSession()));

@@ -8,6 +8,7 @@ import { OptionsView } from "../components/worksheet/OptionsView";
 import { SaveStatus } from "../components/worksheet/workspace/SaveStatus";
 import { WorksheetWorkspace } from "../components/worksheet/workspace/WorksheetWorkspace";
 import { useFlushOnUnmount, useWorksheet } from "../components/worksheet/useWorksheet";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const defaultMaterialPane: MaterialPaneSlot = (props) => <WorksheetMaterialPane {...props} />;
 
@@ -30,6 +31,7 @@ export function WorksheetPage({ materialPane = defaultMaterialPane }: WorksheetP
 function WorksheetPageBody({ id, materialPane }: { id: number; materialPane: MaterialPaneSlot }) {
   const ws = useWorksheet(id);
   const state = ws.state;
+  useDocumentTitle(state ? state.title || "未命名的學習單" : "學習單");
   /** null: follow the worksheet (options until it was generated, then the result). */
   const [view, setView] = useState<"options" | "result" | null>(null);
   /** 修改課文 / 只選要用的段落, opened from the material column or from a message about the material. */

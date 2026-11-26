@@ -15,6 +15,7 @@ import { detectDeviceType, editOp, removeOp, useRecordSync } from "../lib/record
 import { runQueueScope } from "../lib/runs";
 import { logScaffold } from "../lib/scaffold";
 import { useTapper } from "../lib/useTapper";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /** The console re-reads the run this often while class is on (bookmarks from a paired phone). */
 export const RUN_POLL_MS = 20_000;
@@ -28,6 +29,7 @@ export function RunConsolePage() {
   const runId = Number(useParams().runId);
   const navigate = useNavigate();
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  useDocumentTitle(detail?.lesson_title ?? "上課");
   const [loadError, setLoadError] = useState<string | null>(null);
   const send = useCallback((ops: Parameters<typeof api.syncRunEvents>[1]) => api.syncRunEvents(runId, ops), [runId]);
   const [state, sync] = useRecordSync(runQueueScope(runId), send);

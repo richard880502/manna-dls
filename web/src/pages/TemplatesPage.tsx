@@ -30,6 +30,7 @@ import { mimicTemplatePath } from "../lib/create";
 import { formatDate } from "../lib/labels";
 import { ocrFailed, ocrFailedLine, ocrOpen } from "../lib/ocr";
 import { NO_TEXT_MESSAGE, TEMPLATES_INTRO, templateDeleteConsequences } from "../lib/templates";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
   ["platform", TEMPLATE_AREA_LABEL.platform],
@@ -482,6 +483,7 @@ function Templates() {
 }
 
 export function TemplatesPage() {
+  useDocumentTitle("學習單範本");
   return (
     <OncePerPage>
       <Templates />

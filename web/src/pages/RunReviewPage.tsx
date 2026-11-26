@@ -20,6 +20,7 @@ import {
 import { editOp, removeOp, useRecordSync, type RecordSync, type ViewEvent } from "../lib/recordQueue";
 import { runQueueScope } from "../lib/runs";
 import { logScaffold } from "../lib/scaffold";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 export const FOLLOWUP_MAX_CHARS = 2000;
 
@@ -242,6 +243,7 @@ function ReviewCard({ runId, event, steps, sync, register, onDirtyChange, showPr
 export function RunReviewPage() {
   const runId = Number(useParams().runId);
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  useDocumentTitle(detail?.lesson_title ?? "課後補寫");
   const [loadError, setLoadError] = useState<string | null>(null);
   const send = useCallback((ops: Parameters<typeof api.syncRunEvents>[1]) => api.syncRunEvents(runId, ops), [runId]);
   const [state, sync] = useRecordSync(runQueueScope(runId), send);

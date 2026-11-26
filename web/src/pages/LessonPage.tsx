@@ -17,6 +17,7 @@ import { useActiveClass } from "../lib/classes";
 import { formatClock, formatDate } from "../lib/labels";
 import { startOrResumeRun } from "../lib/runs";
 import { STAGES, stageName, type StageKey } from "../lib/sop";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const stageStorageKey = (lessonId: number) => `manna.lesson.${lessonId}.stage`;
 
@@ -56,6 +57,7 @@ export function LessonPage() {
 function LessonWorkspace({ lessonId }: { lessonId: number }) {
   const navigate = useNavigate();
   const [lesson, setLesson] = useState<LessonDetail | null>(null);
+  useDocumentTitle(lesson?.title ?? "課例");
   const [unit, setUnit] = useState<Unit | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 

@@ -6,6 +6,7 @@ import { LeaveConfirm, useLeaveGuard } from "../components/LeaveGuard";
 import { useApp } from "../context/AppContext";
 import { can } from "../lib/permissions";
 import "../components/adminLibrary/adminLibrary.css";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 type Tab = "materials" | "templates";
 
@@ -19,6 +20,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
  * word list, exam guides) and the platform 學習單範本. pi and kb_manager only; others go home.
  */
 export function AdminLibraryPage() {
+  useDocumentTitle("教材與範本管理");
   const { teacher } = useApp();
   const [params] = useSearchParams();
   // ?tab=templates opens 平台範本. Switching is not a navigation, so it never asks to leave.

@@ -7,6 +7,7 @@ import { Dialog, useDialogGuard } from "../components/Dialog";
 import { UnitIdeas } from "../components/unit/UnitIdeas";
 import { usedByText, useActiveClass } from "../lib/classes";
 import { formatDate } from "../lib/labels";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /** 「高一 3 班、高一 7 班上過」 for one lesson, from the teacher's finished runs. */
 function taughtBy(runs: LessonRun[], lessonId: number): string {
@@ -105,6 +106,7 @@ function NewLessonForm({
 export function UnitPage() {
   const unitId = Number(useParams().unitId);
   const [unit, setUnit] = useState<Unit | null>(null);
+  useDocumentTitle(unit?.title ?? "單元");
   const [lessons, setLessons] = useState<Lesson[] | null>(null);
   const [runs, setRuns] = useState<LessonRun[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);

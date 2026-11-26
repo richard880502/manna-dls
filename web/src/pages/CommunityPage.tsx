@@ -7,6 +7,7 @@ import { MineTab } from "../components/community/MineTab";
 import { Tabs } from "../components/library/Tabs";
 import { useApp } from "../context/AppContext";
 import "../styles/community.css";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const tabFromParam = (value: string | null): CommunityTab =>
   COMMUNITY_TABS.find(([key]) => key === value)?.[0] ?? "explore";
@@ -16,6 +17,7 @@ const tabFromParam = (value: string | null): CommunityTab =>
  * `?tab=`. With the switch off the page does not exist for teachers: it sends them home.
  */
 export function CommunityPage() {
+  useDocumentTitle("社群");
   const { config, communityEnabled } = useApp();
   const ids = useId();
   const [params, setParams] = useSearchParams();
@@ -36,6 +38,7 @@ export function CommunityPage() {
         onChange={(next) => setParams(next === "explore" ? {} : { tab: next }, { replace: true })}
       />
       <div id={`${ids}-panel`} role="tabpanel" className="library-tabpanel">
+        <h2 className="sr-only">{COMMUNITY_TABS.find(([key]) => key === tab)?.[1]}</h2>
         {tab === "explore" && <BrowseTab kind="explore" />}
         {tab === "saved" && <BrowseTab kind="saved" />}
         {tab === "mine" && <MineTab />}

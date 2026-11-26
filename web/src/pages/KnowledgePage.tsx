@@ -17,6 +17,7 @@ import { Tabs } from "../components/library/Tabs";
 import { useApp } from "../context/AppContext";
 import { ITEM_TRACK_LABELS, formatDateTime } from "../lib/labels";
 import { can } from "../lib/permissions";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const CATEGORY_LABELS: Record<string, string> = {
   curriculum: "課綱",
@@ -48,6 +49,7 @@ const KB_TABS: ReadonlyArray<readonly [KbTab, string]> = [
  * index (課綱條目與詞彙, `?tab=curriculum`). Files are uploaded in 教材與範本管理 (上傳教材).
  */
 export function KnowledgePage() {
+  useDocumentTitle("知識庫");
   const { teacher } = useApp();
   const ids = useId();
   const [params, setParams] = useSearchParams();

@@ -6,6 +6,7 @@ import { VersionHistoryDialog } from "../VersionHistory";
 import type { WorksheetController } from "../useWorksheet";
 import { NameVersionDialog } from "./NameVersionDialog";
 import { ToolbarPopover } from "./ToolbarPopover";
+import { Icon } from "../../Icon";
 
 /**
  * 「第 N 版 ▾」: everything about versions in one place. A named version is a version too, so naming
@@ -46,9 +47,7 @@ export function VersionMenu({
         label={
           <>
             第 {state.version_no} 版
-            <span className="export-caret" aria-hidden="true">
-              ▾
-            </span>
+            <Icon name="chevron" className="is-glyph export-caret" />
           </>
         }
         ariaLabel={`版本：第 ${state.version_no} 版`}

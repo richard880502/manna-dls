@@ -10,6 +10,7 @@ import {
   imageFilesOf,
   outcomeNote,
 } from "../../lib/prepImages";
+import { Icon } from "../Icon";
 
 /**
  * Pictures a teacher attaches to a revision (docs/API.md「附上圖片」): chosen, pasted or dropped,
@@ -243,7 +244,7 @@ export function AttachedThumbs({ attach }: { attach: ImageAttach }) {
             aria-label={`移除圖片 ${item.name}`}
             onClick={() => attach.remove(item)}
           >
-            ✕
+            <Icon name="close" className="is-glyph" />
           </button>
         </li>
       ))}

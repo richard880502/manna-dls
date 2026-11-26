@@ -29,6 +29,7 @@ import {
 import { formatDateTime } from "../lib/labels";
 import { PREP_ROUTE_LABELS, ROUTE_CORE_HIGHLIGHTS, effectiveRoute } from "../lib/preferences";
 import { logScaffold } from "../lib/scaffold";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const ROUTE_CORE_NOTES: Record<PrepRoute, string> = {
   goal: "建議先寫標示「建議先寫」的 Q1–Q3：學生要學會什麼、為什麼要學、這次先不教什麼。其他題可以之後再補。",
@@ -45,6 +46,7 @@ type VersionMeta = Pick<CoreVersion, "id" | "version_no" | "completed_at" | "pha
 const cellKey = (focusKey: string, q: QuestionId) => `${focusKey}:${q}`;
 
 export function CorePage() {
+  useDocumentTitle("單元想法");
   const unitId = Number(useParams().unitId);
   const { aiEnabled, routeChoiceEnabled } = useApp();
 

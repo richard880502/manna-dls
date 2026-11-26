@@ -8,6 +8,7 @@ import { STEPWISE_TAG, TOOL_NAME } from "../lib/create";
 import { stepwiseProgress } from "../lib/sop";
 import { DELETE_CONFIRM, NEXT_LABEL, PREP_SESSIONS_CHANGED, sessionTitle } from "../lib/prep";
 import { LEVEL_LABEL, formatDateTime } from "../lib/worksheet";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /** The filter chips. 學習單 covers every worksheet-making kind and the standalone worksheets. */
 type Filter = "all" | "worksheet" | "activity" | "ask" | "stepwise";
@@ -155,6 +156,7 @@ const time = (iso: string) => {
  * list. Every item has 刪除; a session's takes its worksheets with it.
  */
 export function PrepListPage() {
+  useDocumentTitle("我的作品");
   const [params, setParams] = useSearchParams();
   const [sessions, setSessions] = useState<PrepSessionSummary[] | null>(null);
   const [worksheets, setWorksheets] = useState<WorksheetSummary[] | null>(null);
@@ -336,6 +338,7 @@ export function PrepListPage() {
               </button>
             </p>
           )}
+          {shown.length > 0 && <h2 className="sr-only">作品清單</h2>}
           {shown.length > 0 && view === "cards" && (
             <ul className="work-grid" aria-label="我的作品" ref={listRef} tabIndex={-1}>
               {shown.map((item) => (

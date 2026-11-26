@@ -9,6 +9,7 @@ import { Dialog } from "../components/Dialog";
 import { useApp } from "../context/AppContext";
 import { classSubtitle, focalClass, nextLine } from "../lib/classes";
 import { formatDate, formatShortDate } from "../lib/labels";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 const FIRST_CLASS_SKIPPED_KEY = "manna.firstClassSkipped";
 /** 「上完還沒補寫」 shows the latest few; the rest are on the records page. */
@@ -96,6 +97,7 @@ function ClassRow({ item, isFocal }: { item: SchoolClass; isFocal: boolean }) {
  * skipped.
  */
 export function ClassesPage() {
+  useDocumentTitle("班級");
   const { teacher, preferences } = useApp();
   const navigate = useNavigate();
   const [classes, setClasses] = useState<SchoolClass[] | null>(null);

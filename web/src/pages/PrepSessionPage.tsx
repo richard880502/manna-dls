@@ -65,6 +65,7 @@ import {
   resourcesOf,
   sessionTitle,
 } from "../lib/prep";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /** Below this width the conversation and the worksheet are two tabs of one column (prep.css matches). */
 const NARROW_QUERY = "(max-width: 68.6875rem)";
@@ -128,6 +129,7 @@ function PrepSessionView({ id }: { id: number }) {
   const classes = useActiveClasses();
   const templates = useReadyTemplates();
   const [session, setSession] = useState<PrepSession | null>(null);
+  useDocumentTitle(session ? sessionTitle(session) : "備課對話");
   // Habit suggestions found in what the teacher typed (Manna asks; she decides): those of this
   // conversation's messages, and of 「改這一區」 on its worksheets (they carry the worksheet only,
   // so the teacher's pending ones are read and kept to this conversation below).
@@ -912,7 +914,9 @@ function PrepSessionView({ id }: { id: number }) {
             aria-controls={`${ids}-head-settings`}
             onClick={() => setHeadOpenWide(!headOpen)}
           >
-            <span className="prep-head-toggle-label">對話設定</span>
+            <span className="prep-head-toggle-label">
+              對話設定 <Icon name={headOpen ? "chevron" : "next"} className="is-glyph" />
+            </span>
             {!headOpen && <span className="prep-head-summary">{contextSummary}</span>}
           </button>
         )}
@@ -1066,7 +1070,7 @@ function PrepSessionView({ id }: { id: number }) {
                 aria-label={`不要只改 ${target.name}`}
                 onClick={() => setTarget(null)}
               >
-                ✕
+                <Icon name="close" className="is-glyph" />
               </button>
             </span>
             <span className="field-hint">只改這一區；Manna 改好後先給你看，按「採用」才會寫入學習單。</span>

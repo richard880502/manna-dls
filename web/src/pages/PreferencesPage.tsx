@@ -8,6 +8,7 @@ import { usePreferenceQuestions } from "../components/prefs/usePreferenceQuestio
 import { useApp } from "../context/AppContext";
 import { formatDateTime } from "../lib/labels";
 import { PREFERENCE_SOURCE_LABELS, answersFrom } from "../lib/preferences";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /**
  * 我的備課偏好: edit P1–P5; every save creates a new version (source "settings"). It is optional
@@ -16,6 +17,7 @@ import { PREFERENCE_SOURCE_LABELS, answersFrom } from "../lib/preferences";
  * and saved again unchanged with every new version.
  */
 export function PreferencesPage() {
+  useDocumentTitle("我的備課偏好");
   const { preferences, preferencesStatus, setPreferences } = useApp();
   const { questions: allQuestions, loaded } = usePreferenceQuestions();
   const questions = allQuestions.filter((q) => q.id !== "P6");

@@ -4,6 +4,7 @@ import type { PromptInfo, PromptList, PromptVersion, TryResponse } from "../../a
 import { formatDateTime } from "../../lib/labels";
 import { checkVariables, lineDiff } from "../../lib/promptCheck";
 import { ErrorText, Loading, Notice } from "../common";
+import { Icon } from "../Icon";
 
 const UNREGISTERED = "未登記";
 const NOTE_MAX = 200;
@@ -633,7 +634,7 @@ function TryRun({
             <ul className="try-checks" aria-label="平台檢查">
               {result.checks.map((c, i) => (
                 <li key={`${c.name}-${i}`} className={c.passed ? "try-pass" : "try-fail"}>
-                  <span aria-hidden="true">{c.passed ? "✓" : "✗"}</span> {c.passed ? "通過" : "沒通過"}：<code>{c.name}</code>
+                  <Icon name={c.passed ? "check" : "close"} className="is-glyph" /> {c.passed ? "通過" : "沒通過"}：<code>{c.name}</code>
                   {c.detail && <span className="try-detail"> {c.detail}</span>}
                 </li>
               ))}

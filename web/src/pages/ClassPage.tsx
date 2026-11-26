@@ -11,6 +11,7 @@ import { useApp } from "../context/AppContext";
 import { CLASS_NOTE_MAX_CHARS, classSubtitle, usedByText } from "../lib/classes";
 import { formatDate, formatShortDate } from "../lib/labels";
 import { CLASS_PROFILE_MAX_CHARS } from "../lib/preferences";
+import { useDocumentTitle } from "../lib/useDocumentTitle";
 
 /** One unit as this class uses it: a ruled row with this class's progress and note. */
 function ClassUnitRow({
@@ -159,6 +160,7 @@ export function ClassPage() {
   const ids = useId();
   const { setCurrentClassId } = useApp();
   const [detail, setDetail] = useState<ClassDetail | null>(null);
+  useDocumentTitle(detail?.name ?? "班級");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [runs, setRuns] = useState<LessonRun[]>([]);
 

@@ -80,6 +80,7 @@ import { GlossaryBox } from "./Glossary";
 import { SlotPicture } from "./SlotPicture";
 import { SopSyncNotice } from "./SopSync";
 import type { WorksheetController } from "./useWorksheet";
+import { Icon } from "../Icon";
 
 function LevelChips({
   name,
@@ -635,7 +636,7 @@ function BlockSection({
           }}
           onDragEnd={() => setDragging(null)}
         >
-          ⠿
+          <Icon name="drag" className="is-glyph" />
         </span>
         <SectionTools
           name={`區塊 ${name}`}

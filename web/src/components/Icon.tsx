@@ -26,6 +26,10 @@ const PATHS = {
   logout: "M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10",
   menu: "M4 6.5h16M4 12h16M4 17.5h16",
   close: "M6 6l12 12M18 6 6 18",
+  next: "M9 6l6 6-6 6",
+  check: "M5 12.5l4.5 4.5L19 7",
+  // Six dots: the grip to drag a block by.
+  drag: "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01",
   collapse: "M15 6l-6 6 6 6",
   chevron: "M6 9l6 6 6-6",
   paperclip: "M20 11.5 12.3 19a5 5 0 0 1-7.1-7.1L13 4.2a3.3 3.3 0 0 1 4.7 4.7l-7.7 7.7a1.7 1.7 0 0 1-2.4-2.4l7-7",

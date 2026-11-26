@@ -1554,13 +1554,6 @@
   font-weight: var(--weight-strong);
 }
 
-.prep-head-toggle-label::after {
-  content: " ▸";
-}
-
-.prep-head-toggle[aria-expanded="true"] .prep-head-toggle-label::after {
-  content: " ▾";
-}
 
 .prep-head-summary {
   display: -webkit-box;

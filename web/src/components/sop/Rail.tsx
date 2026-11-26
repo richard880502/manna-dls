@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { SopContent, SopMaterial } from "../../api/types";
 import { STAGES, stageSummary, type StageKey } from "../../lib/sop";
+import { Icon } from "../Icon";
 
 interface RailProps {
   stage: StageKey;
@@ -52,7 +53,7 @@ export function Rail({ stage, onStage, material, content, onWorksheet, worksheet
                   onClick={() => go(s.step)}
                 >
                   <span className="dot" aria-hidden="true">
-                    {summary && !now ? "✓" : s.step}
+                    {summary && !now ? <Icon name="check" className="is-glyph" /> : s.step}
                   </span>
                   <span>
                     <span className="sr-only">第 {s.step} 步：</span>
