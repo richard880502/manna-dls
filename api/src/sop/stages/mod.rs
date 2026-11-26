@@ -98,6 +98,16 @@ pub fn objective_codes(content: &SopContent) -> Vec<(String, &Objective)> {
         .collect()
 }
 
+/// The objectives' text and students' lines, for the check that no question copies one
+/// ([`crate::worksheet::checks::objective_lines`]).
+fn objective_texts(codes: &[(String, &Objective)]) -> Vec<String> {
+    crate::worksheet::checks::objective_lines(
+        codes
+            .iter()
+            .map(|(_, o)| (o.text.as_str(), o.student_facing_en.as_str())),
+    )
+}
+
 fn objectives_summary(codes: &[(String, &Objective)]) -> String {
     if codes.is_empty() {
         return "（教師沒有提供目標；objective_refs 請給空陣列）".to_string();

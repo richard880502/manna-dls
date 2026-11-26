@@ -275,6 +275,7 @@ pub async fn run_tasks(
         .map(|(c, o)| (c.clone(), o.id.clone()))
         .collect();
     let code_names: Vec<String> = code_ids.iter().map(|(c, _)| c.clone()).collect();
+    let objectives = objective_texts(&codes);
     let passages = texts(paragraphs);
     // 換一個: the one block again, over the same paragraphs, with about as many tasks.
     let redo = input.scope.item();
@@ -379,6 +380,7 @@ pub async fn run_tasks(
                         item_budget: budget,
                         only: only.as_deref(),
                         habits,
+                        objectives: &objectives,
                     },
                 ),
                 |blocks| blocks,

@@ -235,6 +235,7 @@ async fn section_call(
             images::rules_with_sample_hint(&run.slot_rules, r.sample_pictures),
         );
     }
+    let objectives = run.objective_texts();
     let fake_context = json!({
         "task": KEY_SECTION,
         "image_slots": if slots { MAX_SLOTS_PER_BLOCK } else { 0 },
@@ -244,6 +245,8 @@ async fn section_call(
         "paragraphs": run.paragraphs,
         "instruction_language": r.template.instruction_language,
         "run_no": run.run_no,
+        // For the fake provider's copied-objective outputs only.
+        "objectives": objectives,
     });
     let passage = run.paragraphs.join("\n");
     // 圖像組織 is in the section's formats (or it names none, so any format may come).
@@ -263,6 +266,7 @@ async fn section_call(
         needs_external: r.section.needs_external_material,
         tables_asked: tables,
         english_tables: false,
+        objectives: &objectives,
     };
     let mut schema = section_out_schema(ctx.item_count, (organizers, tables), &r.section.supports);
     let legacy = legacy_kind(r.section);

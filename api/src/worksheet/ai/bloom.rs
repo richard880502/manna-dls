@@ -459,12 +459,14 @@ async fn level_call(
         "redo": r.redo.is_some(),
     });
     let passage = run.paragraphs.join("\n");
+    let objectives = run.objective_texts();
     let ctx = BloomCtx {
         bloom: b,
         formats: r.formats,
         passage: &passage,
         paragraph_codes: &codes,
         count: r.count,
+        objectives: &objectives,
     };
     if output == Output::Tiered {
         return run_step(

@@ -136,6 +136,7 @@ pub async fn run_exit(
         .map(|(c, o)| (c.clone(), o.id.clone()))
         .collect();
     let code_names = code_names_of(&code_ids);
+    let objectives = objective_texts(&codes);
     let passage = texts(paragraphs).join("\n");
     let count = worksheet::exit_count(content.options.minutes);
     let notes = notes_for_ai(state, input).await?;
@@ -234,6 +235,7 @@ pub async fn run_exit(
                     objective_ids: &code_names,
                     task_prompts: &task_prompts,
                     passage: &passage,
+                    objectives: &objectives,
                 },
                 wanted.is_none(),
             );
