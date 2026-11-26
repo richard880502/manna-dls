@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type {
   WsAudience,
@@ -1334,13 +1334,7 @@ export function ResultView({
       )}
 
       <article className="ws" lang="en" aria-label={sheetName}>
-        <input
-          className="ws-title"
-          type="text"
-          aria-label="學習單標題"
-          value={state.title}
-          onChange={(e) => ws.setTitle(e.target.value)}
-        />
+        <SheetTitle value={state.title} onChange={ws.setTitle} />
         <p className="ws-meta">
           <span>Class ______</span>
           <span>No. ______</span>
@@ -1504,5 +1498,47 @@ function PrintedAs({ text }: { text: string | null }) {
     <p className="ws-printed-as quiet-note" lang="zh-Hant">
       印出時：<span lang="en">{text}</span>
     </p>
+  );
+}
+
+/**
+ * The title on the sheet. It wraps the way the printed title does: a one-line field cut long titles
+ * off at the pane's edge. Still one line of text: Enter adds no line break, and a pasted one becomes a
+ * space. The height follows the text and the pane's width (the divider and the folded chat change it).
+ */
+function SheetTitle({ value, onChange }: { value: string; onChange: (title: string) => void }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const fit = () => {
+      el.style.height = "auto";
+      if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+    };
+    fit();
+    if (typeof ResizeObserver !== "function") return undefined;
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      // Only a new width can change the line count; fitting changes the height, not the width.
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      fit();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      className="ws-title"
+      rows={1}
+      aria-label="學習單標題"
+      value={value}
+      onChange={(e) => onChange(e.target.value.replace(/\s*\n\s*/g, " "))}
+      onKeyDown={(e) => {
+        // Not while an input method is composing: its Enter picks the characters.
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) e.preventDefault();
+      }}
+    />
   );
 }

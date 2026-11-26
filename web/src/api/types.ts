@@ -2723,7 +2723,7 @@ export interface WsVersionRow {
   /** 這一版是怎麼來的（docs/API.md「版本紀錄」）；更早的版本是 null */
   source?: Record<string, unknown> | null;
   created_at: string;
-  /** 老師給這一版取的快照名稱；沒有、或舊的伺服器沒有這一欄就是 null／缺 */
+  /** 老師給這一版取的名字（為這一版命名）；沒有、或舊的伺服器沒有這一欄就是 null／缺 */
   snapshot?: WsSnapshotLabel | null;
 }
 
@@ -2732,7 +2732,7 @@ export interface WsSnapshotLabel {
   name: string;
 }
 
-/** 快照：老師給某一版取的名字（版本本身不變） */
+/** 有名字的版本：老師給某一版取的名字（版本本身不變；API 叫 snapshot） */
 export interface WsSnapshot {
   id: number;
   version_no: number;

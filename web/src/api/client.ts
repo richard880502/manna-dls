@@ -592,7 +592,7 @@ export const api = {
   /** 某一版的學習單（唯讀預覽用；圖片是當時的圖） */
   worksheetVersionSheet: (id: number, versionNo: number, audience: WsAudience, level?: WsLevel) =>
     get<WsSheet>(`/worksheets/${id}/versions/${versionNo}/sheet`, { level, audience }),
-  /** 存成快照：把最新一版標上名字（name 不給＝預設「快照 11/25 17:30」）；base_version_no 不是最新 → 409 */
+  /** 為這一版命名：把最新一版標上名字（name 不給＝預設「版本 11/25 17:30」）；base_version_no 不是最新 → 409 */
   createWorksheetSnapshot: (id: number, body: { name?: string; base_version_no: number }) =>
     post<WsSnapshot>(`/worksheets/${id}/snapshots`, body),
   renameWorksheetSnapshot: (id: number, snapshotId: number, name: string) =>

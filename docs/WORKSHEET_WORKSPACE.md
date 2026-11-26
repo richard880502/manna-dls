@@ -11,8 +11,7 @@
 | 工具列 | 形式 | 內容 |
 |---|---|---|
 | 學生版｜教師版 | 分段按鈕（常駐） | — |
-| 版本（「第 N 版」） | 按鈕 → 對話框 | 版本紀錄（列表、預覽、還原；快照標示與篩選） |
-| 存成快照 | 按鈕 → 小對話框 | 名稱（選填，預設「快照 11/25 17:30」） |
+| 版本（「第 N 版 ▾」） | 選單 | 為這一版命名…（小對話框，名稱選填，預設「版本 11/25 17:30」）、版本紀錄（對話框：列表、預覽、還原；名字標示與篩選） |
 | 顯示 | Popover | 顯示學習目標、字詞表放在學習單最後、字詞表的字義用中文 |
 | 詞彙檢查 | 大對話框 | 原 `/worksheets/:id/check` 的內容（分布、超出級別的字與處理、限制）；處理後關閉時學習單更新 |
 | 匯出 | 選單 | DOCX／PDF，學生版／教師版 |
@@ -22,12 +21,14 @@
 - 每區工具：改這一區、加註記（常駐）；更多…：重新產生、修改歷程、復原上一版、上移／下移、關掉這一區、刪除、複製、有幫助／不合用。
 - 窄螢幕（分頁）：「學習單」分頁就是同一個工作區。
 
-## 2. 快照
+工具列分兩組：左邊是看與編輯（學生版｜教師版、顯示、詞彙檢查、ⓘ、更多…），右邊是保存與輸出（已自動儲存的時間、第 N 版 ▾、匯出）；工具按鈕平常不加框，只有分段按鈕和匯出有框。工具列、Bloom 摘要和學習單紙張同寬（`--sheet-w`），備課頁的學習單欄比紙張寬時（對話收起、寬螢幕）整欄置中。
 
-- 自動儲存每次都寫一版（`cause = 'edit'`），版本紀錄會很長。**快照**＝老師手動把「現在這一版」標上名字，作為可以回去的重點。
-- 資料：`worksheet_snapshots (id, worksheet_id, version_no, name, created_at)`（migration 0058），一個版本可以有一個快照名稱；刪除快照只是拿掉標記，版本本身不刪（版本是 append-only）。
+## 2. 有名字的版本（原「快照」）
+
+- 自動儲存每次都寫一版（`cause = 'edit'`），版本紀錄會很長。老師可以「為這一版命名」，作為可以回去的重點。名字只是版本上的標記，不是另一種存檔，所以介面上不再叫「快照」（內部的表、端點、研究事件仍叫 snapshot）。
+- 資料：`worksheet_snapshots (id, worksheet_id, version_no, name, created_at)`（migration 0058），一個版本可以有一個名字；移除名稱只是拿掉標記，版本本身不刪（版本是 append-only）。
 - API：`POST /api/worksheets/{id}/snapshots { name?, base_version_no }`（先 flush，再標記最新一版；`base_version_no` 過期 409）、`PATCH …/snapshots/{snapshot_id} { name }`、`DELETE …/snapshots/{snapshot_id}`；`GET /versions` 的每一列多 `snapshot: { id, name } | null`。
-- 版本紀錄：快照有名稱標示；「只看快照」篩選；連續的「手動編輯」收合成一組（「手動編輯 ×12，17:02–17:30」），展開才看到每一版。
+- 版本紀錄：有名字的版本顯示名字；「只看有名字的版本」篩選；連續的「手動編輯」收合成一組（「手動編輯 ×12，17:02–17:30」），展開才看到每一版。
 - 研究紀錄：`worksheet_snapshot_saved`／`_renamed`／`_removed` `{worksheet_id, version_no, named: bool}`（不記名稱文字）。
 
 ## 3. 程式結構（收斂）
@@ -40,8 +41,9 @@ components/worksheet/workspace/
   InfoPopover.tsx          ⓘ 說明
   PrintPreviewDialog.tsx   列印樣式預覽（SheetPreview 唯讀）
   VocabCheckDialog.tsx     詞彙檢查（內容抽自 WorksheetCheckPage，頁面改為包同一個元件）
-  SnapshotButton.tsx       存成快照
-  VersionHistory.tsx       （搬入）版本紀錄＋快照
+  VersionMenu.tsx          「第 N 版 ▾」：為這一版命名…、版本紀錄
+  NameVersionDialog.tsx    為這一版命名
+  VersionHistory.tsx       （搬入）版本紀錄＋名字
 ```
 
 - `ResultView` 只負責「學習單本體的編輯」（區塊、題目、每區工具），工具列與說明移到 `WorkspaceToolbar`／Popover；`embedded`、`frozen` 照舊。

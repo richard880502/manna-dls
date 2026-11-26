@@ -184,8 +184,8 @@ describe("the worksheet pane of the 備課對話", () => {
     expect(screen.queryByRole("radio", { name: "編輯" })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "學生版" })).toBeChecked();
     const bar = within(screen.getByRole("group", { name: "學習單工具列" }));
-    expect(bar.getByLabelText("版本")).toHaveTextContent("第 3 版");
-    for (const name of ["版本紀錄", "顯示", "詞彙檢查", "關於這份學習單", "更多…"]) {
+    expect(bar.getByRole("button", { name: "版本：第 3 版" })).toHaveTextContent("第 3 版");
+    for (const name of ["顯示", "詞彙檢查", "關於這份學習單", "更多…"]) {
       expect(bar.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(bar.getByRole("button", { name: /匯出/ })).toBeEnabled();
@@ -207,6 +207,23 @@ describe("the worksheet pane of the 備課對話", () => {
     expect(body.base_version_no).toBe(3);
     expect(body.content?.blocks[0]?.items[0]?.prompt).toBe("Why did Mrs. Lin start it?");
     expect(await screen.findByText(/^已自動儲存/)).toBeInTheDocument();
+  });
+
+  it("the title wraps like the printed one but stays one line: Enter adds nothing, a pasted break is a space", async () => {
+    autosaveConfig.delayMs = 20;
+    const api = mockApi(routes());
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const title = await screen.findByRole("textbox", { name: "學習單標題" });
+    expect(title.tagName).toBe("TEXTAREA");
+    await user.click(title);
+    await user.keyboard("{End}{Enter}!");
+    expect((title as HTMLTextAreaElement).value).not.toContain("\n");
+    expect((title as HTMLTextAreaElement).value.endsWith("!")).toBe(true);
+    fireEvent.change(title, { target: { value: "Night Markets\nin Taiwan" } });
+    expect(title).toHaveValue("Night Markets in Taiwan");
+    await waitFor(() => expect(api.callsTo("PUT", WS).length).toBeGreaterThan(0));
+    expect((api.lastBody("PUT", WS) as SaveWorksheetRequest).title).toBe("Night Markets in Taiwan");
   });
 
   it("sending a message saves the pending edit first", async () => {

@@ -32,7 +32,7 @@ export function ToolbarPopover({
       <button
         ref={own}
         type="button"
-        className={className ?? "decision-button"}
+        className={className ?? "ws-bar-tool"}
         aria-expanded={open}
         aria-controls={`${id}-panel`}
         aria-label={ariaLabel}

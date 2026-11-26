@@ -53,63 +53,6 @@ const AUDIENCES: Array<[WsAudience, string]> = [
   ["teacher", "教師版"],
 ];
 
-export function VersionHistoryButton({
-  worksheetId,
-  blockedReason = null,
-  beforeOpen,
-  onRestored,
-  levels = [],
-  initialVersionNo,
-  className = "text-link is-plain",
-}: {
-  worksheetId: number;
-  /** Why 版本紀錄 cannot be used right now (Manna or a chat turn is working); null: it can. */
-  blockedReason?: string | null;
-  /** Runs before the list is loaded (the editor saves first); a message stops it. */
-  beforeOpen?: () => Promise<string | null>;
-  /** The worksheet as it is after 還原成這一版. */
-  onRestored: (done: WsVersionRestored) => void;
-  /** The levels of the worksheet (the preview can switch between them when there are several). */
-  levels?: WsLevel[];
-  initialVersionNo?: number;
-  className?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const hint = useId();
-  return (
-    <>
-      <button
-        type="button"
-        className={className}
-        aria-disabled={blockedReason ? true : undefined}
-        title={blockedReason ?? undefined}
-        aria-describedby={blockedReason ? hint : undefined}
-        onClick={() => !blockedReason && setOpen(true)}
-      >
-        版本紀錄
-      </button>
-      {blockedReason && (
-        <span id={hint} className="sr-only">
-          {blockedReason}
-        </span>
-      )}
-      {open && (
-        <VersionHistoryDialog
-          worksheetId={worksheetId}
-          beforeOpen={beforeOpen}
-          levels={levels}
-          initialVersionNo={initialVersionNo}
-          onClose={() => setOpen(false)}
-          onRestored={(done) => {
-            setOpen(false);
-            onRestored(done);
-          }}
-        />
-      )}
-    </>
-  );
-}
-
 /** One line of the list: a version, or several consecutive 手動編輯 versions folded together. */
 type Entry = { kind: "row"; row: WsVersionRow } | { kind: "group"; key: number; rows: WsVersionRow[] };
 
@@ -145,11 +88,14 @@ export function VersionHistoryDialog({
   beforeOpen,
   levels = [],
   initialVersionNo,
+  returnFocus,
   onClose,
   onRestored,
 }: {
   worksheetId: number;
   beforeOpen?: () => Promise<string | null>;
+  /** Where focus goes when the dialog closes (the menu item that opened it is gone by then). */
+  returnFocus?: () => HTMLElement | null;
   levels?: WsLevel[];
   /** Open with this version selected (a chat card's 「產生了第 N 版」); ignored when it does not exist. */
   initialVersionNo?: number;
@@ -305,7 +251,12 @@ export function VersionHistoryDialog({
           <span className="ws-history-label">
             第 {r.version_no} 版・{versionLabel(r, r.version_no === oldest)}
           </span>
-          {r.snapshot && <span className="ws-history-snap">快照：{r.snapshot.name}</span>}
+          {r.snapshot && (
+            <span className="ws-history-snap">
+              <span className="sr-only">名稱：</span>
+              {r.snapshot.name}
+            </span>
+          )}
           <span className="ws-history-time">{formatDateTime(r.created_at)}</span>
           {r.version_no === latest && <span className="ws-history-now">目前</span>}
         </button>
@@ -328,7 +279,7 @@ export function VersionHistoryDialog({
   }
 
   return (
-    <Dialog title="版本紀錄" size="large" onClose={onClose} busy={busy}>
+    <Dialog title="版本紀錄" size="large" returnFocus={returnFocus} onClose={onClose} busy={busy}>
       <div className="ws-history" lang="zh-Hant">
         {!rows && !error && <p className="quiet-note">載入中…</p>}
         <ErrorText message={error} />
@@ -341,10 +292,10 @@ export function VersionHistoryDialog({
               <div className="ws-history-side">
                 <label className="ws-history-filter">
                   <input type="checkbox" checked={onlySnapshots} onChange={(e) => setOnlySnapshots(e.target.checked)} />
-                  <span>只看快照</span>
+                  <span>只看有名字的版本</span>
                 </label>
                 {onlySnapshots && entries.length === 0 && (
-                  <p className="quiet-note">還沒有快照。按工具列的「存成快照」，把現在這一版標上名字。</p>
+                  <p className="quiet-note">還沒有命名的版本。在工具列的「第 {latest} 版」選單按「為這一版命名…」，就能幫重要的版本取名字。</p>
                 )}
                 <ol className="ws-history-list" aria-label="學習單的版本">
                   {entries.map((e) => {
@@ -385,7 +336,7 @@ export function VersionHistoryDialog({
                         }}
                       >
                         <label className="sr-only" htmlFor={`${ids}-snap`}>
-                          快照名稱
+                          版本名稱
                         </label>
                         <input
                           id={`${ids}-snap`}
@@ -403,7 +354,7 @@ export function VersionHistoryDialog({
                         </button>
                       </form>
                     ) : removing ? (
-                      <div className="button-row" role="group" aria-label="確認移除快照">
+                      <div className="button-row" role="group" aria-label="確認移除名稱">
                         <span>只拿掉「{row.snapshot.name}」這個名稱，這一版仍留在版本紀錄裡。</span>
                         <button type="button" className="text-link is-danger" disabled={busy} onClick={() => void removeSnapshot()}>
                           確定移除
@@ -414,12 +365,12 @@ export function VersionHistoryDialog({
                       </div>
                     ) : (
                       <div className="button-row">
-                        <strong>快照：{row.snapshot.name}</strong>
+                        <strong>名稱：{row.snapshot.name}</strong>
                         <button type="button" className="text-link is-plain" onClick={() => setRenaming(row.snapshot!.name)}>
                           改名
                         </button>
                         <button type="button" className="text-link is-plain" onClick={() => setRemoving(true)}>
-                          移除快照
+                          移除名稱
                         </button>
                       </div>
                     )}

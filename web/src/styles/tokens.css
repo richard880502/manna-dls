@@ -130,6 +130,7 @@
   /* The navigation is a left sidebar (wide screens) or a drawer behind ☰ in a top bar (narrow). */
   --side-w: 15.5rem; /* 248: the sidebar */
   --side-w-icons: 4.25rem; /* 68: the sidebar folded to icons */
+  --sheet-w: 47.5rem; /* 760: the worksheet paper on screen, and the column its toolbar lines up with */
   --top-bar-h: 3.5rem; /* 56: the top bar (narrow screens; the in-class console) */
   --top-h: var(--top-bar-h); /* what sticky things clear at the top: the top bar, when there is one */
   --shell-left: 0rem; /* where the page starts: fixed panels sit right of the sidebar */

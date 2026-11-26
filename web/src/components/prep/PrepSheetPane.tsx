@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type MutableRefObject } from "react";
 import { ErrorText, Loading } from "../common";
 import { WorksheetWorkspace, type WorkspaceChat } from "../worksheet/workspace/WorksheetWorkspace";
 import { useFlushOnUnmount, useWorksheet } from "../worksheet/useWorksheet";
@@ -20,7 +20,6 @@ export function PrepSheetPane({
   flushRef,
   waiting = false,
   onReady,
-  snapshotSlot,
 }: {
   worksheetId: number;
   chat: WorkspaceChat;
@@ -31,7 +30,6 @@ export function PrepSheetPane({
   waiting?: boolean;
   /** Called once the worksheet is on screen (or could not be loaded), in the same frame. */
   onReady?: () => void;
-  snapshotSlot?: ReactNode;
 }) {
   const ws = useWorksheet(worksheetId);
   const flush = ws.flush;
@@ -83,7 +81,7 @@ export function PrepSheetPane({
   }
   return (
     <div className="prep-sheet-wrap is-arriving">
-      <WorksheetWorkspace ws={ws} chat={chat} snapshotSlot={snapshotSlot} />
+      <WorksheetWorkspace ws={ws} chat={chat} />
     </div>
   );
 }

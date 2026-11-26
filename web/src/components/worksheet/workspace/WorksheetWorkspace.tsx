@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { WsAudience, WsBlock, WsLevel } from "../../../api/types";
 import { interactionFor } from "../../../lib/blockRating";
@@ -7,9 +7,7 @@ import { templateTitle } from "../../../lib/templates";
 import { ErrorText } from "../../common";
 import { ResultView, type BlockTarget } from "../ResultView";
 import type { WorksheetController } from "../useWorksheet";
-import { api } from "../../../api/client";
 import { PrintPreviewDialog } from "./PrintPreviewDialog";
-import { SnapshotButton } from "./SnapshotButton";
 import { VocabCheckDialog } from "./VocabCheckDialog";
 import { WorkspaceToolbar, type WorkspaceDialog } from "./WorkspaceToolbar";
 import { useVocabFill } from "./useVocabFill";
@@ -41,14 +39,11 @@ export function WorksheetWorkspace({
   ws,
   chat,
   onAdjust,
-  snapshotSlot,
 }: {
   ws: WorksheetController;
   chat?: WorkspaceChat;
   /** The full page: 調整設定 goes back to the options. */
   onAdjust?: () => void;
-  /** Where 「存成快照」 goes in the toolbar. */
-  snapshotSlot?: ReactNode;
 }) {
   const state = ws.state;
   const [levelPick, setLevel] = useState<WsLevel | null>(null);
@@ -97,32 +92,9 @@ export function WorksheetWorkspace({
   const locked = frozen || ws.busy;
   const blockedReason = locked
     ? chat
-      ? "備課對話正在處理，等這一輪結束後再看版本紀錄。"
-      : "Manna 正在處理這份學習單，好了之後再看版本紀錄。"
+      ? "備課對話正在處理，等這一輪結束後再命名版本或看版本紀錄。"
+      : "Manna 正在處理這份學習單，好了之後再命名版本或看版本紀錄。"
     : null;
-
-  // 存成快照: pending edits are saved first, then the version that is now the latest is labelled.
-  const snapshot = snapshotSlot ?? (
-    <SnapshotButton
-      worksheetId={state.id}
-      baseVersionNo={state.version_no}
-      className="decision-button"
-      disabled={locked}
-      disabledReason={
-        locked
-          ? chat
-            ? "備課對話正在處理，等這一輪結束後再存快照。"
-            : "Manna 正在處理這份學習單，好了之後再存快照。"
-          : null
-      }
-      flush={async () => {
-        const failed = await ws.flush();
-        if (failed) return { ok: false, error: failed };
-        const versions = await api.worksheetVersions(state.id);
-        return { ok: true, versionNo: versions[0]?.version_no };
-      }}
-    />
-  );
 
   return (
     <div className="ws-workspace">
@@ -139,7 +111,6 @@ export function WorksheetWorkspace({
         locked={locked}
         blockedReason={blockedReason}
         fill={fill}
-        snapshotSlot={snapshot}
         onOpenDialog={(kind, from) => void open(kind, from)}
         openFullHref={chat ? `/worksheets/${state.id}` : undefined}
         onAdjust={chat ? undefined : onAdjust}
