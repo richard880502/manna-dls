@@ -1241,6 +1241,7 @@ async fn admin_prompts_imports_and_permissions() {
             "sop_paragraph_tasks",
             "sop_passage_analysis",
             "sop_scaffolds",
+            "sop_text_english",
             "sop_warmup",
             "teacher_memory_context",
             "teacher_memory_extract",
@@ -1305,10 +1306,10 @@ async fn admin_prompts_imports_and_permissions() {
         // 0053_block_intros.sql. sop_scaffolds v3, sop_warmup v3, worksheet_block_revise v9,
         // worksheet_scaffolds v4 and worksheet_warmup v3 since 0054_key_vocabulary.sql.
         // prep_revise v5 since 0055_prep_apply_discussion.sql. prep_chat v1 since
-        // 0056_prep_chat.sql.
+        // 0056_prep_chat.sql. sop_text_english v1 since 0059_sop_text_english.sql.
         vec![
-            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 1, 5, 1, 1, 1, 2, 1, 4, 1, 3, 3, 2, 3, 9, 1, 6, 5, 2, 4,
-            10, 3, 2, 6, 4, 1, 1, 3
+            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 1, 5, 1, 1, 1, 2, 1, 4, 1, 3, 1, 3, 2, 3, 9, 1, 6, 5, 2,
+            4, 10, 3, 2, 6, 4, 1, 1, 3
         ]
     );
     let v1_kept: i64 = sqlx::query_scalar(

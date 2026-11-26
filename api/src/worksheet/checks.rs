@@ -2151,6 +2151,17 @@ pub fn uncovered_objectives(items: &[RawExitItem], objective_ids: &[String]) -> 
 }
 
 pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>> {
+    evaluate_exit_items(raw, ctx, true)
+}
+
+/// [`evaluate_exit`]; with `whole_set` false (one item again, 換一個 in the lesson SOP) the
+/// checks that count a whole exit ticket (2–4 items, one of each kind, every objective) are
+/// left out: one usable item is enough (the caller picks the one it asked for).
+pub fn evaluate_exit_items(
+    raw: &RawExit,
+    ctx: &ExitCtx<'_>,
+    whole_set: bool,
+) -> Eval<Vec<RawExitItem>> {
     let mut t = Tally::new(&EXIT_CHECKS);
     let all_tasks = student_tasks();
     let prompts: HashSet<String> = ctx
@@ -2252,6 +2263,17 @@ pub fn evaluate_exit(raw: &RawExit, ctx: &ExitCtx<'_>) -> Eval<Vec<RawExitItem>>
             );
         }
         items.push(item);
+    }
+    if !whole_set {
+        if items.is_empty() {
+            t.fail(
+                "item_count_2_4",
+                "items 需要 1 題可用的題目。".to_string(),
+                "",
+            );
+        }
+        let output = if items.is_empty() { None } else { Some(items) };
+        return t.finish(output);
     }
     if !(2..=4).contains(&items.len()) {
         t.fail(

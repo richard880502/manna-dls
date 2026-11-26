@@ -960,14 +960,18 @@ interface SopContent { …; options: SopOptions }
 | Method | Path | 請求 | 回應 |
 |---|---|---|---|
 | POST | `/api/lessons/:id/sop/goals` | `{ class_id?, paragraph_id?, parent_job_id? }` | 202 `SopJob`：第 4 步逐段整合目標；帶 `paragraph_id` ＝「這一段再建議一次」（slot `p:<段落 id>`）。沒有目標 → 400 |
-| POST | `/api/lessons/:id/sop/tasks` | `{ class_id? }` | 202 `SopJob`：第 5 步逐段問題或任務＋語言與教學鷹架 |
-| POST | `/api/lessons/:id/sop/warmup` | `{ class_id? }` | 202 `SopJob`：第 6 步暖身與關鍵字彙 |
-| POST | `/api/lessons/:id/sop/exit-ticket` | `{ class_id? }` | 202 `SopJob`（`kind = "exit_ticket"`）：第 7 步。沒有目標 → 400 |
+| POST | `/api/lessons/:id/sop/tasks` | `{ class_id?, parent_job_id?, item_index? }` | 202 `SopJob`：第 5 步逐段問題或任務＋語言與教學鷹架；帶 `parent_job_id`＋`item_index`（區塊的位置）＝**換一個**這一個區塊 |
+| POST | `/api/lessons/:id/sop/warmup` | `{ class_id?, parent_job_id?, item_index? }` | 202 `SopJob`：第 6 步暖身與關鍵字彙；**換一個**：`item_index` 是活動的位置，或 100＝換一組關鍵字彙 |
+| POST | `/api/lessons/:id/sop/exit-ticket` | `{ class_id?, parent_job_id?, item_index? }` | 202 `SopJob`（`kind = "exit_ticket"`）：第 7 步；**換一個**：`item_index` 是題目的位置。沒有目標 → 400 |
+| POST | `/api/lessons/:id/sop/analysis` | `{ class_id?, paragraph_id?, parent_job_id?, item_index? }` | 202 `SopJob`：第 2 步。帶 `paragraph_id`＝「這一段再分析一次」（slot `p:<段落 id>`；有 `parent_job_id` 時被換掉的分析也告訴模型）；帶 `parent_job_id`＋`item_index: 0`＝全文分析的**換一個** |
 | POST | `/api/lessons/:id/sop/objectives` | `{ parent_job_id, item_index }` | 202 `SopJob`：**換一個**。被換掉的建議與其他建議由伺服器從 `parent_job_id`（可以是上一次換一個的工作，`item_index` 0）的結果讀，不信任請求；同類型、不重複；slot `<parent>:<index>`。結果只有 1 項 |
 | POST | `/api/lessons/:id/sop/objective-english` | `{ type, text, student_facing_en }` | 200 `AiResult<{ english, changed, note }>`：**幫我修英文**，一次短呼叫（`max_tokens` 400），不是背景工作；`student_facing_en` 空白時依中文目標寫英文版；`text` 空白 → 400 |
+| POST | `/api/lessons/:id/sop/text-english` | `{ field: "task" \| "warmup" \| "exit", text, paragraph_ids? }` | 200 `AiResult<{ english, changed, note }>`：第 5–7 步的**幫我修英文**（老師自己寫的題目、暖身活動、Exit ticket 題目；中文的部分寫成英文），一次短呼叫（`max_tokens` 900）；`paragraph_ids` 只有 `task` 用（那幾段給模型參考，記錄裡只留字數與雜湊）；`text` 空白或超過 4000 字 → 400 |
 | POST | `/api/lessons/:id/sop/procedural-steps` | `{ paragraph_ids, student_tasks, answer_formats }` | 200 `{ steps, text }`：**產生程序鷹架**，由程式依任務產生（與學習單同一套規則，`worksheet::assemble::auto_steps`），不呼叫模型；記一筆 `sop_procedural_steps` 使用事件 |
 
-教師的決定沿用 `POST /api/ai/:interaction_id/decision`。`item_index`：第 4 步＝段落編號；第 5 步＝建議區塊的位置（從 0）；第 6 步＝暖身活動的位置，關鍵字彙這一組固定是 100；第 7 步＝題目的位置；換一個＝新建議在它自己的工作裡是 0（被換掉的那項在原工作記為 `reject`）；幫我修英文＝0（用這個 `adopt`、保留我的 `reject`）。
+**換一個（第 2、5、6、7 步）**與第 3 步同一套：被換掉的建議與其他建議由伺服器從 `parent_job_id`（同一課、同一步、已完成且有建議的工作；可以是上一次換一個的工作）的結果讀，不信任請求；slot `<parent>:<index>`，同一 slot 第二次按會加入正在跑的工作。沿用各步原本的提示詞，程式在訊息後面補上「這次只要換一項」的說明（被換掉的那一項與不要重複的其他項；第 5 步放在 `only_block`，第 6、7 步是 `redo_note`；第 2 步直接接在訊息最後），這段說明由教材衍生，記錄裡只留字數與雜湊。結果：第 2 步單段只有那一段（全文的分析照常附上，頁面只用那一段）、全文的換一個只用全文的欄位；第 5 步 1 個區塊（同樣的段落，題數約同）；第 6 步 1 個活動且沒有字，或一組新字（被換掉的字不再是候選字）且沒有活動，教材已經沒有其他候選字時直接回 `blocked`（`more_words = false` 的建議頁面不提供換一個）；第 7 步 1 題同類型的題目（不檢查整份 Exit ticket 的題數與題型，`uncovered_objective_ids` 為空）。
+
+教師的決定沿用 `POST /api/ai/:interaction_id/decision`。`item_index`：第 2 步＝全文 0、各段＝段落編號；第 4 步＝段落編號；第 5 步＝建議區塊的位置（從 0）；第 6 步＝暖身活動的位置，關鍵字彙這一組固定是 100；第 7 步＝題目的位置；換一個＝新建議在它自己的工作裡是 0（關鍵字彙這一組仍是 100；第 2 步單段仍是段落編號；被換掉的那項在原工作記為 `reject`）；幫我修英文＝0（用這個 `adopt`、保留我的 `reject`）。
 
 ### 各步的建議與檢查
 
@@ -975,14 +979,15 @@ interface SopContent { …; options: SopOptions }
 |---|---|---|
 | 3 換一個 | `sop_objectives`（只要 1 項） | 與第 3 步相同（代碼在清單內、不照抄課綱、中文目標、I can 英文），且必須有 1 項要求的類型 |
 | 3 幫我修英文 | `sop_objective_english`（新） | 以「I can 」開頭、只有英文、4–25 個字；失敗時回 `blocked`，教師原本的英文不動 |
+| 5–7 幫我修英文 | `sop_text_english`（新，0059；**沒有用真實模型驗證過**） | 一行一個陣列項目（伺服器接回）；只有英文；空格（`___`）數量不變；老師寫了幾行就幾行；不超過原文兩倍＋200 字；失敗時回 `blocked`，教師原本的文字不動 |
 | 4 逐段整合目標 | `sop_paragraph_goals`（新；**沒有用真實模型驗證過**） | 每一段各一筆且依段落順序；`objective_codes` 只能是教師目標的代號（`O1…`，回傳時換成真的 id）；每段最多 3 項；`note_zh` 為中文、≤ 120 字；不對應任何目標的段落要在 note 說明 |
 | 5 問題或任務 | `sop_paragraph_tasks`、`sop_scaffolds`（複製學習單 `worksheet_tasks`／`worksheet_scaffolds` 的最新版再補 SOP 規則） | 就是學習單的檢查：標籤只能用產生器的、每段都涵蓋且依序、`evidence` 為原文連續片段、學生看到的只有英文、選擇題選項數與配對題下限（含老師已確認的選項數習慣）、鷹架不洩漏答案。鷹架那一次失敗時任務仍保留，只有程式的程序鷹架 |
 | 6 暖身 | `sop_warmup`（複製 `worksheet_warmup`） | 學習單的檢查；候選字與級別由程式（`worksheet::ai::key_word_candidates`、大考中心詞彙表）決定，模型只挑、不輸出級別；`context_sentence` 為原文逐字 |
 | 7 Exit ticket | `sop_exit_ticket`（複製 `worksheet_exit_ticket`） | 學習單的檢查（2–4 題、至少 1 題形成性評量與 1 題反思／蒐集問題、不重複主要任務）；另外形成性評量要有 `objective_refs`（轉成目標 id）與參考答案 |
 
-- 每次模型呼叫各寫一列 `ai_interactions`（`module` 與 prompt key 相同，除了第 3 步沿用 `sop_objectives`；`lesson_id`、`unit_id` 有值；第 2 次的 `retry_of` 指向第 1 次）。鷹架：`SC-SOP-GOALS`、`SC-SOP-TASKS`（問題與鷹架兩次呼叫）、`SC-SOP-WARMUP`、`SC-SOP-EXIT`、`SC-SOP-ENGLISH`。教材文字只以字數與雜湊記進輸入快照；教材刪除時，這些輸出裡的 `evidence`／`context_sentence` 與 SOP 任務的 `evidence` 一併清掉。
-- **教師記憶**：`sop_paragraph_tasks`、`sop_warmup`、`sop_exit_ticket` 在 `memory::HABIT_STEPS`（主持人開啟開關時帶入已確認的習慣，第 5 步的選項數檢查同樣放寬）；英文修改、整合目標、鷹架不帶。見 `docs/TEACHER_MEMORY.md`。
-- 後台提示詞「逐步設計」群組列出 8 個提示詞（含原本的 `sop_passage_analysis`、`sop_objectives`）。
+- 每次模型呼叫各寫一列 `ai_interactions`（`module` 與 prompt key 相同，除了第 3 步沿用 `sop_objectives`；`lesson_id`、`unit_id` 有值；第 2 次的 `retry_of` 指向第 1 次）。鷹架：`SC-SOP-GOALS`、`SC-SOP-TASKS`（問題與鷹架兩次呼叫）、`SC-SOP-WARMUP`、`SC-SOP-EXIT`、`SC-SOP-ENGLISH`、`SC-SOP-TEXT-ENGLISH`。教材文字只以字數與雜湊記進輸入快照；教材刪除時，這些輸出裡的 `evidence`／`context_sentence` 與 SOP 任務的 `evidence` 一併清掉。
+- **教師記憶**：`sop_paragraph_tasks`、`sop_warmup`、`sop_exit_ticket` 在 `memory::HABIT_STEPS`（主持人開啟開關時帶入已確認的習慣，第 5 步的選項數檢查同樣放寬）；英文修改（兩種）、整合目標、鷹架不帶。見 `docs/TEACHER_MEMORY.md`。
+- 後台提示詞「逐步設計」群組列出 9 個提示詞（含原本的 `sop_passage_analysis`、`sop_objectives`，與 0059 的 `sop_text_english`）。
 
 ### 學習單的選擇放在哪一步（規格 §7）
 

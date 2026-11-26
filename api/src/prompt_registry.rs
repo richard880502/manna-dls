@@ -598,7 +598,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_passage_analysis",
         name_zh: "逐步設計第 2 步：分析教材的寫作特色",
         group: G_SOP,
-        description: "逐步設計第 2 步：逐段分析教材的寫作特色。",
+        description: "逐步設計第 2 步：逐段分析教材的寫作特色。「這一段再分析一次」與全文分析的「換一個」也用這一個：程式在訊息最後補上只要哪一段、被換掉的分析。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -653,7 +653,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_paragraph_tasks",
         name_zh: "逐步設計第 5 步：逐段問題或任務",
         group: G_SOP,
-        description: "逐步設計第 5 步的第 1 次呼叫：逐段（或合併相鄰段落）設計任務、學生任務標籤與作答方式。沿用學習單「學習任務與題目」的規則與檢查（含老師確認的選項數習慣）。",
+        description: "逐步設計第 5 步的第 1 次呼叫：逐段（或合併相鄰段落）設計任務、學生任務標籤與作答方式。沿用學習單「學習任務與題目」的規則與檢查（含老師確認的選項數習慣）。一個區塊的「換一個」也用這一個（only_block 說明要重做的區塊）。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -669,7 +669,7 @@ pub static REGISTRY: &[PromptInfo] = &[
             opt("selected_student_tasks", "老師勾選的學生任務"),
             opt("selected_answer_formats", "老師勾選的作答方式"),
             opt("teacher_tasks", "老師自己寫的任務"),
-            req("only_block", "只重做某一區的說明（逐步設計用不到，是空的）"),
+            req("only_block", "只重做某一區的說明（整批時是空的；「換一個」時說明要重做的區塊）"),
             auto("image_slot_rules", "圖片位置的規則（逐步設計用不到）"),
         ],
     },
@@ -698,7 +698,7 @@ pub static REGISTRY: &[PromptInfo] = &[
         key: "sop_warmup",
         name_zh: "逐步設計第 6 步：暖身與關鍵字彙",
         group: G_SOP,
-        description: "逐步設計第 6 步：設計喚醒背景知識的活動，並從程式依詞彙表挑出的候選字裡選關鍵字彙。暖身的指示是活動介紹（In this activity, you will …），不重複作答步驟。字彙級別一律由程式帶入，模型不輸出級別；每個關鍵字另給詞性（pos）與簡短中文意思（meaning_zh），詞性由程式對照詞彙表檢查。",
+        description: "逐步設計第 6 步：設計喚醒背景知識的活動，並從程式依詞彙表挑出的候選字裡選關鍵字彙（「換一個」活動或換一組字也用這一個）。暖身的指示是活動介紹（In this activity, you will …），不重複作答步驟。字彙級別一律由程式帶入，模型不輸出級別；每個關鍵字另給詞性（pos）與簡短中文意思（meaning_zh），詞性由程式對照詞彙表檢查。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -713,13 +713,14 @@ pub static REGISTRY: &[PromptInfo] = &[
             opt("teacher_vocabulary", "老師指定的字彙"),
             opt("tasks_summary", "第 5 步已經寫好的任務摘要"),
             req("vocab_candidates", "程式從教材挑出的候選字彙"),
+            auto("redo_note", "「換一個」時的說明（只換一個活動或一組字；整批時沒有）"),
         ],
     },
     PromptInfo {
         key: "sop_exit_ticket",
         name_zh: "逐步設計第 7 步：Exit ticket",
         group: G_SOP,
-        description: "逐步設計第 7 步：設計 2 到 4 題 Exit ticket；至少一題形成性評量連到第 3 步的目標並附參考答案，至少一題反思或蒐集問題，不重複主要任務。",
+        description: "逐步設計第 7 步：設計 2 到 4 題 Exit ticket（「換一個」只換一題時也用這一個）；至少一題形成性評量連到第 3 步的目標並附參考答案，至少一題反思或蒐集問題，不重複主要任務。",
         uses_user_template: true,
         vars: vars![
             opt("school_track", "學校類型"),
@@ -733,6 +734,20 @@ pub static REGISTRY: &[PromptInfo] = &[
             opt("exit_minutes", "作答分鐘數"),
             opt("teacher_exit", "老師自己寫的出場票"),
             req("tasks_summary", "已經寫好的任務摘要"),
+            auto("redo_note", "「換一個」時的說明（只換一題；整批時沒有）"),
+        ],
+    },
+    PromptInfo {
+        key: "sop_text_english",
+        name_zh: "逐步設計第 5–7 步：幫我修題目與活動的英文",
+        group: G_SOP,
+        description: "老師在第 5–7 步的編輯表單按「幫我修英文」時：修老師自己寫的英文題目、暖身活動或 Exit ticket 題目（中文的部分寫成英文），保留意思、空格與行數。一次呼叫，直接回答，不是背景工作。",
+        uses_user_template: true,
+        vars: vars![
+            opt("school_track", "學校類型"),
+            opt("text_kind", "文字類型（問題或任務、暖身活動、Exit ticket 題目）"),
+            opt("paragraph_text", "相關段落（只有問題或任務有）"),
+            req("teacher_text", "老師寫的文字"),
         ],
     },
 ];

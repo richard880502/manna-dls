@@ -19,6 +19,10 @@
 //! | `FAKE_SOP_GOALS_SKIP`    | step 4: call 1 leaves out paragraph 2; call 2 delivers it          |
 //! | `FAKE_SOP_GOALS_SKIP_ALWAYS` | step 4: neither call delivers paragraph 2 (→ missing)          |
 //! | `FAKE_SOP_GOALS_LONG`    | step 4: call 1 writes a note over the length limit; call 2 does not |
+//! | `FAKE_SOP_TEXT_BLANK_ONCE` | 幫我修英文 in steps 5–7: call 1 loses the `___` blanks; call 2 keeps them |
+//!
+//! A redo (`redo` in the context: 這一段再分析一次, 換一個 for the whole text) writes 「換個角度：」
+//! into every Chinese text, so that it differs from the suggestion it replaces.
 //!
 //! Steps 5–7 are the worksheet's own steps (`worksheet_tasks`, `_scaffolds`, `_warmup`,
 //! `_exit_ticket`): their fake outputs and markers (`worksheet::fake`) apply to them as well.
@@ -63,6 +67,12 @@ pub fn analysis(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value 
     let only: Option<Vec<i64>> = ctx["only_paragraphs"]
         .as_array()
         .map(|a| a.iter().filter_map(Value::as_i64).collect());
+    // 這一段再分析一次／換一個: another angle, said so in every text.
+    let again = if ctx["redo"].is_null() {
+        ""
+    } else {
+        "換個角度："
+    };
     let all = ctx["paragraphs"].as_array().cloned().unwrap_or_default();
     let wanted: Vec<&Value> = all
         .iter()
@@ -93,8 +103,8 @@ pub fn analysis(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value 
             };
             json!({
                 "paragraph_no": no,
-                "function_zh": format!("（測試）第 {no} 段在全文中的功能"),
-                "summary_zh": format!("（測試）第 {no} 段的一句話摘要"),
+                "function_zh": format!("（測試）{again}第 {no} 段在全文中的功能"),
+                "summary_zh": format!("（測試）{again}第 {no} 段的一句話摘要"),
                 "writing_features": [{
                     "feature_zh": "（測試）主題句放在段首",
                     "evidence": evidence,
@@ -124,8 +134,8 @@ pub fn analysis(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value 
     };
     json!({
         "text_type": "記敘文",
-        "main_idea_zh": if invalid { "Main idea" } else { "（測試）全文主旨的示範說明" },
-        "structure_zh": if invalid { "Structure" } else { "（測試）依段落順序鋪陳" },
+        "main_idea_zh": if invalid { "Main idea".to_string() } else { format!("（測試）{again}全文主旨的示範說明") },
+        "structure_zh": if invalid { "Structure".to_string() } else { format!("（測試）{again}依段落順序鋪陳") },
         "paragraphs": paragraphs,
         "language_focus": language_focus
     })
@@ -189,7 +199,10 @@ pub fn goals(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
 
 /// 幫我修英文: capitalises «I can», closes the sentence; writes one from the Chinese when the
 /// teacher's English is empty. A sentence that is already right comes back unchanged.
-pub fn english(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+pub fn english(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    if !ctx["text_kind"].is_null() {
+        return text_english(ctx, attempt, has);
+    }
     if has("FAKE_BLOCK") {
         return json!({ "english": "我可以說明原因", "changed": true, "note_zh": "" });
     }
@@ -217,6 +230,49 @@ pub fn english(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value 
         "english": fixed,
         "changed": fixed != original,
         "note_zh": if fixed == original { "（測試）已經很好，不需要改。" } else { "（測試）修了大小寫與句點。" }
+    })
+}
+
+/// 幫我修英文 in steps 5–7 (`sop_text_english`, asked with `text_kind`): every line starts with a
+/// capital and ends with a mark; Chinese becomes one fixed English line. `FAKE_BLOCK`: Chinese
+/// comes back (fails the check); `FAKE_SOP_TEXT_BLANK_ONCE`: the first answer loses the blanks.
+pub fn text_english(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
+    if has("FAKE_BLOCK") {
+        return json!({ "lines": ["請和同學討論。"], "changed": true, "note_zh": "" });
+    }
+    let original = ctx["english"].as_str().unwrap_or_default();
+    if original.chars().any(crate::retrieval::is_cjk) {
+        return json!({
+            "lines": ["Underline the sentence that shows the main idea."],
+            "changed": true,
+            "note_zh": "（測試）把中文寫成英文。"
+        });
+    }
+    let lose_blanks = has("FAKE_SOP_TEXT_BLANK_ONCE") && attempt == 1;
+    let lines: Vec<String> = original
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| !l.is_empty())
+        .map(|l| {
+            let mut chars = l.chars();
+            let mut fixed: String = match chars.next() {
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            };
+            if !fixed.ends_with(['.', '?', '!', ':']) {
+                fixed.push('.');
+            }
+            if lose_blanks {
+                fixed = fixed.replace("___", "something");
+            }
+            fixed
+        })
+        .collect();
+    let changed = lines.join("\n") != original.trim();
+    json!({
+        "lines": lines,
+        "changed": changed,
+        "note_zh": if changed { "（測試）修了大小寫與句點。" } else { "（測試）已經很好，不需要改。" }
     })
 }
 

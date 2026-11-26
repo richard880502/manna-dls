@@ -112,6 +112,14 @@ impl JobKind {
         match (self, scope) {
             (Self::Objectives, Scope::Swap(_)) => stages::PHASE_SWAP,
             (Self::Goals, Scope::Paragraph { .. }) => stages::PHASE_REDO,
+            (Self::Analysis, Scope::Paragraph { .. }) => stages::PHASE_REDO_ANALYSIS,
+            (Self::Analysis, Scope::Item(_)) => stages::PHASE_REDO_OVERALL,
+            (Self::Tasks, Scope::Item(_)) => stages::PHASE_REDO_BLOCK,
+            (Self::Warmup, Scope::Item(r)) if r.index == stages::VOCABULARY_ITEM_INDEX => {
+                stages::PHASE_REDO_VOCABULARY
+            }
+            (Self::Warmup, Scope::Item(_)) => stages::PHASE_REDO_WARMUP,
+            (Self::ExitTicket, Scope::Item(_)) => stages::PHASE_REDO_EXIT,
             (Self::Analysis, _) => PHASE_ANALYSIS,
             (Self::Objectives, _) => PHASE_OBJECTIVES,
             (Self::Goals, _) => stages::PHASE_GOALS,
@@ -135,6 +143,19 @@ pub struct Swap {
     pub avoid: Vec<String>,
 }
 
+/// 換一個 in steps 2 (the analysis of the whole text), 5, 6 and 7: the one suggestion of an
+/// earlier job of the same stage to replace, as that job stored it.
+#[derive(Debug, Clone)]
+pub struct ItemRedo {
+    pub parent_job_id: i64,
+    /// The suggestion's `item_index` (as the teacher's decisions count it).
+    pub index: i32,
+    /// The suggestion being set aside, from the parent job's result (never from the request).
+    pub declined: Value,
+    /// The other suggestions of the parent job's result (the new one must not repeat them).
+    pub others: Vec<Value>,
+}
+
 /// What part of a stage a job covers: all of it, or one suggestion (換一個, 這一段再建議一次).
 #[derive(Debug, Clone)]
 pub enum Scope {
@@ -143,10 +164,12 @@ pub enum Scope {
     /// them) 語言目標 derived from them.
     Kind(ObjectiveType),
     Swap(Swap),
+    /// One paragraph again (steps 2 and 4).
     Paragraph {
         parent_job_id: Option<i64>,
         paragraph_id: String,
     },
+    Item(ItemRedo),
 }
 
 impl Scope {
@@ -156,6 +179,14 @@ impl Scope {
             Self::Whole | Self::Kind(_) => String::new(),
             Self::Swap(s) => format!("{}:{}", s.parent_job_id, s.index),
             Self::Paragraph { paragraph_id, .. } => format!("p:{paragraph_id}"),
+            Self::Item(r) => format!("{}:{}", r.parent_job_id, r.index),
+        }
+    }
+
+    pub fn item(&self) -> Option<&ItemRedo> {
+        match self {
+            Self::Item(r) => Some(r),
+            _ => None,
         }
     }
 
@@ -171,6 +202,7 @@ impl Scope {
             Self::Whole | Self::Kind(_) => None,
             Self::Swap(s) => Some(s.parent_job_id),
             Self::Paragraph { parent_job_id, .. } => *parent_job_id,
+            Self::Item(r) => Some(r.parent_job_id),
         }
     }
 
@@ -184,6 +216,8 @@ impl Scope {
                 "avoid_count": s.avoid.len(),
             })),
             Self::Paragraph { paragraph_id, .. } => Some(json!({ "paragraph_id": paragraph_id })),
+            // The declined suggestion is in the parent job's result.
+            Self::Item(r) => Some(json!({ "index": r.index, "others_count": r.others.len() })),
         }
     }
 }
@@ -629,13 +663,26 @@ pub async fn run_queued(
                 .ok_or_else(|| AppError::bad_request("找不到要換掉的那一項建議。"))?;
             Scope::Swap(swap_of(state, teacher_id, lesson.id, parent_id, index, &version).await?)
         }
-        (JobKind::Goals, parent, slot) if slot.starts_with("p:") => Scope::Paragraph {
-            parent_job_id: parent,
-            paragraph_id: params["paragraph_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-        },
+        (JobKind::Goals | JobKind::Analysis, parent, slot) if slot.starts_with("p:") => {
+            Scope::Paragraph {
+                parent_job_id: parent,
+                paragraph_id: params["paragraph_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            }
+        }
+        (
+            JobKind::Analysis | JobKind::Tasks | JobKind::Warmup | JobKind::ExitTicket,
+            Some(parent_id),
+            _,
+        ) => {
+            let index = params["index"]
+                .as_i64()
+                .and_then(|i| i32::try_from(i).ok())
+                .ok_or_else(|| AppError::bad_request("找不到要換掉的那一項建議。"))?;
+            Scope::Item(item_of(state, teacher_id, lesson.id, kind, parent_id, index).await?)
+        }
         (JobKind::Objectives, None, _) => Scope::Kind(
             if params["only_type"].as_str() == Some(ObjectiveType::Language.label()) {
                 ObjectiveType::Language
@@ -742,6 +789,71 @@ pub async fn swap_of(
     })
 }
 
+/// The suggestion of an earlier job of the same stage that 換一個 replaces (read from the stored
+/// result, never from the request), and the job's other suggestions. Which list `index` counts
+/// in is the stage's: the analysis of the whole text is 0 (its paragraphs are redone with
+/// 這一段再分析一次), the blocks of step 5, the activities of step 6 and its word group
+/// ([`stages::VOCABULARY_ITEM_INDEX`]), the items of step 7.
+pub async fn item_of(
+    state: &AppState,
+    teacher_id: i64,
+    lesson_id: i64,
+    kind: JobKind,
+    parent_id: i64,
+    index: i32,
+) -> AppResult<ItemRedo> {
+    let parent = job(state, parent_id, teacher_id)
+        .await?
+        .filter(|j| j.lesson_id == lesson_id && j.kind == kind.as_str() && j.status == "done")
+        .ok_or_else(|| AppError::not_found("找不到這一批建議。"))?;
+    let output = parent
+        .result
+        .as_ref()
+        .filter(|r| r["status"] == "shown")
+        .map(|r| r["output"].clone())
+        .ok_or_else(|| AppError::bad_request("這一批沒有可以換的建議。"))?;
+    let missing = || AppError::bad_request("找不到要換掉的那一項建議。");
+    let pick = |list: &Value| -> AppResult<(Value, Vec<Value>)> {
+        let list = list.as_array().ok_or_else(missing)?;
+        let i = usize::try_from(index).map_err(|_| missing())?;
+        let chosen = list.get(i).cloned().ok_or_else(missing)?;
+        let others = list
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, v)| v.clone())
+            .collect();
+        Ok((chosen, others))
+    };
+    let (declined, others) = match kind {
+        JobKind::Analysis if index == 0 => {
+            let mut overall = output.clone();
+            if let Some(o) = overall.as_object_mut() {
+                o.remove("paragraphs");
+                o.remove("missing_paragraph_ids");
+            }
+            (overall, Vec::new())
+        }
+        JobKind::Tasks => pick(&output["blocks"])?,
+        JobKind::Warmup if index == stages::VOCABULARY_ITEM_INDEX => {
+            let words = output["vocabulary"].clone();
+            if words.as_array().is_none_or(Vec::is_empty) {
+                return Err(missing());
+            }
+            (words, Vec::new())
+        }
+        JobKind::Warmup => pick(&output["background"])?,
+        JobKind::ExitTicket => pick(&output["items"])?,
+        _ => return Err(missing()),
+    };
+    Ok(ItemRedo {
+        parent_job_id: parent_id,
+        index,
+        declined,
+        others,
+    })
+}
+
 pub(super) async fn set_phase(db: &PgPool, job_id: i64, phase: &str) -> sqlx::Result<()> {
     sqlx::query("UPDATE lesson_sop_jobs SET phase = $2 WHERE id = $1 AND status = 'running'")
         .bind(job_id)
@@ -792,7 +904,14 @@ async fn run_analysis(
 ) -> AppResult<Done> {
     let db = &state.db;
     let paragraphs = &input.material.paragraphs;
-    let all: Vec<i32> = paragraphs.iter().map(|p| p.no).collect();
+    // The paragraphs this job asks for: all of them, or (這一段再分析一次, 換一個 for the whole
+    // text) one; the analysis of the whole text comes with every answer.
+    let (all, redo_note) = analysis_scope(state, input).await?;
+    let asked: Vec<Paragraph> = paragraphs
+        .iter()
+        .filter(|p| all.contains(&p.no))
+        .cloned()
+        .collect();
     let prompt = prompt(db, KEY_ANALYSIS).await?;
     let passage = numbered_passage(paragraphs);
     let class_profile = input.profile.text.clone();
@@ -803,10 +922,18 @@ async fn run_analysis(
     ]);
     let required = [("class_profile", "班級特性")];
     let system = prompts::render(&prompt.system_text, &vars);
-    let user = prompts::render_user_with(&prompt, &vars, &required);
-    // The material must stay deletable: the logged copy keeps only its length and a hash.
+    let user = format!(
+        "{}{redo_note}",
+        prompts::render_user_with(&prompt, &vars, &required)
+    );
+    // The material must stay deletable: the logged copy keeps only its length and a hash (and
+    // so does what a redo says about the earlier suggestion, which is made from it).
     vars.insert("passage_numbered", prompts::redacted("課例教材", &passage));
-    let logged_user = prompts::render_user_with(&prompt, &vars, &required);
+    let logged_user = format!(
+        "{}{}",
+        prompts::render_user_with(&prompt, &vars, &required),
+        prompts::redacted("由教材衍生的內容", &redo_note)
+    );
     let snapshot = json!({
         "inputs": vars,
         "class_context": input.profile.snapshot(),
@@ -838,12 +965,17 @@ async fn run_analysis(
         .iter()
         .map(|p| json!({ "no": p.no, "text": p.text }))
         .collect();
+    let mut fake_context = json!({ "task": KEY_ANALYSIS, "paragraphs": fake_paragraphs });
+    if !redo_note.is_empty() {
+        fake_context["only_paragraphs"] = json!(all);
+        fake_context["redo"] = json!(job_id);
+    }
     let mut req = LlmRequest {
         system,
         user: user.clone(),
         schema_name: schemas::ANALYSIS_SCHEMA_NAME,
         schema: schemas::analysis_schema(),
-        fake_context: json!({ "task": KEY_ANALYSIS, "paragraphs": fake_paragraphs }),
+        fake_context,
         attempt: 1,
         max_tokens: Some(analysis_max_tokens(paragraphs.len())),
         temperature: Some(temperature),
@@ -990,7 +1122,7 @@ async fn run_analysis(
     }
 
     // ---- merge, drop what is still wrong, decide
-    let merged = merge_analysis(first.as_ref(), second.as_ref().map(|s| &s.1), paragraphs);
+    let merged = merge_analysis(first.as_ref(), second.as_ref().map(|s| &s.1), &asked);
     let usable = !merged.paragraphs.is_empty();
     let repairs = json!({
         "attempts": if targets.is_empty() { 1 } else { 2 },
@@ -1040,6 +1172,96 @@ async fn run_analysis(
         result_json(AiResult::shown(final_id, merged, Vec::new()).with_context(context)),
         Some(final_id),
     ))
+}
+
+/// The paragraph numbers an analysis job asks for, and what the request adds for a redo: the
+/// paragraph alone (這一段再分析一次) or, for 換一個 on the analysis of the whole text, the
+/// first paragraph (the answer's shape needs one) with that analysis set aside. Empty note: the
+/// whole stage.
+async fn analysis_scope(state: &AppState, input: &JobInput) -> AppResult<(Vec<i32>, String)> {
+    let paragraphs = &input.material.paragraphs;
+    let all: Vec<i32> = paragraphs.iter().map(|p| p.no).collect();
+    match &input.scope {
+        Scope::Paragraph {
+            parent_job_id,
+            paragraph_id,
+        } => {
+            let Some(p) = paragraphs.iter().find(|p| &p.id == paragraph_id) else {
+                return Err(AppError::bad_request("找不到這一段。"));
+            };
+            // What the teacher set aside, when the request says which job it came from.
+            let earlier = match parent_job_id {
+                Some(id) => job(state, *id, input.teacher_id)
+                    .await?
+                    .and_then(|j| j.result)
+                    .and_then(|r| {
+                        r["output"]["paragraphs"]
+                            .as_array()?
+                            .iter()
+                            .find(|x| x["paragraph_id"] == paragraph_id.as_str())
+                            .cloned()
+                    }),
+                None => None,
+            };
+            Ok((vec![p.no], paragraph_redo_note(p.no, earlier.as_ref())))
+        }
+        Scope::Item(r) => Ok((
+            all.iter().copied().take(1).collect(),
+            overall_redo_note(&r.declined, all.first().copied().unwrap_or(1)),
+        )),
+        _ => Ok((all, String::new())),
+    }
+}
+
+fn paragraph_redo_note(no: i32, earlier: Option<&Value>) -> String {
+    let mut note = format!(
+        "\n\n【這次只要重新分析 [P{no}]】paragraphs 只輸出 [P{no}] 一筆，不要輸出其他段落；text_type、main_idea_zh、structure_zh、language_focus 仍然針對全文填寫。"
+    );
+    if let Some(e) = earlier {
+        let features: Vec<String> = e["features"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|f| f["feature"].as_str())
+                    .map(|f| clip_chars(f, 80))
+                    .collect()
+            })
+            .unwrap_or_default();
+        note.push_str(&format!(
+            "\n教師不要上一次對這一段的分析，請換一個角度看這一段（不同的寫作特色或不同的說法）：\n上一次的功能：{}\n上一次的摘要：{}\n上一次的寫作特色：{}",
+            clip_chars(e["function"].as_str().unwrap_or_default(), 120),
+            clip_chars(e["summary"].as_str().unwrap_or_default(), 200),
+            if features.is_empty() {
+                "（沒有）".to_string()
+            } else {
+                features.join("、")
+            }
+        ));
+    }
+    note
+}
+
+fn overall_redo_note(declined: &Value, first_no: i32) -> String {
+    let focus: Vec<String> = declined["language_focus"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|f| f["item"].as_str())
+                .map(|f| clip_chars(f, 60))
+                .collect()
+        })
+        .unwrap_or_default();
+    format!(
+        "\n\n【這次只要重新分析全文】教師不要上一次對全文的分析，請換一個角度重寫 text_type、main_idea_zh、structure_zh 與 language_focus（挑不同的語言重點）。paragraphs 只需要輸出 [P{first_no}] 一筆。\n上一次的文體：{}\n上一次的主旨：{}\n上一次的結構：{}\n上一次的語言重點：{}",
+        clip_chars(declined["text_type"].as_str().unwrap_or_default(), 40),
+        clip_chars(declined["main_idea"].as_str().unwrap_or_default(), 200),
+        clip_chars(declined["structure"].as_str().unwrap_or_default(), 200),
+        if focus.is_empty() {
+            "（沒有）".to_string()
+        } else {
+            focus.join("、")
+        }
+    )
 }
 
 // ---------------------------------------------------------------- (b) objectives

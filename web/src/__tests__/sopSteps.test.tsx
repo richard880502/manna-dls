@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type {
   AiResult,
+  SopAnalysisSuggestion,
   SopContent,
   SopExitSuggestion,
   SopGoalsSuggestion,
@@ -743,5 +744,541 @@ describe("step 7: Exit ticket and 產生學習單", () => {
     expect(o?.material_types).toEqual(["閱讀文本", "資料／數據"]);
     expect(o?.levels).toEqual(["standard", "advanced"]);
     expect(o?.generation).toEqual(["顯示學習目標", "提供句型框架"]);
+  });
+});
+
+// ---------------------------------------------------------------- 換一個 on every suggestion (steps 2, 5, 6, 7)
+
+/** A 換一個 job as the server starts it (running) and as it ends (done, with `output` or a status). */
+function redoPair<T>(
+  kind: SopJobKind,
+  parent: SopJob,
+  slot: string,
+  outcome: T | { status: "blocked"; message: string },
+  interaction: number,
+) {
+  const started = job<T>(kind, null, { slot, parent_job_id: parent.id });
+  const result: AiResult<T> =
+    outcome !== null && typeof outcome === "object" && "status" in outcome
+      ? { interaction_id: interaction, status: "blocked", message: outcome.message, output: null, sources: [], context: [] }
+      : { interaction_id: interaction, status: "shown", message: null, output: outcome as T, sources: [], context: [] };
+  const done: SopJob<T> = { ...started, status: "done", phase: "", finished_at: new Date().toISOString(), result };
+  return { started, done };
+}
+
+const decisions = (api: ReturnType<typeof mockApi>, interaction: number) =>
+  api.callsTo("POST", `/api/ai/${interaction}/decision`).map((c) => c.body);
+
+describe("step 2: 這一段再分析一次 and 換一個 on the whole text", () => {
+  const analysis = (mainIdea: string, p1Function: string): SopAnalysisSuggestion => ({
+    text_type: "記敘文",
+    main_idea: mainIdea,
+    structure: "開場 → 轉折",
+    language_focus: [],
+    paragraphs: [
+      { paragraph_id: "p1", paragraph_no: 1, function: p1Function, summary: "店門口的傘架", features: [] },
+      { paragraph_id: "p2", paragraph_no: 2, function: "預測", summary: "鄰居不看好", features: [] },
+    ],
+    missing_paragraph_ids: [],
+    dropped_evidence: 0,
+  });
+
+  it("這一段再分析一次 asks for that paragraph, replaces its suggestion only, and the new one is adopted with its own interaction", async () => {
+    signIn();
+    const whole = job("analysis", analysis("善意會被珍惜", "介紹"), {}, 91);
+    const redone: SopAnalysisSuggestion = {
+      ...analysis("不會被採用的主旨", "重新介紹"),
+      paragraphs: [{ paragraph_id: "p1", paragraph_no: 1, function: "重新介紹", summary: "傘架的由來", features: [] }],
+    };
+    const { started, done } = redoPair("analysis", whole, "p:p1", redone, 92);
+    const api = mockApi(
+      routes(sopState(undefined, { analysis: whole }), {
+        [`POST ${SOP}/analysis`]: started,
+        [`GET /api/sop-jobs/${started.id}`]: done,
+        "POST /api/ai/91/decision": { ok: true },
+        "POST /api/ai/92/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /分析寫作特色/);
+    const p1 = within(screen.getByRole("region", { name: "第 1 段" }));
+    expect(p1.getByText("介紹")).toBeInTheDocument();
+    await user.click(p1.getByRole("button", { name: "這一段再分析一次" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/analysis`).map((c) => c.body)).toEqual([
+        { paragraph_id: "p1", parent_job_id: whole.id },
+      ]),
+    );
+    await waitFor(() => expect(p1.getByText("重新介紹")).toBeInTheDocument());
+    expect(p1.queryByText("介紹")).not.toBeInTheDocument();
+    // The second paragraph and the whole-text suggestion stay as they were.
+    expect(screen.getByText("預測")).toBeInTheDocument();
+    expect(screen.getByText("善意會被珍惜")).toBeInTheDocument();
+    expect(screen.queryByText("不會被採用的主旨")).not.toBeInTheDocument();
+    await waitFor(() => expect(decisions(api, 91)).toEqual([{ item_index: 1, decision: "reject" }]));
+
+    await user.click(within(p1.getByRole("group", { name: "Manna 建議：第 1 段" })).getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(decisions(api, 92)).toEqual([{ item_index: 1, decision: "adopt" }]));
+    await settleAutosave();
+    expect(lastSaved(api).analysis.paragraphs.map((a) => [a.paragraph_id, a.function, a.origin])).toEqual([
+      ["p1", "重新介紹", "ai_adopted"],
+    ]);
+  });
+
+  it("換一個 on the whole text asks for a new overall analysis and ignores its paragraphs", async () => {
+    signIn();
+    const whole = job("analysis", analysis("善意會被珍惜", "介紹"), {}, 91);
+    const redone: SopAnalysisSuggestion = {
+      ...analysis("信任讓社區變好", "不會出現的段落功能"),
+      text_type: "說明文",
+    };
+    const { started, done } = redoPair("analysis", whole, `${whole.id}:0`, redone, 92);
+    const api = mockApi(
+      routes(sopState(undefined, { analysis: whole }), {
+        [`POST ${SOP}/analysis`]: started,
+        [`GET /api/sop-jobs/${started.id}`]: done,
+        "POST /api/ai/91/decision": { ok: true },
+        "POST /api/ai/92/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /分析寫作特色/);
+    const well = within(screen.getByRole("group", { name: "Manna 建議：全文" }));
+    expect(well.getByText("善意會被珍惜")).toBeInTheDocument();
+    await user.click(well.getByRole("button", { name: "換一個" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/analysis`).map((c) => c.body)).toEqual([
+        { parent_job_id: whole.id, item_index: 0 },
+      ]),
+    );
+    const again = within(await screen.findByRole("group", { name: "Manna 建議：全文" }));
+    await waitFor(() => expect(again.getByText("信任讓社區變好")).toBeInTheDocument());
+    expect(screen.queryByText("善意會被珍惜")).not.toBeInTheDocument();
+    // The new analysis's paragraphs are not used: paragraph 1 still shows the whole run's.
+    expect(screen.queryByText("不會出現的段落功能")).not.toBeInTheDocument();
+    expect(screen.getByText("介紹")).toBeInTheDocument();
+    await waitFor(() => expect(decisions(api, 91)).toEqual([{ item_index: 0, decision: "reject" }]));
+
+    await user.click(again.getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(decisions(api, 92)).toEqual([{ item_index: 0, decision: "adopt" }]));
+    await settleAutosave();
+    expect(lastSaved(api).analysis).toMatchObject({ text_type: "說明文", main_idea: "信任讓社區變好" });
+  });
+});
+
+describe("step 5: 換一個 on a block", () => {
+  const block = (text: string) => ({
+    paragraph_ids: ["p1"],
+    paragraph_nos: [1],
+    title: "Why the stand?",
+    student_tasks: ["理解內容"],
+    answer_formats: ["簡答題"],
+    objective_ids: ["o-1"],
+    reason: "先確認學生讀懂規則",
+    tasks: [
+      {
+        function: "discover" as const,
+        text,
+        answer_format: "簡答題",
+        options: [],
+        answer: "To help people",
+        evidence: "",
+        scaffolds: { verbal: "", instructional: "", procedural: "" },
+      },
+    ],
+  });
+  const suggestion = (text: string): SopTasksSuggestion => ({
+    scaffolds_ok: true,
+    missing_paragraph_ids: [],
+    blocks: [block(text)],
+  });
+
+  it("asks for that block with the paragraphs it covers, shows the new one in place, and a second 換一個 chains from the redo job", async () => {
+    signIn();
+    const whole = job("tasks", suggestion("Why did Mrs. Lin put the stand outside?"), {}, 91);
+    const first = redoPair("tasks", whole, `${whole.id}:0`, suggestion("Who could take an umbrella?"), 92);
+    const second = redoPair("tasks", first.done, `${first.done.id}:0`, suggestion("What did the sign say?"), 93);
+    let posts = 0;
+    const api = mockApi(
+      routes(sopState(undefined, { tasks: whole }), {
+        [`POST ${SOP}/tasks`]: () => {
+          posts += 1;
+          return posts === 1 ? first.started : second.started;
+        },
+        [`GET /api/sop-jobs/${first.started.id}`]: first.done,
+        [`GET /api/sop-jobs/${second.started.id}`]: second.done,
+        "POST /api/ai/91/decision": { ok: true },
+        "POST /api/ai/92/decision": { ok: true },
+        "POST /api/ai/93/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /逐段問題或任務/);
+    const p1 = within(screen.getByRole("region", { name: "第 1 段" }));
+    await user.click(within(p1.getByRole("group", { name: "Manna 建議：第 1 段" })).getByRole("button", { name: "換一個" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/tasks`).map((c) => c.body)).toEqual([{ parent_job_id: whole.id, item_index: 0 }]),
+    );
+    await waitFor(() => expect(p1.getByText("Who could take an umbrella?")).toBeInTheDocument());
+    expect(p1.queryByText("Why did Mrs. Lin put the stand outside?")).not.toBeInTheDocument();
+    await waitFor(() => expect(decisions(api, 91)).toEqual([{ item_index: 0, decision: "reject" }]));
+
+    // Again: the redo job is the parent now.
+    await user.click(within(p1.getByRole("group", { name: "Manna 建議：第 1 段" })).getByRole("button", { name: "換一個" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/tasks`).map((c) => c.body)).toEqual([
+        { parent_job_id: whole.id, item_index: 0 },
+        { parent_job_id: first.done.id, item_index: 0 },
+      ]),
+    );
+    await waitFor(() => expect(p1.getByText("What did the sign say?")).toBeInTheDocument());
+    await waitFor(() => expect(decisions(api, 92)).toEqual([{ item_index: 0, decision: "reject" }]));
+
+    await user.click(within(p1.getByRole("group", { name: "Manna 建議：第 1 段" })).getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(decisions(api, 93)).toEqual([{ item_index: 0, decision: "adopt" }]));
+    await settleAutosave();
+    expect(lastSaved(api).task_blocks.flatMap((b) => b.tasks.map((t) => [t.text, t.origin]))).toEqual([
+      ["What did the sign say?", "ai_adopted"],
+    ]);
+  });
+});
+
+describe("step 6: 換一個 on an activity and on the word group", () => {
+  const empty = { text: "", scaffolds: { verbal: "", instructional: "", procedural: "" }, purpose: "" };
+  const whole = (): SopWarmupSuggestion => ({
+    candidates_available: 5,
+    levels_available: true,
+    background: [{ ...empty, text: "Look at the title.", purpose: "喚醒傘的經驗" }],
+    vocabulary: [
+      { word: "umbrella", level: 2, paragraph_id: "p1", evidence: "an umbrella stand", definition_en: "a thing for rain" },
+    ],
+  });
+
+  it("an activity: replaced in place, the word group untouched, adopted with the redo job's interaction", async () => {
+    signIn();
+    const parent = job("warmup", whole(), {}, 91);
+    const redone: SopWarmupSuggestion = {
+      ...whole(),
+      background: [{ ...empty, text: "Share a time you borrowed an umbrella.", purpose: "換個角度" }],
+      vocabulary: [],
+    };
+    const { started, done } = redoPair("warmup", parent, `${parent.id}:0`, redone, 92);
+    const api = mockApi(
+      routes(sopState(undefined, { warmup: parent }), {
+        [`POST ${SOP}/warmup`]: started,
+        [`GET /api/sop-jobs/${started.id}`]: done,
+        "POST /api/ai/91/decision": { ok: true },
+        "POST /api/ai/92/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /暖身/);
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：暖身活動 1" })).getByRole("button", { name: "換一個" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/warmup`).map((c) => c.body)).toEqual([{ parent_job_id: parent.id, item_index: 0 }]),
+    );
+    await waitFor(() => expect(screen.getByText("Share a time you borrowed an umbrella.")).toBeInTheDocument());
+    expect(screen.queryByText("Look at the title.")).not.toBeInTheDocument();
+    // The redo job has no words: the whole run's group is still there.
+    expect(screen.getByRole("group", { name: "Manna 建議：關鍵字彙" })).toBeInTheDocument();
+    await waitFor(() => expect(decisions(api, 91)).toEqual([{ item_index: 0, decision: "reject" }]));
+
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：暖身活動 1" })).getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(decisions(api, 92)).toEqual([{ item_index: 0, decision: "adopt" }]));
+    await settleAutosave();
+    expect(lastSaved(api).warmup.background.map((a) => [a.text, a.origin])).toEqual([
+      ["Share a time you borrowed an umbrella.", "ai_adopted"],
+    ]);
+  });
+
+  it("the word group: asked with item_index 100, replaced in place, adopted as 100 of the redo job", async () => {
+    signIn();
+    const parent = job("warmup", whole(), {}, 91);
+    const redone: SopWarmupSuggestion = {
+      ...whole(),
+      background: [],
+      vocabulary: [{ word: "stand", level: 1, paragraph_id: "p1", evidence: "an umbrella stand", definition_en: "a small table" }],
+    };
+    const { started, done } = redoPair("warmup", parent, `${parent.id}:100`, redone, 92);
+    const api = mockApi(
+      routes(sopState(undefined, { warmup: parent }), {
+        [`POST ${SOP}/warmup`]: started,
+        [`GET /api/sop-jobs/${started.id}`]: done,
+        "POST /api/ai/91/decision": { ok: true },
+        "POST /api/ai/92/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /暖身/);
+    const words = within(screen.getByRole("group", { name: "Manna 建議：關鍵字彙" }));
+    expect(words.getByText("umbrella")).toBeInTheDocument();
+    await user.click(words.getByRole("button", { name: "換一個" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/warmup`).map((c) => c.body)).toEqual([{ parent_job_id: parent.id, item_index: 100 }]),
+    );
+    await waitFor(() => expect(screen.getByText("a small table")).toBeInTheDocument());
+    expect(screen.queryByText("a thing for rain")).not.toBeInTheDocument();
+    // The activity suggestion stays.
+    expect(screen.getByText("Look at the title.")).toBeInTheDocument();
+    await waitFor(() => expect(decisions(api, 91)).toEqual([{ item_index: 100, decision: "reject" }]));
+
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：關鍵字彙" })).getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(decisions(api, 92)).toEqual([{ item_index: 100, decision: "adopt" }]));
+    await settleAutosave();
+    expect(lastSaved(api).warmup.vocabulary.map((v) => [v.word, v.origin])).toEqual([["stand", "ai_adopted"]]);
+  });
+
+  it("when the material has no other words, the redo ends blocked: Manna's message is shown with 再試一次", async () => {
+    signIn();
+    const parent = job("warmup", whole(), {}, 91);
+    const { started, done } = redoPair(
+      "warmup",
+      parent,
+      `${parent.id}:100`,
+      { status: "blocked", message: "教材裡沒有其他適合的候選字了。" },
+      92,
+    );
+    const api = mockApi(
+      routes(sopState(undefined, { warmup: parent }), {
+        [`POST ${SOP}/warmup`]: started,
+        [`GET /api/sop-jobs/${started.id}`]: done,
+        "POST /api/ai/91/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /暖身/);
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：關鍵字彙" })).getByRole("button", { name: "換一個" }));
+    expect(await screen.findByText("教材裡沒有其他適合的候選字了。")).toBeInTheDocument();
+    expect(screen.queryByText("a thing for rain")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "再試一次" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/warmup`).map((c) => c.body)).toEqual([{ parent_job_id: parent.id, item_index: 100 }]),
+    );
+  });
+
+  it("a group that took every candidate word offers no 換一個 (the activity still does)", async () => {
+    signIn();
+    const parent = job("warmup", { ...whole(), more_words: false }, {}, 91);
+    mockApi(routes(sopState(undefined, { warmup: parent })));
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /暖身/);
+    const words = within(await screen.findByRole("group", { name: "Manna 建議：關鍵字彙" }));
+    expect(words.getByRole("button", { name: "採用" })).toBeInTheDocument();
+    expect(words.queryByRole("button", { name: "換一個" })).not.toBeInTheDocument();
+    const activity = within(screen.getByRole("group", { name: "Manna 建議：暖身活動 1" }));
+    expect(activity.getByRole("button", { name: "換一個" })).toBeInTheDocument();
+  });
+});
+
+describe("step 7: 換一個 on an item", () => {
+  const output: SopExitSuggestion = {
+    uncovered_objective_ids: [],
+    items: [
+      { kind: "formative", text: "Why did Mrs. Lin put the stand outside?", objective_id: "o-1", answer: "To help people." },
+      { kind: "reflection", text: "What was hardest today?", objective_id: "", answer: "" },
+    ],
+  };
+
+  it("asks for that item only, shows the new one in place, adopts it with the redo job's interaction", async () => {
+    signIn();
+    const whole = job("exit_ticket", output, {}, 91);
+    const redone: SopExitSuggestion = {
+      uncovered_objective_ids: [],
+      items: [{ kind: "formative", text: "What did the sign say?", objective_id: "o-1", answer: "Take one." }],
+    };
+    const { started, done } = redoPair("exit_ticket", whole, `${whole.id}:0`, redone, 92);
+    const api = mockApi(
+      routes(sopState(undefined, { exit_ticket: whole }), {
+        [`POST ${SOP}/exit-ticket`]: started,
+        [`GET /api/sop-jobs/${started.id}`]: done,
+        "POST /api/ai/91/decision": { ok: true },
+        "POST /api/ai/92/decision": { ok: true },
+      }),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /Exit ticket/);
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：形成性評量" })).getByRole("button", { name: "換一個" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/exit-ticket`).map((c) => c.body)).toEqual([
+        { parent_job_id: whole.id, item_index: 0 },
+      ]),
+    );
+    await waitFor(() => expect(screen.getByText("What did the sign say?")).toBeInTheDocument());
+    expect(screen.queryByText("Why did Mrs. Lin put the stand outside?")).not.toBeInTheDocument();
+    // The other item is where it was.
+    expect(screen.getByText("What was hardest today?")).toBeInTheDocument();
+    await waitFor(() => expect(decisions(api, 91)).toEqual([{ item_index: 0, decision: "reject" }]));
+
+    await user.click(within(screen.getByRole("group", { name: "Manna 建議：形成性評量" })).getByRole("button", { name: "採用" }));
+    await waitFor(() => expect(decisions(api, 92)).toEqual([{ item_index: 0, decision: "adopt" }]));
+    await settleAutosave();
+    expect(lastSaved(api).exit_ticket.items.map((i) => [i.text, i.origin, i.answer])).toEqual([
+      ["What did the sign say?", "ai_adopted", "Take one."],
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------- 幫我修英文 in steps 5, 6, 7
+
+describe("幫我修英文 in steps 5, 6, 7", () => {
+  const reply = (id: number, english: string, changed = true) => ({
+    interaction_id: id,
+    status: "shown",
+    message: null,
+    output: { english, changed, note: "改了動詞。" },
+    sources: [],
+    context: [],
+  });
+  const noScaffolds = { verbal: "", instructional: "", procedural: "" };
+
+  /** Two asks: the first is kept (保留我的), the second is taken (用這個). */
+  function textEnglishRoutes(first: string, second: string) {
+    let calls = 0;
+    return {
+      [`POST ${SOP}/text-english`]: () => {
+        calls += 1;
+        return calls === 1 ? reply(71, first) : reply(72, second);
+      },
+      "POST /api/ai/71/decision": { ok: true },
+      "POST /api/ai/72/decision": { ok: true },
+    };
+  }
+
+  it("step 5: a task, with its paragraphs; 保留我的 keeps the text, 用這個 replaces it", async () => {
+    signIn();
+    const content: SopContent = {
+      ...emptyContent(),
+      objectives,
+      task_blocks: [
+        {
+          id: "b1",
+          paragraph_ids: ["p1"],
+          student_tasks: [],
+          answer_formats: [],
+          ai_student_tasks: [],
+          ai_answer_formats: [],
+          tasks: [
+            {
+              id: "t1",
+              function: "discover",
+              text: "Why Mrs. Lin put stand?",
+              scaffolds: noScaffolds,
+              origin: "teacher",
+              answer_format: "",
+              options: [],
+              answer: "",
+              evidence: "",
+            },
+          ],
+        },
+      ],
+    };
+    const api = mockApi(
+      routes(sopState(content), textEnglishRoutes("Why did Mrs. Lin put the stand?", "Why did Mrs. Lin put the stand outside?\nFind the sentence.")),
+    );
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /逐段問題或任務/);
+    await user.click(screen.getByRole("button", { name: "修改「Why Mrs. Lin put stand?」" }));
+    const editor = within(screen.getByRole("group", { name: "問題或任務" }));
+    await user.click(editor.getByRole("button", { name: "幫我修英文" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/text-english`).map((c) => c.body)).toEqual([
+        { field: "task", text: "Why Mrs. Lin put stand?", paragraph_ids: ["p1"] },
+      ]),
+    );
+    const proposal = within(await screen.findByRole("group", { name: "Manna 建議的英文" }));
+    expect(proposal.getByText("Why Mrs. Lin put stand?")).toBeInTheDocument();
+    expect(proposal.getByText("Why did Mrs. Lin put the stand?")).toBeInTheDocument();
+    await user.click(proposal.getByRole("button", { name: "保留我的" }));
+    expect(editor.getByRole("textbox", { name: "問題或任務" })).toHaveValue("Why Mrs. Lin put stand?");
+    expect(screen.queryByRole("group", { name: "Manna 建議的英文" })).not.toBeInTheDocument();
+
+    await user.click(editor.getByRole("button", { name: "幫我修英文" }));
+    const second = within(await screen.findByRole("group", { name: "Manna 建議的英文" }));
+    await user.click(second.getByRole("button", { name: "用這個" }));
+    expect(editor.getByRole("textbox", { name: "問題或任務" })).toHaveValue(
+      "Why did Mrs. Lin put the stand outside?\nFind the sentence.",
+    );
+    await settleAutosave();
+    expect(lastSaved(api).task_blocks[0]!.tasks[0]).toMatchObject({
+      text: "Why did Mrs. Lin put the stand outside?\nFind the sentence.",
+      origin: "ai_edited",
+    });
+    await waitFor(() => expect(decisions(api, 71)).toEqual([{ item_index: 0, decision: "reject" }]));
+    await waitFor(() => expect(decisions(api, 72)).toEqual([{ item_index: 0, decision: "adopt" }]));
+  });
+
+  it("step 6: a warm-up activity; the button waits for some text", async () => {
+    signIn();
+    const content: SopContent = {
+      ...emptyContent(),
+      objectives,
+      warmup: { background: [{ id: "w1", text: "", scaffolds: noScaffolds, origin: "teacher" }], vocabulary: [] },
+    };
+    const api = mockApi(routes(sopState(content), textEnglishRoutes("Look at the title.", "Look at the title and guess.")));
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /暖身/);
+    const activity = within(screen.getByRole("group", { name: "暖身活動 1" }));
+    expect(activity.getByRole("button", { name: "幫我修英文" })).toBeDisabled();
+    await user.type(activity.getByRole("textbox", { name: "暖身活動 1" }), "look at title");
+    await user.click(activity.getByRole("button", { name: "幫我修英文" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/text-english`).map((c) => c.body)).toEqual([{ field: "warmup", text: "look at title" }]),
+    );
+    const proposal = within(await screen.findByRole("group", { name: "Manna 建議的英文" }));
+    await user.click(proposal.getByRole("button", { name: "保留我的" }));
+    expect(activity.getByRole("textbox", { name: "暖身活動 1" })).toHaveValue("look at title");
+
+    await user.click(activity.getByRole("button", { name: "幫我修英文" }));
+    await user.click(within(await screen.findByRole("group", { name: "Manna 建議的英文" })).getByRole("button", { name: "用這個" }));
+    expect(activity.getByRole("textbox", { name: "暖身活動 1" })).toHaveValue("Look at the title and guess.");
+    await settleAutosave();
+    expect(lastSaved(api).warmup.background.map((a) => [a.text, a.origin])).toEqual([
+      ["Look at the title and guess.", "ai_edited"],
+    ]);
+    await waitFor(() => expect(decisions(api, 71)).toEqual([{ item_index: 0, decision: "reject" }]));
+    await waitFor(() => expect(decisions(api, 72)).toEqual([{ item_index: 0, decision: "adopt" }]));
+  });
+
+  it("step 7: an exit-ticket item", async () => {
+    signIn();
+    const content: SopContent = {
+      ...emptyContent(),
+      objectives,
+      exit_ticket: {
+        items: [{ id: "e1", kind: "reflection", text: "what hardest today", origin: "teacher", objective_id: "", answer: "" }],
+      },
+    };
+    const api = mockApi(routes(sopState(content), textEnglishRoutes("What was hardest today?", "What was the hardest part today?")));
+    const user = userEvent.setup();
+    await open();
+    await goToStep(user, /Exit ticket/);
+    const item = within(screen.getByRole("group", { name: "Exit ticket 第 1 題" }));
+    await user.click(item.getByRole("button", { name: "幫我修英文" }));
+    await waitFor(() =>
+      expect(api.callsTo("POST", `${SOP}/text-english`).map((c) => c.body)).toEqual([{ field: "exit", text: "what hardest today" }]),
+    );
+    await user.click(within(await screen.findByRole("group", { name: "Manna 建議的英文" })).getByRole("button", { name: "保留我的" }));
+    expect(item.getByRole("textbox", { name: "題目" })).toHaveValue("what hardest today");
+
+    await user.click(item.getByRole("button", { name: "幫我修英文" }));
+    await user.click(within(await screen.findByRole("group", { name: "Manna 建議的英文" })).getByRole("button", { name: "用這個" }));
+    expect(item.getByRole("textbox", { name: "題目" })).toHaveValue("What was the hardest part today?");
+    await settleAutosave();
+    expect(lastSaved(api).exit_ticket.items.map((i) => [i.text, i.origin])).toEqual([
+      ["What was the hardest part today?", "ai_edited"],
+    ]);
+    await waitFor(() => expect(decisions(api, 71)).toEqual([{ item_index: 0, decision: "reject" }]));
+    await waitFor(() => expect(decisions(api, 72)).toEqual([{ item_index: 0, decision: "adopt" }]));
   });
 });

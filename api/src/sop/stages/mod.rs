@@ -12,6 +12,12 @@
 //! | 6 暖身 | `sop_warmup` (worksheet step (d)) | `worksheet::checks::evaluate_warmup`; candidates and levels come from code |
 //! | 7 Exit ticket | `sop_exit_ticket` (worksheet step (f)) | `worksheet::checks::evaluate_exit` |
 //! | 3 幫我修英文 | `sop_objective_english` (new) | [`evaluate_english`] |
+//! | 5–7 幫我修英文 | `sop_text_english` (new) | [`evaluate_text_english`] |
+//!
+//! 換一個 (one suggestion again, `Scope::Item`) runs the same prompt and checks for that one
+//! suggestion: the code adds what was set aside and what not to repeat (`only_block` in step 5,
+//! `redo_note` in steps 6 and 7, appended where the prompt has no place for it), and the checks
+//! that count a whole set (an exit ticket's 2–4 items and its kinds) are left out.
 //!
 //! The 作答方式 rules (選擇題 options, 配對題 minimum) and the teacher's confirmed option-count
 //! habit are the worksheet's, because step 5 runs the worksheet's own checks. Procedural
@@ -44,12 +50,14 @@ pub const KEY_SCAFFOLDS: &str = "sop_scaffolds";
 pub const KEY_WARMUP: &str = "sop_warmup";
 pub const KEY_EXIT: &str = "sop_exit_ticket";
 pub const KEY_ENGLISH: &str = "sop_objective_english";
+pub const KEY_TEXT_ENGLISH: &str = "sop_text_english";
 
 pub const SC_GOALS: &str = "SC-SOP-GOALS";
 pub const SC_TASKS: &str = "SC-SOP-TASKS";
 pub const SC_WARMUP: &str = "SC-SOP-WARMUP";
 pub const SC_EXIT: &str = "SC-SOP-EXIT";
 pub const SC_ENGLISH: &str = "SC-SOP-ENGLISH";
+pub const SC_TEXT_ENGLISH: &str = "SC-SOP-TEXT-ENGLISH";
 
 pub const PHASE_GOALS: &str = "正在逐段想這一段可以帶到哪些目標";
 pub const PHASE_GOALS_REPAIR: &str = "有幾段沒有通過檢查，正在重新確認";
@@ -63,6 +71,12 @@ pub const PHASE_EXIT: &str = "正在設計 Exit ticket";
 pub const PHASE_EXIT_REPAIR: &str = "正在重新確認 Exit ticket";
 pub const PHASE_SWAP: &str = "正在換一個目標";
 pub const PHASE_REDO: &str = "正在重新建議這一段";
+pub const PHASE_REDO_ANALYSIS: &str = "正在重新分析這一段";
+pub const PHASE_REDO_OVERALL: &str = "正在換一個角度看全文";
+pub const PHASE_REDO_BLOCK: &str = "正在重新設計這一個區塊";
+pub const PHASE_REDO_WARMUP: &str = "正在換一個暖身活動";
+pub const PHASE_REDO_VOCABULARY: &str = "正在換一組關鍵字彙";
+pub const PHASE_REDO_EXIT: &str = "正在換一題";
 
 /// The longest note of a paragraph goal (characters).
 pub const GOAL_NOTE_MAX_CHARS: usize = 120;
@@ -243,6 +257,9 @@ fn new_call(
             ("blocks_detail", "由教材衍生的內容"),
             ("tasks_summary", "由教材衍生的內容"),
             ("teacher_tasks", "由教材衍生的內容"),
+            // 換一個: what was set aside and what not to repeat.
+            ("only_block", "由教材衍生的內容"),
+            ("redo_note", "由教材衍生的內容"),
         ],
         fake_context,
         max_tokens,
@@ -337,10 +354,12 @@ mod tasks;
 use tasks::existing_tasks_text;
 mod english;
 mod exit;
+mod text_english;
 mod warmup;
 
 pub use english::*;
 pub use exit::*;
 pub use goals::*;
 pub use tasks::*;
+pub use text_english::*;
 pub use warmup::*;

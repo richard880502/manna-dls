@@ -36,7 +36,7 @@ async fn every_seeded_key_has_a_registry_entry_and_passes_its_own_check() {
         .iter()
         .map(|p| p["prompt_key"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(seeded.len(), 37, "{seeded:?}");
+    assert_eq!(seeded.len(), 38, "{seeded:?}");
     assert_eq!(
         seeded.difference(&registry).collect::<Vec<_>>(),
         Vec::<&String>::new(),

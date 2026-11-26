@@ -1,5 +1,5 @@
-//! 逐步設計 steps 3–7 with AI (docs/API.md「逐步設計：每一步的 AI 協助」): 換一個, 幫我修英文,
-//! 逐段整合目標, 逐段問題或任務, 暖身, Exit ticket (fake provider), what the teacher's choices
+//! 逐步設計 steps 2–7 with AI (docs/API.md「逐步設計：每一步的 AI 協助」): 換一個 (every step but
+//! 1), 幫我修英文 (steps 3, 5–7), 逐段整合目標, 逐段問題或任務, 暖身, Exit ticket (fake provider), what the teacher's choices
 //! on the way (學生任務, 作答方式, 產生設定) do to a worksheet made from the SOP.
 
 #[macro_use]
@@ -1192,4 +1192,444 @@ async fn a_run_without_an_exit_ticket_is_running_until_its_worksheet_is_saved() 
         .unwrap();
     assert_eq!(exit["status"], "done", "{exit}");
     assert_eq!(exit["outcome"], "skipped", "{exit}");
+}
+
+// ---------------------------------------------------------------- 換一個 in steps 2, 5, 6, 7
+
+fn redacted(v: &Value) -> bool {
+    v.as_str()
+        .is_some_and(|s| s.starts_with("［由教材衍生的內容"))
+}
+
+#[tokio::test]
+async fn one_paragraph_or_the_whole_text_can_be_analysed_again() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-20", "general").await;
+    let id = ready(&app, &t, "").await;
+    let whole = run_job(&app, &t, id, "analysis", json!({})).await;
+    assert_eq!(whole["result"]["status"], "shown", "{whole}");
+    let earlier_p2 = whole["result"]["output"]["paragraphs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["paragraph_id"] == "p2")
+        .unwrap()
+        .clone();
+
+    // 這一段再分析一次: only that paragraph, from another angle.
+    let paragraph = run_job(
+        &app,
+        &t,
+        id,
+        "analysis",
+        json!({ "paragraph_id": "p2", "parent_job_id": whole["id"] }),
+    )
+    .await;
+    assert_eq!(paragraph["slot"], "p:p2");
+    assert_eq!(paragraph["parent_job_id"], whole["id"]);
+    let out = &paragraph["result"]["output"];
+    assert_eq!(paragraph["result"]["status"], "shown", "{paragraph}");
+    let list = out["paragraphs"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "{out}");
+    assert_eq!(list[0]["paragraph_id"], "p2");
+    assert_ne!(list[0]["summary"], earlier_p2["summary"]);
+    assert_eq!(out["missing_paragraph_ids"], json!([]));
+
+    // 換一個 for the analysis of the whole text.
+    let overall = run_job(
+        &app,
+        &t,
+        id,
+        "analysis",
+        json!({ "parent_job_id": whole["id"], "item_index": 0 }),
+    )
+    .await;
+    assert_eq!(overall["slot"], format!("{}:0", whole["id"]));
+    let out = &overall["result"]["output"];
+    assert_ne!(out["main_idea"], whole["result"]["output"]["main_idea"]);
+    assert!(out["main_idea"].as_str().unwrap().contains("換個角度"));
+
+    // Each is its own interaction; what was set aside is in the log only as a length and a
+    // hash (it is made from the material).
+    let logged = rows(&app, id, "sop_analysis").await;
+    assert_eq!(logged.len(), 3, "{logged:?}");
+    assert_eq!(paragraph["result"]["interaction_id"], logged[1].id);
+    let user = logged[1].input_snapshot["prompt"]["user"].as_str().unwrap();
+    assert!(user.contains("［由教材衍生的內容"), "{user}");
+    assert!(!user.contains(earlier_p2["summary"].as_str().unwrap()));
+    let (s, v) = app
+        .post(
+            &format!("/api/ai/{}/decision", logged[2].id),
+            Some(&t),
+            json!({ "item_index": 0, "decision": "adopt" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    // The whole run stays the stage's job; both redos are listed for the page.
+    let state = get_sop(&app, &t, id).await;
+    assert_eq!(state["jobs"]["analysis"]["id"], whole["id"]);
+    let redo: Vec<&Value> = state["jobs"]["redo"].as_array().unwrap().iter().collect();
+    assert_eq!(redo.len(), 2);
+    // Nothing was written.
+    assert_eq!(state["content"]["analysis"]["paragraphs"], json!([]));
+
+    // Only the analysis of the whole text is item 0; unknown paragraphs are refused.
+    for body in [
+        json!({ "parent_job_id": whole["id"], "item_index": 3 }),
+        json!({ "paragraph_id": "p99" }),
+    ] {
+        let (s, v) = start(&app, &t, id, "analysis", body).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    }
+}
+
+#[tokio::test]
+async fn one_block_of_tasks_can_be_designed_again_over_the_same_paragraphs() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-21", "general").await;
+    let id = ready(&app, &t, "").await;
+    let whole = run_job(&app, &t, id, "tasks", json!({})).await;
+    assert_eq!(whole["result"]["status"], "shown", "{whole}");
+    let blocks = whole["result"]["output"]["blocks"].as_array().unwrap();
+    assert!(blocks.len() >= 2);
+    let declined = blocks[1].clone();
+
+    let redo = run_job(
+        &app,
+        &t,
+        id,
+        "tasks",
+        json!({ "parent_job_id": whole["id"], "item_index": 1 }),
+    )
+    .await;
+    assert_eq!(redo["slot"], format!("{}:1", whole["id"]));
+    let out = &redo["result"]["output"];
+    assert_eq!(redo["result"]["status"], "shown", "{redo}");
+    let new_blocks = out["blocks"].as_array().unwrap();
+    assert_eq!(new_blocks.len(), 1, "one block only: {out}");
+    assert_eq!(new_blocks[0]["paragraph_ids"], declined["paragraph_ids"]);
+    assert_ne!(
+        new_blocks[0]["tasks"], declined["tasks"],
+        "a different design"
+    );
+    for task in new_blocks[0]["tasks"].as_array().unwrap() {
+        assert!(task["scaffolds"]["procedural"]
+            .as_str()
+            .unwrap()
+            .starts_with("1. "));
+    }
+    assert_eq!(out["missing_paragraph_ids"], json!([]));
+
+    // The tasks prompt was asked for that block (its only_block), logged without the
+    // material-made text.
+    let logged = rows(&app, id, "sop_paragraph_tasks").await;
+    assert_eq!(logged.len(), 2, "{logged:?}");
+    assert!(redacted(&logged[1].input_snapshot["inputs"]["only_block"]));
+    assert_eq!(logged[0].input_snapshot["inputs"]["only_block"], "");
+    // The scaffolds of that one block were asked for too.
+    assert_eq!(rows(&app, id, "sop_scaffolds").await.len(), 2);
+
+    // A replacement can be replaced again; a block that does not exist cannot.
+    let again = run_job(
+        &app,
+        &t,
+        id,
+        "tasks",
+        json!({ "parent_job_id": redo["id"], "item_index": 0 }),
+    )
+    .await;
+    assert_eq!(
+        again["result"]["output"]["blocks"][0]["paragraph_ids"],
+        declined["paragraph_ids"]
+    );
+    let (s, v) = start(
+        &app,
+        &t,
+        id,
+        "tasks",
+        json!({ "parent_job_id": whole["id"], "item_index": 99 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+    // A job of another stage is not a parent.
+    let (s, v) = start(
+        &app,
+        &t,
+        id,
+        "warmup",
+        json!({ "parent_job_id": whole["id"], "item_index": 0 }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+}
+
+#[tokio::test]
+async fn one_warmup_activity_or_the_word_group_can_be_replaced() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-22", "general").await;
+    let id = ready(&app, &t, "").await;
+    let whole = run_job(&app, &t, id, "warmup", json!({})).await;
+    let out = &whole["result"]["output"];
+    let words: Vec<String> = out["vocabulary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["word"].as_str().unwrap().to_string())
+        .collect();
+    assert!(!words.is_empty());
+    assert_eq!(out["more_words"], true, "{out}");
+
+    // One activity: another one, and no words.
+    let activity = run_job(
+        &app,
+        &t,
+        id,
+        "warmup",
+        json!({ "parent_job_id": whole["id"], "item_index": 0 }),
+    )
+    .await;
+    let new = &activity["result"]["output"];
+    assert_eq!(activity["result"]["status"], "shown", "{activity}");
+    assert_eq!(new["background"].as_array().unwrap().len(), 1);
+    assert_ne!(new["background"][0]["text"], out["background"][0]["text"]);
+    assert_eq!(new["vocabulary"], json!([]));
+
+    // The word group: other words from the candidates, and no activity.
+    let group = run_job(
+        &app,
+        &t,
+        id,
+        "warmup",
+        json!({ "parent_job_id": whole["id"], "item_index": 100 }),
+    )
+    .await;
+    assert_eq!(group["slot"], format!("{}:100", whole["id"]));
+    let new = &group["result"]["output"];
+    assert_eq!(group["result"]["status"], "shown", "{group}");
+    assert_eq!(new["background"], json!([]));
+    let new_words: Vec<&str> = new["vocabulary"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["word"].as_str().unwrap())
+        .collect();
+    assert!(!new_words.is_empty());
+    assert!(
+        new_words.iter().all(|w| !words.iter().any(|old| old == w)),
+        "{new_words:?} vs {words:?}"
+    );
+
+    let logged = rows(&app, id, "sop_warmup").await;
+    assert_eq!(logged.len(), 3);
+    let user = logged[1].input_snapshot["prompt"]["user"].as_str().unwrap();
+    assert!(
+        user.contains("這次只要換一項：［由教材衍生的內容"),
+        "{user}"
+    );
+    assert!(redacted(&logged[2].input_snapshot["inputs"]["redo_note"]));
+    assert_eq!(
+        logged[0].input_snapshot["inputs"].get("redo_note"),
+        Some(&json!(""))
+    );
+}
+
+#[tokio::test]
+async fn a_word_group_cannot_be_replaced_when_the_material_has_no_other_words() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-23", "general").await;
+    let id = lesson(&app, &t).await;
+    put_material(&app, &t, id, "The umbrella stand helped everyone.").await;
+    let whole = run_job(&app, &t, id, "warmup", json!({})).await;
+    let words = whole["result"]["output"]["vocabulary"].as_array().unwrap();
+    assert!(!words.is_empty(), "{whole}");
+    // The group took every candidate: the page is told not to offer 換一個 …
+    assert_eq!(whole["result"]["output"]["more_words"], false);
+    // … and a request anyway ends with what to do instead.
+    let last = run_job(
+        &app,
+        &t,
+        id,
+        "warmup",
+        json!({ "parent_job_id": whole["id"], "item_index": 100 }),
+    )
+    .await;
+    assert_eq!(last["result"]["status"], "blocked", "{last}");
+    assert!(last["result"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("沒有其他候選字"));
+}
+
+#[tokio::test]
+async fn one_exit_item_can_be_replaced_with_another_of_the_same_kind() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-24", "general").await;
+    let id = ready(&app, &t, "").await;
+    let whole = run_job(&app, &t, id, "exit-ticket", json!({})).await;
+    let items = whole["result"]["output"]["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    for (index, item) in items.iter().enumerate() {
+        let redo = run_job(
+            &app,
+            &t,
+            id,
+            "exit-ticket",
+            json!({ "parent_job_id": whole["id"], "item_index": index }),
+        )
+        .await;
+        assert_eq!(redo["result"]["status"], "shown", "{redo}");
+        let out = &redo["result"]["output"];
+        let new = out["items"].as_array().unwrap();
+        assert_eq!(new.len(), 1, "{out}");
+        assert_eq!(new[0]["kind"], item["kind"], "the same kind");
+        assert_ne!(new[0]["text"], item["text"], "another question");
+        if item["kind"] == "formative" {
+            assert!(new[0]["objective_id"] == "o-1" || new[0]["objective_id"] == "o-2");
+            assert!(!new[0]["answer"].as_str().unwrap().is_empty());
+        }
+        assert_eq!(out["uncovered_objective_ids"], json!([]));
+    }
+    let logged = rows(&app, id, "sop_exit_ticket").await;
+    assert_eq!(logged.len(), 1 + items.len());
+    let user = logged[1].input_snapshot["prompt"]["user"].as_str().unwrap();
+    assert!(
+        user.contains("這次只要換一題：［由教材衍生的內容"),
+        "{user}"
+    );
+}
+
+// ---------------------------------------------------------------- 幫我修英文 in steps 5–7
+
+#[tokio::test]
+async fn the_english_a_teacher_wrote_in_steps_5_to_7_is_fixed_in_one_call_and_never_written() {
+    let app = test_app!();
+    let t = app.teacher("T-STEP-25", "general").await;
+    let id = lesson(&app, &t).await;
+    put_material(&app, &t, id, &passage("")).await;
+    let url = format!("/api/lessons/{id}/sop/text-english");
+
+    // A task: every line fixed, the blank kept, the paragraph given as context.
+    let (s, v) = app
+        .post(
+            &url,
+            Some(&t),
+            json!({ "field": "task",
+                    "text": "why mrs. Lin put the stand outside\nshe did it because ___",
+                    "paragraph_ids": ["p1", "p-unknown"] }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "shown", "{v}");
+    assert_eq!(
+        v["output"]["english"],
+        "Why mrs. Lin put the stand outside.\nShe did it because ___."
+    );
+    assert_eq!(v["output"]["changed"], true);
+
+    // A warm-up written in Chinese becomes English; an exit item that is fine stays.
+    let (_, warmup) = app
+        .post(
+            &url,
+            Some(&t),
+            json!({ "field": "warmup", "text": "請學生畫出主旨句" }),
+        )
+        .await;
+    assert_eq!(warmup["status"], "shown", "{warmup}");
+    assert!(!warmup["output"]["english"]
+        .as_str()
+        .unwrap()
+        .chars()
+        .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)));
+    let (_, exit) = app
+        .post(
+            &url,
+            Some(&t),
+            json!({ "field": "exit", "text": "Write one question you still have." }),
+        )
+        .await;
+    assert_eq!(exit["output"]["changed"], false);
+
+    let logged = rows(&app, id, "sop_text_english").await;
+    assert_eq!(logged.len(), 3);
+    assert_eq!(logged[0].prompt_key.as_deref(), Some("sop_text_english"));
+    assert_eq!(
+        logged[0].scaffold_code.as_deref(),
+        Some("SC-SOP-TEXT-ENGLISH")
+    );
+    assert_eq!(v["interaction_id"], logged[0].id);
+    // The paragraph is in the log as a length and a hash; the teacher's own words as written.
+    let inputs = &logged[0].input_snapshot["inputs"];
+    assert!(inputs["paragraph_text"]
+        .as_str()
+        .unwrap()
+        .starts_with("［課例教材"));
+    assert!(inputs["teacher_text"]
+        .as_str()
+        .unwrap()
+        .contains("she did it because ___"));
+    assert_eq!(
+        logged[1].input_snapshot["inputs"]["paragraph_text"],
+        "（沒有）"
+    );
+    let (s, v) = app
+        .post(
+            &format!("/api/ai/{}/decision", logged[0].id),
+            Some(&t),
+            json!({ "item_index": 0, "decision": "adopt" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // Nothing was written into the SOP.
+    assert_eq!(
+        get_sop(&app, &t, id).await["content"]["task_blocks"],
+        json!([])
+    );
+
+    // Lost blanks are asked for again once.
+    let (_, repaired) = app
+        .post(
+            &url,
+            Some(&t),
+            json!({ "field": "task", "text": "The stand has ___ umbrellas FAKE_SOP_TEXT_BLANK_ONCE" }),
+        )
+        .await;
+    assert_eq!(repaired["status"], "shown", "{repaired}");
+    assert!(repaired["output"]["english"]
+        .as_str()
+        .unwrap()
+        .contains("___"));
+    let logged = rows(&app, id, "sop_text_english").await;
+    assert_eq!(logged.len(), 5);
+    assert_eq!(logged[4].retry_of, Some(logged[3].id));
+
+    // Bad requests, a model that cannot produce an answer, another teacher.
+    for body in [
+        json!({ "field": "task", "text": "  " }),
+        json!({ "field": "task", "text": "x".repeat(4_001) }),
+    ] {
+        let (s, _) = app.post(&url, Some(&t), body).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+    let (s, _) = app
+        .post(&url, Some(&t), json!({ "field": "poem", "text": "x" }))
+        .await;
+    assert!(s.is_client_error());
+    let (s, blocked) = app
+        .post(
+            &url,
+            Some(&t),
+            json!({ "field": "exit", "text": "FAKE_BLOCK what did you learn" }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(blocked["status"], "blocked");
+    assert_eq!(blocked["output"], Value::Null);
+    let other = app.teacher("T-STEP-25B", "general").await;
+    let (s, _) = app
+        .post(&url, Some(&other), json!({ "field": "task", "text": "x" }))
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
 }

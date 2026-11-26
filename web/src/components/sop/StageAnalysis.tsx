@@ -2,14 +2,15 @@ import { useState } from "react";
 import type {
   SopAnalysisSuggestion,
   SopFeature,
+  SopJob,
   SopLanguageFocus,
   SopParagraph,
   SopParagraphAnalysis,
 } from "../../api/types";
 import { newId } from "../../lib/sop";
 import { GenerationChoice } from "./Choices";
-import { AskManna, MannaWell, NoMaterialNote, Quote } from "./parts";
-import type { SopController } from "./useSop";
+import { AskManna, MannaWell, NoMaterialNote, Quote, RedoPending } from "./parts";
+import { followRedo, redoFor, retryRedo, type SopController } from "./useSop";
 
 type ParagraphSuggestion = SopAnalysisSuggestion["paragraphs"][number];
 
@@ -26,6 +27,28 @@ function withSuggestion(existing: SopParagraphAnalysis | undefined, s: Paragraph
     features: [...(existing?.features ?? []), ...s.features.map((f) => ({ id: newId("f"), ...f }))],
     origin: isBlank(existing) ? "ai_adopted" : "ai_edited",
   };
+}
+
+type ParagraphOffer =
+  | { kind: "pending"; job: SopJob }
+  | { kind: "entry"; job: SopJob<SopAnalysisSuggestion>; entry: ParagraphSuggestion };
+
+/**
+ * The analysis a paragraph shows now: the newest of the whole run and of 這一段再分析一次, as long
+ * as the teacher has not decided on it.
+ */
+function paragraphOffer(sop: SopController, paragraph: SopParagraph): ParagraphOffer | null {
+  const whole = sop.jobs.analysis;
+  const redo = redoFor(sop.jobs, "analysis", null, `p:${paragraph.id}`) as SopJob<SopAnalysisSuggestion> | null;
+  const source = redo && (!whole || redo.id > whole.id) ? redo : whole;
+  if (!source) return null;
+  if (source.status === "running" || source.result?.status !== "shown") {
+    return source === redo ? { kind: "pending", job: source } : null;
+  }
+  const entry = source.result.output?.paragraphs.find((g) => g.paragraph_id === paragraph.id);
+  if (!entry) return null;
+  if (source.decided.includes(entry.paragraph_no)) return null;
+  return { kind: "entry", job: source, entry };
 }
 
 interface ParagraphEditorProps {
@@ -186,12 +209,22 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
   const analysis = content.analysis;
   const job = sop.jobs.analysis;
   const suggestion = job?.status === "done" && job.result?.status === "shown" ? job.result.output : null;
-  const undecided = (index: number) => suggestion !== null && !job?.decided.includes(index);
+  /** The job of a decision: the whole run's, or the redo job the suggestion came from. */
+  const jobOf = (shown: { id: number }) => (shown.id === job?.id ? undefined : shown.id);
+  /** The analysis of the whole text as it stands now (a 換一個 may have replaced it). */
+  const overall = job && suggestion ? followRedo<SopAnalysisSuggestion>(sop.jobs, "analysis", job, 0) : null;
+  const overallOffer = overall && !overall.pending ? overall.job.result?.output : null;
 
-  /** The paragraph being edited, and the suggestion (by paragraph number) the edit started from. */
-  const [editing, setEditing] = useState<{ id: string; from: number | null; initial: SopParagraphAnalysis } | null>(
-    null,
-  );
+  /**
+   * The paragraph being edited, and the suggestion the edit started from: its paragraph number and
+   * the job it came from (a redo job; none for the whole run).
+   */
+  const [editing, setEditing] = useState<{
+    id: string;
+    from: number | null;
+    jobId?: number;
+    initial: SopParagraphAnalysis;
+  } | null>(null);
   const [focusItem, setFocusItem] = useState("");
   const [focusNote, setFocusNote] = useState("");
 
@@ -214,8 +247,25 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
       analysis: { ...c.analysis, paragraphs: c.analysis.paragraphs.filter((p) => p.paragraph_id !== paragraphId) },
     }));
 
+  /** 換一個 for the overall well: set aside (logged as 不用), Manna analyses the whole text again. */
+  function swapOverall() {
+    if (!overall) return;
+    decide("analysis", 0, "reject", undefined, jobOf(overall.job));
+    void sop.startJob("analysis", { parent_job_id: overall.job.id, item_index: 0 });
+  }
+
+  /** 這一段再分析一次: the paragraph's current suggestion is set aside and Manna analyses just that paragraph. */
+  function again(p: SopParagraph, offer: ParagraphOffer | null) {
+    if (offer?.kind === "entry") decide("analysis", offer.entry.paragraph_no, "reject", undefined, jobOf(offer.job));
+    void sop.startJob("analysis", {
+      paragraph_id: p.id,
+      parent_job_id: offer?.kind === "entry" ? offer.job.id : job?.id,
+    });
+  }
+
   function adoptOverall(decision: "adopt" | "revise") {
-    if (!suggestion) return;
+    if (!overall || !overallOffer) return;
+    const suggestion = overallOffer;
     update((c) => {
       const a = c.analysis;
       const have = new Set(a.language_focus.map((f) => f.item.toLowerCase()));
@@ -236,7 +286,7 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
         },
       };
     });
-    decide("analysis", 0, decision, decision === "revise" ? suggestion.main_idea : undefined);
+    decide("analysis", 0, decision, decision === "revise" ? suggestion.main_idea : undefined, jobOf(overall.job));
     if (decision === "revise") document.getElementById("sop-main-idea")?.focus();
   }
 
@@ -369,30 +419,40 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
           </button>
         </div>
 
-        {suggestion && undecided(0) && (
+        {overall?.pending && (
+          <RedoPending
+            label="全文"
+            job={overall.pending}
+            onCancelled={() => void sop.refreshJob((overall.pending as SopJob).id)}
+            onAgain={() => retryRedo(sop, "analysis", overall.pending)}
+          />
+        )}
+        {overall && overallOffer && !overall.job.decided.includes(0) && (
           <MannaWell
             label="全文"
             onAdopt={() => adoptOverall("adopt")}
             onEdit={() => adoptOverall("revise")}
-            onDismiss={() => decide("analysis", 0, "reject")}
+            onDismiss={() => decide("analysis", 0, "reject", undefined, jobOf(overall.job))}
+            onAgain={swapOverall}
+            againLabel="換一個"
           >
             <dl className="well-list">
               <div>
                 <dt>文體</dt>
-                <dd>{suggestion.text_type}</dd>
+                <dd>{overallOffer.text_type}</dd>
               </div>
               <div>
                 <dt>主旨</dt>
-                <dd>{suggestion.main_idea}</dd>
+                <dd>{overallOffer.main_idea}</dd>
               </div>
               <div>
                 <dt>結構</dt>
-                <dd>{suggestion.structure}</dd>
+                <dd>{overallOffer.structure}</dd>
               </div>
             </dl>
-            {suggestion.language_focus.length > 0 && (
+            {overallOffer.language_focus.length > 0 && (
               <ul className="feature-list">
-                {suggestion.language_focus.map((f) => (
+                {overallOffer.language_focus.map((f) => (
                   <li key={`${f.item}-${f.paragraph_id}`}>
                     <strong lang="en">{f.item}</strong>
                     <span className="quiet-term">{f.kind}</span>
@@ -414,7 +474,7 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
         {paragraphs.length === 0 && <NoMaterialNote onGoToMaterial={onGoToMaterial} />}
         {paragraphs.map((p) => {
           const mine = byParagraph.get(p.id);
-          const offered = suggestion?.paragraphs.find((s) => s.paragraph_id === p.id);
+          const offer = paragraphOffer(sop, p);
           const isEditing = editing?.id === p.id;
           const missing = suggestion?.missing_paragraph_ids.includes(p.id) ?? false;
           return (
@@ -431,7 +491,9 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
                       ...value,
                       origin: from !== null || value.origin !== "teacher" ? "ai_edited" : "teacher",
                     });
-                    if (from !== null) decide("analysis", from, "revise", `${value.function}｜${value.summary}`);
+                    if (from !== null) {
+                      decide("analysis", from, "revise", `${value.function}｜${value.summary}`, editing.jobId);
+                    }
                     setEditing(null);
                   }}
                 />
@@ -477,31 +539,46 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
                   {missing && <span>　Manna 這次沒有分析到這一段。</span>}
                 </p>
               )}
-              {offered && undecided(offered.paragraph_no) && !isEditing && (
+              {offer?.kind === "pending" && !isEditing && (
+                <RedoPending
+                  label={`第 ${p.no} 段`}
+                  job={offer.job}
+                  onAgain={() => again(p, null)}
+                  onCancelled={() => void sop.refreshJob(offer.job.id)}
+                />
+              )}
+              {offer?.kind === "entry" && !isEditing && (
                 <MannaWell
                   label={`第 ${p.no} 段`}
                   onAdopt={() => {
-                    putParagraph(withSuggestion(mine, offered));
-                    decide("analysis", offered.paragraph_no, "adopt");
+                    putParagraph(withSuggestion(mine, offer.entry));
+                    decide("analysis", offer.entry.paragraph_no, "adopt", undefined, jobOf(offer.job));
                   }}
                   onEdit={() =>
-                    setEditing({ id: p.id, from: offered.paragraph_no, initial: withSuggestion(mine, offered) })
+                    setEditing({
+                      id: p.id,
+                      from: offer.entry.paragraph_no,
+                      jobId: jobOf(offer.job),
+                      initial: withSuggestion(mine, offer.entry),
+                    })
                   }
-                  onDismiss={() => decide("analysis", offered.paragraph_no, "reject")}
+                  onDismiss={() => decide("analysis", offer.entry.paragraph_no, "reject", undefined, jobOf(offer.job))}
+                  onAgain={() => again(p, offer)}
+                  againLabel="這一段再分析一次"
                 >
                   <dl className="well-list">
                     <div>
                       <dt>功能</dt>
-                      <dd>{offered.function}</dd>
+                      <dd>{offer.entry.function}</dd>
                     </div>
                     <div>
                       <dt>摘要</dt>
-                      <dd>{offered.summary}</dd>
+                      <dd>{offer.entry.summary}</dd>
                     </div>
                   </dl>
-                  {offered.features.length > 0 && (
+                  {offer.entry.features.length > 0 && (
                     <ul className="feature-list">
-                      {offered.features.map((f) => (
+                      {offer.entry.features.map((f) => (
                         <li key={f.evidence}>
                           <strong>{f.feature}</strong>
                           <span className="evidence" lang="en">
@@ -514,6 +591,18 @@ export function StageAnalysis({ sop, onGoToMaterial }: StageAnalysisProps) {
                   )}
                   <p className="src">引文已核對是這一段原文的連續文字。</p>
                 </MannaWell>
+              )}
+              {!offer && suggestion && !isEditing && (
+                <p className="para-actions">
+                  <button
+                    type="button"
+                    className="text-link is-plain"
+                    aria-label={`請 Manna 再分析第 ${p.no} 段`}
+                    onClick={() => again(p, null)}
+                  >
+                    這一段再分析一次
+                  </button>
+                </p>
               )}
             </section>
           );

@@ -313,9 +313,9 @@ function LessonWorkspace({ lessonId }: { lessonId: number }) {
       case 5:
         return <StageTasks sop={sop} onGoToStage={goStage} lessonId={lessonId} />;
       case 6:
-        return <StageWarmup sop={sop} />;
+        return <StageWarmup sop={sop} lessonId={lessonId} />;
       default:
-        return <StageExit sop={sop} />;
+        return <StageExit sop={sop} lessonId={lessonId} />;
     }
   }
 

@@ -160,6 +160,7 @@ pub fn api_router() -> Router<AppState> {
             "/lessons/{id}/sop/objective-english",
             post(sop::objective_english),
         )
+        .route("/lessons/{id}/sop/text-english", post(sop::text_english))
         .route(
             "/lessons/{id}/sop/procedural-steps",
             post(sop::procedural_steps),

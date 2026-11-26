@@ -270,12 +270,13 @@ const MSG_CONTENT_FIRST: &str =
 pub struct StartJob {
     #[serde(default)]
     pub class_id: Option<i64>,
-    /// 換一個 (objectives): the job whose suggestion is replaced, and its `item_index`.
+    /// 換一個 (objectives; analysis of the whole text, tasks, warm-up, exit ticket): the job
+    /// whose suggestion is replaced, and its `item_index`.
     #[serde(default)]
     pub parent_job_id: Option<i64>,
     #[serde(default)]
     pub item_index: Option<i32>,
-    /// 這一段再建議一次 (goals).
+    /// 這一段再建議一次 (goals), 這一段再分析一次 (analysis).
     #[serde(default)]
     pub paragraph_id: Option<String>,
     /// objectives: `content` or `language`. The 內容目標 are recommended first; the 語言目標 come
@@ -358,7 +359,7 @@ async fn start_job(
                 .ok_or_else(|| AppError::bad_request("請指定要換掉哪一項建議（item_index）。"))?;
             Scope::Swap(ai::swap_of(&state, teacher.id(), id, parent_id, index, &version).await?)
         }
-        (JobKind::Goals, parent, Some(paragraph_id)) => {
+        (JobKind::Goals | JobKind::Analysis, parent, Some(paragraph_id)) => {
             if !material.paragraphs.iter().any(|p| p.id == paragraph_id) {
                 return Err(AppError::bad_request("找不到這一段。"));
             }
@@ -366,6 +367,16 @@ async fn start_job(
                 parent_job_id: parent,
                 paragraph_id: paragraph_id.to_string(),
             }
+        }
+        (
+            JobKind::Analysis | JobKind::Tasks | JobKind::Warmup | JobKind::ExitTicket,
+            Some(parent_id),
+            None,
+        ) => {
+            let index = req
+                .item_index
+                .ok_or_else(|| AppError::bad_request("請指定要換掉哪一項建議（item_index）。"))?;
+            Scope::Item(ai::item_of(&state, teacher.id(), id, kind, parent_id, index).await?)
         }
         (JobKind::Objectives, None, _) => Scope::Kind(only.unwrap_or(if has_content {
             sop::ObjectiveType::Language
@@ -478,6 +489,64 @@ pub async fn objective_english(
         req.kind,
         &req.text,
         &req.student_facing_en,
+    )
+    .await?;
+    Ok(Json(out))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TextEnglishRequest {
+    pub field: stages::TextField,
+    #[serde(default)]
+    pub text: String,
+    /// A task's paragraphs (step 5): they help keep its meaning.
+    #[serde(default)]
+    pub paragraph_ids: Vec<String>,
+}
+
+/// 幫我修英文 in steps 5–7: the English a teacher wrote for a task, a warm-up activity or an
+/// exit-ticket item, corrected. One short call, answered in the request (docs/API.md「課例 SOP」).
+pub async fn text_english(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiJson(req): ApiJson<TextEnglishRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    let lesson = owned_lesson(&state.db, id, teacher.id()).await?;
+    if req.text.trim().is_empty() {
+        return Err(AppError::bad_request("請先寫一些文字，Manna 才能幫你修。"));
+    }
+    if req.text.chars().count() > MAX_FIELD_CHARS {
+        return Err(AppError::bad_request(format!(
+            "這一段最多 {MAX_FIELD_CHARS} 字。"
+        )));
+    }
+    if req.paragraph_ids.len() > sop::MAX_LIST_ITEMS {
+        return Err(AppError::bad_request("項目太多。"));
+    }
+    // The paragraphs of the material the lesson uses now (ids it does not have are left out).
+    let paragraphs = if req.paragraph_ids.is_empty() || req.field != stages::TextField::Task {
+        Vec::new()
+    } else {
+        let version = store::latest(&state.db, id).await?;
+        store::material(&state.db, version.as_ref().and_then(|v| v.material_id))
+            .await?
+            .map(|m| {
+                m.paragraphs
+                    .into_iter()
+                    .filter(|p| req.paragraph_ids.contains(&p.id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let out = stages::suggest_text_english(
+        &state,
+        teacher.id(),
+        teacher.track(),
+        &lesson,
+        req.field,
+        &req.text,
+        &paragraphs,
     )
     .await?;
     Ok(Json(out))

@@ -619,6 +619,23 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     } else {
         format!("the title \"{}\"", title.trim())
     };
+    // 換一個 in the lesson SOP: another activity.
+    if !ctx["redo"].is_null() {
+        return json!({
+            "background_activities": [{
+                "title_en": "What do you already know?",
+                "instructions_en": "In this activity, you will share what you already know about the topic before you read.",
+                "prompts_en": [
+                    format!("Write down two things you already know about {about}."),
+                    "Share one of them with your partner and listen to theirs.",
+                ],
+                "student_tasks": ["討論／分享"],
+                "answer_format": FMT_SHORT,
+                "purpose_zh": "先寫下已知的事再和同學交流，喚醒背景知識。",
+            }],
+            "key_vocabulary": key_vocabulary,
+        });
+    }
     json!({
         "background_activities": [{
             "title_en": "Before you read",
@@ -797,6 +814,25 @@ pub fn exit_ticket(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
     ];
     if has("FAKE_WS_EXIT_FRAME_ALWAYS") || (has("FAKE_WS_EXIT_FRAME") && attempt == 1) {
         items[0]["prompt_en"] = json!(EXIT_FRAME);
+    }
+    // 換一個 in the lesson SOP: one item of the kind asked for, worded differently.
+    if let Some(purpose) = ctx["one_purpose"].as_str() {
+        let mut one = items
+            .iter()
+            .find(|i| i["purpose"] == purpose)
+            .cloned()
+            .unwrap_or_else(|| items[0].clone());
+        let prompt = match purpose {
+            "形成性評量" => {
+                "Which sentence of the text best shows the main idea? Copy it and explain why."
+            }
+            "學生反思" => {
+                "What helped you most in understanding today's text? Explain in one sentence."
+            }
+            _ => "What would you like to ask the writer of this text?",
+        };
+        one["prompt_en"] = json!(prompt);
+        return json!({ "estimated_minutes": 3, "items": [one] });
     }
     items.truncate(count.clamp(2, 3));
     json!({ "estimated_minutes": if count <= 2 { 3 } else { 5 }, "items": items })
