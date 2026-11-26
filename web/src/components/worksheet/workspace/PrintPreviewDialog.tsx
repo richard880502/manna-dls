@@ -10,8 +10,6 @@ const AUDIENCES: Array<[WsAudience, string]> = [
   ["student", "學生版"],
   ["teacher", "教師版"],
 ];
-const NO_HIGHLIGHT: ReadonlySet<string> = new Set();
-const NO_INTERACTION = () => null;
 
 /**
  * 列印樣式預覽: the sheet as the server assembles it (the same projection the exports use), read
@@ -93,9 +91,7 @@ export function PrintPreviewDialog({
         {sheet && (
           <SheetPreview
             sheet={sheet}
-            highlight={NO_HIGHLIGHT}
-            interactionFor={NO_INTERACTION}
-            readOnly={{ worksheetId, load: loadImage }}
+            pictures={{ worksheetId, load: loadImage }}
           />
         )}
       </div>

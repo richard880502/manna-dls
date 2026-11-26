@@ -13,8 +13,6 @@ import { SheetPreview } from "../prep/SheetPreview";
  * nothing is lost (the versions after it stay in the list and can be switched back to).
  */
 
-const NO_HIGHLIGHT: ReadonlySet<string> = new Set();
-const NO_INTERACTION = () => null;
 
 /** What produced a version, in one short phrase (`oldest`: the first version of the worksheet). */
 export function versionLabel(row: Pick<WsVersionRow, "cause" | "source" | "version_no">, oldest: boolean): string {
@@ -463,9 +461,7 @@ export function VersionHistoryDialog({
                 {sheet && sheet.no === picked && (
                   <SheetPreview
                     sheet={sheet.sheet}
-                    highlight={NO_HIGHLIGHT}
-                    interactionFor={NO_INTERACTION}
-                    readOnly={{ worksheetId, load: loadImage }}
+                    pictures={{ worksheetId, load: loadImage }}
                   />
                 )}
                 {asking ? (

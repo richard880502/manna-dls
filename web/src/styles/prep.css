@@ -371,19 +371,6 @@
   border-radius: var(--radius-sm);
 }
 
-.prep-sheet-block.is-changed {
-  background: var(--color-manna-wash);
-  box-shadow: inset 3px 0 0 var(--color-manna-rule);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .prep-sheet-block {
-    transition:
-      background-color var(--dur-short) var(--ease-out),
-      box-shadow var(--dur-short) var(--ease-out);
-  }
-}
-
 /* ---------- 規劃教學活動 ---------- */
 .prep-result-title {
   margin-bottom: var(--space-xs);

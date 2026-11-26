@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 import type { WsItem, WsSheet } from "../api/types";
-import { SheetPreview, sheetBlockText } from "../components/prep/SheetPreview";
+import { SheetPreview } from "../components/prep/SheetPreview";
 import { WritingArea } from "../components/worksheet/ItemAnswer";
 import {
   columnsNamedInPrompt,
@@ -17,6 +17,8 @@ import {
   withAnswerFormat,
   withoutPlaceholders,
 } from "../lib/worksheet";
+
+const NO_PICTURES = { worksheetId: 1, load: () => Promise.reject(new Error("no pictures")) };
 
 // The same cases as api/src/worksheet/table.rs.
 const PI_PROMPT =
@@ -173,12 +175,11 @@ describe("the printed preview of a table with row labels", () => {
   });
 
   it("prints the labels in the first column under the headings", () => {
-    render(<SheetPreview sheet={sheet()} highlight={new Set()} interactionFor={() => null} />);
+    render(<SheetPreview sheet={sheet()} pictures={NO_PICTURES} />);
     const table = screen.getByRole("table", { name: "作答表格 1" });
     expect(within(table).getAllByRole("columnheader").map((c) => c.textContent)).toEqual(["", "Path A", "Path B"]);
     expect(within(table).getAllByRole("rowheader").map((c) => c.textContent)).toEqual(["Claim", "Supporting detail"]);
     expect(within(table).getAllByRole("row")).toHaveLength(3);
     expect(table.textContent).not.toContain("Column");
-    expect(sheetBlockText(sheet().blocks[0]!)).toContain("   | Claim |");
   });
 });

@@ -15,7 +15,6 @@ import type {
   WsOrganizerType,
 } from "../api/types";
 import { OrganizerEditor, OrganizerView } from "../components/worksheet/Organizer";
-import { sheetBlockText } from "../components/prep/SheetPreview";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import {
   ORGANIZER_NAME,
@@ -349,23 +348,5 @@ describe("organizers in the worksheet editor", () => {
     await user.click(screen.getByRole("radio", { name: "教師版" }));
     await screen.findByRole("article", { name: "一般版 教師版" });
     expect(screen.getByRole("textbox", { name: "參考答案 3-2-1" })).toHaveValue("Key 1.0");
-  });
-
-  it("the session preview draws the server's organizer and copies it as text", () => {
-    const org = projectOrganizer(filled("sequence"), "standard", false);
-    const block = {
-      id: "b1",
-      kind: "activity" as const,
-      label: "A",
-      title: "Organize",
-      instructions: "",
-      steps: [],
-      vocabulary: [],
-      supports: [],
-      items: [{ no: 1, answer_format: "圖像組織", prompt: "Complete the chain.", options: [], lines: 0, organizer: org }],
-    };
-    const text = sheetBlockText(block);
-    expect(text).toContain("1. L1: Given one");
-    expect(text).toContain("3. L3: ______");
   });
 });
