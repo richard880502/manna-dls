@@ -64,13 +64,17 @@ export function useSplitResize() {
     if (!el) return undefined;
     const measure = () => setBounds(boundsFor(el.getBoundingClientRect().width));
     measure();
+    // The container's own size is what matters (the sidebar folds and unfolds without a window
+    // resize). Measuring on window resize as well read a passing width: the window grew past 80rem
+    // while the sidebar was still folded, and nothing measured again once it unfolded to the same
+    // width as before. The window is only the fallback without ResizeObserver.
+    if (typeof ResizeObserver === "function") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(el);
+      return () => observer.disconnect();
+    }
     window.addEventListener("resize", measure);
-    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
-    observer?.observe(el);
-    return () => {
-      window.removeEventListener("resize", measure);
-      observer?.disconnect();
-    };
+    return () => window.removeEventListener("resize", measure);
   }, [container]);
 
   const share = clamp(wanted, bounds.min, bounds.max);
