@@ -2,7 +2,7 @@
 
 狀態：步驟 1–6 已完成（預設 `AI_QUEUE_ENABLED=false`，部署後由負責人在 Coolify 打開；變數要列在 `docker-compose.yml` 才傳得進容器）。實作紀錄見最後一節「10. 做了什麼、和計劃書的差異」。
 決定：使用者選「資料庫裡的工作佇列」（不是只在記憶體裡排隊）。老師送出的請求**不回 429**，而是照現在一樣回 202（已收到），工作進佇列，由伺服器的分派器依規則分配。
-前提：先等「備課對話改用 OpenAI Responses 介面」合併（它改 `api/src/ai/chat.rs`；本計劃第 2 層要包住新的呼叫函式）。
+前提（已完成）：備課對話改用 OpenAI Responses 介面（#110，`api/src/ai/chat.rs`）；第 2 層包住它的呼叫函式（`ActiveAi::complete_chat`／`complete_chat_counted`）。
 
 ---
 
@@ -322,6 +322,7 @@ for attempt in 0..=AI_RATE_LIMIT_RETRIES:
 
 - **步驟 5 的後端**：`progress::Progress.queue: Option<{job_id, ahead, eta_secs}>`；取消 `DELETE /api/ai-jobs/{id}`。
 - **假模型延遲**：`FAKE_LATENCY_MS`（`Config.fake_latency_ms`，每次假呼叫在 `ActiveAi` 裡先等這麼久，一般與備課對話兩種呼叫都有）。
+- **備課對話的呼叫（Responses API）**：`POST /v1/responses` 的錯誤用同一個 `http_error` 分類（429 分 `rate_limited`／`quota`、500–503 `overloaded`、408／504 逾時、其他 `HTTP <狀態>`），所以重試、冷卻、老師訊息、`error_detail` 字首與一般呼叫相同；守門的重試次數失敗時也記進 `usage.transport_retries`（`complete_chat_counted`）。用本機假 OpenAI 測過（`api/tests/responses_api.rs`：400、429 重試、額度冷卻）。
 
 ### 決定
 

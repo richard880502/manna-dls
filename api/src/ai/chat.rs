@@ -1,11 +1,17 @@
 //! Tool calling for the prep chat (docs/PREP_CHAT.md): messages with tool calls and tool results,
-//! and the OpenAI Responses API request and response for them. Only OpenAI's own API (and the
-//! fake provider) supports it; every other provider answers with an error. The strict
-//! `json_schema` calls every other feature makes are in [`super::openai`] and are not touched.
+//! and the OpenAI Responses API request and response for them (`POST /v1/responses`: function
+//! tools and a reasoning effort together, which chat completions refuses for GPT-5.6). Only
+//! OpenAI's own API (and the fake provider, through the same shapes: [`fake_call`]) supports it;
+//! every other provider answers with an error. The strict `json_schema` calls every other
+//! feature makes stay on chat completions ([`super::openai`]) and are not touched.
 
 use serde_json::{json, Value};
 
+use super::openai::REASONING_ROOM;
 use super::{clip, LlmImage, ProviderError};
+
+/// `input_snapshot.request.api` of a tool call: which OpenAI API it went to.
+pub const API: &str = "responses";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
@@ -243,7 +249,7 @@ pub fn build_body(model: &str, effort: &str, req: &ChatRequest) -> Value {
             }
         },
         "reasoning": { "effort": super::openai::reasoning_effort(effort) },
-        "max_output_tokens": req.max_tokens.saturating_add(super::openai::REASONING_ROOM),
+        "max_output_tokens": req.max_tokens.saturating_add(REASONING_ROOM),
         "store": false,
         "include": ["reasoning.encrypted_content"],
     });
@@ -260,13 +266,38 @@ pub fn build_body(model: &str, effort: &str, req: &ChatRequest) -> Value {
                 "parameters": t.parameters, "strict": true
             }))
             .collect::<Vec<_>>());
-        body["tool_choice"] = json!(match req.tool_choice {
-            ToolChoice::Auto => "auto",
-            ToolChoice::None => "none",
-        });
+        body["tool_choice"] = json!(req.tool_choice.as_str());
         body["parallel_tool_calls"] = json!(false);
     }
     body
+}
+
+impl ToolChoice {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::None => "none",
+        }
+    }
+}
+
+/// What the research log keeps about a request (`ai_interactions.input_snapshot.request`), next
+/// to the messages as lengths and hashes: the API, the reasoning effort actually sent, whether
+/// OpenAI may keep it, the limits and the tool switches. No text.
+pub fn request_record(effort: &str, req: &ChatRequest) -> Value {
+    json!({
+        "api": API,
+        "reasoning_effort": super::openai::reasoning_effort(effort),
+        "store": false,
+        "max_tokens": req.max_tokens,
+        "max_output_tokens": req.max_tokens.saturating_add(REASONING_ROOM),
+        "tool_choice": req.tool_choice.as_str(),
+        "parallel_tool_calls": false,
+    })
+}
+
+pub fn endpoint(base_url: &str) -> String {
+    format!("{}/responses", base_url.trim_end_matches('/'))
 }
 
 pub fn parse_response(status: u16, body: &str) -> Result<ChatResponse, ProviderError> {
@@ -354,18 +385,19 @@ pub fn parse_response(status: u16, body: &str) -> Result<ChatResponse, ProviderE
     })
 }
 
+/// One request to `{base_url}/responses` (OpenAI's own address, [`super::openai::OPENAI_BASE_URL`],
+/// outside tests). Errors are classified like every other call ([`super::http_error`]: 429 rate
+/// limit or quota, 5xx, 408/504 timeouts), so the guard retries and cools down the same way.
 pub async fn call(
     http: &reqwest::Client,
+    base_url: &str,
     api_key: Option<&str>,
     model: &str,
     effort: &str,
     req: &ChatRequest,
 ) -> Result<ChatResponse, ProviderError> {
     let mut rb = http
-        .post(format!(
-            "{}/responses",
-            super::openai::OPENAI_BASE_URL.trim_end_matches('/')
-        ))
+        .post(endpoint(base_url))
         .json(&build_body(model, effort, req));
     if let Some(key) = api_key {
         rb = rb.bearer_auth(key);
@@ -378,6 +410,127 @@ pub async fn call(
         return Err(super::http_error(status, &body, delay));
     }
     parse_response(status, &body)
+}
+
+// ---------------------------------------------------------------- the fake provider
+
+/// The fake provider's tool call, through the same request and response shapes as [`call`]: the
+/// body is built and checked the way OpenAI reads it ([`check_body`]; a body it would refuse is
+/// answered with HTTP 400, classified like a real one), the scripted answer is written as a
+/// Responses body (a reasoning item first, as a reasoning model returns it) and read back with
+/// [`parse_response`]. The tool loop's tests thus send the reasoning and the calls back the way
+/// production does, without the network.
+pub(crate) fn fake_call(
+    model: &str,
+    effort: &str,
+    req: &ChatRequest,
+    script: impl FnOnce(&ChatRequest, &str) -> Result<ChatResponse, ProviderError>,
+) -> Result<ChatResponse, ProviderError> {
+    if let Err(why) = check_body(&build_body(model, effort, req)) {
+        let body = json!({ "error": { "message": why, "type": "invalid_request_error" } });
+        return Err(super::http_error(400, &body.to_string(), None));
+    }
+    let answer = script(req, model)?;
+    let step = req
+        .messages
+        .iter()
+        .filter(|m| matches!(m, ChatMessage::Assistant { .. }))
+        .count();
+    parse_response(200, &fake_wire(&answer, step).to_string())
+}
+
+/// What a stateless (`store: false`) request with tools must not contain: an output with no call
+/// before it or a call with no output after it (OpenAI answers 400), reasoning sent back without
+/// its encrypted content (nothing is stored to look it up), an item that refers to a stored one
+/// by `id` (the replay rule of [`replay_item`]: only reasoning keeps its id), a non-strict tool.
+pub(crate) fn check_body(body: &Value) -> Result<(), String> {
+    if body["store"] != json!(false) {
+        return Err("store must be false".into());
+    }
+    if !body["include"]
+        .as_array()
+        .is_some_and(|i| i.contains(&json!("reasoning.encrypted_content")))
+    {
+        return Err("include must ask for reasoning.encrypted_content".into());
+    }
+    if body["reasoning"]["effort"].as_str().is_none() {
+        return Err("no reasoning effort".into());
+    }
+    for tool in body["tools"].as_array().into_iter().flatten() {
+        if tool["type"] != "function" || tool["strict"] != json!(true) {
+            return Err(format!("tool {} is not a strict function", tool["name"]));
+        }
+    }
+    let input = body["input"].as_array().cloned().unwrap_or_default();
+    let mut calls: Vec<&str> = Vec::new();
+    for (k, item) in input.iter().enumerate() {
+        let call_id = item["call_id"].as_str().unwrap_or_default();
+        match item["type"].as_str() {
+            Some("reasoning") => {
+                if item["encrypted_content"].as_str().is_none() {
+                    return Err(format!(
+                        "reasoning item {k} has no encrypted_content (items are not stored)"
+                    ));
+                }
+                continue;
+            }
+            Some("function_call") => {
+                let answered = input[k + 1..].iter().any(|later| {
+                    later["type"] == "function_call_output" && later["call_id"] == call_id
+                });
+                if !answered {
+                    return Err(format!("No tool output found for function call {call_id}."));
+                }
+                calls.push(call_id);
+            }
+            Some("function_call_output") if !calls.contains(&call_id) => {
+                return Err(format!(
+                    "No tool call found for function call output with call_id {call_id}."
+                ));
+            }
+            _ => {}
+        }
+        if item.get("id").is_some() {
+            return Err(format!("input item {k} refers to a stored item by id"));
+        }
+    }
+    Ok(())
+}
+
+/// A scripted answer as the body `POST /v1/responses` returns.
+fn fake_wire(answer: &ChatResponse, step: usize) -> Value {
+    let mut output = vec![json!({
+        "type": "reasoning", "id": format!("rs_fake_{step}"), "summary": [],
+        "encrypted_content": format!("fake-encrypted-reasoning-{step}"),
+    })];
+    if answer.tool_calls.is_empty() {
+        output.push(json!({
+            "type": "message", "id": format!("msg_fake_{step}"), "status": "completed",
+            "role": "assistant",
+            "content": [{ "type": "output_text", "annotations": [],
+                          "text": answer.content.clone().unwrap_or_default() }],
+        }));
+    }
+    output.extend(answer.tool_calls.iter().enumerate().map(|(k, c)| {
+        json!({
+            "type": "function_call", "id": format!("fc_fake_{step}_{k}"), "status": "completed",
+            "call_id": c.id, "name": c.name, "arguments": c.arguments,
+        })
+    }));
+    let mut wire = json!({
+        "id": format!("resp_fake_{step}"), "object": "response", "status": "completed",
+        "model": answer.model_version, "output": output,
+    });
+    if let Some(u) = answer.usage {
+        wire["usage"] = json!({
+            "input_tokens": u.prompt_tokens,
+            "input_tokens_details": { "cached_tokens": u.cached_tokens },
+            "output_tokens": u.completion_tokens,
+            "output_tokens_details": { "reasoning_tokens": u.reasoning_tokens },
+            "total_tokens": u.prompt_tokens + u.completion_tokens,
+        });
+    }
+    wire
 }
 
 #[cfg(test)]
@@ -688,5 +841,213 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_400_and_the_two_kinds_of_429_are_classified_like_every_other_call() {
+        // What OpenAI answers a request it will not take (the 2026-11-25 chat completions error).
+        let refused = json!({"error": {
+            "message": "Function tools with reasoning_effort are not supported for gpt-5.6-sol in /v1/chat/completions. Please use /v1/responses instead.",
+            "type": "invalid_request_error", "param": "reasoning_effort", "code": null}})
+        .to_string();
+        match parse_response(400, &refused) {
+            Err(ProviderError::Http { status: 400, body }) => {
+                assert!(body.contains("/v1/responses"))
+            }
+            other => panic!("{other:?}"),
+        }
+        let rate = json!({"error": {"message": "Rate limit reached for gpt-5.6-sol on tokens per min (TPM)",
+            "type": "tokens", "param": null, "code": "rate_limit_exceeded"}})
+        .to_string();
+        assert!(matches!(
+            parse_response(429, &rate),
+            Err(ProviderError::RateLimited { .. })
+        ));
+        let quota = json!({"error": {"message": "You exceeded your current quota",
+            "type": "insufficient_quota", "param": null, "code": "insufficient_quota"}})
+        .to_string();
+        assert!(matches!(
+            parse_response(429, &quota),
+            Err(ProviderError::QuotaExceeded { .. })
+        ));
+        // The guard and the teacher's message read the same kinds as for chat completions.
+        let quota_err = parse_response(429, &quota).unwrap_err();
+        assert_eq!(
+            super::super::ErrorKind::of(&quota_err),
+            super::super::ErrorKind::Quota
+        );
+        assert!(matches!(
+            parse_response(502, "bad gateway"),
+            Err(ProviderError::Overloaded { status: 502, .. })
+        ));
+        assert_eq!(endpoint("http://h/v1/"), "http://h/v1/responses");
+        assert_eq!(
+            endpoint(super::super::openai::OPENAI_BASE_URL),
+            "https://api.openai.com/v1/responses"
+        );
+    }
+
+    #[test]
+    fn the_research_record_names_the_api_and_the_effort_sent() {
+        let mut r = request();
+        let rec = request_record("xhigh", &r);
+        assert_eq!(
+            rec,
+            json!({"api": "responses", "reasoning_effort": "high", "store": false,
+                   "max_tokens": 1000, "max_output_tokens": 1000 + REASONING_ROOM,
+                   "tool_choice": "auto", "parallel_tool_calls": false})
+        );
+        // It says what the body says.
+        let b = build_body("g", "xhigh", &r);
+        assert_eq!(rec["reasoning_effort"], b["reasoning"]["effort"]);
+        assert_eq!(rec["max_output_tokens"], b["max_output_tokens"]);
+        assert_eq!(rec["store"], b["store"]);
+        r.tool_choice = ToolChoice::None;
+        assert_eq!(request_record("low", &r)["tool_choice"], "none");
+    }
+
+    /// The fake's scripted tool loop: one `read_block` call, then the answer.
+    fn script(req: &ChatRequest, model: &str) -> Result<ChatResponse, ProviderError> {
+        let answered = req
+            .messages
+            .iter()
+            .any(|m| matches!(m, ChatMessage::Tool { .. }));
+        let usage = Some(Usage {
+            prompt_tokens: 900,
+            completion_tokens: 40,
+            cached_tokens: if answered { 768 } else { 0 },
+            reasoning_tokens: 25,
+            transport_retries: 0,
+        });
+        Ok(if answered {
+            ChatResponse {
+                content: Some("{\"paragraphs\":[\"done\"],\"follow_ups\":[]}".into()),
+                tool_calls: vec![],
+                replay: vec![],
+                model_version: format!("{model}-1"),
+                usage,
+            }
+        } else {
+            ChatResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_0".into(),
+                    name: "read_block".into(),
+                    arguments: "{\"block_id\":\"b1\"}".into(),
+                }],
+                replay: vec![],
+                model_version: format!("{model}-1"),
+                usage,
+            }
+        })
+    }
+
+    #[test]
+    fn the_fake_runs_a_two_step_tool_loop_through_the_responses_shapes() {
+        let mut req = request();
+        // 1: a function call, with the reasoning item to send back.
+        let first = fake_call("fake-model", "medium", &req, script).unwrap();
+        assert_eq!(first.content, None);
+        assert_eq!(first.tool_calls[0].id, "call_0");
+        assert_eq!(first.model_version, "fake-model-1");
+        let kinds: Vec<&str> = first
+            .replay
+            .iter()
+            .map(|i| i["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["reasoning", "function_call"]);
+        let u = first.usage.unwrap();
+        assert_eq!((u.cached_tokens, u.reasoning_tokens), (0, 25));
+        // 2: the call and its output go back after the reasoning; the answer is the message.
+        req.messages.push(ChatMessage::Assistant {
+            content: first.content.clone(),
+            tool_calls: first.tool_calls.clone(),
+            replay: first.replay.clone(),
+        });
+        req.messages.push(ChatMessage::Tool {
+            call_id: "call_0".into(),
+            content: "區塊內容".into(),
+        });
+        let body = build_body("fake-model", "medium", &req);
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(
+            input[3],
+            json!({"type": "reasoning", "id": "rs_fake_0", "summary": [],
+                   "encrypted_content": "fake-encrypted-reasoning-0"})
+        );
+        assert_eq!(
+            input[4],
+            json!({"type": "function_call", "call_id": "call_0", "name": "read_block",
+                   "arguments": "{\"block_id\":\"b1\"}"})
+        );
+        assert_eq!(
+            input[5],
+            json!({"type": "function_call_output", "call_id": "call_0", "output": "區塊內容"})
+        );
+        assert_eq!(check_body(&body), Ok(()));
+        let last = fake_call("fake-model", "medium", &req, script).unwrap();
+        assert!(last.tool_calls.is_empty() && last.replay.is_empty());
+        assert_eq!(
+            last.content.as_deref(),
+            Some("{\"paragraphs\":[\"done\"],\"follow_ups\":[]}")
+        );
+        let u = last.usage.unwrap();
+        assert_eq!(
+            (
+                u.prompt_tokens,
+                u.completion_tokens,
+                u.cached_tokens,
+                u.reasoning_tokens
+            ),
+            (900, 40, 768, 25)
+        );
+    }
+
+    #[test]
+    fn the_fake_refuses_what_a_stateless_request_must_not_send() {
+        // An output whose call is missing.
+        let mut orphan = request();
+        orphan.messages.push(ChatMessage::Tool {
+            call_id: "c9".into(),
+            content: "x".into(),
+        });
+        match fake_call("m", "low", &orphan, script) {
+            Err(ProviderError::Http { status: 400, body }) => {
+                assert!(body.contains("No tool call found"), "{body}")
+            }
+            other => panic!("{other:?}"),
+        }
+        // A call whose output is missing.
+        let mut unanswered = request();
+        unanswered.messages.push(ChatMessage::Assistant {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: "c1".into(),
+                name: "read_block".into(),
+                arguments: "{}".into(),
+            }],
+            replay: vec![],
+        });
+        assert!(matches!(
+            fake_call("m", "low", &unanswered, script),
+            Err(ProviderError::Http { status: 400, .. })
+        ));
+        // Reasoning without its encrypted content, and a call that keeps its stored id.
+        let mut body = build_body("m", "low", &second_request());
+        assert_eq!(check_body(&body), Ok(()));
+        body["input"][3]
+            .as_object_mut()
+            .unwrap()
+            .remove("encrypted_content");
+        assert!(check_body(&body).unwrap_err().contains("encrypted_content"));
+        let mut body = build_body("m", "low", &second_request());
+        body["input"][4]["id"] = json!("fc_1");
+        assert!(check_body(&body).unwrap_err().contains("by id"));
+        let mut body = build_body("m", "low", &request());
+        body["store"] = json!(true);
+        assert!(check_body(&body).is_err());
+        // The scripted errors pass through unchanged.
+        let timeout = fake_call("m", "low", &request(), |_, _| Err(ProviderError::Timeout));
+        assert_eq!(timeout, Err(ProviderError::Timeout));
     }
 }
