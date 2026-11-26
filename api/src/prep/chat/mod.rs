@@ -4,16 +4,17 @@
 //! One turn: the messages are built in a fixed order (system prompt, the fixed prefix with the
 //! material, the compact worksheet, the class and the teacher's habits, the recent turns, then
 //! this turn's request) so OpenAI's automatic prompt cache covers everything but the end; the
-//! model is called with `tools`; every tool call is run on a working copy of the worksheet
-//! ([`tools::Work`]) and answered with `role: "tool"`; later calls only append. When the model
-//! stops calling tools its last message is the answer. The whole turn then writes ONE new
-//! worksheet version (or none), every changed block first going to the block history. The
-//! changes shown to the teacher come from the difference between the worksheet as it was and
-//! as it was left, not from what the model said.
+//! model is called with `tools` on the Responses API ([`crate::ai::chat`]); every tool call is run
+//! on a working copy of the worksheet ([`tools::Work`]) and answered with a
+//! `function_call_output`; later calls only append. When the model stops calling tools its last
+//! message is the answer. The whole turn then writes ONE new worksheet version (or none), every
+//! changed block first going to the block history. The changes shown to the teacher come from
+//! the difference between the worksheet as it was and as it was left, not from what the model
+//! said.
 //!
 //! The answer is the model's last message under a strict JSON schema (`paragraphs`,
-//! `follow_ups`; the same `response_format` on every call of the turn, so the request prefix
-//! stays the same). It is read like an `ask` answer; a message that is not that JSON is used as
+//! `follow_ups`; the same `text.format` on every call of the turn, so the request prefix stays
+//! the same). It is read like an `ask` answer; a message that is not that JSON is used as
 //! plain text, so a turn never fails for the shape of its last message.
 
 pub mod tools;
@@ -165,11 +166,11 @@ impl Calls<'_> {
     ) -> AppResult<Result<Answered, String>> {
         let db = &self.state.db;
         let mut snapshot = self.base.clone();
-        snapshot["request"] = json!({
-            "max_tokens": req.max_tokens, "model_call": no,
-            "tool_choice": match req.tool_choice { ToolChoice::Auto => "auto", ToolChoice::None => "none" },
-            "parallel_tool_calls": false,
-        });
+        // The API and the reasoning effort the call is sent with (Responses API, the effort of
+        // the turn's pinned settings), never any text.
+        let mut request = crate::ai::chat::request_record(&self.ai.effort, req);
+        request["model_call"] = json!(no);
+        snapshot["request"] = request;
         snapshot["tools"] = json!(self.tool_names);
         snapshot["messages"] = json!(logged);
         let id = pipeline::insert_interaction(
@@ -186,8 +187,16 @@ impl Calls<'_> {
             tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         }
         let start = Instant::now();
-        let response = self.ai.complete_chat(req).await;
+        let (response, retries) = self.ai.complete_chat_counted(req).await;
         let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
+        // The guard's repeats are kept for a failed call too, like every other feature's calls.
+        pipeline::record_usage_counted(
+            db,
+            id,
+            response.as_ref().ok().and_then(|r| r.usage),
+            retries,
+        )
+        .await?;
         match response {
             Ok(r) => {
                 let output = if r.tool_calls.is_empty() {
@@ -217,13 +226,6 @@ impl Calls<'_> {
                     },
                 )
                 .await?;
-                if let Some(u) = r.usage {
-                    sqlx::query("UPDATE ai_interactions SET usage = $2 WHERE id = $1")
-                        .bind(id)
-                        .bind(u.to_json())
-                        .execute(db)
-                        .await?;
-                }
                 Ok(Ok(Answered {
                     response: r,
                     interaction_id: id,

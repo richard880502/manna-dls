@@ -97,6 +97,10 @@ pub struct Config {
     /// `OPENAI_API_KEY`: the text model's key with `AI_PROVIDER=openai` (the pictures read it
     /// themselves). Never logged.
     pub openai_api_key: Option<String>,
+    /// Where the `openai` text model is called: always [`crate::ai::openai::OPENAI_BASE_URL`].
+    /// Not an environment variable (the key must only ever go to OpenAI); tests point it at a
+    /// local stand-in.
+    pub openai_base_url: String,
     pub demo_mode: bool,
     pub admin_bootstrap_code: Option<String>,
     pub rag_top_k: usize,
@@ -343,6 +347,7 @@ impl Config {
             openai_compat_base_url,
             openai_compat_api_key,
             openai_api_key,
+            openai_base_url: crate::ai::openai::OPENAI_BASE_URL.to_string(),
             demo_mode,
             admin_bootstrap_code: get("ADMIN_BOOTSTRAP_CODE").map(|c| c.trim().to_string()),
             rag_top_k,
@@ -385,6 +390,7 @@ impl Config {
             openai_compat_base_url: None,
             openai_compat_api_key: None,
             openai_api_key: None,
+            openai_base_url: crate::ai::openai::OPENAI_BASE_URL.to_string(),
             demo_mode: false,
             admin_bootstrap_code: None,
             rag_top_k: 8,

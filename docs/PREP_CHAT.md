@@ -31,8 +31,8 @@
    2. user（固定前綴）：班級特性、教材（加段落標記）、學習單目前內容的精簡版（每區：block_id、印出的字母、種類、標題、作答指示、每題的作答方式與題目、表格欄列、有沒有句型框架或提示、鷹架摘要、Key Vocabulary、圖的 slot_id 與狀態；沒有答案，答案與全文用 `read_block`）、圖片說明、作答方式清單、老師的習慣。
    3. user：先前的對話——最近 6 輪的 `{種類、老師說了什麼、結果的一行}`（chat 輪次是回答加上「改了：…」；每輪最多 700 字）。
    4. user：這一輪老師的話（與附圖）。
-2. 呼叫模型（OpenAI chat completions：`tools`＝嚴格 JSON schema 的函式、`tool_choice: "auto"`、`parallel_tool_calls: false`；同一輪每次呼叫的 `response_format` 相同）。
-3. 模型回 `tool_calls` → 伺服器逐一在**工作副本**上執行 → 以 `role: "tool"` 把結果（成功的摘要，或檢查不通過的原因）回給模型 → 再呼叫；後面的呼叫只在後面追加訊息。直到模型不再呼叫工具：它的最後一則訊息就是回答。
+2. 呼叫模型（OpenAI Responses API，見第 6 節：`tools`＝嚴格 JSON schema 的函式、`tool_choice: "auto"`、`parallel_tool_calls: false`；同一輪每次呼叫的 `text.format` 相同）。
+3. 模型回 `function_call` → 伺服器逐一在**工作副本**上執行 → 以 `function_call_output`（同一個 `call_id`）把結果（成功的摘要，或檢查不通過的原因）回給模型 → 再呼叫；後面的呼叫只在後面追加項目。直到模型不再呼叫工具：它的最後一則訊息就是回答。
 4. **回答怎麼產生**：最後一則訊息受嚴格 JSON schema 約束（`{ paragraphs[], follow_ups[] }`，同 `prep_ask`；schema 在每次呼叫都一樣，所以請求前綴不變，也不用多花一次呼叫）。伺服器把段落用空行接成 `answer`（去掉 Markdown 符號，最多 2500 字）；訊息不是這個 JSON 時（不應發生）就把全文當回答，追問為空——所以一輪不會因為最後一則訊息的格式而失敗。沒有文字時伺服器補一句（「已依你的要求處理…」「這次沒有改成…」「這一輪處理完了…」），`answer` 一定是字串。
 5. 上限：一輪最多 8 次工具呼叫、最多 10 次模型呼叫、每次呼叫沿用 AI 設定的等待上限。模型想做第 9 次工具呼叫時，那次呼叫不執行（回「次數已用完」），再叫一次模型（`tool_choice: "none"`）請它用文字收尾；回答後面加一段說明（「這一輪的工具次數已經用完…」）。
 6. 所有修改在記憶體裡的**工作副本**上進行；整輪結束時**一次**寫成學習單的一個新版本（`cause = "revise"`，`source = { cause: "prep_turn", turn_id, block_ids }`），每個被改的區塊先放進 `worksheet_block_history`（附 `after_block` 與 `version_no`），沒有任何修改就不寫版本。
@@ -88,7 +88,7 @@ interface PrepChatResult {
 
 ## 5. 研究紀錄
 
-- 每一次模型呼叫一列 `ai_interactions`（`module = prep_chat`，`attempt` = 這一輪的第幾次呼叫）。`input_snapshot`：`inputs`（老師這一輪的話照記；教材、學習單衍生內容、先前的對話只記字數與雜湊）、`prompt`（key、版本、已遮蔽的系統與使用者文字）、`messages`（每則訊息的角色、字數、雜湊；助手的工具呼叫記名稱與參數字數）、`tools`、`request`、`teacher_memory`。`output`：工具呼叫（名稱與參數雜湊）或最後的回答。`usage`（Migration 0056 新增的欄位）：`{ prompt_tokens, completion_tokens, cached_tokens }`，`cached_tokens` 是 OpenAI 回報的 `usage.prompt_tokens_details.cached_tokens`。
+- 每一次模型呼叫一列 `ai_interactions`（`module = prep_chat`，`attempt` = 這一輪的第幾次呼叫）。`input_snapshot`：`inputs`（老師這一輪的話照記；教材、學習單衍生內容、先前的對話只記字數與雜湊）、`prompt`（key、版本、已遮蔽的系統與使用者文字）、`messages`（每則訊息的角色、字數、雜湊；助手的工具呼叫記名稱與參數字數）、`tools`、`request`、`teacher_memory`。`request` 記這次怎麼送：`api`（`responses`）、`reasoning_effort`（實際送出的推理強度，來自這一輪固定的 AI 設定）、`store: false`、`max_tokens`／`max_output_tokens`、`tool_choice`、`parallel_tool_calls`、`model_call`（不含任何文字）。`output`：工具呼叫（名稱與參數雜湊）或最後的回答。`usage`（Migration 0056 新增的欄位）：`{ prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens }`（對應見第 6 節）；守門重試過時另有 `transport_retries`，失敗的呼叫也記。
 - 每一次工具呼叫記 `usage_logs` event `prep_chat_tool`：`{turn_id, tool, block_id, ok, reason_code}`（不記老師原文）。`reason_code`：`ok`、`bad_arguments`、`unknown_block`、`check_failed`、`retry_limit`、`limit`、`unavailable`。
 - 輪次結束記 `prep_chat_turn`：`{turn_id, tool_calls, model_calls, changed, changes, not_applied, undone: false}`；復原記 `prep_chat_undo`：`{turn_id, worksheet_id, version_no, undone_version_no, blocks}`。
 - 「問問題」與「改學習單」由 `changed` 判定，不靠模式。
@@ -101,13 +101,15 @@ interface PrepChatResult {
 - **不存檔**：`store: false`，教材與學習單內容不留在 OpenAI 那邊。因為不存檔，推理內容用 `include: ["reasoning.encrypted_content"]` 取回，同一輪的下一次請求原樣送回去（`reasoning`、`function_call` 等輸出項目原封不動放在 `ChatMessage::Assistant.replay`，後面接 `function_call_output`）。只有要繼續呼叫工具的那一步需要帶回；最終回答不用。
 - 回應：`function_call` 項目成為工具呼叫（`call_id`、`name`、`arguments`）；最終文字取 `message` 項目的 `output_text`（沒有就用頂層 `output_text`）；`status: incomplete` 且原因為 `max_output_tokens` 走與「回答被截斷」相同的錯誤路徑，`content_filter` 與 `refusal` 視為拒答。HTTP 錯誤、408／504、非 JSON 的對應與以前相同。
 - 提示快取：固定前綴放最前面，同一輪內的後續呼叫只在後面追加（`tools` 與 `text.format` 每次都一樣）；另送 `prompt_cache_key = prep-chat-<對話 id>`（穩定、不含個資），讓同一場備課的呼叫落在同一份快取。`ai_interactions.usage` 記 `prompt_tokens`（`input_tokens`）、`completion_tokens`（`output_tokens`）、`cached_tokens`（`input_tokens_details.cached_tokens`）與 `reasoning_tokens`（`output_tokens_details.reasoning_tokens`，已含在 completion 裡）。
+- 錯誤與重試：和其他呼叫走同一個守門（`ActiveAi::complete_chat`，docs/AI_REQUEST_CONTROL.md）：429 依 `retry-after` 重試、額度用完進入冷卻並顯示 `MSG_QUOTA`、5xx 重試一次、逾時不重試；400 是一般錯誤（`error_detail` 留 OpenAI 的原文）。設定快照、輪次固定模型、佇列、取消都與以前相同；只有工具呼叫走 Responses API，其他功能的呼叫（嚴格 JSON schema）照舊用 chat completions。
+- 後台「測試並套用」：選 OpenAI 時，除了原本的小測試，還用備課對話自己的工具與回答格式、選定的推理強度送一次 Responses API（`tool_choice: "auto"`；模型回答或呼叫工具都算通過，不執行工具），兩次都過才儲存。所以只接受 chat completions、不接受「工具＋推理強度」的模型不會被套用。
 - 費用估計：一般一輪 1–3 次模型呼叫；上限 10 次。
 
 ## 7. 測試用假模型
 
-`AI_PROVIDER=fake`：依**這一輪的請求**（最後一則 user 訊息；前面輪次的標記不算）裡的標記腳本化工具呼叫（細節在 `api/src/prep/fake.rs` 開頭）：`FAKE_CHAT_ASK`（不呼叫工具）、`FAKE_CHAT_EDIT`（`edit_block` 改第一個有題目的區塊）、`FAKE_CHAT_BAD_EDIT`（先給不合格的作答方式，收到原因後修正）、`FAKE_CHAT_REFUSED`（一直給不合格的，直到伺服器停止）、`FAKE_CHAT_LOOP`（一直 `read_block`，測上限）、`FAKE_CHAT_TABLE`（第一題改成表格整理）、`FAKE_CHAT_PICTURE`／`FAKE_CHAT_EDIT_PICTURE`（重畫第一張圖／先改再重畫）、`FAKE_CHAT_SCAFFOLD`、`FAKE_CHAT_VOCAB`、`FAKE_CHAT_BLOCKS`（新增再移動區塊）、`FAKE_CHAT_PACED`（每次呼叫前停 400 ms，測試趁機改學習單）。假模型回報的 `usage` 的 `cached_tokens` 是第一次工具回合之前的訊息量，所以第二次呼叫起大於 0。
+`AI_PROVIDER=fake`：依**這一輪的請求**（最後一則 user 訊息；前面輪次的標記不算）裡的標記腳本化工具呼叫（細節在 `api/src/prep/fake.rs` 開頭）：`FAKE_CHAT_ASK`（不呼叫工具）、`FAKE_CHAT_EDIT`（`edit_block` 改第一個有題目的區塊）、`FAKE_CHAT_BAD_EDIT`（先給不合格的作答方式，收到原因後修正）、`FAKE_CHAT_REFUSED`（一直給不合格的，直到伺服器停止）、`FAKE_CHAT_LOOP`（一直 `read_block`，測上限）、`FAKE_CHAT_TABLE`（第一題改成表格整理）、`FAKE_CHAT_PICTURE`／`FAKE_CHAT_EDIT_PICTURE`（重畫第一張圖／先改再重畫）、`FAKE_CHAT_SCAFFOLD`、`FAKE_CHAT_VOCAB`、`FAKE_CHAT_BLOCKS`（新增再移動區塊）、`FAKE_CHAT_PACED`（每次呼叫前停 400 ms，測試趁機改學習單）。假模型回報的 `usage` 的 `cached_tokens` 是第一次工具回合之前的訊息量，所以第二次呼叫起大於 0。假模型走同樣的請求與回應格式（`chat::fake_call`）：先組出真正要送的 Responses 請求並檢查（每個 `function_call_output` 前面有同 `call_id` 的呼叫、每個呼叫後面有輸出、送回的推理項目帶 `encrypted_content`、除了推理項目不帶 `id`、工具都是 strict），不合格就回 HTTP 400；腳本的回答寫成 Responses 回應（先一個推理項目）再解析回來，所以工具迴圈的測試會把推理與呼叫原樣送回，跟正式站一樣。對 OpenAI 的整段流程（請求內容、兩步工具迴圈、400／429、後台測試）用本機假 OpenAI 測：`api/tests/responses_api.rs`。
 
 ## 8. 實作分工
 
-- 後端：`api/src/ai/chat.rs`（訊息、工具規格、OpenAI 的 `tools`／`tool_calls`／`role: "tool"`／`cached_tokens`）、`api/src/prep/chat/`（`mod.rs` 流程、一次寫版本、復原；`tools.rs` 工作副本與工具；`view.rs` 精簡版與變更清單）、`prep::fake::chat`、`0056_prep_chat.sql`（`chat` 種類、`prep_turns.chat_undo`、`ai_interactions.usage`、`prep_chat` 第 1 版）、`routes/prep.rs`（建立輪次、復原）。
+- 後端：`api/src/ai/chat.rs`（訊息、工具規格、Responses API 的請求與回應、`cached_tokens`／`reasoning_tokens`、假模型的同格式往返）、`api/src/prep/chat/`（`mod.rs` 流程、一次寫版本、復原；`tools.rs` 工作副本與工具；`view.rs` 精簡版與變更清單）、`prep::fake::chat`、`0056_prep_chat.sql`（`chat` 種類、`prep_turns.chat_undo`、`ai_interactions.usage`、`prep_chat` 第 1 版）、`routes/prep.rs`（建立輪次、復原）。
 - 前端：單一輸入框（沒有改學習單／問 Manna 切換）、chat 輪次卡片（回答、追問、改了什麼、沒改成、復原這一輪）、執行中進度、舊 ask／revise 卡片照舊顯示。

@@ -3,8 +3,10 @@
 //!
 //! The environment (`AI_PROVIDER`, `AI_MODEL`, `AI_EFFORT`, `AI_TIMEOUT_SECS`) is the default;
 //! `app_settings.ai_text_model` overrides it. A change is accepted only after one small test
-//! call with the NEW settings succeeds, then it is saved and becomes active in memory at once
-//! ([`AiClient::set_active`]); calls in flight finish with the settings they started with.
+//! call with the NEW settings succeeds (for OpenAI two: the plain call every feature makes, and
+//! the prep chat's call with tools and a reasoning effort on the Responses API), then it is saved
+//! and becomes active in memory at once ([`AiClient::set_active`]); calls in flight finish with
+//! the settings they started with.
 //! Keys and addresses are never settable here, and neither are `anthropic` (overseas policy),
 //! `fake` and `none`.
 
@@ -16,8 +18,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
+use super::chat::{self, ChatMessage, ChatRequest, ToolChoice};
 use super::pipeline::{self, Finish, InteractionMeta};
-use super::{AiClient, AiSettings, AiSource, LlmRequest, ProviderError};
+use super::{ActiveAi, AiClient, AiSettings, AiSource, LlmRequest, ProviderError};
 use crate::audit::log_usage;
 use crate::auth::AuthTeacher;
 use crate::config::{AiProviderKind, VALID_EFFORTS};
@@ -180,9 +183,25 @@ fn explain(e: &ProviderError) -> String {
     }
 }
 
-/// One tiny call with `candidate`, recorded as an `ai_interactions` row of module
-/// [`TEST_MODULE`] (provider and model are the candidate's, so the log stays truthful). Returns
-/// the latency in milliseconds, or the message for the PI.
+/// Why the tool test failed: a model that takes the plain call may still refuse tools with a
+/// reasoning effort (chat completions did exactly that for gpt-5.6-sol).
+fn explain_tools(e: &ProviderError) -> String {
+    let why = match e {
+        ProviderError::Http {
+            status: status @ (400 | 404),
+            ..
+        } => format!("這個模型不接受備課對話需要的「工具＋推理強度」呼叫（HTTP {status}）。"),
+        ProviderError::InvalidOutput(_) => {
+            "模型對工具呼叫的回答讀不懂，這個模型可能不適合。".to_string()
+        }
+        other => explain(other),
+    };
+    format!("備課對話的工具呼叫測試（Responses API）沒有通過：{why}")
+}
+
+/// The test calls with `candidate`: the plain one, and for OpenAI also the prep chat's
+/// ([`tools_test_call`]). Returns the plain call's latency in milliseconds, or the message for
+/// the PI.
 async fn test_call(
     state: &AppState,
     teacher_id: i64,
@@ -192,61 +211,67 @@ async fn test_call(
     ai.timeout = ai
         .timeout
         .min(std::time::Duration::from_secs(TEST_TIMEOUT_CAP_SECS));
-    let req = LlmRequest {
-        system: "This is a connection test. Reply only with the JSON object requested.".into(),
-        user: "Return {\"ok\": true}.".into(),
-        schema_name: "model_test",
-        schema: json!({
-            "type": "object",
-            "properties": { "ok": { "type": "boolean" } },
-            "required": ["ok"],
-            "additionalProperties": false
-        }),
-        fake_context: json!({ "task": "model_test" }),
-        attempt: 1,
-        max_tokens: Some(64),
-        temperature: None,
-        images: Vec::new(),
+    let latency_ms = match plain_test_call(state, teacher_id, candidate, &ai).await? {
+        Ok(ms) => ms,
+        Err(why) => return Ok(Err(why)),
     };
-    let meta = InteractionMeta {
+    if candidate.kind == AiProviderKind::OpenAi {
+        if let Err(why) = tools_test_call(state, teacher_id, candidate, &ai).await? {
+            return Ok(Err(why));
+        }
+    }
+    Ok(Ok(latency_ms))
+}
+
+fn test_meta(teacher_id: i64) -> InteractionMeta {
+    InteractionMeta {
         teacher_id,
         module: TEST_MODULE,
         unit_id: None,
         lesson_id: None,
         scaffold_id: None,
         prompt_version_id: None,
-    };
-    let snapshot = json!({
-        "purpose": "test call before the text model is switched",
-        "system": req.system,
-        "user": req.user,
-        "settings": candidate.to_json(),
-    });
+    }
+}
+
+/// What a test call returned: its output, the model the provider reported, the tokens.
+type Tested = (Value, String, Option<chat::Usage>);
+
+/// Runs one test call recorded as an `ai_interactions` row of module [`TEST_MODULE`] (provider
+/// and model are the candidate's, so the log stays truthful): the latency, or the error.
+async fn recorded(
+    state: &AppState,
+    teacher_id: i64,
+    ai: &ActiveAi,
+    snapshot: &Value,
+    attempt: i32,
+    call: impl std::future::Future<Output = Result<Tested, ProviderError>>,
+) -> AppResult<Result<i32, ProviderError>> {
     let id = pipeline::insert_interaction(
         &state.db,
-        &meta,
+        &test_meta(teacher_id),
         ai.provider_name(),
         &ai.model,
-        &snapshot,
-        1,
+        snapshot,
+        attempt,
         None,
     )
     .await?;
     let start = Instant::now();
-    let result = ai.complete(&req).await;
-    if let Ok(resp) = &result {
-        pipeline::record_usage(&state.db, id, resp.usage).await?;
+    let result = call.await;
+    if let Ok((_, _, usage)) = &result {
+        pipeline::record_usage(&state.db, id, *usage).await?;
     }
     let latency_ms = i32::try_from(start.elapsed().as_millis()).unwrap_or(i32::MAX);
     let (outcome, finish) = match result {
-        Ok(resp) => (
+        Ok((output, model_version, _)) => (
             Ok(latency_ms),
             Finish {
                 status: "shown",
-                output: Some(resp.json),
+                output: Some(output),
                 citations: Vec::new(),
                 check_results: None,
-                model_version: Some(resp.model_version),
+                model_version: Some(model_version),
                 error_detail: None,
                 latency_ms,
             },
@@ -264,7 +289,7 @@ async fn test_call(
                 other => super::clip(&other.to_string(), 500),
             };
             (
-                Err(explain(&e)),
+                Err(e),
                 Finish {
                     status,
                     output: None,
@@ -279,6 +304,102 @@ async fn test_call(
     };
     pipeline::finish_interaction(&state.db, id, finish).await?;
     Ok(outcome)
+}
+
+/// The tiny call every feature's shape takes (strict JSON schema; chat completions on OpenAI and
+/// NCHC).
+async fn plain_test_call(
+    state: &AppState,
+    teacher_id: i64,
+    candidate: &AiSettings,
+    ai: &ActiveAi,
+) -> AppResult<Result<i32, String>> {
+    let req = LlmRequest {
+        system: "This is a connection test. Reply only with the JSON object requested.".into(),
+        user: "Return {\"ok\": true}.".into(),
+        schema_name: "model_test",
+        schema: json!({
+            "type": "object",
+            "properties": { "ok": { "type": "boolean" } },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        fake_context: json!({ "task": "model_test" }),
+        attempt: 1,
+        max_tokens: Some(64),
+        temperature: None,
+        images: Vec::new(),
+    };
+    let snapshot = json!({
+        "purpose": "test call before the text model is switched",
+        "system": req.system,
+        "user": req.user,
+        "settings": candidate.to_json(),
+    });
+    let call = async {
+        ai.complete(&req)
+            .await
+            .map(|r| (r.json, r.model_version, r.usage))
+    };
+    Ok(recorded(state, teacher_id, ai, &snapshot, 1, call)
+        .await?
+        .map_err(|e| explain(&e)))
+}
+
+/// The prep chat's call, tiny: the chat's own tools (strict function schemas) and answer schema,
+/// `tool_choice: "auto"`, the candidate's reasoning effort, `store: false`, on the Responses API
+/// ([`ActiveAi::complete_chat`]). A model can take the plain call and still refuse this one, so
+/// a model the chat could not use is never switched on. Answering in words or calling a tool
+/// both pass (either way the model took tools and reasoning together); no tool is run.
+async fn tools_test_call(
+    state: &AppState,
+    teacher_id: i64,
+    candidate: &AiSettings,
+    ai: &ActiveAi,
+) -> AppResult<Result<i32, String>> {
+    let system = "This is a connection test. Do not call any tool. Reply only with the JSON \
+                  object requested.";
+    let user = "Return {\"paragraphs\": [\"ok\"], \"follow_ups\": []}.";
+    let req = ChatRequest {
+        messages: vec![
+            ChatMessage::System(system.into()),
+            ChatMessage::User {
+                text: user.into(),
+                images: Vec::new(),
+            },
+        ],
+        tools: crate::prep::chat::tools::specs(),
+        tool_choice: ToolChoice::Auto,
+        answer_schema_name: crate::prep::chat::SCHEMA_NAME,
+        answer_schema: crate::prep::ask_schema(),
+        max_tokens: 64,
+        cache_key: None,
+        fake_context: json!({ "task": "model_test" }),
+    };
+    let snapshot = json!({
+        "purpose": "test call with the prep chat's tools before the text model is switched",
+        "system": system,
+        "user": user,
+        "settings": candidate.to_json(),
+        "tools": req.tools.iter().map(|t| t.name).collect::<Vec<_>>(),
+        "request": chat::request_record(&ai.effort, &req),
+    });
+    let call = async {
+        ai.complete_chat(&req).await.map(|r| {
+            let output = if r.tool_calls.is_empty() {
+                r.content
+                    .as_deref()
+                    .and_then(|c| serde_json::from_str::<Value>(c).ok())
+                    .unwrap_or_else(|| json!({ "text_chars": r.content.as_deref().map_or(0, |c| c.chars().count()) }))
+            } else {
+                json!({ "tool_calls": r.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>() })
+            };
+            (output, r.model_version, r.usage)
+        })
+    };
+    Ok(recorded(state, teacher_id, ai, &snapshot, 2, call)
+        .await?
+        .map_err(|e| explain_tools(&e)))
 }
 
 async fn status(state: &AppState) -> AppResult<Value> {

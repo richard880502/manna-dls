@@ -2182,7 +2182,7 @@ interface PrepChatResult {
 - 進度：`PrepTurn.progress` 每次工具呼叫一步（「讀 C 區」「修改 C 區」「重畫 C 區的圖」…）。
 - `POST /api/prep-sessions/:id/turns/:turn_id/undo`：整輪復原，寫成一個新版本（`cause = "undo"`），回傳更新後的 `PrepTurn`。404 別人的對話；409（`{ error: { message } }`）沒有可復原的修改、或被改的區塊之後又改過。圖不復原。
 - 模型：只用 OpenAI。AI 設定是國網（或示範用的 Anthropic）時，chat 輪次 `failed`，「這個功能需要 OpenAI 模型。…」。
-- 紀錄：`ai_interactions`（`module = prep_chat`，每次模型呼叫一列，`usage.cached_tokens`）；`usage_logs`：`prep_chat_tool`、`prep_chat_turn`、`prep_chat_undo`。
+- 紀錄：`ai_interactions`（`module = prep_chat`，每次模型呼叫一列，走 OpenAI Responses API；`input_snapshot.request` 記 `api: "responses"` 與實際送出的 `reasoning_effort`；`usage.cached_tokens`、`usage.reasoning_tokens`）；`usage_logs`：`prep_chat_tool`、`prep_chat_turn`、`prep_chat_undo`。
 - 設定 `PREP_LEGACY_TURNS=true` 讓 `ask`／`revise` 可以再新建（測試舊流程用；預設關）。
 
 ## 測試用假模型（`AI_PROVIDER=fake`）
@@ -3906,12 +3906,12 @@ Phase 1 的確認／修改／停止使用與不可覆寫歷程，以及 Phase 2 
 | 方法／路徑 | 說明 |
 |---|---|
 | `GET /api/admin/ai-model` | PI。`{active, source, changed_by, changed_at, env_default, providers, efforts, timeout_range}`。`active`／`env_default` 為 `{provider, model, effort, timeout_secs}`；`source` 是 `env`（環境變數預設）或 `admin`（後台設定，此時 `changed_by` 為設定者的研究編號、`changed_at` 為時間）；`providers` 是 `[{id, label, available, models, uses_effort}]`（`models` 是建議名稱：`openai` 為 `gpt-5.6-sol`、`gpt-5.6-terra`，`openai_compatible` 為 `gemma-4-31B-it`，再加上環境變數預設的模型；也可以自行輸入）；`timeout_range` 為 `{min: 30, max: 900}` |
-| `PUT /api/admin/ai-model` | PI。`{provider, model, effort?, timeout_secs}`。先驗證（來源、模型名稱 1–100 字元且只含英數與 `. - _ : /`、`effort` 屬於 `low／medium／high／xhigh／max`、秒數 30–900；沒給 `effort` 沿用環境變數的值），再用**新設定**做一次很小的測試呼叫（最多等 120 秒）。測試成功才儲存並立刻生效，回傳與 GET 相同的內容加上 `test_latency_ms`；測試失敗或驗證不過回 400（中文原因，例如模型名稱可能打錯），**什麼都不儲存**，目前的模型不變 |
+| `PUT /api/admin/ai-model` | PI。`{provider, model, effort?, timeout_secs}`。先驗證（來源、模型名稱 1–100 字元且只含英數與 `. - _ : /`、`effort` 屬於 `low／medium／high／xhigh／max`、秒數 30–900；沒給 `effort` 沿用環境變數的值），再用**新設定**做一次很小的測試呼叫（最多等 120 秒）；選 `openai` 時再做第二次：備課對話的呼叫（Responses API、備課對話的工具與回答格式、選定的推理強度，最多等 120 秒），因為模型可能接受一般呼叫卻不接受「工具＋推理強度」。測試都成功才儲存並立刻生效，回傳與 GET 相同的內容加上 `test_latency_ms`；測試失敗或驗證不過回 400（中文原因，例如模型名稱可能打錯），**什麼都不儲存**，目前的模型不變 |
 | `DELETE /api/admin/ai-model` | PI。刪除後台設定，回到環境變數預設，回傳與 GET 相同的內容；沒有後台設定時什麼也不做 |
 | `GET /api/admin/ai-traffic` | PI。AI 請求流量，只有彙總（沒有老師內容、沒有每位老師的數字）。`{now, last_hour, last_7_days}`：`now` 為 `{max_running, running, queued, oldest_wait_secs, queue_enabled, quota_blocked_secs}`（來自 `ai_jobs` 與設定；佇列沒在用時為 0；`quota_blocked_secs` 是額度冷卻剩餘秒數，沒有冷卻為 `null`）。`last_hour` 為 `{jobs: {done, failed, cancelled}（一小時內結束的工作）, wait_secs: {p50, p95}（started_at − queued_at）, run_secs: {<kind>: {p50, p95}}（finished_at − started_at，只列有工作的 kind）, calls（ai_interactions 筆數）, errors（status 為 error／timeout）, rate_limited, quota, overloaded（依 error_detail 前綴 `rate_limited:`／`quota:`／`overloaded:`，可能與 errors 重疊）, tokens: {prompt, cached, completion, reasoning}, latency_ms: {p50, p95}}`。`last_7_days` 固定 7 筆（今天在最後，沒有資料的日子補 0），日期為 Asia/Taipei：`{date, calls, jobs（當天排入的工作）, prompt_tokens, cached_tokens, completion_tokens}`。百分位數為 `percentile_cont`，四捨五入到小數一位；沒有資料時為 0 |
 
 - **生效時機**：新開始的 AI 工作立刻使用新設定；已經在跑的工作（例如正在產生的學習單）會用開始時的模型跑完，不會半途混用。每次呼叫與每個背景工作（學習單產生、備課對話的一輪及其 SIOP 自我檢核、版型讀取、區塊修改、課程 SOP 分析與目標、記憶索引同步）在開始時取一份設定快照，請求、逾時與 `ai_interactions` 的記錄都用這一份；一個備課對話的輪次（含事後由頁面輪詢觸發的自我檢核）沿用輪次開始時的設定。使用者在頁面按「再試一次」是新的工作，用當時的設定。伺服器重新啟動時會讀回後台設定（沒有就用環境變數），並在啟動記錄寫明使用哪一種來源；若後台設定的來源已不在環境中（例如金鑰被移除）會被忽略並改用環境變數。目前只有一個 API 實例，切換與這些快照都存在該實例的記憶體；若日後有多個實例，需要各自重新讀取 `app_settings`。
-- **研究記錄**：每筆 `ai_interactions` 的 `provider`／`model` 是該次呼叫快照裡實際使用的值。測試呼叫也記成一筆，`module = admin_model_test`（`teacher_id` 是主持人、`input_snapshot` 是固定的測試題目與新設定、失敗時 `status = error／timeout` 並有 `error_detail`），不會混進教師的流程。
+- **研究記錄**：每筆 `ai_interactions` 的 `provider`／`model` 是該次呼叫快照裡實際使用的值。測試呼叫也記成一筆，`module = admin_model_test`（`teacher_id` 是主持人、`input_snapshot` 是固定的測試題目與新設定、失敗時 `status = error／timeout` 並有 `error_detail`），不會混進教師的流程；OpenAI 的第二次測試是另一筆（`attempt = 2`，`input_snapshot` 另有 `tools` 與 `request.api = "responses"`）。`test_latency_ms` 只算第一次。
 - **稽核**：每次儲存或恢復預設都寫 `usage_logs`（`event = setting_changed`、`payload = {key: "ai_text_model", from, to}`；儲存另有 `test_latency_ms`，恢復另有 `reset_to_env`）。
 - `GET /api/config` 的 `ai_provider`、`ai_model`、`ai_enabled` 反映目前生效的設定。
 - 逾時改成每次呼叫由快照決定，所以「執行中工作被視為中斷」的門檻（`n × AI_TIMEOUT_SECS + 60`）改用**自啟動以來用過的最長逾時**計算，避免主持人縮短逾時後把還在跑的工作誤判為中斷。

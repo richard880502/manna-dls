@@ -428,6 +428,8 @@ struct Endpoints {
     openai_api_key: Option<String>,
     /// `OPENAI_API_KEY`, for the `openai` provider.
     openai_platform_key: Option<String>,
+    /// [`openai::OPENAI_BASE_URL`] (a stand-in in tests).
+    openai_platform_url: String,
 }
 
 /// The text model client. The provider, model, effort and timeout can be switched while the
@@ -493,6 +495,7 @@ impl AiClient {
                 openai_base_url: cfg.openai_compat_base_url.clone(),
                 openai_api_key: cfg.openai_compat_api_key.clone(),
                 openai_platform_key: cfg.openai_api_key.clone(),
+                openai_platform_url: cfg.openai_base_url.clone(),
             }),
         }
     }
@@ -716,7 +719,7 @@ impl ActiveAi {
                     AiProviderKind::OpenAi => {
                         openai::call(
                             &self.http,
-                            openai::OPENAI_BASE_URL,
+                            &e.openai_platform_url,
                             e.openai_platform_key.as_deref(),
                             &self.model,
                             Some(&self.effort),
@@ -731,14 +734,33 @@ impl ActiveAi {
 }
 
 impl ActiveAi {
-    /// One call with tools (the prep chat), bounded by the snapshot's timeout. Only OpenAI's own
-    /// API and the fake provider support it; the others answer with an error.
+    /// One call with tools (the prep chat) on OpenAI's Responses API (`POST /v1/responses`,
+    /// [`chat::call`]), bounded by the snapshot's timeout and guarded like every other call
+    /// (429 retries, quota cooldown). Only OpenAI's own API and the fake provider support it; the
+    /// others answer with an error. The fake goes through the same request and response shapes
+    /// ([`chat::fake_call`]).
     pub async fn complete_chat(
         &self,
         req: &chat::ChatRequest,
     ) -> Result<chat::ChatResponse, ProviderError> {
-        let (result, retries) = self
-            .guard
+        let (result, retries) = self.complete_chat_counted(req).await;
+        result.map(|mut resp| {
+            if retries > 0 {
+                resp.usage
+                    .get_or_insert_with(Default::default)
+                    .transport_retries = u64::from(retries);
+            }
+            resp
+        })
+    }
+
+    /// [`ActiveAi::complete_chat`], also returning how many times the guard repeated the call (so
+    /// a failed call can record it too).
+    pub async fn complete_chat_counted(
+        &self,
+        req: &chat::ChatRequest,
+    ) -> (Result<chat::ChatResponse, ProviderError>, u32) {
+        self.guard
             .run_counted(self.timeout, || async {
                 match self.kind {
                     AiProviderKind::None => Err(ProviderError::Disabled),
@@ -746,11 +768,12 @@ impl ActiveAi {
                         if !self.fake_latency.is_zero() {
                             tokio::time::sleep(self.fake_latency).await;
                         }
-                        crate::prep::fake::chat(req, &self.model)
+                        chat::fake_call(&self.model, &self.effort, req, crate::prep::fake::chat)
                     }
                     AiProviderKind::OpenAi => {
                         chat::call(
                             &self.http,
+                            &self.endpoints.openai_platform_url,
                             self.endpoints.openai_platform_key.as_deref(),
                             &self.model,
                             &self.effort,
@@ -763,15 +786,7 @@ impl ActiveAi {
                     )),
                 }
             })
-            .await;
-        result.map(|mut resp| {
-            if retries > 0 {
-                resp.usage
-                    .get_or_insert_with(Default::default)
-                    .transport_retries = u64::from(retries);
-            }
-            resp
-        })
+            .await
     }
 }
 
