@@ -155,12 +155,13 @@
 
 .lib-chip[aria-pressed="true"] {
   border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-text);
 }
 
 .lib-chip[aria-pressed="true"] .lib-chip-count {
-  color: var(--color-accent-ink);
+  color: var(--color-accent-text);
 }
 
 /* ================= 只看： and 標籤： ================= */
@@ -209,7 +210,8 @@
 }
 
 .lib-filter[aria-pressed="true"] {
-  border-color: var(--color-accent-rule);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
   background: var(--color-accent-wash);
   color: var(--color-accent-text);
 }

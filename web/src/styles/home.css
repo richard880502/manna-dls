@@ -313,8 +313,9 @@
 
 .output-chip[aria-pressed="true"] {
   border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
+  box-shadow: 0 0 0 1px var(--color-accent);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-text);
 }
 
 .output-chip:disabled {
@@ -364,38 +365,13 @@
   width: var(--control-h);
   height: var(--control-h);
   border-radius: var(--radius-control);
-  background: var(--color-accent-wash);
-  color: var(--color-accent-text);
-}
-
-.tool-card-icon.is-tiered {
-  background: var(--color-success-wash);
-  color: var(--color-success);
-}
-
-.tool-card-icon.is-activity {
-  background: var(--color-manna-wash);
-  color: var(--color-manna-ink);
-}
-
-.tool-card-icon.is-kit {
-  background: var(--color-warn-wash);
-  color: var(--color-warn-ink);
-}
-
-.tool-card-icon.is-worksheet {
   background: var(--color-paper-2);
   color: var(--color-ink-2);
 }
 
-.tool-card-icon.is-mimic {
-  background: var(--color-accent);
-  color: var(--color-accent-ink);
-}
-
-.tool-card-icon.is-stepwise {
-  background: var(--color-success-wash);
-  color: var(--color-success);
+/* On the chosen tile (accent wash) the icon goes white so it still reads as a tile. */
+.tool-tile[aria-checked="true"] .tool-card-icon {
+  background: var(--color-paper);
 }
 
 .tool-card-title {
@@ -458,7 +434,6 @@
 @media (hover: hover) {
   .tool-tile:not(:disabled, [aria-checked="true"]):hover {
     border-color: var(--color-accent-rule);
-    box-shadow: var(--shadow-float);
   }
 }
 

@@ -26,7 +26,7 @@ export function Cover({ sheet, tint }: { sheet: WsSheet | null; tint: number }) 
     return () => observer.disconnect();
   }, []);
   return (
-    <div className={`com-cover com-tint-${tint % 6}`} ref={box} aria-hidden="true">
+    <div className={`com-cover com-tint-${tint % 2}`} ref={box} aria-hidden="true">
       {sheet ? (
         <div className="com-cover-stage" style={{ width: DESIGN_WIDTH, transform: `scale(${scale})` }}>
           <SheetPreview sheet={sheet} pictures={NO_PICTURES} />

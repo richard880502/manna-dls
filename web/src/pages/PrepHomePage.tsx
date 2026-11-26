@@ -587,7 +587,7 @@ function QuickBox() {
             onClick={() => pickTool(t)}
             onKeyDown={(e) => onTileKeyDown(e, i)}
           >
-            <span className={`tool-card-icon is-${t}`} aria-hidden="true">
+            <span className="tool-card-icon" aria-hidden="true">
               <Icon name={t} />
             </span>
             <span className="tool-card-title" id={`${ids}-${t}-name`}>
