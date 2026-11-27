@@ -26,6 +26,7 @@ import { worksheetConfig } from "../components/worksheet/useWorksheet";
 import {
   BLOOM_ORDER,
   BLOOM_PRESETS,
+  COMPREHENSION_NO_WORD_BANK,
   TOTAL_MAX,
   countsFor,
   countsTotal,
@@ -579,6 +580,23 @@ describe("settings view: 要做什麼, Bloom presets, 題數, 學習目標, 給 
     expect(what.getByRole("radio", { name: "閱讀理解題" })).toBeDisabled();
     expect(what.getByRole("radio", { name: "差異化學習單" })).toBeDisabled();
     expect(screen.getByText(/版型只適用於完整學習單/)).toBeInTheDocument();
+  });
+
+  it("閱讀理解題 says it has no word bank, warm-up or sentence frames, and where a word bank is", async () => {
+    // 提供字詞表 ticked for the full worksheet (its defaults) stays in the settings, unseen here.
+    mockApi(routes(wsState({ settings: { ...emptySettings(), generation: ["加入暖身活動", "提供字詞表", "提供句型框架"] } })));
+    const user = userEvent.setup();
+    renderApp("/worksheets/5");
+    await screen.findByRole("radiogroup", { name: "要做什麼" });
+    expect(screen.queryByText(COMPREHENSION_NO_WORD_BANK)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "提供字詞表" })).toBeChecked();
+
+    await user.click(whatToMake().getByRole("radio", { name: "閱讀理解題" }));
+    expect(screen.getByText(COMPREHENSION_NO_WORD_BANK)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "提供字詞表" })).not.toBeInTheDocument();
+
+    await user.click(whatToMake().getByRole("radio", { name: "差異化學習單" }));
+    expect(screen.queryByText(COMPREHENSION_NO_WORD_BANK)).not.toBeInTheDocument();
   });
 });
 

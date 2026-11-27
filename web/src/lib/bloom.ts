@@ -44,6 +44,14 @@ export const OUTPUTS: readonly WsOutput[] = ["worksheet", "comprehension", "tier
 export const outputOf = (settings: Pick<WorksheetSettings, "output"> | null | undefined): WsOutput =>
   settings?.output ?? "worksheet";
 
+/**
+ * A 閱讀理解題 has no warm-up, word bank or sentence frames: its settings do not offer 產生設定,
+ * and the server leaves those options out of what the generation records. Said under 要做什麼,
+ * with where a word bank can be had.
+ */
+export const COMPREHENSION_NO_WORD_BANK =
+  "閱讀理解題每一區附作答步驟和作答示例，不印暖身、Word bank（字詞表）和句型框架。需要 Word bank 的話，改做「差異化學習單」（每個版本附轉折詞）或「學習單」。";
+
 // ---------------------------------------------------------------- counts
 
 /** 題數 limits (the server's): 3–30 in all, 0–12 for one level. */

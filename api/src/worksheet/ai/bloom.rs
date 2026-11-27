@@ -910,9 +910,12 @@ impl Draft {
 }
 
 /// What the system used for the generation: the versions (tiered: all three; otherwise the
-/// selected ones or 一般版), the levels and counts actually generated, and why.
+/// selected ones or 一般版), the levels and counts actually generated, the 產生設定 options that
+/// apply to the output (a 閱讀理解題 has no warm-up, word bank or sentence frames), and why.
 fn chosen_for(settings: &Settings, plan: &[(Bloom, usize)]) -> Chosen {
     let mut s = settings.clone();
+    let unused = settings.output.unused_generation();
+    s.generation.retain(|g| !unused.contains(&g.as_str()));
     let mut auto: Vec<String> = Vec::new();
     let total: usize = plan.iter().map(|(_, n)| n).sum();
     let mut reasons = vec![bl::summary(plan)];
@@ -1447,5 +1450,35 @@ mod tests {
         assert_eq!(c.settings.levels, Level::ALL);
         assert!(c.reasons.iter().any(|r| r == tiered::TIERED_REASON));
         assert_eq!(first_numbers(&[], 1), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_comprehension_generation_does_not_claim_a_word_bank() {
+        use crate::worksheet::{
+            GENERATION_OPTIONS, GEN_EXAMPLE, GEN_FRAMES, GEN_GUIDING, GEN_WARMUP, GEN_WORD_LIST,
+        };
+        // The worksheet's defaults (加入暖身活動、提供字詞表、提供句型框架) ride along unseen.
+        let s = Settings {
+            output: Output::Comprehension,
+            generation: GENERATION_OPTIONS.map(String::from).to_vec(),
+            ..Settings::default()
+        };
+        let c = chosen_for(&s, &bl::plan(&s));
+        assert_eq!(
+            c.settings.generation,
+            [GEN_OBJECTIVES, GEN_GUIDING, GEN_EXAMPLE]
+        );
+        assert!(c.settings.normalised().is_ok());
+        // The teacher's own settings keep them, for when the full worksheet is made again.
+        assert_eq!(s.generation.len(), GENERATION_OPTIONS.len());
+        // A 差異化學習單 keeps what was ticked.
+        let t = Settings {
+            output: Output::Tiered,
+            ..s.clone()
+        };
+        let c = chosen_for(&t, &bl::plan(&t));
+        assert!([GEN_WARMUP, GEN_WORD_LIST, GEN_FRAMES]
+            .iter()
+            .all(|g| c.settings.wants(g)));
     }
 }

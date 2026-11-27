@@ -2388,6 +2388,7 @@ interface WsSheetBlock { /* …既有欄位… */
 - 題目：`origin = "ai"`，`bloom` = 層次（被改標的是判斷的層次），`hint` 照模型輸出，`levels` = 學習單的版本（`settings.levels`，沒有時是一般版）。
 - 一個新的學習單版本（`cause = "generate"`）。
 - `content.chosen`：`settings` 是實際用的（`levels`、`bloom` = 實際產生的層次、`question_count` = 總題數），`item_budget` = 總題數，`reasons` 第一條是「Bloom：記憶 2、理解 2、應用 1、分析 1、評鑑 1、創造 1」，再說明題數與版本怎麼決定。
+- **產生設定**：閱讀理解題沒有暖身、Word bank（字詞表鷹架）和句型框架，設定頁也不顯示「產生設定」；學習單的 `settings.generation` 裡若有「加入暖身活動」「提供字詞表」「提供句型框架」（建立學習單時的預設，或先前選完整學習單時勾的），產生時不理會，`content.chosen.settings.generation` 也不列（`Output::unused_generation`），只留「顯示學習目標」等有作用的。學習單的 `settings` 原樣保留，改回完整學習單時照舊。設定頁選「閱讀理解題」時說明這一點，需要 Word bank 請改做差異化學習單（各版本附轉折詞）或完整學習單。
 
 ## 產生：分層練習（`output = "tiered"`）
 
