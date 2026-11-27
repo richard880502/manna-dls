@@ -808,8 +808,8 @@ pub struct SheetItem {
     /// the student version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bloom: Option<Option<Bloom>>,
-    /// 基礎版 only (both audiences): the hint printed under the question (a question without
-    /// versions of its own; see `support`).
+    /// The lowest of the worksheet's versions only ([`hint_shown`], both audiences): the hint
+    /// printed under the question (a question without versions of its own; see `support`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
     /// The question's own sentence frame (a short paragraph with `___` blanks the student can
@@ -1020,6 +1020,14 @@ pub struct Sheet {
 /// in 進階版), and 進階版 when it is the only kind of version there is (a frame is never lost).
 pub fn frame_shown(level: Level, selected: &[Level]) -> bool {
     level != Level::Advanced || !selected.iter().any(|l| *l != Level::Advanced)
+}
+
+/// Whether `level` prints the questions' hints: the lowest of the worksheet's versions, where
+/// support is greatest (基礎版 when there is one). A 閱讀理解題 of one version (一般版) prints its
+/// hints there instead of writing hints that no version prints. No versions set (older
+/// worksheets): 一般版.
+pub fn hint_shown(level: Level, selected: &[Level]) -> bool {
+    level == selected.iter().copied().min().unwrap_or(Level::Standard)
 }
 
 /// One version's support, as printed; `None` when it gives none.
@@ -1354,8 +1362,10 @@ pub fn project(title: &str, content: &Content, level: Level, audience: Audience)
                     evidence: (teacher && !i.evidence.trim().is_empty())
                         .then(|| refs(i.evidence.trim())),
                     bloom: teacher.then_some(i.bloom),
-                    hint: (tier.is_none() && level == Level::Basic && !i.hint.trim().is_empty())
-                        .then(|| refs(i.hint.trim())),
+                    hint: (tier.is_none()
+                        && hint_shown(level, &content.levels)
+                        && !i.hint.trim().is_empty())
+                    .then(|| refs(i.hint.trim())),
                     frame: (tier.is_none()
                         && frame_shown(level, &content.levels)
                         && !i.frame.trim().is_empty())
@@ -2258,6 +2268,34 @@ mod tests {
             item_levels("support", &[Level::Standard]),
             Vec::<Level>::new()
         );
+    }
+
+    #[test]
+    fn hints_print_in_the_lowest_version_there_is() {
+        let mut c = content();
+        c.blocks[1].items[1].hint = "Look at the second sentence.".into();
+        let hint_in = |c: &Content, level: Level| {
+            project("T", c, level, Audience::Student).blocks[1]
+                .items
+                .iter()
+                .any(|i| i.hint.as_deref() == Some("Look at the second sentence."))
+        };
+        // A 閱讀理解題 of one version prints its hints there, never nowhere.
+        c.levels = vec![Level::Standard];
+        assert!(hint_in(&c, Level::Standard));
+        // Without 基礎版, 一般版 has the most support.
+        c.levels = vec![Level::Standard, Level::Advanced];
+        assert!(hint_in(&c, Level::Standard));
+        assert!(!hint_in(&c, Level::Advanced));
+        c.levels = vec![Level::Advanced];
+        assert!(hint_in(&c, Level::Advanced));
+        // With 基礎版, only there (as before).
+        c.levels = Level::ALL.to_vec();
+        assert!(hint_in(&c, Level::Basic));
+        assert!(!hint_in(&c, Level::Standard));
+        // No versions set (older worksheets): 一般版.
+        assert!(hint_shown(Level::Standard, &[]));
+        assert!(!hint_shown(Level::Basic, &[]));
     }
 
     #[test]

@@ -1024,7 +1024,7 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     expect(editorBlock().getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
     expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
 
-    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表放在學習單最後" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "Key Vocabulary 放在學習單最後" }));
     const end = await screen.findByRole("region", { name: "字詞表（學習單最後）" });
     expect(within(end).getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2);
     expect(editorBlock().queryAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(0);
@@ -1038,7 +1038,7 @@ describe("編輯器: 字詞表的位置與恢復", () => {
     expect(saved.blocks[1]!.vocabulary).toEqual(before.vocabulary);
 
     // And back.
-    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "字詞表放在學習單最後" }));
+    await user.click((await openBarPopover(user, "顯示")).getByRole("checkbox", { name: "Key Vocabulary 放在學習單最後" }));
     await waitFor(() => expect(editorBlock().getAllByRole("table", { name: /^字詞表 B/ })).toHaveLength(2));
     expect(screen.queryByRole("region", { name: "字詞表（學習單最後）" })).toBeNull();
   });

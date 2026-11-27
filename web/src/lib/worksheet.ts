@@ -866,6 +866,22 @@ export function formatDateTime(iso: string): string {
 export const percent = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
 
 /**
+ * The version a question's hint prints in (mirrors `assemble::hint_shown`): the lowest of the
+ * worksheet's versions, where support is greatest (基礎版 when there is one); 一般版 when none is
+ * set. A 閱讀理解題 of one version prints its hints there.
+ */
+export function hintLevel(levels: readonly WsLevel[]): WsLevel {
+  return LEVELS.find((l) => levels.includes(l)) ?? "standard";
+}
+
+/** The label over a question's hint: where it prints, or why it does not. */
+export function hintLabel(levels: readonly WsLevel[], itemLevels: readonly WsLevel[]): string {
+  const where = LEVEL_LABEL[hintLevel(levels)];
+  if (!itemLevels.includes(hintLevel(levels))) return `提示（只印在${where}；這題不在${where}，不會印出）`;
+  return levels.length > 1 ? `提示（只印在${where}）` : "提示";
+}
+
+/**
  * Whether `level` prints the questions' own sentence frames (mirrors `assemble::frame_shown`):
  * 基礎版 and 一般版, and 進階版 only when it is the only kind of version.
  */

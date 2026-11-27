@@ -226,3 +226,9 @@
 .ws-check-dialog .section {
   max-width: none;
 }
+
+/* 顯示 without Key Vocabulary: why its two switches are off. */
+.ws-display-note {
+  max-width: 20rem;
+  margin: 0;
+}

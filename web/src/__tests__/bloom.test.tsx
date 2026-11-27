@@ -370,17 +370,33 @@ describe("worksheet editor: Bloom chip, distribution and hint", () => {
     });
   });
 
-  it("a worksheet without 基礎版 offers no empty hint (it would never print) and says so of a written one", async () => {
+  it("a worksheet of one version prints a written hint there and offers no empty one", async () => {
     const only = generated();
     only.content.blocks[0] = { ...only.content.blocks[0]!, items: [{ ...only.content.blocks[0]!.items[0]!, hint: "Who did it?" }, only.content.blocks[0]!.items[1]!] };
     mockApi(routes(only));
     renderApp("/worksheets/5");
     await screen.findByRole("textbox", { name: "題目 1" });
-    expect(screen.queryByText("提示（只印在基礎版）")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("textbox", { name: "提示（只印在基礎版；這題不在基礎版，不會印出） 1" }),
-    ).toHaveValue("Who did it?");
+    // 一般版 is its only version, so the hint prints there: no 「不會印出」.
+    expect(screen.queryByText(/不會印出/)).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "提示 1" })).toHaveValue("Who did it?");
     expect(screen.getAllByRole("textbox", { name: /^提示/ })).toHaveLength(1);
+  });
+
+  it("without 基礎版, a hint prints in 一般版, the most support there is", async () => {
+    const two = generated();
+    two.levels = ["standard", "advanced"];
+    two.content.levels = ["standard", "advanced"];
+    const [first, second] = two.content.blocks[0]!.items;
+    two.content.blocks[0] = {
+      ...two.content.blocks[0]!,
+      items: [
+        { ...first!, hint: "Who did it?", levels: ["standard", "advanced"] },
+        { ...second!, hint: "Look again.", levels: ["advanced"] },
+      ],
+    };
+    mockApi(routes(two));
+    renderApp("/worksheets/5");
+    expect(await screen.findByRole("textbox", { name: "提示（只印在一般版） 1" })).toHaveValue("Who did it?");
   });
 
   it("the teacher view shows each block's Bloom line", async () => {

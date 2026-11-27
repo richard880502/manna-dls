@@ -143,7 +143,10 @@ pub const TIER_ANSWER_CHARS: usize = 400;
 pub const SCORING_CHARS: usize = 150;
 pub const MAX_LINKING_WORDS: usize = 4;
 pub const LINKING_WORD_CHARS: usize = 30;
-pub const FUNCTION_CHARS: usize = 40;
+/// Room for a function of two parts ("contrasting interpretations and giving reasons", 46): at
+/// 40 the schema cut that one off after "giving", and the model filled the two characters left
+/// with "re" or with 「理由」.
+pub const FUNCTION_CHARS: usize = 80;
 pub const STEP_CHARS: usize = 150;
 pub const MIN_STEPS: usize = 2;
 pub const MAX_STEPS: usize = 5;

@@ -185,7 +185,7 @@ describe("the worksheet pane of the 備課對話", () => {
     expect(screen.getByRole("radio", { name: "學生版" })).toBeChecked();
     const bar = within(screen.getByRole("group", { name: "學習單工具列" }));
     expect(bar.getByRole("button", { name: "版本：第 3 版" })).toHaveTextContent("第 3 版");
-    for (const name of ["顯示", "詞彙檢查", "關於這份學習單", "更多…"]) {
+    for (const name of ["顯示", "詞彙檢查", "關於這份學習單", "更多…", "預覽"]) {
       expect(bar.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(bar.getByRole("button", { name: /匯出/ })).toBeEnabled();
@@ -303,7 +303,7 @@ describe("the worksheet pane of the 備課對話", () => {
     const button = screen.getByRole("button", { name: "顯示" });
     await user.click(button);
     const panel = within(screen.getByRole("group", { name: "顯示設定" }));
-    for (const name of ["顯示學習目標", "字詞表放在學習單最後", "字詞表的字義用中文"]) {
+    for (const name of ["顯示學習目標", "Key Vocabulary 放在學習單最後", "Key Vocabulary 的字義用中文"]) {
       expect(panel.getByRole("checkbox", { name })).toBeInTheDocument();
     }
     await user.keyboard("{Escape}");
@@ -318,13 +318,16 @@ describe("the worksheet pane of the 備課對話", () => {
     await waitFor(() => expect(screen.queryByRole("group", { name: "關於這份學習單" })).not.toBeInTheDocument());
   });
 
-  it("列印樣式預覽 shows the printed sheet read-only; closing returns focus to 更多…", async () => {
+  it("預覽 (in the toolbar, next to 匯出) shows the printed sheet read-only; closing returns focus to it", async () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     renderApp("/prep/7");
     await editorBox();
-    const more = screen.getByRole("button", { name: "更多…" });
-    await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "列印樣式預覽" }));
+    const preview = screen.getByRole("button", { name: "預覽" });
+    // Out in the toolbar, no longer in 更多….
+    expect((await openBarPopover(user, "更多…")).queryByRole("button", { name: "列印樣式預覽" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.click(preview);
     const dialog = within(await screen.findByRole("dialog", { name: "列印樣式預覽" }));
     const article = await dialog.findByRole("article", { name: /學生版/ });
     expect(within(article).getByText("Why?")).toBeInTheDocument();
@@ -338,7 +341,7 @@ describe("the worksheet pane of the 備課對話", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "列印樣式預覽" })).not.toBeInTheDocument());
-    expect(more).toHaveFocus();
+    expect(preview).toHaveFocus();
   });
 
   it("詞彙檢查 opens the check in a dialog; closing returns focus and leaves the worksheet alone", async () => {

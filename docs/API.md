@@ -2302,7 +2302,7 @@ interface WorksheetSettings {
 interface WsItem {
   /* …既有欄位… */
   bloom: Bloom | null;                    // 這一題的 Bloom 層次；舊資料是 null。教師可以改或清空
-  hint: string;                           // 提示或句子開頭，預設 ""；只印在基礎版
+  hint: string;                           // 提示或句子開頭，預設 ""；印在學習單最低的版本（有基礎版就是基礎版；只有一般版的閱讀理解題印在一般版）
 }
 interface WsBlock {
   /* …既有欄位… */
@@ -2399,7 +2399,7 @@ interface WsSheetBlock { /* …既有欄位… */
   | 分析 | 一般版、進階版 |
   | 評鑑、創造 | 進階版 |
 
-- 每一題都請模型給 `hint`，只印在基礎版。
+- 每一題都請模型給 `hint`，印在學習單最低的版本（有基礎版就只印在基礎版；只有一般版時印在一般版，不會寫了卻哪一版都不印）。
 - `content.chosen.reasons` 另加「基礎版：記憶＋理解＋應用（附提示）；一般版：理解到分析；進階版：理解、應用、分析到創造」。
 - 投影時，依 Bloom 層次產生的區塊在某個版本裡沒有任何題目，就不出現在那個版本（區塊字母依序遞補）。
 
@@ -2527,7 +2527,7 @@ interface WsItemTier {
       answer_format（enum，開放式）, prompt ≤500, evidence ≤300, paragraph_ids（enum，≤3）,
       advanced: Version, standard: Version, basic: Version },   // 先寫進階版的完整答案
     steps: [2–5 × ≤150], example ≤300,
-    linking_words: { function ≤40, basic ≤4×30, standard_more ≤4×30, advanced_more ≤4×30 } }
+    linking_words: { function ≤80, basic ≤4×30, standard_more ≤4×30, advanced_more ≤4×30 } }
   Version = { support_kind（該版本可用的 enum）, model_sentence ≤300, support ≤4×200,
               word_bank ≤10×40, answer ≤400, scoring_zh ≤150 }
   ```
