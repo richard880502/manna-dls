@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ExitKind, WorksheetSettings, WorksheetState, WsJob, WsLevel, WsOutput } from "../../api/types";
 import {
+  COMPREHENSION_NO_WORD_BANK,
   OUTPUTS,
   OUTPUT_LABEL,
   countsTotal,
@@ -298,6 +299,7 @@ export function OptionsView({ ws, onGenerated, onBack, onEditText, onPickParagra
             ))}
           </div>
           <p className="field-hint">{OUTPUT_HINT[output]}</p>
+          {output === "comprehension" && <p className="field-hint">{COMPREHENSION_NO_WORD_BANK}</p>}
           {state.template && fullWorksheet && (
             <p className="field-hint">版型只適用於完整學習單；要做閱讀理解題或差異化學習單，先把下面的版型改成「不使用版型」。</p>
           )}

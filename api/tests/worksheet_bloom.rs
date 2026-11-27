@@ -1282,6 +1282,58 @@ async fn changing_the_material_keeps_what_to_make() {
     assert_eq!(v["request"], "多出應用題");
 }
 
+/// 產生設定 is not offered for a 閱讀理解題: a word bank, a warm-up or sentence frames ticked
+/// for the full worksheet (or by its defaults) are not made, and the generation does not claim
+/// them; the teacher's settings keep them for the full worksheet.
+#[tokio::test]
+async fn a_comprehension_does_not_claim_a_word_bank_it_does_not_make() {
+    let app = test_app!();
+    let t = app.teacher("T-BLOOM-14", "general").await;
+    let ticked = json!(["加入暖身活動", "顯示學習目標", "提供字詞表", "提供句型框架"]);
+    let id = made(
+        &app,
+        &t,
+        "",
+        json!({ "output": "comprehension", "bloom": ["remember", "analyze"],
+                "generation": ticked }),
+        "",
+    )
+    .await;
+    let state = generate(&app, &t, id).await;
+    let bs = blocks(&state);
+    assert_eq!(bs.len(), 2);
+    let empty = |v: &Value| v.as_array().is_none_or(|a| a.is_empty());
+    for b in &bs {
+        assert_eq!(b["kind"], "activity");
+        let kinds: Vec<&str> = b["scaffolds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["清楚的分步指示及完成順序", "作答示例"], "{b}");
+        assert!(empty(&b["vocabulary"]), "{b}");
+        for it in items(b) {
+            assert!(it["frame"].as_str().unwrap_or_default().is_empty(), "{it}");
+        }
+    }
+    assert_eq!(
+        state["content"]["chosen"]["settings"]["generation"],
+        json!(["顯示學習目標"])
+    );
+    assert_eq!(state["settings"]["generation"], ticked);
+    let student = sheet(&app, &t, id, "standard", "student").await;
+    assert!(empty(&student["end_words"]));
+    for b in student["blocks"].as_array().unwrap() {
+        assert!(empty(&b["vocabulary"]), "{b}");
+        assert!(b["supports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["kind"] != "字詞表"));
+    }
+}
+
 #[tokio::test]
 async fn the_full_worksheet_still_works_and_labels_its_items() {
     let app = test_app!();

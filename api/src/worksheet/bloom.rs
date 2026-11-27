@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use super::template::{enum_of, obj, s_max, strings_max};
 use super::{
     Settings, ANSWER_FORMATS, FMT_BLANK, FMT_CHOICE, FMT_MATCHING, FMT_ORGANIZER, FMT_PARAGRAPH,
-    FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE,
+    FMT_SHORT, FMT_TABLE, FMT_TRUE_FALSE, GEN_FRAMES, GEN_WARMUP, GEN_WORD_LIST,
 };
 use crate::text::clip_chars;
 
@@ -270,6 +270,17 @@ impl Output {
         match self {
             Self::Tiered => DEFAULT_TIERED_COUNT,
             _ => DEFAULT_COMPREHENSION_COUNT,
+        }
+    }
+
+    /// The 產生設定 options this output has nothing to do with: a 閱讀理解題 has no warm-up, no
+    /// word bank (字詞表) and no sentence frames. Its settings page does not offer them; they are
+    /// only carried over from the worksheet's defaults (or a 完整學習單 chosen before), so the
+    /// generation's settings (`content.chosen`) leave them out instead of claiming them.
+    pub fn unused_generation(self) -> &'static [&'static str] {
+        match self {
+            Self::Comprehension => &[GEN_WARMUP, GEN_WORD_LIST, GEN_FRAMES],
+            _ => &[],
         }
     }
 }
