@@ -34,7 +34,7 @@ import {
   type HomeRestore,
 } from "../lib/longMaterial";
 import { ClassChip, NO_CLASS_LABEL, TemplateChip, useActiveClasses } from "../components/prep/ContextChips";
-import { KitDownload } from "../components/prep/KitDownload";
+import { ActivityDownload, KitDownload } from "../components/prep/KitDownload";
 import { FOLDED_COLUMNS, useSplitResize } from "../components/prep/useSplitResize";
 import { CHAT_COLLAPSED_KEY, HEAD_OPEN_KEY, useStoredFlag } from "../components/prep/useStoredFlag";
 import { SiopCheckPanel } from "../components/prep/SiopCheckPanel";
@@ -650,11 +650,13 @@ function PrepSessionView({ id }: { id: number }) {
     }
     const plan = activityOf(turn);
     if (plan) {
+      // 課堂活動: the whole plan as one DOCX, above it as the kit's download is.
       return (
-        <>
+        <div className="prep-kit">
+          <ActivityDownload sessionId={id} turnId={turn.id} />
           <ActivityCard plan={plan} interactionId={turn.interaction_id} />
           <SiopCheckPanel sessionId={id} turn={turn} quiet={stepsShown(turn)} />
-        </>
+        </div>
       );
     }
     const resources = resourcesOf(turn);

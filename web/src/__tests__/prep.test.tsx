@@ -3,7 +3,7 @@
 // polling, and where a session sits in the sidebar.
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ActivityGoal,
   ActivityPlan,
@@ -23,7 +23,17 @@ import type {
   WsSheet,
 } from "../api/types";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
-import { AI_DISCLAIMER, goalGroups, goalsText, hasPrepare, prepConfig, prepareText, reviewText, stepText } from "../lib/prep";
+import {
+  AI_DISCLAIMER,
+  goalGroups,
+  goalsText,
+  hasPrepare,
+  planText,
+  prepConfig,
+  prepareText,
+  reviewText,
+  stepText,
+} from "../lib/prep";
 import { emptyBrief, emptySettings, emptyWorksheetContent } from "../lib/worksheet";
 import {
   baseRoutes,
@@ -1244,6 +1254,85 @@ describe("學習目標：內容目標與語言目標", () => {
     expect(prepareText(plan)).toBe("");
     expect(reviewText(plan)).toBe("");
     expect(stepText(plan.steps[1]!)).toBe("【發展活動】逐段找原因（25 分鐘）\n每段找一個原因。");
+  });
+});
+
+// ---------------------------------------------------------------- 課堂活動：下載與複製全部
+
+describe("課堂活動：一鍵下載與複製全部", () => {
+  it("planText puts every part in the order of the DOCX, each as its own 複製 writes it", () => {
+    expect(planText(planV4)).toBe(
+      [
+        "The Umbrella Stand：一節課的活動\n2 個步驟，共約 30 分鐘",
+        `學習目標\n${goalsText(planV4)}`,
+        `課前準備\n${prepareText(planV4)}`,
+        `教學流程\n${stepText(planV4.steps[0]!)}\n\n${stepText(planV4.steps[1]!)}`,
+        `複習與評量\n${reviewText(planV4)}`,
+        "對應的課綱條目\n5-IV-2：能讀懂簡易故事的主要內容",
+      ].join("\n\n"),
+    );
+    // A plan made before version 4 has no 課前準備 and no 複習與評量.
+    const old = planText(plan);
+    expect(old).not.toContain("課前準備");
+    expect(old).not.toContain("複習與評量");
+    expect(old.indexOf("學習目標")).toBeLessThan(old.indexOf("教學流程"));
+    expect(old.indexOf("【引起動機】雨天經驗")).toBeLessThan(old.indexOf("【發展活動】逐段找原因"));
+  });
+
+  it("a 課堂活動 turn: 複製全部 copies the whole plan, and the DOCX downloads in one click", async () => {
+    signIn();
+    const activity = turn("activity", { result: planV4, interaction_id: 77 });
+    const api = mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([activity]) });
+    // The file is a real download: the stub hands back a blob (no name: the fallback is used).
+    const mocked = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/activity")) {
+        await mocked(input, init);
+        return { ok: true, status: 200, blob: async () => new Blob(["docx"]), headers: { get: () => null } } as unknown as Response;
+      }
+      return mocked(input, init);
+    });
+    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:activity"), revokeObjectURL: vi.fn() }));
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.download);
+    });
+
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const result = within(await screen.findByRole("region", { name: "規劃教學活動（第 1 則）" }));
+    // 複製全部: the whole plan, said by a status; the name starts with what the button says.
+    const copyAll = result.getByRole("button", { name: "複製全部（整份課堂活動）" });
+    expect(copyAll).toHaveTextContent("複製全部");
+    await user.click(copyAll);
+    expect(await navigator.clipboard.readText()).toBe(planText(planV4));
+    expect(copyAll).toHaveTextContent("已複製");
+    expect(screen.getAllByRole("status").some((el) => el.textContent === "已複製")).toBe(true);
+    // Each part keeps its own 複製; the whole plan is not rated again.
+    expect(result.getByRole("button", { name: "複製學習目標" })).toBeInTheDocument();
+    expect(result.queryByRole("button", { name: /整份課堂活動.*(有幫助|不合用)/ })).toBeNull();
+
+    // The DOCX, above the plan.
+    const download = result.getByRole("button", { name: "下載課堂活動 (DOCX)" });
+    expect(download.compareDocumentPosition(copyAll) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(download);
+    await waitFor(() => expect(clicked).toEqual(["課堂活動.docx"]));
+    const call = api.callsTo("GET", `${S7}/turns/${activity.id}/activity`)[0]!;
+    expect(new URLSearchParams(call.url.split("?")[1]).toString()).toBe("format=docx");
+    click.mockRestore();
+  });
+
+  it("a failed download says why and the button can be pressed again", async () => {
+    signIn();
+    const activity = turn("activity", { result: plan, interaction_id: 77 });
+    mockApi({ ...baseRoutes(), [`GET ${S7}`]: session([activity]) });
+    const user = userEvent.setup();
+    renderApp("/prep/7");
+    const result = within(await screen.findByRole("region", { name: "規劃教學活動（第 1 則）" }));
+    await user.click(result.getByRole("button", { name: "下載課堂活動 (DOCX)" }));
+    // (The mock has no file to give: the failure is said.)
+    expect(await result.findByText(`測試未定義：GET ${S7}/turns/${activity.id}/activity`)).toBeInTheDocument();
+    expect(result.getByRole("button", { name: "下載課堂活動 (DOCX)" })).toBeEnabled();
   });
 });
 

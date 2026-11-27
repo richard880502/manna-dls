@@ -341,6 +341,10 @@ pub fn api_router() -> Router<AppState> {
         )
         .route("/prep-sessions/{id}/turns/{turn_id}/kit", get(prep::kit))
         .route(
+            "/prep-sessions/{id}/turns/{turn_id}/activity",
+            get(prep::activity),
+        )
+        .route(
             "/prep-sessions/{id}/turns/{turn_id}/undo",
             post(prep::undo_turn),
         )

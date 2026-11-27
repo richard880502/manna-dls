@@ -1646,7 +1646,7 @@ button.bloom-seg:focus-visible {
   }
 }
 
-/* ---------- 教學套件 (session page; kept here with the rest of Phase 2.7) ---------- */
+/* ---------- 教學套件 and 課堂活動 (session page; kept here with the rest of Phase 2.7) ---------- */
 .prep-kit {
   display: grid;
   gap: var(--space-md);

@@ -2078,6 +2078,7 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 | POST | `/api/prep-sessions/:id/turns` | `{ kind?, request }` | 202 `PrepSession` |
 | PUT | `/api/prep-sessions/:id/material-selection` | `{ paragraph_ids: string[] \| null }` | 200 `PrepSession`。**只選要用的段落**（見「長教材」） |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/kit?format=docx` | – | 教學套件的 DOCX（見 `kit`） |
+| GET | `/api/prep-sessions/:id/turns/:turn_id/activity?format=docx` | – | 課堂活動的 DOCX（見 `activity`） |
 | GET | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | – | 這一輪最新的 `SiopCheck`（檢核中時輪詢）；還沒有 → 404（見「SIOP 自我檢核」） |
 | POST | `/api/prep-sessions/:id/turns/:turn_id/siop-check` | `{}` | 202 `SiopCheck`（新的一次，`running`）：再試一次或重新檢核 |
 
@@ -2129,6 +2130,11 @@ interface WorksheetSummary { /* …既有欄位… */ prep_session_id: number | 
 - **目標**：`zh` 沒有中文字或 `en` 不是英文的目標拿掉；開頭的動詞看不到表現的（中文「學生能」後面是了解、瞭解、理解、認識、知道、學會、學習、明白、熟悉、體會、欣賞、懂；英文 learn、know、understand、appreciate、realize、comprehend、grasp、be aware、be familiar）拿掉；每組最多留 2 個。語言目標的 `supports` 指向的內容目標被拿掉了，或 `relation` 不成立（不是「學生要用……，才能……」、任一半太短，或「才能」後面那一半和它支持的內容目標沒有共同的中文雙字詞或四個字母以上的英文字），這個語言目標就拿掉——說不出關係的語言目標，寫得再好也不採用。留下的語言目標學習策略排前面，`supports` 改成在 `goals` 裡內容目標的序號（從 1 起）。
 - **其他**：不是候選的代碼拿掉；`phase` 不是三個標籤之一的步驟拿掉；分鐘數限制在 1–50；`options` 只留給引起動機（最多 3 個）；`bloom` 去掉重複、留模型寫的前 3 個、再依 Bloom 順序排；`roles` 兩人一組最多 2 個、小組最多 6 個、全班與個人一律清空，沒有 `task` 的拿掉；`skills` 只留四個標籤、不重複、依聽說讀寫排；`key_vocabulary` 的 `word` 要有英文字母、不重複（不分大小寫），最多 8 個；`higher_order_questions` 只留 analyze／evaluate／create、題目有英文字母的，最多 4 個；所有文字經過 `clean_markup` 並截到上限；`curriculum` 由伺服器依引用的代碼從知識庫帶出。
 - **重試**：兩組目標都沒有可用的目標、可用步驟少於 3 個、輸出寫到 `max_tokens` 或讀不懂時**重試一次**（temperature +0.4，附上問題）；還是不行 → `failed`。下列情形也重試一次並附上問題（第一次記成 `blocked`），但規劃本身可以用——重試的規劃比較好就用重試的，重試還是有問題就照樣給教師看重試的規劃（`ai_interactions` 的檢查結果記下沒有通過）：只缺一組目標；教師沒有給語言目標，而語言目標裡沒有學習策略（R2）；教師給的語言目標說不出關係；`background` 是空的（A1）；整節課的分組方式少於兩種、兩人一組沒有寫出兩人各做什麼、小組的角色少於 3 個或沒有寫教師巡視（A2）；整節課沒有用到聽說讀寫四種技能（A3）。
+
+**下載**：`GET /api/prep-sessions/:id/turns/:turn_id/activity?format=docx`（`format` 省略也是 DOCX；其他值 → 400「format 需為 docx。」）。一份 DOCX，標題「<對話標題>：課堂活動」，內容就是教學套件的第 1 部分「**教學流程**」（見下面的 `kit`，同一段程式 `prep::kit::plan_lines` 印的，逐段相同），沒有學習單。檔名：`<對話標題>_課堂活動.docx`。
+
+- 404：不是自己的對話、或這一輪不在這個對話；400：這一輪不是 `activity`（教學套件裡的課堂活動跟著教學套件下載）；409：這一輪還在跑（「課堂活動還在產生，好了之後再下載。」），或沒有規劃（`failed`：「這個課堂活動沒有完成，沒有內容可以下載。請按「再試一次」。」）。
+- 前端：課堂活動上方有「下載課堂活動 (DOCX)」；課堂活動（包括教學套件裡的）頂端另有「複製全部」，把標題、學習目標、課前準備、每一步、複習與評量依序串成純文字（各段空一行，與各區自己的「複製」同一種寫法）放進剪貼簿。
 
 ### `kit`（教學套件）
 
@@ -2211,7 +2217,7 @@ interface PrepChatResult {
 
 ## usage_logs 新事件
 
-`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`、`entry`、`ui_version`）、`prep_session_deleted`（`session_id`、`worksheet_ids`：一起刪除的學習單）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
+`prep_session_created`（`session_id`、`kind`、`material_id`、`class_id`、`template_id`、`entry`、`ui_version`）、`prep_session_deleted`（`session_id`、`worksheet_ids`：一起刪除的學習單）、`prep_turn_created`（`session_id`、`turn_id`、`kind`）、`prep_kit_exported`（`session_id`、`turn_id`、`worksheet_id`、`version_no`、`has_plan`、`bytes`）、`prep_activity_exported`（`session_id`、`turn_id`、`bytes`）、`siop_check_rerun`（`session_id`、`turn_id`、`run_no`：教師按了再試一次、重新檢核或開始檢核）。對話做出的學習單照常記 `worksheet_created`（多了 `prep_session_id`）與 `worksheet_generated`。
 
 ## SIOP 自我檢核
 
@@ -2261,7 +2267,7 @@ interface SiopCheck {
 
 ## 試用真模型
 
-prompt key：`prep_activity`（第 4 版）、`prep_ask`、`prep_revise`、`siop_selfcheck`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）、`prep::selfcheck::spawn`（自我檢核）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`、`prep::selfcheck::schema`；教學套件的 DOCX 在 `prep::kit`（用 `worksheet::export::combined_docx`）。
+prompt key：`prep_activity`（第 4 版）、`prep_ask`、`prep_revise`、`siop_selfcheck`（可在管理頁改版本）。程式進入點：`prep::run::start`（各輪次）、`prep::selfcheck::spawn`（自我檢核）；JSON schema 在 `prep::activity_schema`、`prep::ask_schema`、`prep::revise_schema`、`prep::selfcheck::schema`；教學套件與課堂活動的 DOCX 在 `prep::kit`（`docx`、`activity_docx`，用 `worksheet::export::combined_docx`）。
 
 ---
 

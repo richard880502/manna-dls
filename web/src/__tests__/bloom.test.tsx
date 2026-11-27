@@ -757,6 +757,9 @@ describe("session page: 閱讀理解題, 差異化學習單, 教學套件", () =
         .map((c) => c.textContent),
     ).toEqual(["Bloom 層次：記憶", "Bloom 層次：理解"]);
     expect(within(result).queryByRole("group", { name: "「說說看」的 Bloom 層次" })).toBeNull();
+    // The kit's plan can be copied whole too; its download is the kit's, not a 課堂活動 of its own.
+    expect(within(result).getByRole("button", { name: "複製全部（整份課堂活動）" })).toBeInTheDocument();
+    expect(within(result).queryByRole("button", { name: "下載課堂活動 (DOCX)" })).toBeNull();
     // The worksheet beside it.
     expect(await (await pane()).findByRole("tablist", { name: "版本" })).toBeInTheDocument();
 
