@@ -284,7 +284,11 @@ async fn comprehension_end_to_end() {
     assert_eq!(teacher["blocks"][4]["items"][0]["bloom"], "evaluate");
     let student = sheet(&app, &t, id, "standard", "student").await;
     let s = student.to_string();
-    assert!(!s.contains("\"bloom\"") && !s.contains("bloom_summary") && !s.contains("\"hint\""));
+    assert!(!s.contains("\"bloom\"") && !s.contains("bloom_summary"));
+    // One version (一般版): the hints print there, the lowest version the sheet has.
+    assert!(student["blocks"][0]["items"][0]["hint"]
+        .as_str()
+        .is_some_and(|h| !h.is_empty()));
     // The steps print in the order students work; one version: no code to tell apart.
     assert_eq!(student["blocks"][0]["steps"].as_array().unwrap().len(), 3);
     assert_eq!(student["version_code"], Value::Null);

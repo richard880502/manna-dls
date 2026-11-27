@@ -20,7 +20,6 @@ import { prepConfig } from "../lib/prep";
 import { autosaveConfig } from "../lib/useAutosave";
 import { emptyBrief, emptySettings, emptyWorksheetContent, versionCode } from "../lib/worksheet";
 import { baseRoutes, mockApi, renderApp, signIn, type MockCall } from "../test/mockApi";
-import { openBarPopover } from "../test/menus";
 const WS = "/api/worksheets/5";
 const LEVEL_NAMES = ["基礎", "一般版", "進階"];
 
@@ -294,7 +293,7 @@ describe("差異化學習單: neutral codes and per-version support", () => {
     // The editor beside the conversation names the version by its neutral code too.
     await result.findByRole("article", { name: "A 版 學生版" });
     // The print preview is the server's projection: what the exports print.
-    await user.click((await openBarPopover(user, "更多…")).getByRole("button", { name: "列印樣式預覽" }));
+    await user.click(screen.getByRole("button", { name: "預覽" }));
     const dialog = within(await screen.findByRole("dialog", { name: "列印樣式預覽" }));
     const a = await dialog.findByRole("article", { name: "A 版 學生版" });
     expect(within(a).getByText("Version A")).toBeInTheDocument();

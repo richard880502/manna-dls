@@ -226,3 +226,14 @@
 .ws-check-dialog .section {
   max-width: none;
 }
+
+/* 顯示 names its switches by what they print (「Key Vocabulary 放在學習單最後」): room for one line each. */
+.ws-bar-popover .ws-display-panel {
+  min-width: 18rem;
+}
+
+/* 顯示 without Key Vocabulary: why its two switches are off. */
+.ws-display-note {
+  max-width: 20rem;
+  margin: 0;
+}

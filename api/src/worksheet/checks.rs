@@ -4018,6 +4018,23 @@ fn tier_of(
     })
 }
 
+/// The language function the linking words serve, as printed after 「Linking words for」
+/// ("giving reasons"). A function the model could not finish is left out (the line then reads
+/// 「Linking words: …」): one with a word in another language, or one that fills all the room the
+/// schema gives, which may stop in the middle of a word. With room for 40 characters the model
+/// wrote "contrasting interpretations and givingre" and "… and giving理由" (40 each).
+fn english_function(raw: &str, max_chars: usize) -> String {
+    let text = clean(raw);
+    let plain = text
+        .chars()
+        .all(|c| c.is_ascii_alphabetic() || matches!(c, ' ' | '-' | '\'' | '’' | ',' | '/'));
+    if plain && text.chars().count() < max_chars {
+        text
+    } else {
+        String::new()
+    }
+}
+
 /// Linking words, cumulative per version (T5): each version keeps the words of the one below
 /// and adds its own; a word given twice stays at the lower version.
 fn linking_of(raw: &RawLinkingWords, t: &mut Tally) -> Option<CleanLinking> {
@@ -4045,7 +4062,7 @@ fn linking_of(raw: &RawLinkingWords, t: &mut Tally) -> Option<CleanLinking> {
         );
     }
     Some(CleanLinking {
-        function: clean(&raw.function).chars().take(FUNCTION_CHARS).collect(),
+        function: english_function(&raw.function, FUNCTION_CHARS),
         basic,
         standard,
         advanced,
@@ -5859,6 +5876,46 @@ mod tests {
             count,
             objectives: &[],
         }
+    }
+
+    #[test]
+    fn a_garbled_language_function_is_left_out() {
+        let room = crate::worksheet::tiered::FUNCTION_CHARS;
+        for (raw, want) in [
+            ("giving reasons", "giving reasons"),
+            (
+                "contrasting interpretations and giving reasons",
+                "contrasting interpretations and giving reasons",
+            ),
+            (
+                "comparing ideas, giving examples",
+                "comparing ideas, giving examples",
+            ),
+            ("給理由", ""),
+            ("", ""),
+        ] {
+            assert_eq!(english_function(raw, room), want, "{raw}");
+        }
+        // What the model wrote with room for 40: a Chinese word, a word cut short.
+        for raw in [
+            "contrasting interpretations and giving理由",
+            "contrasting interpretations and givingre",
+        ] {
+            assert_eq!(english_function(raw, 40), "", "{raw}");
+        }
+        let mut raw = tiered_raw(vec![tiered_item(
+            "What did the neighbors think would happen?",
+        )]);
+        raw.linking_words.function = "contrasting interpretations and giving理由".into();
+        let passage = [P1, P2, P3].join("\n");
+        let codes = crate::worksheet::bloom::paragraph_codes(3);
+        let e = evaluate_tiered_level(&raw, &tiered_ctx(&passage, &codes, 1));
+        let linking = e.output.unwrap().linking.unwrap();
+        assert_eq!(
+            linking.function, "",
+            "the words stay, the garbled function goes"
+        );
+        assert_eq!(linking.basic, ["because", "so"]);
     }
 
     #[test]

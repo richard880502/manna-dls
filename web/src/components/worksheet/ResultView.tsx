@@ -28,6 +28,8 @@ import {
   newBlock,
   newId,
   frameShown,
+  hintLabel,
+  hintLevel,
   newItem,
   itemHasAnswer,
   printedNumbers,
@@ -937,10 +939,12 @@ function BlockSection({
           const formats: readonly string[] = differentiated
             ? [...TIERED_FORMATS, ...(item.answer_format && !TIERED_FORMATS.some((f) => f === item.answer_format) ? [item.answer_format] : [])]
             : ANSWER_FORMATS;
-          // The hint prints in 基礎版 only: offered where it can print, kept visible where it cannot.
-          const hintPrints = levels.includes("basic") && item.levels.includes("basic");
+          // The hint prints in the lowest of the worksheet's versions (基礎版 when there is one). An
+          // empty one is offered where 基礎版 is; a written one shows wherever it is, saying where it
+          // prints (or that it cannot).
+          const hintPrints = item.levels.includes(hintLevel(levels));
           const hint = item.hint ?? "";
-          const hintLabel = hintPrints ? "提示（只印在基礎版）" : "提示（只印在基礎版；這題不在基礎版，不會印出）";
+          const hintTitle = hintLabel(levels, item.levels);
           const changeItem = (change: (it: WsItem) => WsItem) => patchItem(item.id, change);
           // The question's own sentence frame: offered under the open formats where it prints.
           const frame = item.frame ?? "";
@@ -973,11 +977,11 @@ function BlockSection({
                   onChange={(change) => patchTier(item.id, change)}
                 />
               ) : (
-                (hintPrints || hint.trim() !== "") && (
+                ((hintPrints && levels.includes("basic")) || hint.trim() !== "") && (
                   <div className="ws-hint" lang="zh-Hant">
-                    <span>{hintLabel}</span>
+                    <span>{hintTitle}</span>
                     <SheetText
-                      label={`${hintLabel} ${no}`}
+                      label={`${hintTitle} ${no}`}
                       note={{ block_id: block.id, field: "item", item_id: item.id, offsets: false, onNote: setDraft }}
                       value={hint}
                       placeholder="Hint: …"
