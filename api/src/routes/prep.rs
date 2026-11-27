@@ -1,7 +1,7 @@
 //! 備課對話 endpoints (docs/API.md「Phase 2.6：備課對話」): sessions, their turns (all run in the
 //! background; the page polls `GET /api/prep-sessions/:id`), the context PATCH, the hard
-//! delete and the 教學套件 download. Every session belongs to one teacher; anyone else's id is
-//! a 404.
+//! delete and the 教學套件 and 課堂活動 downloads. Every session belongs to one teacher; anyone
+//! else's id is a 404.
 
 use axum::extract::{Multipart, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
@@ -50,6 +50,9 @@ const MSG_NOT_KIT: &str = "這一輪不是教學套件，沒有教學套件可�
 const MSG_KIT_RUNNING: &str = "教學套件還在產生，好了之後再下載。";
 const MSG_KIT_EMPTY: &str = "這個教學套件沒有完成，沒有內容可以下載。請按「再試一次」。";
 const MSG_KIT_FORMAT: &str = "format 需為 docx。";
+const MSG_NOT_ACTIVITY: &str = "這一輪不是課堂活動，沒有課堂活動可以下載。";
+const MSG_ACTIVITY_RUNNING: &str = "課堂活動還在產生，好了之後再下載。";
+const MSG_ACTIVITY_EMPTY: &str = "這個課堂活動沒有完成，沒有內容可以下載。請按「再試一次」。";
 const MSG_NEEDS_MATERIAL: &str = "這個動作需要教材：請上傳檔案、從教材庫選，或貼上課文。";
 const MSG_NEEDS_MATERIAL_OR_TOPIC: &str = "找教學資源需要教材或主題。";
 const MSG_NEEDS_REQUEST: &str = "請寫下你想問或想改的內容。";
@@ -876,8 +879,9 @@ pub async fn create_turn(
     Ok((StatusCode::ACCEPTED, Json(made?)))
 }
 
-// ---------------------------------------------------------------- 教學套件 download
+// ---------------------------------------------------------------- 教學套件 and 課堂活動 downloads
 
+/// The query of both downloads (`format` is DOCX or left out).
 #[derive(Debug, Deserialize)]
 pub struct KitQuery {
     #[serde(default)]
@@ -895,16 +899,7 @@ pub async fn kit(
     ApiQuery(q): ApiQuery<KitQuery>,
 ) -> AppResult<Response> {
     let db = &state.db;
-    let session = store::owned(db, id, teacher.id()).await?;
-    if q.format.as_deref().is_some_and(|f| f.trim() != "docx") {
-        return Err(AppError::bad_request(MSG_KIT_FORMAT));
-    }
-    store::refresh(&state, id).await?;
-    let turn = store::turns(db, id)
-        .await?
-        .into_iter()
-        .find(|t| t.id == turn_id)
-        .ok_or_else(|| AppError::not_found(MSG_TURN_NOT_FOUND))?;
+    let (session, turn) = export_turn(&state, &teacher, id, turn_id, &q).await?;
     if turn.kind != KIND_KIT {
         return Err(AppError::bad_request(MSG_NOT_KIT));
     }
@@ -962,14 +957,77 @@ pub async fn kit(
         }),
     )
     .await?;
-    Ok((
+    Ok(docx_download(&name, made))
+}
+
+/// `GET /api/prep-sessions/:id/turns/:turn_id/activity?format=docx`: a 課堂活動 as one DOCX, the
+/// same 教學流程 a 教學套件 starts with ([`kit::activity_docx`]). 404 for another teacher's
+/// session or a turn of another session, 400 for a turn that is not a 課堂活動 (a kit's plan
+/// comes with its kit), 409 while it runs or when it has no plan (it failed).
+pub async fn activity(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath((id, turn_id)): ApiPath<(i64, i64)>,
+    ApiQuery(q): ApiQuery<KitQuery>,
+) -> AppResult<Response> {
+    let (session, turn) = export_turn(&state, &teacher, id, turn_id, &q).await?;
+    if turn.kind != KIND_ACTIVITY {
+        return Err(AppError::bad_request(MSG_NOT_ACTIVITY));
+    }
+    if turn.status == STATUS_RUNNING {
+        return Err(AppError::Conflict(MSG_ACTIVITY_RUNNING.to_string()));
+    }
+    let plan: ActivityPlan = turn
+        .result
+        .and_then(|r| serde_json::from_value(r).ok())
+        .ok_or_else(|| AppError::Conflict(MSG_ACTIVITY_EMPTY.to_string()))?;
+    let title = session.title.clone();
+    let made = tokio::task::spawn_blocking(move || kit::activity_docx(&title, &plan))
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
+    let name = format!("{}_課堂活動.docx", safe_filename(&session.title));
+    log_usage(
+        &state.db,
+        teacher.id(),
+        "prep_activity_exported",
+        json!({ "session_id": id, "turn_id": turn_id, "bytes": made.len() }),
+    )
+    .await?;
+    Ok(docx_download(&name, made))
+}
+
+/// The session and the turn a download asks for, the session brought up to date first: 404 for
+/// another teacher's session or a turn of another session, 400 for a format other than DOCX.
+async fn export_turn(
+    state: &AppState,
+    teacher: &AuthTeacher,
+    id: i64,
+    turn_id: i64,
+    q: &KitQuery,
+) -> AppResult<(SessionRow, store::TurnRow)> {
+    let session = store::owned(&state.db, id, teacher.id()).await?;
+    if q.format.as_deref().is_some_and(|f| f.trim() != "docx") {
+        return Err(AppError::bad_request(MSG_KIT_FORMAT));
+    }
+    store::refresh(state, id).await?;
+    let turn = store::turns(&state.db, id)
+        .await?
+        .into_iter()
+        .find(|t| t.id == turn_id)
+        .ok_or_else(|| AppError::not_found(MSG_TURN_NOT_FOUND))?;
+    Ok((session, turn))
+}
+
+/// A DOCX as a download named `name`.
+fn docx_download(name: &str, made: Vec<u8>) -> Response {
+    (
         [
             (CONTENT_TYPE, export::DOCX_TYPE.to_string()),
-            (CONTENT_DISPOSITION, export::content_disposition(&name)),
+            (CONTENT_DISPOSITION, export::content_disposition(name)),
         ],
         made,
     )
-        .into_response())
+        .into_response()
 }
 
 // ---------------------------------------------------------------- SIOP 自我檢核

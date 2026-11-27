@@ -126,10 +126,34 @@ async fn kit_raw(
     turn_id: i64,
     query: &str,
 ) -> common::RawResponse {
+    download_raw(
+        app,
+        t,
+        &format!("/api/prep-sessions/{id}/turns/{turn_id}/kit{query}"),
+    )
+    .await
+}
+
+async fn activity_raw(
+    app: &common::TestApp,
+    t: &str,
+    id: i64,
+    turn_id: i64,
+    query: &str,
+) -> common::RawResponse {
+    download_raw(
+        app,
+        t,
+        &format!("/api/prep-sessions/{id}/turns/{turn_id}/activity{query}"),
+    )
+    .await
+}
+
+async fn download_raw(app: &common::TestApp, t: &str, path: &str) -> common::RawResponse {
     let auth = format!("Bearer {t}");
     app.send_raw(
         Method::GET,
-        &format!("/api/prep-sessions/{id}/turns/{turn_id}/kit{query}"),
+        path,
         &[("authorization", auth.as_str())],
         Vec::new(),
     )
@@ -556,6 +580,142 @@ async fn the_activity_plan_tags_its_steps_with_bloom_levels() {
     let rows = calls(&app, "prep_activity").await;
     assert_eq!(rows[1].2["inputs"]["teacher_objective"], "（沒有）");
     assert_eq!(rows[1].2["inputs"]["teacher_request"], "（沒有）");
+}
+
+#[tokio::test]
+async fn an_activity_downloads_as_its_teaching_flow() {
+    let app = test_app!();
+    let t = app.teacher("T-PB-11", "general").await;
+    let other = app.teacher("T-PB-12", "general").await;
+    let session = create(
+        &app,
+        &t,
+        json!({ "kind": "activity", "request": "課堂活動", "material": material("") }),
+    )
+    .await;
+    let id = sid(&session);
+    let done = wait(&app, &t, id).await;
+    let turn = last(&done);
+    assert_eq!(turn["status"], "done", "{turn}");
+    let turn_id = turn["id"].as_i64().unwrap();
+
+    let r = activity_raw(&app, &t, id, turn_id, "?format=docx").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.header("content-type").contains("wordprocessingml"));
+    let cd = r.header("content-disposition").to_string();
+    assert!(
+        cd.contains(&encoded("The Umbrella Stand_課堂活動.docx")),
+        "{cd}"
+    );
+    assert_eq!(&r.body[..2], b"PK");
+    let xml = document_xml(r.body);
+    let at = |s: &str| {
+        xml.find(s)
+            .unwrap_or_else(|| panic!("{s} is not in the activity"))
+    };
+    // The 教學流程 of a kit and nothing else: the plan's title, its goals, every step in order.
+    assert!(at("The Umbrella Stand：課堂活動") < at("教學流程"));
+    assert!(at("教學流程") < at(turn["result"]["title"].as_str().unwrap()));
+    assert!(at("教學流程") < at("學習目標"));
+    let mut previous = at("學習目標");
+    for (i, step) in turn["result"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        let head = format!(
+            "{}. {}｜{}",
+            i + 1,
+            step["phase"].as_str().unwrap(),
+            step["title"].as_str().unwrap()
+        );
+        assert!(at(&head) > previous, "{head}");
+        previous = at(&head);
+    }
+    assert!(!xml.contains("學生版") && !xml.contains("差異化學習單"));
+    // Without a format it is a DOCX too.
+    assert_eq!(
+        activity_raw(&app, &t, id, turn_id, "").await.status,
+        StatusCode::OK
+    );
+
+    // Errors: another format, another teacher, a turn of another session, no sign-in.
+    assert_eq!(
+        activity_raw(&app, &t, id, turn_id, "?format=pdf")
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        activity_raw(&app, &other, id, turn_id, "?format=docx")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        activity_raw(&app, &t, id, 999_999, "?format=docx")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    let r = app
+        .send_raw(
+            Method::GET,
+            &format!("/api/prep-sessions/{id}/turns/{turn_id}/activity?format=docx"),
+            &[],
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+
+    // A turn that is not a 課堂活動 has none to download.
+    let (s, _) = post_turn(&app, &t, id, json!({ "kind": "comprehension" })).await;
+    assert_eq!(s, StatusCode::ACCEPTED);
+    let done = wait(&app, &t, id).await;
+    let other_turn = last(&done)["id"].as_i64().unwrap();
+    let r = activity_raw(&app, &t, id, other_turn, "?format=docx").await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // A failed 課堂活動 has no plan: nothing to download.
+    let failed = create(
+        &app,
+        &t,
+        json!({ "kind": "activity", "material": material("FAKE_PREP_NO_PLAN") }),
+    )
+    .await;
+    let failed_id = sid(&failed);
+    let turn = last(&wait(&app, &t, failed_id).await);
+    assert_eq!(turn["status"], "failed", "{turn}");
+    let r = activity_raw(&app, &t, failed_id, turn["id"].as_i64().unwrap(), "").await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    let v: Value = serde_json::from_slice(&r.body).unwrap();
+    assert!(message(&v).contains("沒有完成"), "{v}");
+
+    // While it runs: 409.
+    let slow = create(
+        &app,
+        &t,
+        json!({ "kind": "activity", "request": "慢一點 FAKE_SLOW", "material": material("") }),
+    )
+    .await;
+    let turn = last(&slow);
+    assert_eq!(turn["status"], "running");
+    let r = activity_raw(&app, &t, sid(&slow), turn["id"].as_i64().unwrap(), "").await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    let v: Value = serde_json::from_slice(&r.body).unwrap();
+    assert!(message(&v).contains("還在產生"), "{v}");
+
+    let exported: Vec<Value> = sqlx::query_scalar(
+        "SELECT payload FROM usage_logs WHERE event = 'prep_activity_exported' ORDER BY id",
+    )
+    .fetch_all(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(exported.len(), 2);
+    assert_eq!(exported[0]["session_id"], id);
+    assert_eq!(exported[0]["turn_id"], turn_id);
+    assert!(exported[0]["bytes"].as_i64().unwrap() > 0);
 }
 
 // ---------------------------------------------------------------- 教學套件

@@ -306,6 +306,34 @@ export function goalsText(plan: ActivityPlan): string {
     .join("\n");
 }
 
+/** The headings of 複製全部, the parts of the plan's DOCX (教學流程). */
+export const PLAN_TEXT_HEADINGS = {
+  goals: "學習目標",
+  steps: "教學流程",
+  curriculum: "對應的課綱條目",
+} as const;
+
+/**
+ * The whole plan as plain text, for 複製全部: the title and how long it takes, then 學習目標,
+ * 課前準備, every step, 複習與評量 and the curriculum it cites, in the order of its DOCX. Each part
+ * is written as its own 複製 writes it, under its heading, with a blank line between parts (and
+ * between steps). Parts the plan does not have are left out.
+ */
+export function planText(plan: ActivityPlan): string {
+  const minutes = plan.steps.reduce((sum, s) => sum + s.minutes, 0);
+  const part = (heading: string, body: string) => (body.trim() ? `${heading}\n${body}` : "");
+  return [
+    [plan.title.trim(), `${plan.steps.length} 個步驟，共約 ${minutes} 分鐘`].filter(Boolean).join("\n"),
+    part(PLAN_TEXT_HEADINGS.goals, goalsText(plan)),
+    part(PLAN_WORDS.prepare, prepareText(plan)),
+    part(PLAN_TEXT_HEADINGS.steps, plan.steps.map(stepText).join("\n\n")),
+    part(PLAN_WORDS.reviewAssessment, reviewText(plan)),
+    part(PLAN_TEXT_HEADINGS.curriculum, plan.curriculum.map((c) => `${c.code}：${c.text}`).join("\n")),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 // ---------------------------------------------------------------- SIOP 自我檢核
 
 /** The words of the SIOP self-check panel (docs/SIOP_DESIGN_RULES.md section 八). */

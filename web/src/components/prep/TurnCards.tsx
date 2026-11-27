@@ -21,6 +21,7 @@ import {
   KIND_LABEL,
   hasPrepare,
   paragraphsOf,
+  planText,
   prepareText,
   reviewText,
   stepText,
@@ -165,7 +166,11 @@ export function ActivityCard({ plan, interactionId }: { plan: ActivityPlan; inte
   const review = reviewText(plan);
   return (
     <div className="prep-activity">
-      {plan.title.trim() && <h3 className="prep-result-title">{plan.title}</h3>}
+      {/* 複製全部: the whole plan in one go, each part as its own 複製 writes it (no rating: each part has its own). */}
+      <div className="prep-activity-head">
+        {plan.title.trim() && <h3 className="prep-result-title">{plan.title}</h3>}
+        <SectionTools name="整份課堂活動" copyLabel="複製全部" text={planText(plan)} interactionId={null} />
+      </div>
       {groups.length > 0 && (
         <section className="prep-section" aria-label="學習目標">
           <table className="prep-goals">

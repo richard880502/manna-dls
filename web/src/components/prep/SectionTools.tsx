@@ -16,10 +16,16 @@ export function SectionTools({
   children,
   more,
   ratingTarget,
+  copyLabel,
 }: {
   /** What the section is called, for the buttons' accessible names. */
   name: string;
   text: string;
+  /**
+   * The copy button's text when it is not just 「複製」 (「複製全部」); its accessible name then
+   * starts with it and names the section after it: 「複製全部（整份課堂活動）」.
+   */
+  copyLabel?: string;
   interactionId: number | null;
   /** More tools of the section (a worksheet block: 改這一區、加註記…). */
   children?: ReactNode;
@@ -76,7 +82,7 @@ export function SectionTools({
   }, [close, triggerRef]);
 
   const copyLabels = [
-    { label: "複製", on: copied !== true },
+    { label: copyLabel ?? "複製", on: copied !== true },
     { label: "已複製", on: copied === true },
   ];
   const copy = (
@@ -86,7 +92,7 @@ export function SectionTools({
       <button
         type="button"
         className={itemClass}
-        aria-label={`複製${name}`}
+        aria-label={copyLabel ? `${copyLabel}（${name}）` : `複製${name}`}
         onClick={() => void copyText(text).then(setCopied)}
       >
         {copied === false ? (

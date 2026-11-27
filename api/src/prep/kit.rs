@@ -12,6 +12,10 @@
 //! ([`project`]); the document is written by the worksheet's DOCX writer
 //! ([`export::combined_docx`]). A part that the kit could not make is replaced by a line that
 //! says so.
+//!
+//! A 課堂活動 made on its own downloads as its 教學流程 alone ([`activity_docx`],
+//! `GET /api/prep-sessions/:id/turns/:turn_id/activity?format=docx`), printed by the same
+//! [`plan_lines`], so the two read the same.
 
 use super::{ActivityPlan, Goal, GoalKind, Step, OPTION_NAMES_ZH};
 use crate::worksheet::assemble::{keep_original_text, project, Sheet};
@@ -375,6 +379,17 @@ pub fn docx(
     export::combined_docx(&format!("{}：教學套件", title.trim()), &parts)
 }
 
+/// A 課堂活動 on its own as one DOCX: the 教學流程 part of a 教學套件, line for line.
+pub fn activity_docx(title: &str, plan: &ActivityPlan) -> anyhow::Result<Vec<u8>> {
+    export::combined_docx(
+        &format!("{}：課堂活動", title.trim()),
+        &[Part::Lines {
+            heading: HEADING_PLAN.to_string(),
+            lines: plan_lines(plan),
+        }],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,6 +710,30 @@ mod tests {
         std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
             .unwrap();
         assert!(xml.contains(NO_PLAN) && xml.contains(NO_WORKSHEET));
+    }
+
+    #[test]
+    fn an_activity_exports_the_plan_of_its_kit_alone() {
+        let p = plan_v4();
+        let xml_of = |bytes: Vec<u8>| {
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+                .unwrap();
+            xml
+        };
+        let alone = xml_of(activity_docx(" The Umbrella Stand ", &p).unwrap());
+        let kit = xml_of(docx("The Umbrella Stand", Some(&p), None).unwrap());
+        assert!(alone.contains("The Umbrella Stand：課堂活動"));
+        assert!(alone.contains(HEADING_PLAN));
+        assert!(!alone.contains(NO_WORKSHEET) && !alone.contains("學生版"));
+        // The same 教學流程 as the kit's, paragraph for paragraph.
+        let from = alone.find(HEADING_PLAN).unwrap();
+        let to = alone.rfind("</w:p>").unwrap() + "</w:p>".len();
+        assert!(kit.contains(&alone[from..to]));
+        for s in &p.steps {
+            assert!(alone.contains(s.title.as_str()), "{}", s.title);
+        }
     }
 
     /// A 差異化學習單: every question in all three versions, each with its own support, answer
