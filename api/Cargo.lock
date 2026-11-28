@@ -1465,6 +1465,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ttf-parser",
+ "unicode-normalization",
  "zip",
 ]
 

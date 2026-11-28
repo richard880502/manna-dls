@@ -93,6 +93,13 @@ fn without_leading_heading<T>(mut paragraphs: Vec<T>, text: impl Fn(&T) -> &str)
     paragraphs
 }
 
+/// The paragraphs an unselected (`null`) library selection stands for: all but the exam
+/// paper's cover text; all of them when every paragraph is cover text.
+pub fn default_paragraphs(paragraphs: &[Paragraph]) -> impl Iterator<Item = &Paragraph> {
+    let all_front = paragraphs.iter().all(|p| p.front);
+    paragraphs.iter().filter(move |p| all_front || !p.front)
+}
+
 impl Material {
     /// Pasted text, split into paragraphs in code. A paragraph whose text equals one of
     /// `previous` keeps that id; returns the material and the highest paragraph number used.
@@ -113,6 +120,8 @@ impl Material {
                         no: i as i32 + 1,
                         text: p.text.clone(),
                         page: None,
+                        group: None,
+                        front: false,
                     })
                     .collect()
             })
@@ -149,7 +158,10 @@ impl Material {
     }
 
     /// A snapshot of a material-library entry (pasted text is stored in the library first, so
-    /// paragraph ids match the library's and annotations can be located).
+    /// paragraph ids match the library's and annotations can be located). The whole material
+    /// is used, except the cover text of an exam paper (`front` paragraphs: 作答注意事項,
+    /// 計分方式, ...), unless every paragraph is cover text. A teacher who wants it picks it
+    /// ([`Self::from_library_selection`]).
     pub fn from_library(
         kind: &str,
         lesson_id: Option<i64>,
@@ -166,8 +178,7 @@ impl Material {
             Self {
                 title: m.title.clone(),
                 paragraphs: without_leading_heading(
-                    m.paragraphs
-                        .iter()
+                    default_paragraphs(&m.paragraphs)
                         .map(|p| MaterialParagraph {
                             id: p.id.clone(),
                             text: p.text.clone(),
@@ -283,6 +294,87 @@ impl Material {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn exam(front: &[bool]) -> crate::sop::store::Material {
+        crate::sop::store::Material {
+            id: 9,
+            version_no: 1,
+            kind: "pdf".into(),
+            origin: "upload".into(),
+            title: "考卷".into(),
+            source_note: String::new(),
+            url: None,
+            filename: None,
+            has_file: true,
+            text_status: "ready".into(),
+            text_truncated: false,
+            page_count: None,
+            text: String::new(),
+            paragraphs: front
+                .iter()
+                .enumerate()
+                .map(|(i, f)| Paragraph {
+                    id: format!("p{}", i + 1),
+                    no: i as i32 + 1,
+                    text: format!("Paragraph number {} of the exam.", i + 1),
+                    page: None,
+                    group: None,
+                    front: *f,
+                })
+                .collect(),
+            word_count: 0,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn ids(m: &Material) -> Vec<&str> {
+        m.paragraphs.iter().map(|p| p.id.as_str()).collect()
+    }
+
+    #[test]
+    fn from_library_leaves_out_the_cover_text() {
+        let stored = exam(&[true, true, false, false, false]);
+        let (m, seq) = Material::from_library(SOURCE_LIBRARY, None, &stored);
+        assert_eq!(ids(&m), ["p3", "p4", "p5"]);
+        assert_eq!(seq, 5);
+    }
+
+    #[test]
+    fn from_library_keeps_everything_when_all_is_cover_text() {
+        let stored = exam(&[true, true, true]);
+        let (m, _) = Material::from_library(SOURCE_LIBRARY, None, &stored);
+        assert_eq!(ids(&m), ["p1", "p2", "p3"]);
+    }
+
+    #[test]
+    fn a_selection_keeps_the_chosen_cover_text() {
+        let stored = exam(&[true, false, false]);
+        let (m, _) =
+            Material::from_library_selection(SOURCE_LIBRARY, None, &stored, &["p1".into()])
+                .unwrap();
+        assert_eq!(ids(&m), ["p1"]);
+        assert_eq!(m.source.total_paragraphs, Some(3));
+    }
+
+    #[test]
+    fn paragraph_json_without_the_exam_fields_still_reads_and_stays_unchanged() {
+        let p: Paragraph =
+            serde_json::from_str(r#"{"id":"p1","no":1,"text":"Hi.","page":2}"#).unwrap();
+        assert_eq!((p.group.clone(), p.front), (None, false));
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            serde_json::json!({"id":"p1","no":1,"text":"Hi.","page":2})
+        );
+        let q = Paragraph {
+            group: Some("6-10".into()),
+            front: true,
+            ..p
+        };
+        let v = serde_json::to_value(&q).unwrap();
+        assert_eq!(v["group"], "6-10");
+        assert_eq!(v["front"], true);
+    }
     #[test]
     fn a_selection_keeps_only_the_chosen_paragraphs_in_order() {
         let stored = crate::sop::store::Material {
@@ -305,6 +397,8 @@ mod tests {
                     no: n,
                     text: format!("Paragraph {n}."),
                     page: None,
+                    group: None,
+                    front: false,
                 })
                 .collect(),
             word_count: 0,
@@ -358,8 +452,6 @@ mod tests {
         );
         assert_eq!(m.paragraphs.len(), 3);
     }
-
-    use super::*;
 
     #[test]
     fn pasted_text_is_split_and_ids_survive_an_edit() {

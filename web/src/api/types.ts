@@ -1108,6 +1108,10 @@ export interface SopParagraph {
   text: string;
   /** PDF 才有：這一段從第幾頁開始 */
   page?: number;
+  /** 試卷才有：題組的鍵（如 "6-10"，第 6 至 10 題）；連續、鍵相同的段落是同一個題組 */
+  group?: string;
+  /** 試卷才有：封面文字（作答注意事項、考試時間、計分方式、著作權說明）；沒有這個欄位就是 false */
+  front?: boolean;
 }
 
 /** 課例第 1 步的教材：教材庫裡的一份教材（Phase 2.2）。`version_no` 是教材的修訂次數 */

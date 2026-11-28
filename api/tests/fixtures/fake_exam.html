@@ -1,0 +1,143 @@
+<!doctype html>
+<!--
+  假試卷（issue #135 的測試資料）：版面仿學測英文試卷（封面作答注意事項、題號、題組、選項排成兩欄或一列、
+  一頁兩欄的題組），文字全部是 Manna 團隊自己寫的，和任何考試機構無關。
+  重新產生 fake_exam.pdf（macOS）：
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --no-pdf-header-footer \
+      --user-data-dir="$(mktemp -d)" --print-to-pdf=api/tests/fixtures/fake_exam.pdf \
+      "file://$PWD/api/tests/fixtures/fake_exam.html"
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>Manna 模擬試卷 英文考科（測試用）</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Times New Roman", "PingFang TC", "Heiti TC", serif; font-size: 11.5pt; line-height: 1.65; color: #000; }
+  .page { width: 210mm; height: 297mm; padding: 16mm 18mm 18mm; position: relative; page-break-after: always; overflow: hidden; }
+  .page:last-child { page-break-after: auto; }
+  .running { position: absolute; top: 7mm; left: 18mm; right: 18mm; font-size: 9pt; display: flex; justify-content: space-between; }
+  .folio { position: absolute; bottom: 8mm; left: 0; right: 0; text-align: center; font-size: 9pt; }
+  h1 { font-size: 20pt; text-align: center; margin: 30mm 0 4mm; letter-spacing: 4pt; }
+  h2 { font-size: 15pt; text-align: center; margin: 0 0 14mm; }
+  .box { border: 1.2pt solid #000; padding: 6mm 8mm; }
+  .box h3 { text-align: center; font-size: 14pt; margin: 0 0 4mm; letter-spacing: 6pt; }
+  .box p { margin: 0 0 2.5mm; }
+  .bullet { padding-left: 6mm; text-indent: -4mm; }
+  .start { text-align: center; font-size: 14pt; margin-top: 24mm; letter-spacing: 3pt; }
+  .part { font-weight: bold; font-size: 12.5pt; margin: 0 0 2mm; }
+  .section { font-weight: bold; margin: 3mm 0 1mm; }
+  .note { margin: 0 0 3mm; text-align: justify; }
+  .group-mark { margin: 3mm 0 1mm; }
+  .passage { text-indent: 2em; margin: 0 0 1mm; text-align: justify; }
+  .q { margin: 2mm 0 0; padding-left: 7mm; text-indent: -7mm; }
+  .opts4 { display: grid; grid-template-columns: repeat(4, 1fr); padding-left: 7mm; }
+  .opts2 { display: grid; grid-template-columns: repeat(2, 1fr); padding-left: 7mm; }
+  .opts1 { padding-left: 7mm; }
+  .opts1 div { margin: 0; }
+  .cols { column-count: 2; column-gap: 9mm; column-rule: 0.6pt solid #000; }
+  .blank { display: inline-block; min-width: 9mm; border-bottom: 0.8pt solid #000; text-align: center; text-indent: 0; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <h1>Manna 模擬試卷</h1>
+  <h2>英文考科（測試用）</h2>
+  <div class="box">
+    <h3>作答注意事項</h3>
+    <p>考試時間：100 分鐘</p>
+    <p>作答方式：</p>
+    <p class="bullet">・選擇題用 2B 鉛筆在「答題卷」上作答；更正時，應以橡皮擦擦拭，切勿使用修正液（帶）。</p>
+    <p class="bullet">・非選擇題用筆尖較粗之黑色墨水的筆在「答題卷」上作答；更正時，可以使用修正液（帶）。</p>
+    <p class="bullet">・考生須依上述規定劃記，若未依規定而導致答案難以辨識或評閱時，恐將影響成績並損及權益。</p>
+    <p>選擇題計分方式：</p>
+    <p class="bullet">・單選題：每題有 n 個選項，其中只有一個是正確或最適當的選項。各題答對者，得該題的分數；答錯、未作答或畫記多於一個選項者，該題以零分計算。</p>
+    <p class="bullet">・多選題：每題有 n 個選項，其中至少有一個是正確的選項。各題之選項獨立判定，所有選項均答對者，得該題全部的分數。</p>
+    <p>著作權說明：本試卷為開發測試用的假試卷，內容由 Manna 團隊自行撰寫，與任何考試機構無關，可自由用於測試。</p>
+  </div>
+  <p class="start">請於考試開始鈴響時，始得翻閱本試題本</p>
+</div>
+
+<div class="page">
+  <div class="running"><span>Manna 模擬試卷</span><span>英文考科</span></div>
+  <p class="part">第壹部分、選擇題（占 62 分）</p>
+  <p class="section">一、詞彙題（占 10 分）</p>
+  <p class="note">說明：第 1 題至第 5 題，每題有 4 個選項，其中只有一個是正確或最適當的選項，請畫記在答題卷之「選擇題答案區」。各題答對者，得 2 分；答錯、未作答或畫記多於一個選項者，該題以零分計算。</p>
+  <p class="q">1. When the bus finally arrived after an hour in the rain, the tired passengers ________ climbed aboard and took the nearest seats.</p>
+  <div class="opts4"><div>(A) eagerly</div><div>(B) rarely</div><div>(C) narrowly</div><div>(D) barely</div></div>
+  <p class="q">2. The museum asks visitors not to touch the paintings, because the oil on human skin can slowly ________ the colors.</p>
+  <div class="opts4"><div>(A) damage</div><div>(B) donate</div><div>(C) describe</div><div>(D) decorate</div></div>
+  <p class="q">3. Ms. Chen keeps a ________ of every book her students borrow, so nothing goes missing from the class library.</p>
+  <div class="opts4"><div>(A) record</div><div>(B) rumor</div><div>(C) riddle</div><div>(D) recipe</div></div>
+  <p class="q">4. After weeks of practice, Ken finally felt ________ enough to sing in front of the whole school.</p>
+  <div class="opts2"><div>(A) confident</div><div>(B) curious</div><div>(C) careless</div><div>(D) crowded</div></div>
+  <p class="q">5. The two towns are ________ by a narrow bridge that was built more than a hundred years ago.</p>
+  <div class="opts2"><div>(A) connected</div><div>(B) collected</div><div>(C) corrected</div><div>(D) composed</div></div>
+
+  <p class="section">二、綜合測驗（占 10 分）</p>
+  <p class="note">說明：第 6 題至第 10 題，每題一個空格，請依文意選出最適當的一個選項，請畫記在答題卷之「選擇題答案區」。各題答對者，得 2 分；答錯、未作答或畫記多於一個選項者，該題以零分計算。</p>
+  <p class="group-mark">第 6 至 10 題為題組</p>
+  <p class="passage">Mrs. Lin put an umbrella stand outside her small bookshop on a rainy Monday morning. A sign above it said, “Take one if you need it, and bring it back when you can.” Her neighbors <span class="blank">6</span> at the idea. They were sure every umbrella would be gone within a week. In the first month, twelve of the thirty umbrellas did go missing. <span class="blank">7</span>, something unexpected followed. People began to bring back not only the umbrellas they had borrowed but also old ones of their own. By spring the stand was <span class="blank">8</span> full again, and Mrs. Lin never had to buy a single new umbrella. “Trust,” she said, “is something you <span class="blank">9</span> by giving it first.” Today, several shops on the street have stands of their own, and the street has become <span class="blank">10</span> for its umbrellas.</p>
+  <div class="folio">第 1 頁　共 4 頁</div>
+</div>
+
+<div class="page">
+  <div class="running"><span>Manna 模擬試卷</span><span>英文考科</span></div>
+  <p class="q">6. (A) laughed&emsp;&emsp;(B) cried&emsp;&emsp;(C) waited&emsp;&emsp;(D) pointed</p>
+  <p class="q">7. (A) Besides&emsp;&emsp;(B) However&emsp;&emsp;(C) Therefore&emsp;&emsp;(D) Instead</p>
+  <p class="q">8. (A) hardly&emsp;&emsp;(B) always&emsp;&emsp;(C) seldom&emsp;&emsp;(D) never</p>
+  <p class="q">9. (A) lose&emsp;&emsp;(B) earn&emsp;&emsp;(C) borrow&emsp;&emsp;(D) forget</p>
+  <p class="q">10. (A) known&emsp;&emsp;(B) afraid&emsp;&emsp;(C) proud&emsp;&emsp;(D) tired</p>
+  <p class="section">三、閱讀測驗（占 16 分）</p>
+  <p class="note">說明：第 11 題至第 18 題，每題請分別根據各篇文章之文意選出最適當的一個選項，請畫記在答題卷之「選擇題答案區」。各題答對者，得 2 分；答錯、未作答或畫記多於一個選項者，該題以零分計算。</p>
+  <p class="group-mark">第 11 至 14 題為題組</p>
+  <p class="passage">Most people think of bees as busy workers that never rest. Scientists, however, have found that honeybees sleep, and that sleep matters to them as much as it does to us. A sleeping bee lets its head drop, its antennae stop moving, and it may even hold on to a flower with its legs.</p>
+  <p class="passage">In one study, researchers kept a group of bees awake for a night by gently shaking their hive. The next day, those bees made more mistakes in their “waggle dance,” the movement bees use to tell others where food can be found. Their sisters, following the wrong directions, flew farther and found less food.</p>
+  <p class="passage">The findings suggest that a tired bee is bad not only for itself but for the whole colony. Farmers who move their hives at night may want to think again.</p>
+  <div class="folio">第 2 頁　共 4 頁</div>
+</div>
+
+<div class="page">
+  <div class="running"><span>Manna 模擬試卷</span><span>英文考科</span></div>
+  <p class="q">11. What is the passage mainly about?</p>
+  <div class="opts1"><div>(A) How bees find flowers in the dark.</div><div>(B) Why sleep is important for honeybees.</div><div>(C) How farmers move hives at night.</div><div>(D) Why bees dance before they sleep.</div></div>
+  <p class="q">12. What happened to the bees that were kept awake?</p>
+  <div class="opts1"><div>(A) They slept longer the next night.</div><div>(B) They refused to leave the hive.</div><div>(C) Their dances gave less exact directions.</div><div>(D) Their sisters stopped following them.</div></div>
+  <p class="q">13. According to the passage, which of the following is a sign that a bee is sleeping?</p>
+  <div class="opts2"><div>(A) Its antennae move quickly.</div><div>(B) It flies in small circles.</div><div>(C) Its head drops down.</div><div>(D) It makes a buzzing sound.</div></div>
+  <p class="q">14. What does the writer suggest farmers do?</p>
+  <div class="opts2"><div>(A) Shake their hives more often.</div><div>(B) Think about when they move hives.</div><div>(C) Keep their bees awake at night.</div><div>(D) Plant more flowers near the hives.</div></div>
+
+  <p class="group-mark">第 15 至 18 題為題組</p>
+  <div class="cols">
+    <p class="passage">Every year on the second Saturday of May, the town of Riverside holds a Repair Day. Residents bring broken lamps, toasters, bicycles and even old radios to the town hall, where volunteers fix them for free. The idea came from a retired teacher, Mr. Ho, who was tired of seeing good things thrown away because of one loose wire.</p>
+    <p class="passage">Last year, more than four hundred items were repaired, and the town sent two tons less rubbish to the dump. Many visitors stay to watch, and some come back the next year as volunteers.</p>
+    <p class="q">15. When is Repair Day held?</p>
+    <div class="opts1"><div>(A) Every Saturday in May.</div><div>(B) On the second Saturday of May.</div><div>(C) On the last day of the school year.</div><div>(D) Whenever Mr. Ho is free.</div></div>
+    <p class="q">16. Why did Mr. Ho start Repair Day?</p>
+    <div class="opts1"><div>(A) He wanted to sell old radios.</div><div>(B) He needed help with his bicycle.</div><div>(C) He disliked seeing useful things wasted.</div><div>(D) He was asked to by the town hall.</div></div>
+    <p class="q">17. What does “the dump” most likely mean?</p>
+    <div class="opts1"><div>(A) A place where rubbish is taken.</div><div>(B) A shop that sells used goods.</div><div>(C) A room in the town hall.</div><div>(D) A kind of repair tool.</div></div>
+    <p class="q">18. Which of the following is TRUE about the visitors?</p>
+    <div class="opts1"><div>(A) They must pay for each repair.</div><div>(B) Some of them later become volunteers.</div><div>(C) Most of them are retired teachers.</div><div>(D) They may only bring one item.</div></div>
+  </div>
+  <div class="folio">第 3 頁　共 4 頁</div>
+</div>
+
+<div class="page">
+  <div class="running"><span>Manna 模擬試卷</span><span>英文考科</span></div>
+  <p class="part">第貳部分、非選擇題（占 28 分）</p>
+  <p class="section">一、中譯英（占 8 分）</p>
+  <p class="note">說明：1. 請將以下中文句子譯成正確而通順達意的英文，並將答案寫在「答題卷」上。<br>2. 請依序作答，並標明子題號 (1)、(2)。每題 4 分，共 8 分。</p>
+  <p class="q">(1) 許多學生喜歡在週末到圖書館讀書，因為那裡安靜又涼爽。</p>
+  <p class="q">(2) 如果我們每個人都願意分享，社區就會變得更溫暖。</p>
+  <p class="section">二、英文作文（占 20 分）</p>
+  <p class="note">說明：1. 依提示在「答題卷」上寫一篇英文作文。<br>2. 文長至少 120 個單詞（words）。</p>
+  <p class="note">提示：你的學校打算在校園裡設置一個「共享傘架」，讓忘記帶傘的同學可以借用。請寫一篇英文作文，第一段說明你是否贊成這個做法及理由，第二段說明你會如何讓這個傘架順利運作。</p>
+  <div class="folio">第 4 頁　共 4 頁</div>
+</div>
+
+</body>
+</html>

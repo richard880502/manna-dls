@@ -875,6 +875,8 @@ pub async fn create_upload(
     );
     for (p, block) in paragraphs.iter_mut().zip(&extracted.blocks) {
         p.page = block.page;
+        p.group = block.group.clone();
+        p.front = block.front;
     }
     let title = if title.trim().is_empty() {
         filename

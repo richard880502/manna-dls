@@ -539,6 +539,8 @@ mod tests {
                 no: i as i32 + 1,
                 text: text.to_string(),
                 page: None,
+                group: None,
+                front: false,
             })
             .collect()
     }

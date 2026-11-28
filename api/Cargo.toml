@@ -54,6 +54,8 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ttf-parser = "0.25"
+# Kangxi radicals in PDF text layers back to ideographs (materials::exam).
+unicode-normalization = "0.1"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

@@ -15,6 +15,7 @@ pub mod annotations;
 pub mod browse;
 pub mod catalog;
 pub mod detect;
+pub mod exam;
 pub mod extract;
 pub mod ocr;
 pub mod store;
