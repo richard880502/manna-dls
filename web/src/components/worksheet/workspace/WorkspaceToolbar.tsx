@@ -135,6 +135,7 @@ export function WorkspaceToolbar({
             worksheetId={state.id}
             level={level}
             levelLabel={levels.length > 1 ? LEVEL_LABEL[level] : null}
+            hasPrepSession={state.prep_session_id != null}
             disabled={state.running}
             beforeExport={ws.flush}
             onError={setExportError}

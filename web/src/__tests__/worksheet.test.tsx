@@ -699,19 +699,19 @@ describe("result editor", () => {
     const user = userEvent.setup();
     renderApp("/worksheets/5");
     const button = await screen.findByRole("button", { name: /匯出/ });
-    expect(button).toHaveAttribute("aria-haspopup", "menu");
+    expect(button).toHaveAttribute("aria-haspopup", "dialog");
     expect(screen.queryByRole("button", { name: "學生版 DOCX" })).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("tablist", { name: "版本" })).getByRole("tab", { name: "一般版" }));
     await user.click(button);
-    const menu = within(screen.getByRole("menu"));
-    expect(menu.getAllByRole("menuitem").map((b) => b.textContent)).toEqual([
+    const dialog = within(screen.getByRole("dialog", { name: "匯出：一般版" }));
+    expect(dialog.getAllByRole("checkbox").map((b) => b.closest("label")?.textContent)).toEqual([
       "學生版 Word",
       "學生版 PDF",
       "教師版 Word",
       "教師版 PDF",
     ]);
-    expect(screen.getByRole("menu")).toHaveTextContent("匯出：一般版");
-    await user.click(menu.getByRole("menuitem", { name: "教師版 PDF" }));
+    await user.click(dialog.getByRole("checkbox", { name: "教師版 PDF" }));
+    await user.click(dialog.getByRole("button", { name: "下載" }));
     await waitFor(() => expect(api.callsTo("GET", `${WS}/export`)).toHaveLength(1));
     const url = api.callsTo("GET", `${WS}/export`)[0]!.url;
     expect(new URLSearchParams(url.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");

@@ -2446,6 +2446,7 @@ export interface WsVocabApplied {
 }
 
 export type WsExportFormat = "docx" | "pdf";
+export type WsExportPart = `${WsAudience}-${WsExportFormat}` | "activity";
 
 export interface WsExportQuery {
   format: WsExportFormat;

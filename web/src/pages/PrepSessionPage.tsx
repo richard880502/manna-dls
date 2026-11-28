@@ -12,7 +12,6 @@ import type {
 import { ErrorText, Loading } from "../components/common";
 import { RunProgressPanel, useRunPanel } from "../components/RunProgress";
 import { useConfirmFocus } from "../lib/useConfirmFocus";
-import { TOOL_NAME } from "../lib/create";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import {
   LongMaterialNotice,
@@ -51,14 +50,12 @@ import {
   DELETE_CONFIRM,
   PREP_SESSIONS_CHANGED,
   KIND_LABEL,
-  NEXT_LABEL,
   CHAT_PLACEHOLDER,
   WORKING_LINE,
   activityOf,
   answerOf,
   chatResult,
   hasWorksheet,
-  isNextKind,
   isWorksheetKind,
   prepConfig,
   replyOf,
@@ -346,7 +343,6 @@ function PrepSessionView({ id }: { id: number }) {
   const running = session.running;
   const locked = running || sending;
   const targets = reviseTargets(session.turns);
-  const next = session.next.filter(isNextKind);
   const sheetIds = new Set(session.turns.flatMap((t) => (t.worksheet ? [t.worksheet.id] : [])));
   // The worksheets of this conversation, and the one the right pane (and the bar) works on.
   const sheetTurns = session.turns.filter((t) => isWorksheetKind(t.kind) && (t.worksheet || t.status === "running"));
@@ -357,6 +353,15 @@ function PrepSessionView({ id }: { id: number }) {
   const compactHead = split && !narrow; // the header's settings sit in a disclosure beside the worksheet
   const headOpen = !compactHead || headOpenWide;
   const currentSheet = sheetTurn?.worksheet ?? null;
+  const differentiationSource =
+    session.next.includes("tiered") &&
+    sheetTurn?.status === "done" &&
+    sheetTurn.kind !== "tiered" &&
+    sheetTurn.kind !== "kit" &&
+    currentSheet &&
+    !currentSheet.running
+      ? currentSheet.id
+      : null;
   const reviseSuggestions = memory.items.filter(
     (c) => c.source === "block_revise" && c.worksheet_id !== null && sheetIds.has(c.worksheet_id),
   );
@@ -1035,21 +1040,18 @@ function PrepSessionView({ id }: { id: number }) {
           />
         )}
 
-      {next.length > 0 && (
+      {differentiationSource !== null && (
         <div className="prep-next">
           <p className="prep-next-label">接下來可以：</p>
           <div className="prep-chips" role="group" aria-label="接下來可以">
-            {next.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                className="prep-chip"
-                disabled={locked}
-                onClick={() => void send({ kind, request: NEXT_LABEL[kind] })}
-              >
-                {kind === "worksheet" ? TOOL_NAME.worksheet : NEXT_LABEL[kind]}
-              </button>
-            ))}
+            <button
+              type="button"
+              className="prep-chip"
+              disabled={locked}
+              onClick={() => void send({ kind: "tiered", request: "差異化學習單", worksheet_id: differentiationSource })}
+            >
+              差異化學習單
+            </button>
           </div>
         </div>
       )}

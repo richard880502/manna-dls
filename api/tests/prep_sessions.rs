@@ -140,10 +140,7 @@ async fn a_worksheet_turn_makes_an_ordinary_worksheet_and_waits_for_it() {
     assert_eq!(turn["worksheet"]["running"], false);
     assert_eq!(turn["worksheet"]["title"], "The Umbrella Stand: Worksheet");
     assert!(turn["worksheet"]["version_no"].as_i64().unwrap() >= 2);
-    assert_eq!(
-        done["next"],
-        json!(["comprehension", "tiered", "activity", "kit"])
-    );
+    assert_eq!(done["next"], json!(["tiered"]));
 
     // An ordinary worksheet: listed, generated from the session's material, linked back.
     let (s, list) = app.get("/api/worksheets", Some(&t)).await;
@@ -239,7 +236,7 @@ async fn an_assessment_has_its_own_title_and_settings() {
     assert!(!kinds.contains(&"warmup"), "no warm-up: {kinds:?}");
     assert_eq!(
         done["next"],
-        json!(["comprehension", "tiered", "activity", "kit", "worksheet"]),
+        json!(["tiered"]),
         "assessment is no longer suggested"
     );
 }
@@ -520,10 +517,7 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     assert_eq!(steps[0]["skills"], json!(["聽", "說"]));
     assert_eq!(steps[1]["skills"], json!(["說", "讀"]));
     assert!(steps[0]["scaffolding"].as_str().unwrap().contains("示範"));
-    assert_eq!(
-        done["next"],
-        json!(["comprehension", "tiered", "kit", "worksheet"])
-    );
+    assert_eq!(done["next"], json!([]));
 
     // One call, logged without the material; its retrieval is logged too.
     let rows = interactions(&app, "prep_activity").await;
@@ -557,7 +551,73 @@ async fn an_activity_plan_is_checked_and_feeds_the_warm_up() {
     );
     let done = wait(&app, &t, id).await;
     assert_eq!(last(&done)["status"], "done");
-    assert_eq!(done["next"], json!(["comprehension", "tiered", "kit"]));
+    assert_eq!(done["next"], json!(["tiered"]));
+
+    let (_, options) = app
+        .get(&format!("/api/worksheets/{ws_id}/export-options"), Some(&t))
+        .await;
+    assert_eq!(options["activity"], true);
+    let path = format!(
+        "/api/worksheets/{ws_id}/export-bundle?level=standard&parts=student-docx,teacher-docx,activity"
+    );
+    let bundle = app
+        .send_raw(
+            Method::GET,
+            &path,
+            &[("authorization", &format!("Bearer {t}"))],
+            vec![],
+        )
+        .await;
+    assert_eq!(bundle.status, StatusCode::OK);
+    assert_eq!(bundle.header("content-type"), "application/zip");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bundle.body)).unwrap();
+    assert_eq!(zip.len(), 3);
+    for name in ["學生版.docx", "教師參考版.docx", "課堂活動.docx"] {
+        let file = zip.by_name(name).unwrap();
+        assert!(file.size() > 0, "{name}");
+    }
+    let other = app.teacher("T-BUNDLE-OTHER", "general").await;
+    let blocked = app
+        .send_raw(
+            Method::GET,
+            &path,
+            &[("authorization", &format!("Bearer {other}"))],
+            vec![],
+        )
+        .await;
+    assert_eq!(blocked.status, StatusCode::NOT_FOUND);
+
+    let (_, original) = app.get(&format!("/api/worksheets/{ws_id}"), Some(&t)).await;
+    let first_question = original["content"]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|b| b["items"][0]["prompt"].as_str())
+        .unwrap();
+    let (s, started) = post_turn(
+        &app,
+        &t,
+        id,
+        json!({ "kind": "tiered", "worksheet_id": ws_id }),
+    )
+    .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{started}");
+    let done = wait(&app, &t, id).await;
+    let differentiated = last(&done);
+    assert_eq!(differentiated["status"], "done", "{differentiated}");
+    let created_id = differentiated["worksheet"]["id"].as_i64().unwrap();
+    assert_ne!(created_id, ws_id);
+    let (_, created) = app
+        .get(&format!("/api/worksheets/{created_id}"), Some(&t))
+        .await;
+    assert_eq!(
+        created["content"]["levels"],
+        json!(["basic", "standard", "advanced"])
+    );
+    assert!(created["request"]
+        .as_str()
+        .unwrap()
+        .contains(first_question.trim()));
 }
 
 async fn turn_req(app: &common::TestApp, t: &str, id: i64, kind: &str) -> (StatusCode, Value) {
@@ -589,11 +649,8 @@ async fn an_activity_is_retried_once_and_fails_honestly() {
         "{turn}"
     );
     assert_eq!(turn["result"], Value::Null);
-    // A failed kind is still offered as a next step.
-    assert!(done["next"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("activity")));
+    // Activity remains available by request, but is not a worksheet follow-up.
+    assert_eq!(done["next"], json!([]));
 
     let runaway = pasted(&app, &t, "activity", "FAKE_RUNAWAY").await;
     assert_eq!(last(&wait(&app, &t, sid(&runaway)).await)["status"], "done");

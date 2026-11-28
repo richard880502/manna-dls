@@ -27,7 +27,7 @@ use super::{
     MaterialRef, RawAnswer, RawPlan, RawRevision, ResourceItem, Resources, Revision,
     TeacherObjectives, ACTIVITY_SCHEMA_NAME, ASK_CURRICULUM_TOP, ASK_SCHEMA_NAME, CHANGES_MAX,
     CHANGE_ITEMS_MAX, CURRICULUM_TOP, KEY_ACTIVITY, KEY_ASK, KEY_REVISE, KIND_ACTIVITY, KIND_ASK,
-    KIND_ASSESSMENT, KIND_CHAT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
+    KIND_ASSESSMENT, KIND_CHAT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_TIERED, KIND_WORKSHEET,
     MATERIALS_TOP, REPLY_CHARS, REVISE_SCHEMA_NAME,
 };
 use crate::application::generation::{call, nothing, Call, Checked};
@@ -88,7 +88,7 @@ pub struct TurnInput {
     pub turn: TurnRow,
     pub session: SessionRow,
     pub track: String,
-    /// `revise`: the worksheet to change.
+    /// For revision the worksheet to change, or for differentiation the original worksheet.
     pub worksheet_id: Option<i64>,
 }
 
@@ -1841,17 +1841,55 @@ async fn start_worksheet(state: &AppState, input: &TurnInput) -> AppResult<()> {
             ..CreateOverrides::default()
         }
     };
+    let mut request = teacher_request(db, input).await?;
+    let mut settings = session
+        .options
+        .0
+        .settings_patch(output_of(kind), !assessment);
+    if let (KIND_TIERED, Some(source_id)) = (kind, input.worksheet_id) {
+        let source = ws_store::owned(db, source_id, teacher_id).await?;
+        let current = ws_store::latest(db, source_id).await?;
+        let sheet = project(
+            &source.title,
+            &current.content,
+            Level::Standard,
+            Audience::Student,
+        );
+        let questions: Vec<_> = sheet
+            .blocks
+            .iter()
+            .flat_map(|block| block.items.iter().map(|item| item.prompt.trim()))
+            .filter(|prompt| !prompt.is_empty())
+            .collect();
+        if questions.is_empty() {
+            return Err(AppError::Conflict(
+                "來源學習單的一般版沒有題目。".to_string(),
+            ));
+        }
+        let guidance = format!(
+            "以這份已完成的一般版為基礎，延續學習重點與作答任務，為基礎版與進階版調整支持。以下是一般版的題目：\n{}",
+            questions.join("\n")
+        );
+        request = clip_chars(
+            &format!("{}\n{}", clip_chars(&request, 500), guidance),
+            super::MAX_REQUEST_CHARS - 1,
+        );
+        let settings = settings.get_or_insert_with(Default::default);
+        if source.settings.content_objective.is_some() {
+            settings.content_objective = Some(source.settings.content_objective);
+        }
+        if source.settings.language_objective.is_some() {
+            settings.language_objective = Some(source.settings.language_objective);
+        }
+    }
     let req = CreateWorksheet {
         class_id: session.class_id,
         material_id: Some(material_id),
         paragraph_ids: Some(session.options.0.paragraph_ids.clone()),
         template_id,
         // An assessment keeps its own answer formats.
-        settings: session
-            .options
-            .0
-            .settings_patch(output_of(kind), !assessment),
-        request: Some(teacher_request(db, input).await?),
+        settings,
+        request: Some(request),
         ..CreateWorksheet::default()
     };
     let worksheet_id = WorksheetService::new(db)
