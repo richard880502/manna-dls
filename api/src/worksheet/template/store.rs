@@ -238,6 +238,34 @@ pub async fn copy(
     Ok(row)
 }
 
+/// A ready personal template assembled from an existing worksheet. Unlike an extracted template,
+/// it has no source material: the shared worksheet remains the source of truth and no private
+/// library row belonging to its author is copied or exposed.
+pub async fn insert_ready(
+    db: &PgPool,
+    teacher_id: i64,
+    title: &str,
+    category: &str,
+    content: &WsTemplate,
+) -> sqlx::Result<TemplateRow> {
+    let mut tx = db.begin().await?;
+    let row: TemplateRow = sqlx::query_as(&format!(
+        "INSERT INTO worksheet_templates (teacher_id, title, status, scope, category, tags)
+         VALUES ($1, $2, '{STATUS_READY}', '{SCOPE_PERSONAL}', $3, ARRAY[]::TEXT[])
+         RETURNING {COLS}"
+    ))
+    .bind(teacher_id)
+    .bind(title)
+    .bind(category)
+    .fetch_one(&mut *tx)
+    .await?;
+    // It belongs to the receiving teacher and was created by an explicit teacher action; the
+    // versions contract has only `ai` (extraction) and `teacher` (everything teacher-approved).
+    add_version(&mut *tx, row.id, content, "teacher").await?;
+    tx.commit().await?;
+    Ok(row)
+}
+
 /// Category and tags (already validated).
 pub async fn set_catalog(
     db: &PgPool,

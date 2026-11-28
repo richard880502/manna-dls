@@ -48,10 +48,14 @@ export const COPY_TEMPLATE = "另存成我的範本";
 export const UPLOAD_SAMPLE = "上傳我的學習單";
 
 export type MaterialArea = MaterialBrowseQuery["area"];
-export type TemplateArea = TemplateBrowseQuery["area"];
+export type TemplateArea = TemplateBrowseQuery["area"] | "saved";
 
 export const MATERIAL_AREA_LABEL: Record<MaterialArea, string> = { reference: "平台教材", mine: "我的教材" };
-export const TEMPLATE_AREA_LABEL: Record<TemplateArea, string> = { platform: "平台範本", mine: "我的範本" };
+export const TEMPLATE_AREA_LABEL: Record<TemplateArea, string> = {
+  platform: "平台範本",
+  mine: "我的範本",
+  saved: "我的收藏",
+};
 
 /** A filter chip under 「只看：」: its words, its icon and what it sets in the query. */
 export interface MaterialFilter {

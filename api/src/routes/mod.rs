@@ -69,6 +69,10 @@ pub fn api_router() -> Router<AppState> {
             post(community::save).delete(community::unsave),
         )
         .route("/community/worksheets/{id}/remix", post(community::remix))
+        .route(
+            "/community/worksheets/{id}/template",
+            post(community::use_as_template),
+        )
         .route("/worksheets/{id}/share", put(community::share))
         .route("/me", get(auth::me))
         .route(

@@ -1,11 +1,19 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { MaterialCard as MaterialCardData, TemplateCard as TemplateCardData } from "../../api/types";
+import { api, errorMessage } from "../../api/client";
+import type {
+  CommunityCard,
+  MaterialCard as MaterialCardData,
+  TemplateCard as TemplateCardData,
+} from "../../api/types";
 import { Dialog } from "../Dialog";
+import { Cover } from "../community/Cover";
 import type { PickedMaterial } from "../material/MaterialChooser";
 import { MaterialContent } from "../material/MaterialViewer";
-import { MaterialBrowser, TemplateBrowser } from "./BrowsePanel";
+import { MaterialBrowser, SearchField, TemplateBrowser } from "./BrowsePanel";
 import { Tabs } from "./Tabs";
+import { useCommunityList } from "../community/useCommunityList";
+import { useSearchText } from "./useBrowse";
 import {
   CHOOSE,
   MATERIAL_AREA_LABEL,
@@ -45,7 +53,7 @@ type PickerProps =
     }
   | {
       kind: "template";
-      onPickTemplate: (card: TemplateCardData) => void;
+      onPickTemplate: (card: Pick<TemplateCardData, "id" | "title" | "section_count">) => void;
       returnFocus?: () => HTMLElement | null;
       onClose: () => void;
     };
@@ -90,10 +98,103 @@ const MATERIAL_TABS: ReadonlyArray<readonly [MaterialArea, string]> = [
 const TEMPLATE_TABS: ReadonlyArray<readonly [TemplateArea, string]> = [
   ["platform", TEMPLATE_AREA_LABEL.platform],
   ["mine", TEMPLATE_AREA_LABEL.mine],
+  ["saved", TEMPLATE_AREA_LABEL.saved],
 ];
 
+function SavedTemplateBrowser({
+  onPick,
+}: {
+  onPick: (card: Pick<TemplateCardData, "id" | "title" | "section_count">) => void;
+}) {
+  const search = useSearchText();
+  const list = useCommunityList("saved", { q: search.q || undefined });
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const choose = async (card: CommunityCard) => {
+    if (busyId !== null) return;
+    setBusyId(card.id);
+    setError(null);
+    try {
+      onPick(await api.community.useAsTemplate(card.id));
+    } catch (err) {
+      setError(errorMessage(err));
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="com-browse saved-template-browser">
+      <SearchField label="搜尋我的收藏" placeholder="用標題搜尋" search={search} />
+      {error && (
+        <p className="error-text" role="alert">
+          {error}
+        </p>
+      )}
+      {list.error && (
+        <div className="lib-error">
+          <p className="error-text" role="alert">
+            {list.error}
+          </p>
+          <button type="button" className="text-link is-plain" onClick={list.retry}>
+            再試一次
+          </button>
+        </div>
+      )}
+      {list.items === null && !list.error && <p role="status">載入中…</p>}
+      {list.items !== null && list.items.length === 0 && !list.error && (
+        <div className="com-empty">
+          <p>
+            {search.q
+              ? "沒有符合的收藏。換個搜尋字看看。"
+              : "還沒有收藏。在「社群」的「探索」看到喜歡的學習單，按「收藏」就會放在這裡。"}
+          </p>
+        </div>
+      )}
+      {list.unavailable > 0 && (
+        <p className="field-hint">有 {list.unavailable} 份收藏的學習單已經取消分享，不會列在這裡。</p>
+      )}
+      {list.items !== null && list.items.length > 0 && (
+        <ul className="com-grid" aria-label="可當範本的收藏">
+          {list.items.map((card) => (
+            <li key={card.id} className="com-card">
+              <div className="com-cover-wrap">
+                <div className="com-cover-btn" aria-hidden="true">
+                  <Cover sheet={card.cover} tint={card.id} />
+                </div>
+              </div>
+              <h3 className="com-title" title={card.title}>
+                {card.title || "未命名的學習單"}
+              </h3>
+              <p className="com-by">
+                <span className="com-owner">{card.owner_name}</span>
+              </p>
+              <button
+                type="button"
+                className="primary-button small-button"
+                aria-label={`${CHOOSE}「${card.title || "未命名的學習單"}」`}
+                disabled={busyId !== null}
+                onClick={() => void choose(card)}
+              >
+                {busyId === card.id ? "建立範本中…" : CHOOSE}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {list.items !== null && list.items.length < list.total && (
+        <p className="lib-more">
+          <button type="button" className="secondary-button" disabled={list.loadingMore} onClick={() => void list.loadMore()}>
+            {list.loadingMore ? "載入中…" : "顯示更多"}
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
- * 從教材挑選 (平台教材 | 我的教材) or 從範本挑選 (平台範本 | 我的範本): the browse UI in a large
+ * 從教材挑選 (平台教材 | 我的教材) or 從範本挑選 (平台範本 | 我的範本 | 我的收藏): the browse UI in a large
  * dialog (the whole screen on a phone). Choosing a card closes it; 預覽 and 看原檔 read the
  * material here, and Escape there goes back to the list (otherwise it closes the dialog).
  */
@@ -167,54 +268,58 @@ export function LibraryPicker(props: PickerProps) {
       <>
         <Tabs label="範本從哪裡來" tabs={TEMPLATE_TABS} current={templateTab} panelId={panelId} onChange={setTemplateTab} />
         <div id={panelId} role="tabpanel" className="picker-panel" hidden={preview !== null}>
-          <TemplateBrowser
-            key={templateTab}
-            area={templateTab}
-            empty={
-              <p className="empty-line">
-                {templateTab === "platform"
-                  ? "還沒有平台範本。"
-                  : "還沒有我的範本。到「學習單範本」上傳一份你做過的學習單，或用「上傳檔案」。"}
-              </p>
-            }
-            renderActions={(card) => {
-              const title = templateCardTitle(card);
-              const ready = card.status === "ready";
-              const source = card.source_material;
-              return (
-                <>
-                  <Link
-                    className="text-link lib-action-link"
-                    to={`/templates/${card.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`${VIEW_TEMPLATE}「${title}」`}
-                  >
-                    {VIEW_TEMPLATE}
-                  </Link>
-                  {source && (
+          {templateTab === "saved" ? (
+            <SavedTemplateBrowser onPick={pick} />
+          ) : (
+            <TemplateBrowser
+              key={templateTab}
+              area={templateTab}
+              empty={
+                <p className="empty-line">
+                  {templateTab === "platform"
+                    ? "還沒有平台範本。"
+                    : "還沒有我的範本。到「學習單範本」上傳一份你做過的學習單，或用「上傳檔案」。"}
+                </p>
+              }
+              renderActions={(card) => {
+                const title = templateCardTitle(card);
+                const ready = card.status === "ready";
+                const source = card.source_material;
+                return (
+                  <>
+                    <Link
+                      className="text-link lib-action-link"
+                      to={`/templates/${card.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`${VIEW_TEMPLATE}「${title}」`}
+                    >
+                      {VIEW_TEMPLATE}
+                    </Link>
+                    {source && (
+                      <button
+                        type="button"
+                        className="ghost-button small-button"
+                        aria-label={`${VIEW_SOURCE}「${title}」`}
+                        onClick={() => open({ materialId: source.id, title, choose: ready ? () => pick(card) : null })}
+                      >
+                        {VIEW_SOURCE}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      className="ghost-button small-button"
-                      aria-label={`${VIEW_SOURCE}「${title}」`}
-                      onClick={() => open({ materialId: source.id, title, choose: ready ? () => pick(card) : null })}
+                      className="primary-button small-button"
+                      aria-label={`${CHOOSE}「${title}」`}
+                      disabled={!ready}
+                      onClick={() => pick(card)}
                     >
-                      {VIEW_SOURCE}
+                      {CHOOSE}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="primary-button small-button"
-                    aria-label={`${CHOOSE}「${title}」`}
-                    disabled={!ready}
-                    onClick={() => pick(card)}
-                  >
-                    {CHOOSE}
-                  </button>
-                </>
-              );
-            }}
-          />
+                  </>
+                );
+              }}
+            />
+          )}
         </div>
       </>
     );

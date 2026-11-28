@@ -41,6 +41,11 @@
 收藏的是一份分享中的學習單（不能收藏自己的）。收藏記在 `worksheet_saves(teacher_id, worksheet_id)`，
 取消分享或刪除後，那一筆從收藏清單消失（清單回 `unavailable` 數量），重新分享時又會回來。
 
+首頁「從範本挑選」的「我的收藏」會列出仍在分享的收藏。選用時呼叫
+`POST /api/community/worksheets/{id}/template`，把分享出去的最新學生版區塊結構做成呼叫者自己的 ready
+版型；端點只接受呼叫者已收藏且仍在分享的學習單。轉換只讀分享學習單本身已公開的區塊、題型、指示與提示框，
+不讀、不複製原作者私人版型的 style notes、原檔或教材庫資料。
+
 ## 拿來改
 
 `POST /api/community/worksheets/{id}/remix`：只有 `share_allow_remix` 為真、不是自己的、仍在分享中時，
@@ -71,6 +76,7 @@
 | `community_save` | 收藏（已收藏不重記） | `worksheet_id` |
 | `community_unsave` | 取消收藏（沒有收藏不記） | `worksheet_id` |
 | `community_remix` | 做出副本 | `worksheet_id`（原件）、`copy_id` |
+| `community_template_created` | 把收藏做成自己的版型 | `worksheet_id`（原件）、`template_id` |
 
 瀏覽探索清單與搜尋目前**不**記錄。副本另外不寫 `worksheet_created`。
 

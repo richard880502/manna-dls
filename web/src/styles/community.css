@@ -60,6 +60,10 @@
   min-width: 0;
 }
 
+.saved-template-browser .com-card > .small-button {
+  justify-self: end;
+}
+
 .com-cover-wrap,
 .com-title {
   grid-column: 1 / -1;
