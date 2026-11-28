@@ -1362,11 +1362,13 @@ async fn the_full_worksheet_still_works_and_labels_its_items() {
     for b in &bs {
         assert_eq!(b["bloom"], Value::Null);
         for it in items(b) {
-            if b["kind"] == "activity" {
-                assert!(it["bloom"].is_string(), "{it}");
-            } else {
-                assert_eq!(it["bloom"], Value::Null);
-            }
+            assert!(
+                it["bloom"]
+                    .as_str()
+                    .and_then(manna_api::worksheet::Bloom::parse)
+                    .is_some(),
+                "{it}"
+            );
             assert_eq!(it["hint"], "");
         }
     }
