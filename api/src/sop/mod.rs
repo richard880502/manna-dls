@@ -39,6 +39,13 @@ pub struct Paragraph {
     /// Page of the source document the paragraph starts on (PDFs only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page: Option<i32>,
+    /// 題組 key shared by the paragraphs of one question group (exam papers only, see
+    /// `materials::extract::Block::group`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Cover text of an exam paper: an unselected material (`null` selection) leaves it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub front: bool,
 }
 
 fn collapse_ws(s: &str) -> String {
@@ -145,6 +152,8 @@ pub fn assign_paragraph_ids(
                 no: i as i32 + 1,
                 text,
                 page: None,
+                group: None,
+                front: false,
             }
         })
         .collect();

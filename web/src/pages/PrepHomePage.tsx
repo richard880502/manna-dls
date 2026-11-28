@@ -68,6 +68,7 @@ import {
   rememberOrigin,
   saveHomeDraft,
   selectedLine,
+  usedParagraphCount,
   type HomeDraft,
   type HomeRestore,
 } from "../lib/longMaterial";
@@ -379,7 +380,7 @@ function QuickBox() {
       });
       setChoice({
         way: "library",
-        picked: { id: made.id, title: made.title, paragraph_count: made.paragraphs.length },
+        picked: { id: made.id, title: made.title, paragraph_count: usedParagraphCount(made.paragraphs) },
         title: "",
         text: "",
       });
@@ -392,10 +393,10 @@ function QuickBox() {
   }
 
   /** The text of the attached library material was edited: its paragraphs may be others now. */
-  function textEdited(detail: { id: number; title: string; paragraphs: Array<{ id: string }> }) {
+  function textEdited(detail: { id: number; title: string; paragraphs: Array<{ id: string; front?: boolean | undefined }> }) {
     setChoice((c) =>
       c?.picked?.id === detail.id
-        ? { ...c, picked: { ...c.picked, title: detail.title, paragraph_count: detail.paragraphs.length } }
+        ? { ...c, picked: { ...c.picked, title: detail.title, paragraph_count: usedParagraphCount(detail.paragraphs) } }
         : c,
     );
     setSelection((now) => {

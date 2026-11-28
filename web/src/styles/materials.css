@@ -1,3 +1,47 @@
+/* 只選要用的段落: the picker, its 題組 and the collapsed cover section of an exam paper. */
+.paragraph-picker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.paragraph-picker-list label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) 0;
+}
+
+.paragraph-picker-no {
+  flex: none;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.paragraph-picker-group {
+  margin: var(--space-xs) 0;
+  padding-left: var(--space-sm);
+  border-left: var(--rule-hair) solid var(--color-rule-strong);
+}
+
+.paragraph-picker-group > .paragraph-picker-list,
+.paragraph-picker-group details > .paragraph-picker-list {
+  padding-left: var(--space-md);
+}
+
+.paragraph-picker-group-label {
+  font-weight: var(--weight-strong);
+  color: var(--color-ink-2);
+}
+
+.paragraph-picker-front > summary {
+  cursor: pointer;
+}
+
+.paragraph-picker-front > summary .paragraph-picker-group-label {
+  display: inline-flex;
+}
+
 /* 教材與註記: the material viewer (panel and side-by-side pane), teacher annotations, and the
    教材 section of 備課庫. Voices (docs/DESIGN_OVERHAUL.md): the material is print on a white
    sheet; what the teacher adds is ink blue, never gold. The sheet itself is in sop.css. */

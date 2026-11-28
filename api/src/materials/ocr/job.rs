@@ -31,6 +31,7 @@ use crate::audit::log_usage;
 use crate::auth::sha256_hex;
 use crate::error::AppResult;
 use crate::materials::detect;
+use crate::materials::exam::PageLines;
 use crate::materials::extract::{Block, Extracted, TextStatus};
 use crate::sop::{assign_paragraph_ids, Paragraph};
 use crate::AppState;
@@ -376,18 +377,30 @@ pub fn assemble(pages: &[OcrPage]) -> Assembled {
     sorted.sort_by_key(|p| p.page);
     sorted.dedup_by_key(|p| p.page);
     let mut out = Assembled::default();
+    let mut read = Vec::new();
     for p in sorted {
         if p.error.is_some() {
             out.failed_pages.push(p.page);
             continue;
         }
         out.read_pages += 1;
-        out.blocks
-            .extend(html::paragraphs(&p.blocks).into_iter().map(|text| Block {
-                text,
-                page: Some(p.page),
-            }));
+        read.push(PageLines {
+            page: p.page,
+            lines: html::paragraphs(&p.blocks),
+        });
     }
+    // A scanned exam paper: its 題組 and questions are put together across the pages.
+    out.blocks = crate::materials::exam::rebuild(&read, true).unwrap_or_else(|| {
+        read.iter()
+            .flat_map(|p| {
+                p.lines.iter().map(|text| Block {
+                    text: text.clone(),
+                    page: Some(p.page),
+                    ..Default::default()
+                })
+            })
+            .collect()
+    });
     out
 }
 
@@ -483,6 +496,8 @@ async fn finish(
         );
         for (p, block) in paragraphs.iter_mut().zip(&extracted.blocks) {
             p.page = block.page;
+            p.group = block.group.clone();
+            p.front = block.front;
         }
         sqlx::query(&format!(
             "UPDATE materials
@@ -558,11 +573,13 @@ mod tests {
             [
                 Block {
                     text: "Page 1".into(),
-                    page: Some(1)
+                    page: Some(1),
+                    ..Default::default()
                 },
                 Block {
                     text: "third".into(),
-                    page: Some(3)
+                    page: Some(3),
+                    ..Default::default()
                 }
             ]
         );

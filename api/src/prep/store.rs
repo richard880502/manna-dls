@@ -1214,16 +1214,19 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
 }
 
 /// `(paragraphs of the session's material, how many of the selected ids are in it)`; the second
-/// is `None` without a selection or when none of its ids is left.
+/// is `None` without a selection or when none of its ids is left. Without a selection the first
+/// is what the session uses: all paragraphs but an exam paper's cover text.
 async fn material_counts(
     db: &PgPool,
     session_id: i64,
     selected: &[String],
 ) -> sqlx::Result<(Option<i32>, Option<i32>)> {
-    let row: Option<(i32, i64)> = sqlx::query_as(
+    let row: Option<(i32, i64, i64)> = sqlx::query_as(
         "SELECT jsonb_array_length(m.paragraphs)::int,
                 (SELECT COUNT(*) FROM jsonb_array_elements(m.paragraphs) e
-                  WHERE e ->> 'id' = ANY($2))
+                  WHERE e ->> 'id' = ANY($2)),
+                (SELECT COUNT(*) FROM jsonb_array_elements(m.paragraphs) e
+                  WHERE e ->> 'front' IS DISTINCT FROM 'true')
            FROM prep_sessions s JOIN materials m ON m.id = s.material_id
           WHERE s.id = $1",
     )
@@ -1232,12 +1235,31 @@ async fn material_counts(
     .fetch_optional(db)
     .await?;
     Ok(match row {
-        Some((total, chosen)) => (
-            Some(total),
-            (!selected.is_empty() && chosen > 0).then_some(chosen as i32),
-        ),
+        Some((total, chosen, not_front)) => counts(total, chosen, not_front, selected.is_empty()),
         None => (None, None),
     })
+}
+
+/// The counts of [`material_counts`] from the material's paragraph numbers: `total` all,
+/// `chosen` of the selected ids, `not_front` without the cover text (an empty selection means
+/// those, or all when every paragraph is cover text).
+fn counts(
+    total: i32,
+    chosen: i64,
+    not_front: i64,
+    no_selection: bool,
+) -> (Option<i32>, Option<i32>) {
+    // A selection none of whose ids is left falls back to the default, as the session does.
+    let no_selection = no_selection || chosen == 0;
+    let used = if no_selection && not_front > 0 {
+        not_front as i32
+    } else {
+        total
+    };
+    (
+        Some(used),
+        (!no_selection && chosen > 0).then_some(chosen as i32),
+    )
 }
 
 /// Whether the session has a turn that made a worksheet (the bottom bar then revises).
@@ -1250,4 +1272,24 @@ pub fn has_worksheet_turn(turns: &[TurnRow]) -> bool {
 /// Kinds that never start a session.
 pub fn starts_a_session(kind: &str) -> bool {
     kind != KIND_REVISE
+}
+
+#[cfg(test)]
+mod counts_tests {
+    use super::counts;
+
+    #[test]
+    fn no_selection_counts_all_but_the_cover_text() {
+        assert_eq!(counts(10, 0, 8, true), (Some(8), None));
+        // every paragraph is cover text: all of them are used
+        assert_eq!(counts(3, 0, 0, true), (Some(3), None));
+        assert_eq!(counts(10, 0, 10, true), (Some(10), None));
+    }
+
+    #[test]
+    fn a_selection_keeps_the_whole_material_as_total() {
+        assert_eq!(counts(10, 2, 8, false), (Some(10), Some(2)));
+        // none of the selected ids is left: the default again
+        assert_eq!(counts(10, 0, 8, false), (Some(8), None));
+    }
 }

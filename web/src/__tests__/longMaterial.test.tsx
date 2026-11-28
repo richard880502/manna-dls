@@ -187,6 +187,67 @@ describe("長課文的提醒（首頁）", () => {
     expect((api.lastBody("POST", "/api/objective-drafts") as { paragraph_ids: string[] }).paragraph_ids).toHaveLength(9);
   });
 
+  it("an exam paper: front text is left out, 題組 tick together, Shift selects a stretch, saving the default sends nothing", async () => {
+    signIn();
+    const para = (id: string, no: number, extra: { group?: string; front?: boolean } = {}) => ({
+      id,
+      no,
+      text: `Text ${no}`,
+      ...extra,
+    });
+    const exam = detail(5, {
+      paragraphs: [
+        para("p1", 1, { front: true }),
+        para("p2", 2, { group: "6-7" }),
+        para("p3", 3, { group: "6-7" }),
+        para("p4", 4, { group: "6-7" }),
+        para("p5", 5),
+      ],
+    });
+    const api = mockApi(
+      homeRoutes({
+        "GET /api/materials/5": exam,
+        [`POST ${SESSIONS}`]: session([turn("worksheet", { status: "running", error: null })]),
+        [`GET ${S7}`]: session([turn("worksheet", { status: "running", error: null })]),
+      }),
+    );
+    const user = userEvent.setup();
+    renderApp("/");
+    await screen.findByRole("heading", { name: HOME, level: 1 });
+    await attachFromLibrary(user);
+    await user.click(await screen.findByRole("button", { name: "只選要用的段落" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "只選要用的段落" }));
+    expect(await dialog.findByText("已選 4 段（共 5 段）")).toBeInTheDocument();
+    expect(dialog.getByRole("checkbox", { name: "封面與作答說明（1 段，預設不使用）" })).not.toBeChecked();
+    const group = dialog.getByRole("checkbox", { name: "第 6–7 題題組（3 段）" });
+    expect(group).toBeChecked();
+    await user.click(dialog.getByRole("checkbox", { name: /第 3 段/ }));
+    expect(group).not.toBeChecked();
+    expect((group as HTMLInputElement).indeterminate).toBe(true);
+    await user.click(group);
+    expect(dialog.getByText("已選 4 段（共 5 段）")).toBeInTheDocument();
+    await user.click(group);
+    expect(dialog.getByText("已選 1 段（共 5 段）")).toBeInTheDocument();
+    // Shift: from the last clicked paragraph (2) on to 4.
+    await user.click(dialog.getByRole("checkbox", { name: /第 5 段/ }));
+    await user.click(dialog.getByRole("checkbox", { name: /第 2 段/ }));
+    await user.keyboard("{Shift>}");
+    await user.click(dialog.getByRole("checkbox", { name: /第 4 段/ }));
+    await user.keyboard("{/Shift}");
+    expect(dialog.getByText("已選 3 段（共 5 段）")).toBeInTheDocument();
+    // Back to the default: it is saved as "all but the front".
+    await user.click(dialog.getByRole("button", { name: "全部取消" }));
+    await user.click(dialog.getByRole("checkbox", { name: /第 2 段/ }));
+    await user.keyboard("{Shift>}");
+    await user.click(dialog.getByRole("checkbox", { name: /第 5 段/ }));
+    await user.keyboard("{/Shift}");
+    expect(dialog.getByText("已選 4 段（共 5 段）")).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "使用選的 4 段" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText(/只用其中/)).not.toBeInTheDocument();
+    expect(api.callsTo("POST", SESSIONS)).toHaveLength(0);
+  });
+
   it("pasted text: the server counts the paragraphs; 只選要用的段落 stores it in the library first", async () => {
     signIn();
     const api = mockApi(

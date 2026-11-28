@@ -38,7 +38,7 @@ import { RunProgressPanel, useRunPanel } from "../RunProgress";
 import { PROGRESS_WORDS } from "../../lib/progress";
 import { ErrorText } from "../common";
 import { LongMaterialNotice, MaterialFixButtons } from "../material/LongMaterial";
-import { RETRY, isLongMaterial } from "../../lib/longMaterial";
+import { RETRY, isLongMaterial, usedParagraphCount } from "../../lib/longMaterial";
 import { ObjectiveFields } from "../objectives/ObjectiveFields";
 import { BloomSettings } from "./BloomSettings";
 import { Chip } from "./Chips";
@@ -589,9 +589,9 @@ export function OptionsView({ ws, onGenerated, onBack, onEditText, onPickParagra
       {!running &&
         !longSeen &&
         !state.material.source.selected_ids &&
-        isLongMaterial(state.material.paragraphs.length) && (
+        isLongMaterial(usedParagraphCount(state.material.paragraphs)) && (
           <LongMaterialNotice
-            paragraphs={state.material.paragraphs.length}
+            paragraphs={usedParagraphCount(state.material.paragraphs)}
             disabled={ws.busy}
             onEdit={() => onEditText?.()}
             onPick={() => onPickParagraphs?.()}
