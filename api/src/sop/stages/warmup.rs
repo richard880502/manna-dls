@@ -10,6 +10,7 @@ pub struct WarmupActivitySuggestion {
     pub text: String,
     pub scaffolds: Scaffolds,
     pub purpose: String,
+    pub prompt_blooms: Vec<worksheet::Bloom>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -60,7 +61,7 @@ fn clean_to_suggestion(
             if !a.instructions.is_empty() {
                 lines.push(a.instructions.clone());
             }
-            lines.extend(a.prompts.iter().map(|p| format!("- {p}")));
+            lines.extend(a.prompts.iter().map(|(text, _)| format!("- {text}")));
             let steps = auto_steps_for_warmup(!w.words.is_empty());
             WarmupActivitySuggestion {
                 text: lines.join("\n"),
@@ -70,6 +71,7 @@ fn clean_to_suggestion(
                     procedural: steps_text(&steps),
                 },
                 purpose: a.purpose_zh.clone(),
+                prompt_blooms: a.prompts.iter().map(|(_, bloom)| *bloom).collect(),
             }
         })
         .collect();

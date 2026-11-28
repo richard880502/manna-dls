@@ -11,6 +11,7 @@ pub struct ExitItemSuggestion {
     /// Id of the step 3 objective a formative item checks (empty: none).
     pub objective_id: String,
     pub answer: String,
+    pub bloom: Option<worksheet::Bloom>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
@@ -49,6 +50,7 @@ fn to_exit_suggestion(items: &[RawExitItem], code_ids: &[(String, String)]) -> E
                 String::new()
             },
             answer: i.sample_answer_en.clone().unwrap_or_default(),
+            bloom: i.bloom.as_deref().and_then(worksheet::Bloom::parse),
         })
         .collect();
     let checked: HashSet<&str> = items

@@ -1217,6 +1217,7 @@ export interface SopTask {
   answer?: string;
   /** 原文依據（逐字摘自段落） */
   evidence?: string;
+  bloom?: Bloom | null;
 }
 
 /** 一段，或合併數段，的問題或任務 */
@@ -1237,6 +1238,7 @@ export interface SopWarmupActivity {
   text: string;
   scaffolds: SopScaffolds;
   origin: SopOrigin;
+  prompt_blooms?: (Bloom | null)[];
 }
 
 export interface SopVocabularyItem {
@@ -1262,6 +1264,7 @@ export interface SopExitItem {
   objective_id?: string;
   /** 參考答案（教師版） */
   answer?: string;
+  bloom?: Bloom | null;
 }
 
 /** 老師在各步驟為學習單做的選擇；null＝沒選，用 SOP 內容推出的預設 */
@@ -1338,6 +1341,7 @@ export interface SopTaskSuggestion {
   answer: string;
   evidence: string;
   scaffolds: SopScaffolds;
+  bloom?: Bloom | null;
 }
 
 export interface SopBlockSuggestion {
@@ -1358,7 +1362,7 @@ export interface SopTasksSuggestion {
 }
 
 export interface SopWarmupSuggestion {
-  background: Array<{ text: string; scaffolds: SopScaffolds; purpose: string }>;
+  background: Array<{ text: string; scaffolds: SopScaffolds; purpose: string; prompt_blooms?: Bloom[] }>;
   vocabulary: Array<{
     word: string;
     level: number | null;
@@ -1373,7 +1377,7 @@ export interface SopWarmupSuggestion {
 }
 
 export interface SopExitSuggestion {
-  items: Array<{ kind: ExitKind; text: string; objective_id: string; answer: string }>;
+  items: Array<{ kind: ExitKind; text: string; objective_id: string; answer: string; bloom?: Bloom | null }>;
   uncovered_objective_ids: string[];
 }
 

@@ -637,6 +637,13 @@ async fn tasks_cover_every_paragraph_in_order_with_labels_scaffolds_and_procedur
                 "English for students"
             );
             assert!(!task["answer_format"].as_str().unwrap().is_empty());
+            assert!(
+                task["bloom"]
+                    .as_str()
+                    .and_then(manna_api::worksheet::Bloom::parse)
+                    .is_some(),
+                "{task}"
+            );
             let evidence = task["evidence"].as_str().unwrap();
             if !evidence.is_empty() {
                 assert!(
@@ -772,6 +779,7 @@ async fn warmup_picks_words_from_candidates_found_by_code_and_never_gives_levels
             .unwrap()
             .starts_with("1. "));
         assert!(!a["text"].as_str().unwrap().is_empty());
+        assert_eq!(a["prompt_blooms"], json!(["understand", "remember"]));
     }
     let vocabulary = out["vocabulary"].as_array().unwrap();
     assert!(!vocabulary.is_empty(), "{out}");
@@ -839,6 +847,13 @@ async fn exit_ticket_has_a_formative_item_on_a_real_objective_and_a_reflection()
         "a reflection or questions item"
     );
     for i in items {
+        assert!(
+            i["bloom"]
+                .as_str()
+                .and_then(manna_api::worksheet::Bloom::parse)
+                .is_some(),
+            "{i}"
+        );
         assert!(!i["text"]
             .as_str()
             .unwrap()
@@ -1051,6 +1066,19 @@ async fn a_worksheet_from_the_sop_uses_the_choices_made_in_the_steps_and_asks_no
         .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     let done = wait_worksheet(&app, &t, ws_id).await;
+    for block in done["content"]["blocks"].as_array().unwrap() {
+        let items = block["items"].as_array().unwrap();
+        assert!(!items.is_empty(), "{block}");
+        for item in items {
+            assert!(
+                item["bloom"]
+                    .as_str()
+                    .and_then(manna_api::worksheet::Bloom::parse)
+                    .is_some(),
+                "{item}"
+            );
+        }
+    }
     let kinds: Vec<&str> = done["content"]["blocks"]
         .as_array()
         .unwrap()

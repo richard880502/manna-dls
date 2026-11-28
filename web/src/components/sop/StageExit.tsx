@@ -11,6 +11,7 @@ newId,
 objectiveLabels
 } from "../../lib/sop";
 import { WorksheetChoices } from "./Choices";
+import { BloomSelect } from "../worksheet/Bloom";
 import { EnglishFix } from "./EnglishFix";
 import { AskManna,MannaWell,RedoPending } from "./parts";
 import { followRedo,retryRedo,type SopController } from "./useSop";
@@ -72,6 +73,7 @@ export function StageExit({ sop, lessonId }: { sop: SopController; lessonId: num
         // A link to an objective the teacher has deleted since is not carried over.
         objective_id: objectives.some((o) => o.id === s.objective_id) ? s.objective_id : "",
         answer: s.answer,
+        bloom: s.bloom,
       },
     ]);
     decide("exit_ticket", slot.index, edit ? "revise" : "adopt", edit ? s.text : undefined, jobOf(slot.job));
@@ -133,6 +135,7 @@ export function StageExit({ sop, lessonId }: { sop: SopController; lessonId: num
               text={item.text}
               onUse={(english) => patchItem(item.id, { text: english, origin: "ai_edited" })}
             />
+            <BloomSelect label="Bloom 層次" value={item.bloom} disabled={false} onChange={(bloom) => patchItem(item.id, { bloom })} />
             {item.kind === "formative" && (
               <>
                 <label className="field-label" htmlFor={`exit-${item.id}-objective`}>

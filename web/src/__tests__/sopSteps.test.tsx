@@ -462,6 +462,7 @@ describe("step 5: 逐段問題或任務", () => {
             options: ["To help people", "To sell", "To hide", "To play"],
             answer: "To help people",
             evidence: "A sign said, Take one if you need it.",
+            bloom: "analyze",
             scaffolds: { verbal: "句型框架：She did it because ____.", instructional: "", procedural: "1. Read.\n2. Answer." },
           },
         ],
@@ -529,6 +530,7 @@ describe("step 5: 逐段問題或任務", () => {
       ["Why did Mrs. Lin put the stand outside?", "ai_adopted"],
     ]);
     expect(block.tasks[1]).toMatchObject({ answer_format: "選擇題", answer: "To help people", evidence: "A sign said, Take one if you need it." });
+    expect(block.tasks[1]?.bloom).toBe("analyze");
     // Her label stays, Manna's are added and remembered as hers (the star).
     expect(block.student_tasks).toEqual(["討論／分享", "理解內容", "推論／預測"]);
     expect(block.answer_formats).toEqual(["選擇題"]);
@@ -595,6 +597,7 @@ describe("step 6: 暖身", () => {
         text: "Look at the title.\n- What is an umbrella stand for?",
         scaffolds: { verbal: "", instructional: "", procedural: "1. Think.\n2. Share." },
         purpose: "喚醒傘的經驗",
+        prompt_blooms: ["understand"],
       },
     ],
     vocabulary: [
@@ -623,6 +626,9 @@ describe("step 6: 暖身", () => {
     await goToStep(user, /暖身/);
     const activity = within(screen.getByRole("group", { name: "Manna 建議：暖身活動 1" }));
     await user.click(activity.getByRole("button", { name: "採用" }));
+    const bloom = screen.getByRole("combobox", { name: "暖身第 1 題的 Bloom 層次" });
+    expect(bloom).toHaveValue("understand");
+    await user.selectOptions(bloom, "apply");
     const words = within(screen.getByRole("group", { name: "Manna 建議：關鍵字彙" }));
     // The level is the word list's: a word it does not have says so.
     expect(words.getByText("大考中心詞彙表第 2 級")).toBeInTheDocument();
@@ -630,6 +636,7 @@ describe("step 6: 暖身", () => {
     await user.click(words.getByRole("button", { name: "採用" }));
     await settleAutosave();
     const saved = lastSaved(api).warmup;
+    expect(saved.background[0]?.prompt_blooms).toEqual(["apply"]);
     expect(saved.background.map((a) => [a.text.split("\n")[0], a.origin, a.scaffolds.procedural])).toEqual([
       ["Look at the title.", "ai_adopted", "1. Think.\n2. Share."],
     ]);

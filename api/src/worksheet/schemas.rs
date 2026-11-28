@@ -76,6 +76,10 @@ fn enum_of(labels: &[&str]) -> Value {
     json!({ "type": "string", "enum": labels })
 }
 
+fn bloom_schema() -> Value {
+    enum_of(&Bloom::ALL.map(Bloom::as_str))
+}
+
 fn enum_array(labels: &[&str]) -> Value {
     json!({ "type": "array", "items": enum_of(labels) })
 }
@@ -86,7 +90,6 @@ fn nullable_string() -> Value {
 
 pub fn tasks_schema() -> Value {
     let functions: Vec<&str> = INFO_FUNCTIONS.iter().map(|(_, l)| *l).collect();
-    let blooms: Vec<&str> = Bloom::ALL.iter().map(|b| b.as_str()).collect();
     let stages: Vec<&str> = Practice::ALL.iter().map(|p| p.label()).collect();
     json!({
         "type": "object",
@@ -118,7 +121,7 @@ pub fn tasks_schema() -> Value {
                                     "table": super::table::schema(),
                                     "answer_en": { "type": "string" },
                                     "evidence": nullable_string(),
-                                    "bloom": enum_of(&blooms)
+                                    "bloom": bloom_schema()
                                 },
                                 "required": ["item_id", "answer_format", "tier", "prompt_en",
                                              "options", "organizer", "table", "answer_en", "evidence",
@@ -146,10 +149,17 @@ pub fn tasks_schema() -> Value {
 pub struct RawBackground {
     pub title_en: String,
     pub instructions_en: String,
-    pub prompts_en: Vec<String>,
+    pub prompts_en: Vec<RawWarmupPrompt>,
     pub student_tasks: Vec<String>,
     pub answer_format: String,
     pub purpose_zh: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RawWarmupPrompt {
+    pub text: String,
+    #[serde(default)]
+    pub bloom: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -183,7 +193,18 @@ pub fn warmup_schema() -> Value {
                     "properties": {
                         "title_en": { "type": "string" },
                         "instructions_en": { "type": "string" },
-                        "prompts_en": strings(),
+                        "prompts_en": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "text": { "type": "string" },
+                                    "bloom": bloom_schema()
+                                },
+                                "required": ["text", "bloom"],
+                                "additionalProperties": false
+                            }
+                        },
                         "student_tasks": enum_array(&student_tasks()),
                         "answer_format": enum_of(&ANSWER_FORMATS),
                         "purpose_zh": { "type": "string" }
@@ -347,6 +368,8 @@ pub struct RawExitItem {
     pub student_tasks: Vec<String>,
     pub objective_refs: Vec<String>,
     pub sample_answer_en: Option<String>,
+    #[serde(default)]
+    pub bloom: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -373,10 +396,11 @@ pub fn exit_schema() -> Value {
                         "options": strings(),
                         "student_tasks": enum_array(&student_tasks()),
                         "objective_refs": strings(),
-                        "sample_answer_en": nullable_string()
+                        "sample_answer_en": nullable_string(),
+                        "bloom": bloom_schema()
                     },
                     "required": ["item_id", "purpose", "prompt_en", "answer_format", "options",
-                                 "student_tasks", "objective_refs", "sample_answer_en"],
+                                 "student_tasks", "objective_refs", "sample_answer_en", "bloom"],
                     "additionalProperties": false
                 }
             }

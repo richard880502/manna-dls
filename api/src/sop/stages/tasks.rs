@@ -16,6 +16,7 @@ pub struct TaskSuggestion {
     /// A verbatim piece of the paragraphs; named `evidence` so that deleting the material scrubs it.
     pub evidence: String,
     pub scaffolds: Scaffolds,
+    pub bloom: Option<worksheet::Bloom>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
@@ -196,6 +197,7 @@ fn to_block_suggestion(
                 options: it.options.clone(),
                 answer: it.answer_en.clone(),
                 evidence: it.evidence.clone().unwrap_or_default(),
+                bloom: it.bloom.as_deref().and_then(worksheet::Bloom::parse),
                 scaffolds: shared.clone(),
             })
             .collect(),

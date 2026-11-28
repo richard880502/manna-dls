@@ -587,7 +587,8 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
     if has("FAKE_BLOCK") || has("FAKE_WS_WARMUP_BLOCK") {
         return json!({
             "background_activities": [{
-                "title_en": "暖身", "instructions_en": "請和同學討論。", "prompts_en": ["你借過傘嗎？"],
+                "title_en": "暖身", "instructions_en": "請和同學討論。",
+                "prompts_en": [{"text": "你借過傘嗎？", "bloom": "remember"}],
                 "student_tasks": ["討論／分享"], "answer_format": FMT_SHORT, "purpose_zh": "連結經驗",
             }],
             "key_vocabulary": [{
@@ -628,8 +629,8 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
                 "title_en": "What do you already know?",
                 "instructions_en": "In this activity, you will share what you already know about the topic before you read.",
                 "prompts_en": [
-                    format!("Write down two things you already know about {about}."),
-                    "Share one of them with your partner and listen to theirs.",
+                    {"text": format!("Write down two things you already know about {about}."), "bloom": "remember"},
+                    {"text": "Share one of them with your partner and listen to theirs.", "bloom": "understand"},
                 ],
                 "student_tasks": ["討論／分享"],
                 "answer_format": FMT_SHORT,
@@ -643,8 +644,8 @@ pub fn warmup(ctx: &Value, _attempt: i32, has: &dyn Fn(&str) -> bool) -> Value {
             "title_en": "Before you read",
             "instructions_en": "In this activity, you will think about the title and guess what the text is about.",
             "prompts_en": [
-                format!("Look at {about}. What do you think the text is about?"),
-                "Have you ever been in a similar situation? Tell your partner in two sentences.",
+                {"text": format!("Look at {about}. What do you think the text is about?"), "bloom": "understand"},
+                {"text": "Have you ever been in a similar situation? Tell your partner in two sentences.", "bloom": "remember"},
             ],
             "student_tasks": ["推論／預測", "討論／分享"],
             "answer_format": FMT_SHORT,
@@ -782,7 +783,7 @@ pub fn exit_ticket(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
         return json!({ "estimated_minutes": 3, "items": [{
             "item_id": "E1", "purpose": "形成性評量", "prompt_en": "今天學到什麼？",
             "answer_format": FMT_SHORT, "options": [], "student_tasks": ["學習反思"],
-            "objective_refs": [], "sample_answer_en": null,
+            "objective_refs": [], "sample_answer_en": null, "bloom": "understand",
         }] });
     }
     let count = ctx["exit_count"].as_u64().unwrap_or(3) as usize;
@@ -800,18 +801,19 @@ pub fn exit_ticket(ctx: &Value, attempt: i32, has: &dyn Fn(&str) -> bool) -> Val
             "answer_format": FMT_SHORT, "options": [], "student_tasks": ["理解內容"],
             "objective_refs": objectives.iter().take(checked).collect::<Vec<_>>(),
             "sample_answer_en": "A clear statement of the main idea with one detail from the text.",
+            "bloom": "understand",
         }),
         json!({
             "item_id": "E2", "purpose": "學生反思",
             "prompt_en": "Which part of today's worksheet was the hardest for you? Why?",
             "answer_format": FMT_SHORT, "options": [], "student_tasks": ["學習反思"],
-            "objective_refs": [], "sample_answer_en": null,
+            "objective_refs": [], "sample_answer_en": null, "bloom": "evaluate",
         }),
         json!({
             "item_id": "E3", "purpose": "蒐集問題",
             "prompt_en": "Write one question you still have about the text.",
             "answer_format": FMT_SHORT, "options": [], "student_tasks": ["自我評量"],
-            "objective_refs": [], "sample_answer_en": null,
+            "objective_refs": [], "sample_answer_en": null, "bloom": "create",
         }),
     ];
     if has("FAKE_WS_EXIT_FRAME_ALWAYS") || (has("FAKE_WS_EXIT_FRAME") && attempt == 1) {
