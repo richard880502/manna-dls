@@ -11,6 +11,7 @@ use std::io::Read;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+use super::exam::{self, normalize_line, PageLines};
 use super::{FileType, MAX_EXTRACTED_CHARS};
 use crate::sop::split_paragraphs;
 
@@ -37,11 +38,17 @@ impl TextStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Block {
     pub text: String,
     /// 1-based page (PDF only).
     pub page: Option<i32>,
+    /// 題組: the paragraphs of one question group (the 「第 6 至 10 題為題組」 line, the passage and
+    /// its questions) share this key, e.g. "6-10" (exam papers only).
+    pub group: Option<String>,
+    /// Cover text of an exam paper (作答注意事項, 計分方式, 著作權說明): left out unless the teacher
+    /// picks it.
+    pub front: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,7 +160,11 @@ fn extract_txt(data: &[u8]) -> Extracted {
     };
     let blocks = split_paragraphs(&text)
         .into_iter()
-        .map(|text| Block { text, page: None })
+        .map(|text| Block {
+            text,
+            page: None,
+            ..Default::default()
+        })
         .collect();
     Extracted::from_blocks(blocks, None)
 }
@@ -189,7 +200,11 @@ fn extract_docx(data: &[u8]) -> Extracted {
         Some(paragraphs) => Extracted::from_blocks(
             paragraphs
                 .into_iter()
-                .map(|text| Block { text, page: None })
+                .map(|text| Block {
+                    text,
+                    page: None,
+                    ..Default::default()
+                })
                 .collect(),
             None,
         ),
@@ -267,14 +282,30 @@ fn extract_pdf(data: &[u8]) -> Extracted {
         }
     };
     let page_count = i32::try_from(pages.len()).ok();
-    let mut blocks = Vec::new();
-    for (i, page) in pages.iter().enumerate() {
-        let page_no = i as i32 + 1;
-        blocks.extend(page_blocks(page).into_iter().map(|text| Block {
-            text,
-            page: Some(page_no),
-        }));
-    }
+    let lines: Vec<PageLines> = pages
+        .iter()
+        .enumerate()
+        .map(|(i, page)| PageLines {
+            page: i as i32 + 1,
+            lines: page.lines().map(normalize_line).collect(),
+        })
+        .collect();
+    // An exam paper is read across its pages (題組, questions, the cover); anything else page
+    // by page.
+    let blocks = exam::rebuild(&lines, false).unwrap_or_else(|| {
+        lines
+            .iter()
+            .flat_map(|p| {
+                page_blocks(&p.lines.join("\n"))
+                    .into_iter()
+                    .map(|text| Block {
+                        text,
+                        page: Some(p.page),
+                        ..Default::default()
+                    })
+            })
+            .collect()
+    });
     let mut extracted = Extracted::from_blocks(blocks, page_count);
     extracted.poor_text = extracted.status == TextStatus::Ready
         && super::ocr::poor_text(&pages.join("\n"), pages.len());
@@ -285,18 +316,34 @@ fn extract_pdf(data: &[u8]) -> Extracted {
 /// extractor produced any; otherwise a line that ends a sentence and stops well short of the
 /// right margin closes a paragraph. Words hyphenated across lines are joined. (The rule is
 /// shared with pasted text that looks hard-wrapped: `sop::wrap`.)
+///
+/// A page set with wide line spacing comes out with a blank line after almost every line: those
+/// blank lines are spacing, not paragraph breaks, when the lines read as wrapped prose.
 pub fn page_blocks(page: &str) -> Vec<String> {
     let text = page.replace("\r\n", "\n").replace('\r', "\n");
     let lines: Vec<&str> = text.split('\n').map(str::trim).collect();
-    let has_blank = {
-        let first = lines.iter().position(|l| !l.is_empty());
-        let last = lines.iter().rposition(|l| !l.is_empty());
-        match (first, last) {
-            (Some(a), Some(b)) => lines[a..=b].iter().any(|l| l.is_empty()),
-            _ => false,
-        }
+    let filled: Vec<&str> = lines.iter().copied().filter(|l| !l.is_empty()).collect();
+    let first = lines.iter().position(|l| !l.is_empty());
+    let last = lines.iter().rposition(|l| !l.is_empty());
+    let inner = match (first, last) {
+        (Some(a), Some(b)) => &lines[a..=b],
+        _ => return Vec::new(),
     };
+    let has_blank = inner.iter().any(|l| l.is_empty());
+    if has_blank && is_line_spaced(inner) && crate::sop::wrap::looks_hard_wrapped(&filled) {
+        return crate::sop::wrap::join_wrapped(&filled, true);
+    }
     crate::sop::wrap::join_wrapped(&lines, !has_blank)
+}
+
+/// At least four lines, and blank lines after at least 80% of them.
+fn is_line_spaced(lines: &[&str]) -> bool {
+    let filled = lines.iter().filter(|l| !l.is_empty()).count();
+    let gaps = lines
+        .windows(2)
+        .filter(|w| !w[0].is_empty() && w[1].is_empty())
+        .count();
+    filled >= 4 && gaps * 10 >= (filled - 1) * 8
 }
 
 #[cfg(test)]
@@ -402,6 +449,7 @@ mod tests {
             .map(|_| Block {
                 text: "x".repeat(10_000),
                 page: None,
+                ..Default::default()
             })
             .collect();
         let e = Extracted::from_blocks(blocks, None);

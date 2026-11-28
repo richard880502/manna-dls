@@ -14,6 +14,109 @@ export const isLongMaterial = (paragraphs: number | null | undefined): boolean =
 export const longMaterialLine = (paragraphs: number): string =>
   `這份課文有 ${paragraphs} 段，比一般一節課長；產生會比較久，後面的段落也比較可能寫得簡略。`;
 
+// ---------------------------------------------------------------- 只選要用的段落
+
+/** The fields of a paragraph that the picker looks at. */
+export interface PickableParagraph {
+  id: string;
+  /** 題組 key such as "6-10"; absent for ordinary materials. */
+  group?: string | undefined;
+  /** Cover text of an exam paper (not used unless the teacher ticks it). */
+  front?: boolean | undefined;
+}
+
+/** The paragraphs a material uses when nothing was chosen: all but the front ones (all, if all are front). */
+export function defaultParagraphs<T extends PickableParagraph>(paragraphs: readonly T[]): T[] {
+  const body = paragraphs.filter((p) => !p.front);
+  return body.length > 0 ? body : [...paragraphs];
+}
+
+/** How many paragraphs an unselected material uses (what a `null` selection means). */
+export const usedParagraphCount = (paragraphs: readonly PickableParagraph[]): number =>
+  defaultParagraphs(paragraphs).length;
+
+/** The ticked ids the picker opens with: the saved ones, or else the default selection. */
+export function initialSelection(
+  paragraphs: readonly PickableParagraph[],
+  initial: readonly string[] | null | undefined,
+): Set<string> {
+  return new Set(initial && initial.length > 0 ? initial : defaultParagraphs(paragraphs).map((p) => p.id));
+}
+
+/** What to save for a choice: `null` when it is exactly the default, else the ids in material order. */
+export function selectionToSave(paragraphs: readonly PickableParagraph[], chosen: ReadonlySet<string>): string[] | null {
+  const def = defaultParagraphs(paragraphs);
+  const same = def.length === chosen.size && def.every((p) => chosen.has(p.id));
+  return same ? null : paragraphs.filter((p) => chosen.has(p.id)).map((p) => p.id);
+}
+
+/** Sets every paragraph between two (inclusive, in material order, either direction) to `on`. */
+export function toggleRange(
+  paragraphs: readonly PickableParagraph[],
+  chosen: ReadonlySet<string>,
+  fromId: string,
+  toId: string,
+  on: boolean,
+): Set<string> {
+  const a = paragraphs.findIndex((p) => p.id === fromId);
+  const b = paragraphs.findIndex((p) => p.id === toId);
+  if (a < 0 || b < 0) return new Set(chosen);
+  const next = new Set(chosen);
+  for (const p of paragraphs.slice(Math.min(a, b), Math.max(a, b) + 1)) {
+    if (on) next.add(p.id);
+    else next.delete(p.id);
+  }
+  return next;
+}
+
+/** Ticks or unticks a set of paragraphs (a 題組 or the front section). */
+export function toggleMany(chosen: ReadonlySet<string>, ids: readonly string[], on: boolean): Set<string> {
+  const next = new Set(chosen);
+  for (const id of ids) {
+    if (on) next.add(id);
+    else next.delete(id);
+  }
+  return next;
+}
+
+/** How much of a set of paragraphs is chosen. */
+export function tickState(ids: readonly string[], chosen: ReadonlySet<string>): "all" | "some" | "none" {
+  const n = ids.filter((id) => chosen.has(id)).length;
+  return n === 0 ? "none" : n === ids.length ? "all" : "some";
+}
+
+/** Consecutive paragraphs in the picker: the front section, a 題組, or one plain paragraph. */
+export type ParagraphRun<T extends PickableParagraph> =
+  | { kind: "front"; key: string; items: T[] }
+  | { kind: "group"; key: string; group: string; items: T[] }
+  | { kind: "plain"; key: string; items: [T] };
+
+export function paragraphRuns<T extends PickableParagraph>(paragraphs: readonly T[]): ParagraphRun<T>[] {
+  const runs: ParagraphRun<T>[] = [];
+  for (const p of paragraphs) {
+    const last = runs[runs.length - 1];
+    if (p.front) {
+      if (last?.kind === "front") last.items.push(p);
+      else runs.push({ kind: "front", key: `front-${p.id}`, items: [p] });
+    } else if (p.group) {
+      if (last?.kind === "group" && last.group === p.group) last.items.push(p);
+      else runs.push({ kind: "group", key: `group-${p.id}`, group: p.group, items: [p] });
+    } else {
+      runs.push({ kind: "plain", key: `plain-${p.id}`, items: [p] });
+    }
+  }
+  return runs;
+}
+
+/** 「第 6–10 題題組（7 段）」 for the key "6-10". */
+export function groupLabel(group: string, count: number): string {
+  const m = /^\s*(\d+)\s*[-–—~至]\s*(\d+)\s*$/.exec(group);
+  const name = m ? `第 ${m[1]}–${m[2]} 題題組` : `第 ${group.trim()} 題題組`;
+  return `${name}（${count} 段）`;
+}
+
+export const frontLabel = (count: number): string => `封面與作答說明（${count} 段，預設不使用）`;
+
 export const EDIT_TEXT = "修改課文";
 export const PICK_PARAGRAPHS = "只選要用的段落";
 export const GENERATE_ANYWAY = "照樣產生";

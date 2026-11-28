@@ -365,6 +365,8 @@ mod tests {
                 no: i,
                 text: format!("Paragraph number {i} has some words."),
                 page: None,
+                group: None,
+                front: false,
             })
             .collect()
     }

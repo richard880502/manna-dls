@@ -466,6 +466,8 @@ mod tests {
             no: 1,
             text: "Two.".into(),
             page: None,
+            group: None,
+            front: false,
         }];
         let n = apply(
             &mut content,

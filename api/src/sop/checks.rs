@@ -601,12 +601,16 @@ mod tests {
                 no: 1,
                 text: P1.into(),
                 page: None,
+                group: None,
+                front: false,
             },
             Paragraph {
                 id: "p7".into(),
                 no: 2,
                 text: P2.into(),
                 page: None,
+                group: None,
+                front: false,
             },
         ]
     }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { MaterialDetail } from "../../api/types";
 import {
@@ -7,7 +7,15 @@ import {
   EDIT_TEXT,
   GENERATE_ANYWAY,
   PICK_PARAGRAPHS,
+  frontLabel,
+  groupLabel,
+  initialSelection,
   longMaterialLine,
+  paragraphRuns,
+  selectionToSave,
+  tickState,
+  toggleMany,
+  toggleRange,
 } from "../../lib/longMaterial";
 import { Dialog, DialogCancel } from "../Dialog";
 import { ErrorText, Loading } from "../common";
@@ -124,6 +132,31 @@ function useMaterialDetail(materialId: number) {
 /** The preview of a paragraph in the picker. */
 const preview = (text: string) => (text.length > 110 ? `${text.slice(0, 110)}…` : text);
 
+/** The checkbox in front of a 題組 or of the cover section: indeterminate when only some are chosen. */
+function PickerGroupBox({
+  label,
+  state,
+  onToggle,
+}: {
+  label: string;
+  state: "all" | "some" | "none";
+  onToggle: (on: boolean) => void;
+}) {
+  return (
+    <label className="paragraph-picker-group-label">
+      <input
+        type="checkbox"
+        checked={state === "all"}
+        ref={(el) => {
+          if (el) el.indeterminate = state === "some";
+        }}
+        onChange={(e) => onToggle(e.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
 /**
  * 只選要用的段落: tick single paragraphs or a range. The choice belongs to this worksheet or
  * conversation (the caller stores it); the material itself is never changed.
@@ -136,7 +169,7 @@ export function ParagraphPickerDialog({
   returnFocus,
 }: {
   materialId: number;
-  /** The ids used now; `null`: all of the paragraphs. */
+  /** The ids used now; `null`: all of the paragraphs (an exam paper's cover text excepted). */
   initial: readonly string[] | null;
   /** `null`: use all of them. */
   onSave: (ids: string[] | null) => Promise<void> | void;
@@ -151,10 +184,9 @@ export function ParagraphPickerDialog({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const paragraphs = useMemo(() => detail?.paragraphs ?? [], [detail]);
-  const chosen = useMemo(
-    () => picked ?? new Set(initial && initial.length > 0 ? initial : paragraphs.map((p) => p.id)),
-    [picked, initial, paragraphs],
-  );
+  const chosen = useMemo(() => picked ?? initialSelection(paragraphs, initial), [picked, initial, paragraphs]);
+  const runs = useMemo(() => paragraphRuns(paragraphs), [paragraphs]);
+  const lastClicked = useRef<string | null>(null);
   const dirty = picked !== null;
 
   function change(next: Set<string>) {
@@ -169,13 +201,35 @@ export function ParagraphPickerDialog({
     change(new Set(paragraphs.filter((p) => p.no >= lo && p.no <= hi).map((p) => p.id)));
   }
 
+  function clickParagraph(id: string, on: boolean, shift: boolean) {
+    const last = lastClicked.current;
+    lastClicked.current = id;
+    if (shift && last !== null) change(toggleRange(paragraphs, chosen, last, id, on));
+    else change(toggleMany(chosen, [id], on));
+  }
+
+  function renderParagraph(p: (typeof paragraphs)[number]) {
+    return (
+      <li key={p.id}>
+        <label>
+          <input
+            type="checkbox"
+            checked={chosen.has(p.id)}
+            onChange={(e) => clickParagraph(p.id, e.target.checked, (e.nativeEvent as MouseEvent).shiftKey === true)}
+          />
+          <span className="paragraph-picker-no">第 {p.no} 段</span>
+          <span lang="en">{preview(p.text)}</span>
+        </label>
+      </li>
+    );
+  }
+
   async function save() {
     if (chosen.size === 0 || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const all = chosen.size === paragraphs.length;
-      await onSave(all ? null : paragraphs.filter((p) => chosen.has(p.id)).map((p) => p.id));
+      await onSave(selectionToSave(paragraphs, chosen));
       onClose();
     } catch (err) {
       setSaveError(errorMessage(err));
@@ -190,7 +244,7 @@ export function ParagraphPickerDialog({
       {detail && (
         <div className="paragraph-picker">
           <p className="field-hint">
-            勾選這一次要用的段落。課文本身不會改變，也可以隨時改回全部使用。
+            勾選這一次要用的段落。課文本身不會改變，也可以隨時改回全部使用。按住 Shift 再點，可以一次選取連續的段落。
           </p>
           <div className="paragraph-picker-tools button-row">
             <label htmlFor={`${ids}-from`}>從第</label>
@@ -227,24 +281,32 @@ export function ParagraphPickerDialog({
             </button>
           </div>
           <ol className="paragraph-picker-list" aria-label="課文段落">
-            {paragraphs.map((p) => (
-              <li key={p.id}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={chosen.has(p.id)}
-                    onChange={(e) => {
-                      const next = new Set(chosen);
-                      if (e.target.checked) next.add(p.id);
-                      else next.delete(p.id);
-                      change(next);
-                    }}
-                  />
-                  <span className="paragraph-picker-no">第 {p.no} 段</span>
-                  <span lang="en">{preview(p.text)}</span>
-                </label>
-              </li>
-            ))}
+            {runs.map((run) => {
+              if (run.kind === "plain") return renderParagraph(run.items[0]);
+              const runIds = run.items.map((p) => p.id);
+              const state = tickState(runIds, chosen);
+              const head = (
+                <PickerGroupBox
+                  label={run.kind === "group" ? groupLabel(run.group, run.items.length) : frontLabel(run.items.length)}
+                  state={state}
+                  onToggle={(on) => change(toggleMany(chosen, runIds, on))}
+                />
+              );
+              const list = <ol className="paragraph-picker-list">{run.items.map(renderParagraph)}</ol>;
+              return run.kind === "group" ? (
+                <li key={run.key} className="paragraph-picker-group">
+                  <div className="paragraph-picker-group-head">{head}</div>
+                  {list}
+                </li>
+              ) : (
+                <li key={run.key} className="paragraph-picker-group">
+                  <details className="paragraph-picker-front">
+                    <summary>{head}</summary>
+                    {list}
+                  </details>
+                </li>
+              );
+            })}
           </ol>
           <p className="field-hint" role="status">
             已選 {chosen.size} 段（共 {paragraphs.length} 段）

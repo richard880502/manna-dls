@@ -1667,7 +1667,10 @@ interface Material {            // 清單用，不含文字
 }
 interface MaterialDetail extends Material {
   text: string;
-  paragraphs: Array<{ id: string; no: number; text: string; page?: number }>;
+  paragraphs: Array<{ id: string; no: number; text: string; page?: number;
+                     group?: string;    // 題組：同一題組的段落（「第 6 至 10 題為題組」那行、文章與各題）共用，例如 "6-10"（只有考卷）
+                     front?: true;      // 考卷的封面文字（作答注意事項、計分方式、著作權說明）；沒選段落時不納入
+                   }>;
 }
 
 interface MaterialAnnotation {
@@ -4044,7 +4047,7 @@ interface WsTemplateDetail { /* …既有欄位… */
 | 學習單 | `WorksheetState.material.source.selected_ids`／`total_paragraphs`（`PUT /api/worksheets/:id/material-selection`；`POST /api/worksheets` 也可帶 `paragraph_ids` 配 `material_id`） | 產生、重新產生、檢查都只用這些段落 |
 | 目標草擬 | `POST /api/objective-drafts` 的 `paragraph_ids`（配 `material_id`） | 只讀這些段落 |
 
-- `paragraph_ids` 是教材庫那份教材的段落 `id`（`MaterialDetail.paragraphs[].id`），照教材的順序使用；`null` 或空陣列＝全部。最多 1000 個；不在教材裡的 `id` → 400「選的段落不在這份教材裡。請重新選一次。」
+- `paragraph_ids` 是教材庫那份教材的段落 `id`（`MaterialDetail.paragraphs[].id`），照教材的順序使用；`null` 或空陣列＝全部（考卷的 `front` 封面段落除外，除非整份都是封面；要用就明確選它）。最多 1000 個；不在教材裡的 `id` → 400「選的段落不在這份教材裡。請重新選一次。」
 - `PrepSession` 多兩欄：`material_paragraphs`（教材有幾段，沒有教材是 `null`）與 `material_selected`（選的段落還在教材裡的有幾段；全部都用是 `null`）。
 - 備課對話的 `PATCH` 送 `options` 時，已存的 `paragraph_ids` 保留（選段落只用上面的 `PUT`）。
 - 學習單是唯一一份「複本」：沒有教材庫來源（`source.material_id` 是 `null`，例如空白教材）→ 400，請用「換教材」貼上要用的部分。學習單產生中 → 409。

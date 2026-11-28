@@ -121,7 +121,14 @@ pub fn looks_hard_wrapped(lines: &[&str]) -> bool {
 /// at a paragraph's start stands alone. A word hyphenated at the end of a line is rejoined, and
 /// no space is put between lines at a Chinese character.
 pub fn join_wrapped(lines: &[&str], break_on_short: bool) -> Vec<String> {
-    let widest = lines.iter().map(|l| line_width(l)).max().unwrap_or(0) as f32;
+    let widest = lines.iter().map(|l| line_width(l)).max().unwrap_or(0);
+    join_wrapped_within(lines, break_on_short, widest)
+}
+
+/// [`join_wrapped`] measured against a given widest line: a piece of a page (an exam paper's
+/// cover is cut at its bullets first, `materials::exam`) does not know how wide the page is.
+pub fn join_wrapped_within(lines: &[&str], break_on_short: bool, widest: usize) -> Vec<String> {
+    let widest = widest as f32;
     let mut out = Vec::new();
     let mut current = String::new();
     let flush = |current: &mut String, out: &mut Vec<String>| {
