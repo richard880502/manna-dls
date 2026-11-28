@@ -1,26 +1,21 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
-import type { WsAudience, WsExportFormat, WsLevel } from "../../api/types";
+import type { WsExportPart, WsLevel } from "../../api/types";
 import { saveBlob } from "../../lib/download";
-import { Icon } from "../Icon";
+import { Dialog, DialogCancel } from "../Dialog";
 
-/** The four exports, in the order they are listed: students' copy first. */
-const ITEMS: Array<{ audience: WsAudience; format: WsExportFormat; label: string }> = [
-  { audience: "student", format: "docx", label: "學生版 Word" },
-  { audience: "student", format: "pdf", label: "學生版 PDF" },
-  { audience: "teacher", format: "docx", label: "教師版 Word" },
-  { audience: "teacher", format: "pdf", label: "教師版 PDF" },
-];
+const ITEMS = [
+  { id: "student-docx", label: "學生版 Word" },
+  { id: "student-pdf", label: "學生版 PDF" },
+  { id: "teacher-docx", label: "教師版 Word" },
+  { id: "teacher-pdf", label: "教師版 PDF" },
+] as const;
 
-/**
- * 匯出: one button that opens a menu of the four files (學生版／教師版 × Word／PDF), so the teacher
- * never has to wonder which version she gets. Used by the prep session's worksheet card and by the
- * editor page. The file is for the level tab being viewed; with several levels the menu says which.
- */
 export function ExportMenu({
   worksheetId,
   level,
   levelLabel = null,
+  hasPrepSession = false,
   disabled = false,
   beforeExport,
   onError,
@@ -28,147 +23,109 @@ export function ExportMenu({
 }: {
   worksheetId: number;
   level: WsLevel;
-  /** Set when the worksheet has several levels: the menu's first line says 「匯出：基礎版」. */
   levelLabel?: string | null;
+  hasPrepSession?: boolean;
   disabled?: boolean;
-  /** Runs before each export; returns a message when the export must not go on (the editor saves first). */
   beforeExport?: () => Promise<string | null | undefined | void>;
-  /** The failure to show (null clears it); the page puts it where it fits. */
   onError: (message: string | null) => void;
-  /** A short note under the items. */
   footnote?: string;
 }) {
-  const id = useId();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const root = useRef<HTMLSpanElement>(null);
-  const button = useRef<HTMLButtonElement>(null);
-  const items = useRef<Array<HTMLButtonElement | null>>([]);
+  const [selected, setSelected] = useState<WsExportPart[]>([]);
+  const [activity, setActivity] = useState(false);
+  const [activityError, setActivityError] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const returnFocus = useCallback(() => trigger.current, []);
 
-  // Click outside closes (focus stays where the click put it).
   useEffect(() => {
-    if (!open) return undefined;
-    const away = (e: MouseEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
-  }, [open]);
+    if (!open || !hasPrepSession) return undefined;
+    let active = true;
+    api.worksheetExportOptions(worksheetId).then(
+      (options) => { if (active) setActivity(options.activity); },
+      () => { if (active) setActivityError(true); },
+    );
+    return () => { active = false; };
+  }, [open, hasPrepSession, worksheetId]);
 
-  function openAt(index: number) {
-    setOpen(true);
-    // The menu is rendered by the time the frame runs.
-    requestAnimationFrame(() => items.current[index]?.focus());
+  function toggle(part: WsExportPart) {
+    setSelected((parts) => parts.includes(part) ? parts.filter((p) => p !== part) : [...parts, part]);
   }
 
-  function close(refocus: boolean) {
+  async function run() {
+    if (selected.length === 0 || busy) return;
     setOpen(false);
-    if (refocus) button.current?.focus();
-  }
-
-  function moveFocus(to: number) {
-    const n = ITEMS.length;
-    items.current[((to % n) + n) % n]?.focus();
-  }
-
-  async function run(format: WsExportFormat, audience: WsAudience) {
-    close(true);
     setBusy(true);
     onError(null);
     try {
       const failed = await beforeExport?.();
       if (failed) throw new Error(failed);
-      const { blob, filename } = await api.exportWorksheet(worksheetId, { format, level, audience });
+      const single = ITEMS.find(({ id }) => selected.length === 1 && selected[0] === id);
+      const { blob, filename } = single
+        ? await api.exportWorksheet(worksheetId, {
+            format: single.id.endsWith("-pdf") ? "pdf" : "docx",
+            level,
+            audience: single.id.startsWith("student-") ? "student" : "teacher",
+          })
+        : await api.exportWorksheetBundle(worksheetId, level, selected);
       saveBlob(blob, filename);
     } catch (err) {
       onError(err instanceof Error && !("status" in err) ? `沒有匯出：${err.message}` : errorMessage(err));
     } finally {
       setBusy(false);
+      trigger.current?.focus();
     }
   }
 
-  const inactive = disabled || busy;
   return (
-    <span className="export-menu" ref={root}>
+    <>
       <button
-        ref={button}
+        ref={trigger}
         type="button"
         className="secondary-button small-button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? `${id}-menu` : undefined}
-        disabled={inactive}
-        // Opened by click, Enter or Space: focus goes to the first file (the items are not in the tab order).
-        onClick={() => (open ? close(false) : openAt(0))}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            openAt(0);
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            openAt(ITEMS.length - 1);
-          }
+        aria-haspopup="dialog"
+        disabled={disabled || busy}
+        onClick={() => {
+          setSelected([]);
+          setActivity(false);
+          setActivityError(false);
+          setOpen(true);
         }}
       >
         {busy ? "匯出中…" : "匯出"}
-        <Icon name="chevron" className="is-glyph export-caret" />
       </button>
-      {open && !inactive && (
-        <div
-          id={`${id}-menu`}
-          className="export-popup"
-          role="menu"
-          tabIndex={-1}
-          aria-label="匯出"
-          onKeyDown={(e) => {
-            const at = items.current.findIndex((el) => el === document.activeElement);
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              moveFocus(at + 1);
-            } else if (e.key === "ArrowUp") {
-              e.preventDefault();
-              moveFocus(at - 1);
-            } else if (e.key === "Home") {
-              e.preventDefault();
-              moveFocus(0);
-            } else if (e.key === "End") {
-              e.preventDefault();
-              moveFocus(ITEMS.length - 1);
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              close(true);
-            } else if (e.key === "Tab") {
-              setOpen(false);
-            }
-          }}
+      {open && (
+        <Dialog
+          title={levelLabel ? `匯出：${levelLabel}` : "匯出學習單"}
+          initialFocus="input[type=checkbox]"
+          onClose={() => setOpen(false)}
+          returnFocus={returnFocus}
         >
-          {levelLabel && (
-            <div className="export-head" role="presentation">
-              匯出：{levelLabel}
-            </div>
-          )}
-          {ITEMS.map((item, i) => (
-            <button
-              key={item.label}
-              ref={(el) => {
-                items.current[i] = el;
-              }}
-              type="button"
-              role="menuitem"
-              tabIndex={-1}
-              className="export-item"
-              onClick={() => void run(item.format, item.audience)}
-            >
-              {item.label}
+          <fieldset className="ws-export-choices">
+            <legend>要匯出的項目</legend>
+            {ITEMS.map(({ id, label }) => (
+              <label key={id}>
+                <input type="checkbox" checked={selected.includes(id)} onChange={() => toggle(id)} />
+                {label}
+              </label>
+            ))}
+            {activity && (
+              <label>
+                <input type="checkbox" checked={selected.includes("activity")} onChange={() => toggle("activity")} />
+                課堂活動 Word
+              </label>
+            )}
+          </fieldset>
+          {activityError && <p role="status">無法確認是否有可匯出的課堂活動。</p>}
+          {footnote && <p className="quiet-note">{footnote}</p>}
+          <div className="button-row">
+            <DialogCancel />
+            <button type="button" className="primary-button" disabled={selected.length === 0} onClick={() => void run()}>
+              {selected.length > 1 ? "下載 ZIP" : "下載"}
             </button>
-          ))}
-          {footnote && (
-            <div className="export-foot" role="presentation">
-              {footnote}
-            </div>
-          )}
-        </div>
+          </div>
+        </Dialog>
       )}
-    </span>
+    </>
   );
 }

@@ -3,6 +3,8 @@
 //! vocabulary check and DOCX / PDF export. Every worksheet belongs to one teacher; anything else
 //! is a 404.
 
+use std::io::{Cursor, Write};
+
 use axum::body::{Body, Bytes};
 use axum::extract::{Multipart, State};
 use axum::http::header::{
@@ -438,32 +440,10 @@ pub async fn export(
             .unwrap_or_default(),
         Audience::Teacher => format!("_{}", level.label()),
     };
-    let (bytes, content_type, extension) = match format {
-        "docx" => {
-            let bytes =
-                tokio::task::spawn_blocking(move || export::docx_with_images(&sheet, &bank))
-                    .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
-            (bytes, export::DOCX_TYPE, "docx")
-        }
-        "pdf" => {
-            let made = tokio::task::spawn_blocking(move || export::pdf_with_images(&sheet, &bank))
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
-            match made {
-                Ok(bytes) => (bytes, export::PDF_TYPE, "pdf"),
-                Err(ExportError::NoCjkFont) => {
-                    return Err(AppError::Conflict(
-                        "這份學習單裡有中文（例如教師備註或字彙的中文提示），但伺服器沒有中文字型，無法做成 PDF。請改用 DOCX，或請管理者安裝中文字型。".to_string(),
-                    ))
-                }
-                Err(ExportError::Other(e)) => return Err(AppError::Internal(e)),
-            }
-        }
-        _ => return Err(AppError::bad_request("format 需為 docx 或 pdf。")),
-    };
+    let pdf = format == "pdf";
+    let (bytes, content_type) = render_export(sheet, bank, pdf).await?;
     let name = format!(
-        "{}{version}_{}.{extension}",
+        "{}{version}_{}.{format}",
         if ws.filename.trim().is_empty() {
             "學習單"
         } else {
@@ -482,14 +462,157 @@ pub async fn export(
         }),
     )
     .await?;
-    Ok((
+    Ok(export_download(&name, content_type, bytes))
+}
+
+async fn render_export(
+    sheet: Sheet,
+    images: export::ImageBank,
+    pdf: bool,
+) -> AppResult<(Vec<u8>, &'static str)> {
+    tokio::task::spawn_blocking(move || {
+        if !pdf {
+            return Ok((export::docx_with_images(&sheet, &images)?, export::DOCX_TYPE));
+        }
+        match export::pdf_with_images(&sheet, &images) {
+            Ok(bytes) => Ok((bytes, export::PDF_TYPE)),
+            Err(ExportError::NoCjkFont) => Err(AppError::Conflict(
+                "這份學習單裡有中文（例如教師備註或字彙的中文提示），但伺服器沒有中文字型，無法做成 PDF。請改用 DOCX，或請管理者安裝中文字型。".to_string(),
+            )),
+            Err(ExportError::Other(e)) => Err(AppError::Internal(e)),
+        }
+    })
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?
+}
+
+fn export_download(name: &str, content_type: &str, bytes: Vec<u8>) -> Response {
+    (
         [
             (CONTENT_TYPE, content_type.to_string()),
-            (CONTENT_DISPOSITION, export::content_disposition(&name)),
+            (CONTENT_DISPOSITION, export::content_disposition(name)),
         ],
         bytes,
     )
-        .into_response())
+        .into_response()
+}
+
+/// The latest available class activity (including a legacy kit's plan) of this worksheet's
+/// own prep session. The ownership and active-session predicates also protect standalone exports.
+async fn export_activity(
+    db: &sqlx::PgPool,
+    worksheet_id: i64,
+    teacher_id: i64,
+) -> AppResult<Option<(String, crate::prep::ActivityPlan)>> {
+    let row: Option<(String, sqlx::types::Json<crate::prep::ActivityPlan>)> = sqlx::query_as(
+        "SELECT s.title, t.result
+         FROM worksheets w
+         JOIN prep_sessions s ON s.id = w.prep_session_id
+         JOIN prep_turns t ON t.session_id = s.id
+         WHERE w.id = $1 AND w.teacher_id = $2 AND s.teacher_id = $2
+           AND w.deleted_at IS NULL AND s.deleted_at IS NULL
+           AND t.kind IN ('activity', 'kit') AND t.status <> 'running'
+           AND jsonb_typeof(t.result->'steps') = 'array'
+         ORDER BY t.seq DESC LIMIT 1",
+    )
+    .bind(worksheet_id)
+    .bind(teacher_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(row.map(|(title, plan)| (title, plan.0)))
+}
+
+pub async fn export_options(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    store::owned(&state.db, id, teacher.id()).await?;
+    Ok(Json(json!({
+        "activity": export_activity(&state.db, id, teacher.id()).await?.is_some(),
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct ExportBundleQuery {
+    parts: String,
+    level: Option<String>,
+}
+
+pub async fn export_bundle(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+    ApiQuery(q): ApiQuery<ExportBundleQuery>,
+) -> AppResult<Response> {
+    let db = &state.db;
+    let ws = store::owned(db, id, teacher.id()).await?;
+    let latest = store::latest(db, id).await?;
+    let mut parts: Vec<&str> = Vec::new();
+    for part in q.parts.split(',') {
+        if !matches!(
+            part,
+            "student-docx" | "student-pdf" | "teacher-docx" | "teacher-pdf" | "activity"
+        ) {
+            return Err(AppError::bad_request(
+                "請選擇要匯出的學生版、教師版或課堂活動。",
+            ));
+        }
+        if !parts.contains(&part) {
+            parts.push(part);
+        }
+    }
+    let mut files = Vec::with_capacity(parts.len());
+    for part in &parts {
+        if *part == "activity" {
+            let (title, plan) = export_activity(db, id, teacher.id())
+                .await?
+                .ok_or_else(|| AppError::Conflict("這份備課沒有可匯出的課堂活動。".to_string()))?;
+            let bytes =
+                tokio::task::spawn_blocking(move || crate::prep::kit::activity_docx(&title, &plan))
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
+            files.push(("課堂活動.docx".to_string(), export::DOCX_TYPE, bytes));
+            continue;
+        }
+        let (audience, format) = part.split_once('-').expect("validated export part");
+        let sheet = sheet_with_images(
+            &state,
+            &ws,
+            &latest.content,
+            &SheetQuery {
+                level: q.level.clone(),
+                audience: Some(audience.to_string()),
+                format: None,
+            },
+        )
+        .await?;
+        let bank = images::bank_for(&state, id, &sheet).await?;
+        let name = format!("{}.{format}", sheet.audience.label());
+        let (bytes, content_type) = render_export(sheet, bank, format == "pdf").await?;
+        files.push((name, content_type, bytes));
+    }
+    let (name, content_type, bytes) = if files.len() == 1 {
+        files.pop().expect("one export")
+    } else {
+        let bytes = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+            let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            for (name, _, bytes) in files {
+                zip.start_file(name, options)?;
+                zip.write_all(&bytes)?;
+            }
+            Ok(zip.finish()?.into_inner())
+        })
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))??;
+        let name = format!("{}_匯出.zip", crate::worksheet::safe_filename(&ws.title));
+        (name, "application/zip", bytes)
+    };
+    log_usage(db, teacher.id(), "worksheet_bundle_exported", json!({
+        "worksheet_id": id, "version_no": latest.version_no, "parts": parts, "bytes": bytes.len(),
+    })).await?;
+    Ok(export_download(&name, content_type, bytes))
 }
 
 /// `GET /api/worksheets/:id/thumbnail`: page 1 of the student PDF (default level, pictures

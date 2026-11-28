@@ -254,6 +254,18 @@ async fn a_sample_becomes_a_template_and_the_first_turn_follows_it() {
     let done = wait(&app, &t, id).await;
     assert_eq!(last(&done)["status"], "done");
     assert_eq!(done["turns"][0]["template"]["id"], template_id);
+    assert_eq!(done["next"], json!(["tiered"]));
+    let (s, v) = app
+        .post(
+            &format!("/api/prep-sessions/{id}/turns"),
+            Some(&t),
+            json!({ "kind": "tiered", "worksheet_id": ws_id }),
+        )
+        .await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let done = wait(&app, &t, id).await;
+    assert_eq!(last(&done)["status"], "done", "{done}");
+    assert_eq!(last(&done)["template"], Value::Null);
 }
 
 #[tokio::test]

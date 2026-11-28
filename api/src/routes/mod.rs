@@ -284,6 +284,14 @@ pub fn api_router() -> Router<AppState> {
             post(worksheet_vocab::apply),
         )
         .route("/worksheets/{id}/export", get(worksheets::export))
+        .route(
+            "/worksheets/{id}/export-options",
+            get(worksheets::export_options),
+        )
+        .route(
+            "/worksheets/{id}/export-bundle",
+            get(worksheets::export_bundle),
+        )
         .route("/worksheets/{id}/thumbnail", get(worksheets::thumbnail))
         // 學習單的圖片
         .route("/worksheets/{id}/images", get(worksheets::images_state))

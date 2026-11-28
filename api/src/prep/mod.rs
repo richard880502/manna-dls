@@ -55,15 +55,10 @@ pub const KINDS: [&str; 10] = [
     KIND_KIT,
     KIND_CHAT,
 ];
-/// The next-step chips, in the order they are offered (all of them need material).
-/// `assessment` and `resources` stay valid kinds but are no longer suggested.
-pub const NEXT_KINDS: [&str; 5] = [
-    KIND_COMPREHENSION,
-    KIND_TIERED,
-    KIND_ACTIVITY,
-    KIND_KIT,
-    KIND_WORKSHEET,
-];
+/// A worksheet that can serve as the starting design for differentiation.
+pub fn is_differentiation_source(kind: &str) -> bool {
+    matches!(kind, KIND_WORKSHEET | KIND_ASSESSMENT | KIND_COMPREHENSION)
+}
 
 pub const STATUS_RUNNING: &str = "running";
 pub const STATUS_DONE: &str = "done";

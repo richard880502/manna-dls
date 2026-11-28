@@ -247,10 +247,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
     let turn = last(&done);
     assert_eq!(turn["status"], "done", "{turn}");
     assert_eq!(turn["worksheet"]["running"], false);
-    assert_eq!(
-        done["next"],
-        json!(["tiered", "activity", "kit", "worksheet"])
-    );
+    assert_eq!(done["next"], json!(["tiered"]));
     let ws = worksheet(&app, &t, &turn).await;
     let s = &ws["settings"];
     assert_eq!(s["output"], "comprehension");
@@ -290,7 +287,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
     let done = wait(&app, &t, id).await;
     let turn = last(&done);
     assert_eq!(turn["status"], "done", "{turn}");
-    assert_eq!(done["next"], json!(["activity", "kit", "worksheet"]));
+    assert_eq!(done["next"], json!([]));
     let ws = worksheet(&app, &t, &turn).await;
     assert_eq!(ws["settings"]["output"], "tiered");
     assert_eq!(ws["request"], request);
@@ -340,7 +337,7 @@ async fn comprehension_and_tiered_turns_carry_the_options_and_the_request() {
         json!(["選擇題", "簡答題"])
     );
     assert_eq!(ws["request"], request);
-    assert_eq!(done["next"], json!(["activity", "kit"]));
+    assert_eq!(done["next"], json!([]));
 }
 
 #[tokio::test]
@@ -766,11 +763,7 @@ async fn a_kit_makes_a_plan_and_a_tiered_worksheet_and_exports_them() {
             "Make Something New"
         ]
     );
-    // The kit's plan is not the 課堂活動 step.
-    assert_eq!(
-        done["next"],
-        json!(["comprehension", "tiered", "activity", "worksheet"])
-    );
+    assert_eq!(done["next"], json!([]));
 
     fix_student_order(&app, ws["id"].as_i64().unwrap()).await;
     // The download.
@@ -982,8 +975,7 @@ async fn a_kit_with_a_failed_part_keeps_the_other() {
     assert_eq!(r.status, StatusCode::OK);
     let xml = document_xml(r.body);
     assert!(xml.contains("課堂活動沒有完成") && xml.contains("學生版（C 版）"));
-    // A failed kit is offered again.
-    assert!(done["next"].as_array().unwrap().contains(&json!("kit")));
+    assert_eq!(done["next"], json!([]));
 
     // Both fail: one message for both, nothing to download.
     let session = create(

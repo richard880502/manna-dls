@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use super::selfcheck::{self, SiopCheck};
 use super::{
     is_worksheet_kind, kit_error, SessionOptions, KIND_ACTIVITY, KIND_KIT, KIND_REVISE,
-    KIND_WORKSHEET, NEXT_KINDS, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING,
+    KIND_TIERED, KIND_WORKSHEET, STATUS_DONE, STATUS_FAILED, STATUS_RUNNING,
 };
 use crate::error::{AppError, AppResult};
 use crate::progress::{self, Progress, RunStatus, Step, StepStatus, Stored};
@@ -1185,12 +1185,17 @@ pub async fn session(state: &AppState, id: i64) -> AppResult<Session> {
         out.push(turn);
     }
     let running = out.iter().any(|t| t.status == STATUS_RUNNING);
-    // Every suggested kind needs the material.
-    let next = if summary.material.is_some() {
-        NEXT_KINDS
-            .into_iter()
-            .filter(|k| !out.iter().any(|t| t.kind == *k && t.status == STATUS_DONE))
-            .collect()
+    let next = if summary.material.is_some()
+        && out.iter().any(|t| {
+            super::is_differentiation_source(&t.kind)
+                && t.status == STATUS_DONE
+                && t.worksheet.as_ref().is_some_and(|w| !w.running)
+        })
+        && !out
+            .iter()
+            .any(|t| t.kind == KIND_TIERED && t.status == STATUS_DONE)
+    {
+        vec![KIND_TIERED]
     } else {
         Vec::new()
     };

@@ -117,6 +117,7 @@ import type {
   WorksheetState,
   WorksheetSummary,
   WsExportQuery,
+  WsExportPart,
   WsJobsState,
   WsLevel,
   WsVocabApplied,
@@ -612,6 +613,13 @@ export const api = {
     }),
   exportWorksheet: (id: number, query: WsExportQuery) =>
     download(`/worksheets/${id}/export`, { ...query }, `worksheet.${query.format}`),
+  worksheetExportOptions: (id: number) => get<{ activity: boolean }>(`/worksheets/${id}/export-options`),
+  exportWorksheetBundle: (id: number, level: WsLevel, parts: WsExportPart[]) =>
+    download(
+      `/worksheets/${id}/export-bundle`,
+      { level, parts: parts.join(",") },
+      `worksheet.${parts.length > 1 ? "zip" : parts[0]?.endsWith("-pdf") ? "pdf" : "docx"}`,
+    ),
   /** 設定或拿掉版型；伺服器依版型重設 settings（拿掉時 settings 不動） */
   setWorksheetTemplate: (id: number, templateId: number | null) =>
     put<WorksheetState>(`/worksheets/${id}`, { template_id: templateId }),

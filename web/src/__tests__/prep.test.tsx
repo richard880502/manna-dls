@@ -499,7 +499,7 @@ describe("首頁 (the quick box, the tools, the latest sessions)", () => {
       "我想逐步設計跟著七個步驟一步步設計，每一步由你決定，Manna 從旁建議",
     ]);
     // The other four tools are named in one quiet line, not as tiles.
-    expect(screen.getByText(/^閱讀理解題、差異化學習單、課堂活動、教學套件：/)).toBeInTheDocument();
+    expect(screen.getByText(/^學習單做好後，可以接著設計差異化學習單/)).toBeInTheDocument();
     // One selector, no second list of the tools on the page.
     expect(screen.queryByRole("region", { name: "Manna 可以幫你做" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "要做什麼" })).not.toBeInTheDocument();
@@ -847,16 +847,17 @@ describe("備課對話 (session page)", () => {
     expect(screen.queryByRole("button", { name: "匯出 DOCX" })).not.toBeInTheDocument();
     const exportButton = screen.getByRole("button", { name: /匯出/ });
     expect(exportButton).toBeEnabled();
-    expect(exportButton).toHaveAttribute("aria-haspopup", "menu");
+    expect(exportButton).toHaveAttribute("aria-haspopup", "dialog");
     await user.click(exportButton);
-    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+    expect(within(screen.getByRole("dialog", { name: /匯出/ })).getAllByRole("checkbox").map((i) => i.closest("label")?.textContent)).toEqual([
       "學生版 Word",
       "學生版 PDF",
       "教師版 Word",
       "教師版 PDF",
     ]);
     // The student version is shown, and 教師版 PDF still asks for the teacher file of this level.
-    await user.click(screen.getByRole("menuitem", { name: "教師版 PDF" }));
+    await user.click(screen.getByRole("checkbox", { name: "教師版 PDF" }));
+    await user.click(screen.getByRole("button", { name: "下載" }));
     await waitFor(() => expect(api.callsTo("GET", "/api/worksheets/11/export")).toHaveLength(1));
     const exportUrl = api.callsTo("GET", "/api/worksheets/11/export")[0]!.url;
     expect(new URLSearchParams(exportUrl.split("?")[1]).toString()).toBe("format=pdf&level=standard&audience=teacher");
@@ -961,11 +962,14 @@ describe("備課對話 (session page)", () => {
       request: "怎麼開場？",
       result: { answer: "先問經驗。", follow_ups: ["給我一段英文開場白"] },
     });
-    const base = session([askTurn], { next: ["comprehension", "tiered", "activity", "kit", "worksheet"] });
+    const wsTurn = turn("worksheet", { id: 2, worksheet: { id: 11, title: "一般版", version_no: 2, running: false } });
+    const base = session([askTurn, wsTurn], { next: ["comprehension", "tiered", "activity", "kit", "worksheet"] });
     const api = mockApi({
       ...baseRoutes(),
       [`GET ${S7}`]: base,
       [`POST ${S7}/turns`]: base,
+      "GET /api/worksheets/11": worksheet(),
+      "GET /api/worksheets/11/sheet": sheetRoute,
     });
     const user = userEvent.setup();
     renderApp("/prep/7");
@@ -975,17 +979,10 @@ describe("備課對話 (session page)", () => {
 
     expect(screen.getByText("接下來可以：")).toBeInTheDocument();
     const next = within(screen.getByRole("group", { name: "接下來可以" }));
-    expect(next.getAllByRole("button").map((b) => b.textContent)).toEqual([
-      "閱讀理解題",
-      "差異化學習單",
-      "課堂活動",
-      "教學套件",
-      "完整學習單",
-    ]);
-    // The chip reads the tool's name; the request keeps the label the server knows.
-    await user.click(next.getByRole("button", { name: "完整學習單" }));
+    expect(next.getAllByRole("button").map((b) => b.textContent)).toEqual(["差異化學習單"]);
+    await user.click(next.getByRole("button", { name: "差異化學習單" }));
     await waitFor(() => expect(api.callsTo("POST", `${S7}/turns`)).toHaveLength(2));
-    expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "worksheet", request: "學習單" });
+    expect(api.lastBody("POST", `${S7}/turns`)).toEqual({ kind: "tiered", request: "差異化學習單", worksheet_id: 11 });
   });
 
   it("the bottom bar sends a chat turn on Enter; Shift+Enter is a new line", async () => {
@@ -1041,7 +1038,7 @@ describe("備課對話 (session page)", () => {
     expect(screen.getByText("Manna 做完後就能送出")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "送出" })).toBeDisabled();
     expect(bar.closest(".prep-composer")).not.toHaveAttribute("data-disabled");
-    expect(within(screen.getByRole("group", { name: "接下來可以" })).getByRole("button", { name: "完整學習單" })).toBeDisabled();
+    expect(screen.queryByRole("group", { name: "接下來可以" })).not.toBeInTheDocument();
   });
 
   it("keeps the focus in the box when the turn finishes", async () => {

@@ -601,7 +601,7 @@ function QuickBox() {
         ))}
       </div>
       <p className="home-others">
-        閱讀理解題、差異化學習單、課堂活動、教學套件：學習單做好後，在對話裡接著做；也可以直接在上面的框寫出來。
+        學習單做好後，可以接著設計差異化學習單。其他需求也可以直接寫在上面的框裡。
       </p>
       {fullFormPath && (
         <p className="home-more">

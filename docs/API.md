@@ -1234,6 +1234,8 @@ interface WsSheet {
 | POST | `/api/worksheets/:id/checks/:check_id/suggest` | `{ action, words }` | `WsVocabSuggestions`（見「詞彙級別檢查：處理超出級別的字」） |
 | POST | `/api/worksheets/:id/checks/:check_id/apply` | `WsVocabApplyRequest` | `WsVocabApplied` |
 | GET | `/api/worksheets/:id/export` | `?format=docx\|pdf&level=&audience=` | 檔案本體（`Content-Disposition: attachment`）。`level` 不在這份學習單的版本裡 → 400 |
+| GET | `/api/worksheets/:id/export-options` | — | `{activity: boolean}`，同一備課對話是否有已產出的課堂活動或舊教學套件的教學流程 |
+| GET | `/api/worksheets/:id/export-bundle` | `?level=&parts=student-docx,teacher-pdf,activity` | 按所選項目下載。可選 `student-docx`、`student-pdf`、`teacher-docx`、`teacher-pdf`、`activity`（Word）。選多項回一個 ZIP；沒有可匯出的活動卻選了它 → 409 |
 | GET | `/api/worksheets/:id/thumbnail` | – | 學生版第 1 頁的預覽圖（JPEG，寬 480 px），給「我的作品」的卡片。見「我的作品：卡片預覽」 |
 
 ## 兩個入口
@@ -2011,8 +2013,7 @@ interface PrepTurn {
 interface PrepSession extends PrepSessionSummary {
   turns: PrepTurn[];               // 依 seq
   running: boolean;
-  next: PrepKind[];                // 建議的下一步：[comprehension, tiered, activity, kit, worksheet] 中這個對話還沒有 done 的，
-                                   // 依這個順序；只在有教材時出現（沒有教材時是 []）。assessment、resources 仍是有效的 kind，但不再建議
+  next: PrepKind[];                // 有教材且學習單完成後，建議 ["tiered"]；已完成差異化學習單或尚無來源時是 []
   options: PrepSessionOptions;     // 只在 PrepSession（列表的 PrepSessionSummary 沒有）
   material_paragraphs: number | null;  // 教材有幾段（沒有教材是 null）
   material_selected: number | null;    // 選的段落還在教材裡的有幾段；全部都用是 null
@@ -2464,7 +2465,7 @@ prompt key：`worksheet_bloom_level`、`worksheet_bloom_check`、`worksheet_task
 - 新的輪次 `comprehension`、`tiered`（`settings.output` 為該值的學習單，不用對話的版型）與 `kit`（教學套件：活動規劃＋差異化學習單，兩者都結束才不是 `running`；任何一個失敗是 `failed`，成功的部分保留）。
 - 對話的出題選項 `options: { bloom?, question_count?, bloom_counts?, answer_formats?, objective? }`（建立與 PATCH 都可以給，用本節的驗證規則），和對話的「教師的要求」一起帶進對話做的每一份學習單（`settings` 的同名欄位與 `request`）；`objective` 也送進活動規劃。
 - `prep_activity` 第 2 版：每一步多了 `bloom`（≤3，enum，依 Bloom 順序），prompt 多了 `{{teacher_objective}}`、`{{teacher_request}}`。
-- `next` 的順序：`comprehension, tiered, activity, kit, worksheet`（都需要教材）。
+- 「接下來可以」只建議 `tiered`。建立該輪可帶同一備課的 `worksheet_id`，以已完成的一般版題目為設計參考。
 - 教學套件下載：`GET /api/prep-sessions/:id/turns/:turn_id/kit?format=docx`，一份 DOCX：教學流程、每個版本的學生版、教師版（答案與 Bloom 標記）。
 - `revise` 適用最新一份任何種類的學習單；改過的題目保留原本的版本（改版前的分層練習不會變成三個版本都有）。
 - 資料：`prep_sessions.options`（JSONB，預設 `{}`）；`prep_turns.kind` 多三個值；`prompt_versions` 新增 `prep_activity` 第 2 版（第 1 版保留）。

@@ -49,11 +49,7 @@ export const KIND_LABEL: Record<PrepKind, string> = {
   kit: "教學套件",
 };
 
-/**
- * 接下來可以 on the session page, in the server's `next` order (comprehension, tiered, activity,
- * kit, worksheet). assessment and resources are still valid kinds, no longer suggested; an older
- * server may still list them.
- */
+/** Labels for the results of past prep turns. */
 export const NEXT_LABEL: Record<"comprehension" | "tiered" | "activity" | "kit" | "worksheet" | "assessment" | "resources", string> = {
   comprehension: "閱讀理解題",
   tiered: "差異化學習單",
@@ -63,8 +59,6 @@ export const NEXT_LABEL: Record<"comprehension" | "tiered" | "activity" | "kit" 
   assessment: "設計評量",
   resources: "找教學資源",
 };
-export type NextKind = keyof typeof NEXT_LABEL;
-export const isNextKind = (kind: PrepKind): kind is NextKind => kind in NEXT_LABEL;
 
 export const ASK_PLACEHOLDER = "說說你想做什麼，例如：幫我想三個這一課的暖身活動";
 export const REVISE_PLACEHOLDER = "針對上面產出的內容，你有什麼想修改的嗎？";

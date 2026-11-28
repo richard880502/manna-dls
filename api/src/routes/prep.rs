@@ -24,8 +24,9 @@ use crate::prep::selfcheck::{self, SiopCheck};
 use crate::prep::store::{self, Session, SessionRow, Summary};
 use crate::prep::{
     chip_label, is_worksheet_kind, ActivityPlan, SessionOptions, AUTO_TITLE_CHARS, KINDS,
-    KIND_ACTIVITY, KIND_ASK, KIND_CHAT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_WORKSHEET,
-    MAX_REQUEST_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_RUNNING,
+    KIND_ACTIVITY, KIND_ASK, KIND_CHAT, KIND_KIT, KIND_RESOURCES, KIND_REVISE, KIND_TIERED,
+    KIND_WORKSHEET, MAX_REQUEST_CHARS, MAX_TITLE_CHARS, MAX_TOPIC_CHARS, STATUS_DONE,
+    STATUS_RUNNING,
 };
 use crate::serde_support::double_option;
 use crate::teaching_context::owned_class;
@@ -737,8 +738,8 @@ pub struct CreateTurn {
     /// (at most 2; only a revise takes them).
     #[serde(default)]
     pub image_ids: Vec<i64>,
-    /// `chat`: the worksheet the turn works on, when it is not the session's latest one. A
-    /// worksheet of another session or teacher is a 404.
+    /// `chat`: the target worksheet. `tiered`: the completed worksheet to differentiate.
+    /// A worksheet of another session or teacher is a 404.
     #[serde(default)]
     pub worksheet_id: Option<i64>,
 }
@@ -767,8 +768,10 @@ pub async fn create_turn(
     if !req.image_ids.is_empty() && kind != KIND_REVISE && kind != KIND_CHAT {
         return Err(AppError::bad_request("只有對話的訊息可以附上圖片。"));
     }
-    if req.worksheet_id.is_some() && kind != KIND_CHAT {
-        return Err(AppError::bad_request("只有對話可以指定要處理的學習單。"));
+    if req.worksheet_id.is_some() && !matches!(kind, KIND_CHAT | KIND_TIERED) {
+        return Err(AppError::bad_request(
+            "只有對話或差異化學習單可以指定來源學習單。",
+        ));
     }
     let image_ids = prep_images::check_ids(db, teacher.id(), id, &req.image_ids).await?;
     let has_material = session.material_id.is_some();
@@ -793,6 +796,22 @@ pub async fn create_turn(
             } else {
                 MSG_NEEDS_MATERIAL
             }));
+        }
+        KIND_TIERED => {
+            if let Some(wid) = req.worksheet_id {
+                if !turns.iter().any(|t| {
+                    t.worksheet_id == Some(wid)
+                        && t.status == STATUS_DONE
+                        && crate::prep::is_differentiation_source(&t.kind)
+                }) {
+                    return Err(AppError::not_found("找不到可用來做差異化的學習單。"));
+                }
+                ws_store::owned(db, wid, teacher.id()).await?;
+                if ws_ai::jobs(&state, wid).await?.1 {
+                    return Err(AppError::Conflict(MSG_WORKSHEET_RUNNING.to_string()));
+                }
+                worksheet_id = Some(wid);
+            }
         }
         KIND_CHAT => {
             // The worksheet asked for, which must be one of this session's; else the latest.
