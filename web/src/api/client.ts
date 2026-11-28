@@ -104,6 +104,10 @@ import type {
   UpdateLibraryMaterialRequest,
   UpdateLessonRequest,
   UpdateUnitRequest,
+  UnitDeletePreview,
+  UnitDeleted,
+  LessonDeletePreview,
+  LessonDeleted,
   VocabularyAnalysis,
   VocabularyAnalyzeRequest,
   VocabularyItemsQuery,
@@ -407,6 +411,9 @@ export const api = {
   classProfileDefault: () => get<ClassProfileDefault>("/units/class-profile-default"),
   getUnit: (unitId: number) => get<Unit>(`/units/${unitId}`),
   updateUnit: (unitId: number, body: UpdateUnitRequest) => put<Unit>(`/units/${unitId}`, body),
+  unitDeletePreview: (unitId: number) => get<UnitDeletePreview>(`/units/${unitId}/delete-preview`),
+  /** 軟刪除：單元、課例與連到課例的學習單一起從畫面移除，研究紀錄保留 */
+  deleteUnit: (unitId: number) => del<UnitDeleted>(`/units/${unitId}`),
   listMaterials: (unitId: number) => get<UnitMaterial[]>(`/units/${unitId}/materials`),
   createMaterial: (unitId: number, body: CreateMaterialRequest) =>
     post<UnitMaterial>(`/units/${unitId}/materials`, body),
@@ -453,6 +460,9 @@ export const api = {
     get<LessonDetail>(`/lessons/${lessonId}`, classQuery(classId)),
   updateLesson: (lessonId: number, body: UpdateLessonRequest, classId?: number | null) =>
     put<LessonDetail>(`/lessons/${lessonId}`, body, classQuery(classId)),
+  lessonDeletePreview: (lessonId: number) => get<LessonDeletePreview>(`/lessons/${lessonId}/delete-preview`),
+  /** 軟刪除：課例與連到它的學習單一起從畫面移除，研究紀錄保留 */
+  deleteLesson: (lessonId: number) => del<LessonDeleted>(`/lessons/${lessonId}`),
   saveLessonVersion: (lessonId: number, body: SaveLessonVersionRequest) =>
     post<LessonVersion>(`/lessons/${lessonId}/versions`, body),
   setCoreLinks: (lessonId: number, focusIds: number[]) =>

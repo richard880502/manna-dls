@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { api, errorMessage } from "../api/client";
 import type { CreateUnitRequest, SchoolClass, Unit } from "../api/types";
 import { ErrorText, Loading } from "../components/common";
 import { Dialog, useDialogGuard } from "../components/Dialog";
+import { MoreMenu } from "../components/library/Cards";
+import { DeleteUnitDialog } from "../components/unit/DeleteDialogs";
+import { RenameDialog } from "../components/unit/RenameDialog";
 import { useApp } from "../context/AppContext";
 import { usedByText } from "../lib/classes";
 import { UNIT_IDEAS_STATUS } from "../lib/labels";
@@ -144,17 +147,24 @@ function NewUnitForm({
   );
 }
 
+/** Where the unit page sends the teacher after deleting its unit: said once here. */
+export interface LibraryLocationState {
+  deletedUnit?: string;
+}
+
 /**
  * 備課庫 (`/units`): every unit of the teacher as ruled rows (lessons, 單元想法, which classes use
- * it), with 加到班級 to reuse a unit in another class. It is not in the top bar: it is reached
- * from 班級 (the home page and the class page's 「從備課庫加入單元」). Materials have their own
- * page (教材). Coming here leaves the class context: a unit opened from the library has no class
- * in play unless only one class uses it.
+ * it), with 加到班級 to reuse a unit in another class, and 改名 / 刪除 behind each row's ⋯
+ * (刪除 says what goes with the unit first). It is not in the top bar: it is reached from 班級
+ * (the home page and the class page's 「從備課庫加入單元」). Materials have their own page (教材).
+ * Coming here leaves the class context: a unit opened from the library has no class in play
+ * unless only one class uses it.
  */
 export function LibraryPage() {
   useDocumentTitle("備課庫");
   const { setCurrentClassId } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
   const [units, setUnits] = useState<Unit[] | null>(null);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -164,10 +174,30 @@ export function LibraryPage() {
   const backToOpener = useCallback(() => opener.current, []);
   /** The unit whose 加到班級 choices are open. */
   const [assigning, setAssigning] = useState<number | null>(null);
+  const [renaming, setRenaming] = useState<Unit | null>(null);
+  const [deleting, setDeleting] = useState<Unit | null>(null);
+  const [notice, setNotice] = useState<string | null>(() => {
+    const deleted = (location.state as LibraryLocationState | null)?.deletedUnit;
+    return deleted ? `已刪除單元「${deleted}」。` : null;
+  });
+  /** A row's ⋯: focus goes back there, or to the heading once the row is gone. */
+  const rowOpener = useRef<HTMLElement | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const backToRow = useCallback(
+    () => (rowOpener.current?.isConnected ? rowOpener.current : heading.current),
+    [],
+  );
 
   useEffect(() => {
     setCurrentClassId(null);
   }, [setCurrentClassId]);
+
+  // The 已刪除 line is said once: a reload or Back does not bring it again.
+  useEffect(() => {
+    if ((location.state as LibraryLocationState | null)?.deletedUnit) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.state, location.pathname, navigate]);
 
   useEffect(() => {
     let alive = true;
@@ -211,7 +241,9 @@ export function LibraryPage() {
       </p>
       <div className="head-row page-head">
         <div>
-          <h1 id="library-heading">備課庫</h1>
+          <h1 id="library-heading" ref={heading} tabIndex={-1}>
+            備課庫
+          </h1>
           <p className="lead">你準備好的單元。一份設計可以給好幾個班用，在哪一班改都是同一份。</p>
         </div>
         <button
@@ -241,6 +273,41 @@ export function LibraryPage() {
         </Dialog>
       )}
 
+      {notice && (
+        <p className="quiet-note" role="status">
+          {notice}
+        </p>
+      )}
+      {renaming && (
+        <RenameDialog
+          title="改單元名稱"
+          label="單元名稱"
+          initial={renaming.title}
+          emptyMessage="請輸入單元名稱。"
+          returnFocus={backToRow}
+          onClose={() => setRenaming(null)}
+          onSave={async (title) => {
+            const saved = await api.updateUnit(renaming.id, { title });
+            setUnits((prev) => (prev ?? []).map((u) => (u.id === saved.id ? { ...u, title: saved.title } : u)));
+            setRenaming(null);
+            setNotice(null);
+          }}
+        />
+      )}
+      {deleting && (
+        <DeleteUnitDialog
+          unit={deleting}
+          returnFocus={backToRow}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            setUnits((prev) => (prev ?? []).filter((u) => u.id !== deleting.id));
+            if (assigning === deleting.id) setAssigning(null);
+            setDeleting(null);
+            setNotice(`已刪除單元「${deleting.title}」。`);
+          }}
+        />
+      )}
+
       {loadError && <ErrorText message={loadError} />}
       {!units && !loadError && <Loading />}
       {units && units.length === 0 && <p className="empty-line">備課庫還沒有單元。建立第一個單元就能開始備課。</p>}
@@ -263,7 +330,7 @@ export function LibraryPage() {
                     ]}
                   />
                 </div>
-                <p className="side">
+                <div className="side">
                   <span>{usedByText(used)}</span>
                   <button
                     type="button"
@@ -274,7 +341,26 @@ export function LibraryPage() {
                   >
                     加到班級
                   </button>
-                </p>
+                  <MoreMenu
+                    label={`更多動作「${unit.title}」`}
+                    items={[
+                      {
+                        label: "改名",
+                        onSelect: (from) => {
+                          rowOpener.current = from;
+                          setRenaming(unit);
+                        },
+                      },
+                      {
+                        label: "刪除",
+                        onSelect: (from) => {
+                          rowOpener.current = from;
+                          setDeleting({ ...unit, classes: used });
+                        },
+                      },
+                    ]}
+                  />
+                </div>
                 {assigning === unit.id && (
                   <AssignClasses unit={{ ...unit, classes: used }} classes={classes} onChanged={onAssignChanged} />
                 )}

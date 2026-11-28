@@ -355,6 +355,34 @@ export interface UpdateLessonRequest {
   my_example?: string;
 }
 
+/** GET /api/units/:id/delete-preview: what deleting the unit takes with it (its classes are on Unit). */
+export interface UnitDeletePreview {
+  lessons: number;
+  /** The teacher's worksheets linked to those lessons. */
+  worksheets: number;
+  /** 上課紀錄 of those lessons (they stop showing). */
+  runs: number;
+}
+
+/** GET /api/lessons/:id/delete-preview */
+export interface LessonDeletePreview {
+  worksheets: number;
+  runs: number;
+}
+
+/** DELETE /api/units/:id (soft delete: the research record stays) */
+export interface UnitDeleted {
+  ok: true;
+  lessons_deleted: number;
+  worksheets_deleted: number;
+}
+
+/** DELETE /api/lessons/:id */
+export interface LessonDeleted {
+  ok: true;
+  worksheets_deleted: number;
+}
+
 export interface CreateMaterialRequest {
   text: string;
   filename?: string;

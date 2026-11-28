@@ -248,7 +248,7 @@ export function PrepListPage() {
 
   /** The delete controls of an item: the same in both views (none for a 逐步設計 lesson). */
   function deleteControl(item: Item) {
-    // Lessons have no delete in the API: their cards carry no 刪除.
+    // A lesson is deleted on its unit page, where what goes with it (worksheets, 上課紀錄) is said first.
     if (item.type === "lesson") return undefined;
     return (
       <DeleteControl

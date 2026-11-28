@@ -11,9 +11,10 @@ use crate::auth::AuthTeacher;
 use crate::error::{ApiJson, ApiPath, AppError, AppResult};
 use crate::preferences::{self, PrepRoute};
 use crate::routes::classes::{assign_unit, MSG_CLASS_ARCHIVED};
+use crate::routes::lessons;
 use crate::routes::preferences::check_class_profile;
 use crate::settings;
-use crate::teaching_context::owned_class;
+use crate::teaching_context::{owned_class, owned_unit};
 use crate::AppState;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -341,4 +342,84 @@ pub async fn update(
     }
     tx.commit().await?;
     Ok(Json(load(&state, teacher.id(), id).await?))
+}
+
+// ---------------------------------------------------------------- delete (soft)
+
+/// What deleting a unit takes with it (`GET /api/units/:id/delete-preview`), so the confirmation
+/// can say it before anything is sent. The classes it leaves are already on [`Unit::classes`].
+#[derive(Debug, Serialize)]
+pub struct UnitDeletePreview {
+    /// Its lessons (hidden with it).
+    pub lessons: i64,
+    /// The teacher's worksheets linked to those lessons (hidden too).
+    pub worksheets: i64,
+    /// The lessons' 上課紀錄, which no longer show either.
+    pub runs: i64,
+}
+
+async fn live_lesson_ids(db: impl sqlx::PgExecutor<'_>, unit_id: i64) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT id FROM lessons WHERE unit_id = $1 AND deleted_at IS NULL ORDER BY id",
+    )
+    .bind(unit_id)
+    .fetch_all(db)
+    .await
+}
+
+pub async fn delete_preview(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<UnitDeletePreview>> {
+    owned_unit(&state.db, id, teacher.id()).await?;
+    let lesson_ids = live_lesson_ids(&state.db, id).await?;
+    let (worksheets, runs) =
+        lessons::count_dependents(&state.db, teacher.id(), &lesson_ids).await?;
+    Ok(Json(UnitDeletePreview {
+        lessons: lesson_ids.len() as i64,
+        worksheets,
+        runs,
+    }))
+}
+
+/// `DELETE /api/units/:id`: a soft delete (`deleted_at`) of the unit, its lessons and the
+/// teacher's worksheets linked to them, in one transaction, logged as `unit_deleted`. The unit's
+/// CoRe, class assignments and everything kept under the lessons stay for the research record
+/// (#131); they are only reached through the unit, which no longer shows anywhere. Someone
+/// else's unit → 404.
+pub async fn delete(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<serde_json::Value>> {
+    let mut tx = state.db.begin().await?;
+    let deleted: Option<i64> = sqlx::query_scalar(
+        "UPDATE units SET deleted_at = now()
+          WHERE id = $1 AND teacher_id = $2 AND deleted_at IS NULL
+          RETURNING id",
+    )
+    .bind(id)
+    .bind(teacher.id())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if deleted.is_none() {
+        return Err(AppError::not_found("找不到這個單元。"));
+    }
+    let lesson_ids = live_lesson_ids(&mut *tx, id).await?;
+    let worksheets = lessons::soft_delete_lessons(&mut tx, teacher.id(), &lesson_ids).await?;
+    log_usage(
+        &mut *tx,
+        teacher.id(),
+        "unit_deleted",
+        json!({ "unit_id": id, "lesson_ids": lesson_ids, "worksheet_ids": worksheets }),
+    )
+    .await?;
+    tx.commit().await?;
+    lessons::forget_previews(&state, &worksheets).await;
+    Ok(Json(json!({
+        "ok": true,
+        "lessons_deleted": lesson_ids.len(),
+        "worksheets_deleted": worksheets.len(),
+    })))
 }
