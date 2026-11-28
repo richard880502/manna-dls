@@ -1119,6 +1119,15 @@ async fn a_worksheet_follows_the_template_on_a_library_material() {
         .map(|b| b["template_section_id"].as_str().unwrap())
         .collect();
     assert_eq!(sections, ["s1", "s2", "s2", "s2", "s2", "s3", "s4"]);
+    for item in bs.iter().flat_map(|b| b["items"].as_array().unwrap()) {
+        assert!(
+            item["bloom"]
+                .as_str()
+                .and_then(manna_api::worksheet::Bloom::parse)
+                .is_some(),
+            "{item}"
+        );
+    }
     // One block per paragraph, numbered.
     for (i, b) in bs[1..5].iter().enumerate() {
         let n = i + 1;

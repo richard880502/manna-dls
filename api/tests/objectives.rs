@@ -417,8 +417,9 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
     // Version 2 (0022_siop_objectives.sql); version 3 adds the 填空題 blank (0030_fill_in_blanks.sql),
     // version 4 that a sentence frame is not a question (0031_sentence_frames_apart.sql), version 5
     // the 是非題 statement and wrapped frames (0036_template_supports.sql), version 6 that the
-    // objectives are not questions (0060_objectives_not_items.sql).
-    assert_eq!(calls[0].3["prompt"]["version_no"], 6);
+    // objectives are not questions (0060_objectives_not_items.sql), and version 7 labels each
+    // question's Bloom level (0061_generated_question_bloom.sql).
+    assert_eq!(calls[0].3["prompt"]["version_no"], 7);
 
     // Q4: one block per paragraph, 示範 → 共同練習 → 同儕練習 → 獨立應用, said in the notes.
     let activities: Vec<&Value> = blocks.iter().filter(|b| b["kind"] == "activity").collect();
@@ -440,8 +441,9 @@ async fn the_full_worksheet_checks_every_objective_and_moves_from_modelling_to_i
     // instructions as a passage introduction, version 9 (0051_table_organizer_headers.sql) the
     // table's headings and row labels, version 10 (0053_block_intros.sql) an introduction only,
     // the how-to left to the steps, version 11 (0060_objectives_not_items.sql) that the
-    // objectives are not questions.
-    assert_eq!(tasks[0].3["prompt"]["version_no"], 11);
+    // objectives are not questions, and version 12 reinforces per-question Bloom labels
+    // (0061_generated_question_bloom.sql).
+    assert_eq!(tasks[0].3["prompt"]["version_no"], 12);
     assert!(tasks[0].3["prompt"]["system"]
         .as_str()
         .unwrap()

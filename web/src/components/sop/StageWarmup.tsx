@@ -9,6 +9,7 @@ import {
 emptyScaffolds,
 newId
 } from "../../lib/sop";
+import { BloomSelect } from "../worksheet/Bloom";
 import { GenerationChoice } from "./Choices";
 import { EnglishFix } from "./EnglishFix";
 import { AskManna,MannaWell,RedoPending,ScaffoldFields,ScaffoldList } from "./parts";
@@ -69,7 +70,13 @@ export function StageWarmup({ sop, lessonId }: { sop: SopController; lessonId: n
     const id = newId("w");
     setBackground((list) => [
       ...list,
-      { id, text: s.text, scaffolds: s.scaffolds, origin: edit ? "ai_edited" : "ai_adopted" },
+      {
+        id,
+        text: s.text,
+        scaffolds: s.scaffolds,
+        origin: edit ? "ai_edited" : "ai_adopted",
+        prompt_blooms: s.prompt_blooms,
+      },
     ]);
     decide("warmup", slot.index, edit ? "revise" : "adopt", edit ? s.text : undefined, jobOf(slot.job));
     if (edit) focusNext.current = `warmup-${id}`;
@@ -163,6 +170,21 @@ export function StageWarmup({ sop, lessonId }: { sop: SopController; lessonId: n
                 setBackground((list) => list.map((a) => (a.id === activity.id ? { ...a, scaffolds } : a)))
               }
             />
+            {activity.prompt_blooms?.map((bloom, index) => (
+              <BloomSelect
+                key={`prompt-${index + 1}`}
+                label={`暖身第 ${index + 1} 題的 Bloom 層次`}
+                value={bloom}
+                disabled={false}
+                onChange={(next) =>
+                  setBackground((list) => list.map((a) =>
+                    a.id === activity.id
+                      ? { ...a, prompt_blooms: a.prompt_blooms?.map((level, i) => (i === index ? next : level)) }
+                      : a,
+                  ))
+                }
+              />
+            ))}
             <button
               type="button"
               className="text-link is-plain"

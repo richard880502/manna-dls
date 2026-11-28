@@ -139,6 +139,18 @@ fn clean_all(list: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn checked_bloom(raw: Option<&str>, question: &str, tally: &mut Tally) -> Option<Bloom> {
+    let bloom = raw.and_then(Bloom::parse);
+    if bloom.is_none() {
+        tally.fail(
+            "labels_from_spec_sets",
+            format!("{question} 缺少有效的 bloom 層次。"),
+            "依這一題實際要求的認知活動補上 bloom",
+        );
+    }
+    bloom
+}
+
 /// Shorter pieces of a spliced quote are fragments, not evidence.
 pub const MIN_EVIDENCE_WORDS: usize = 5;
 
@@ -1463,12 +1475,10 @@ pub fn evaluate_tasks(raw: &RawTasks, ctx: &TasksCtx<'_>) -> Eval<Vec<RawBlock>>
             item.prompt_en = clean_prompt(&it.prompt_en);
             item.answer_en = clean(&it.answer_en);
             item.options = clean_all(&it.options);
-            // A label outside the fixed set (a provider that ignores the schema) is dropped.
-            item.bloom = it
-                .bloom
-                .as_deref()
-                .and_then(Bloom::parse)
-                .map(|b| b.as_str().to_string());
+            let Some(bloom) = checked_bloom(it.bloom.as_deref(), &iname, &mut t) else {
+                continue;
+            };
+            item.bloom = Some(bloom.as_str().to_string());
             if !ANSWER_FORMATS.contains(&item.answer_format.as_str()) {
                 t.fail(
                     "labels_from_spec_sets",
@@ -1740,7 +1750,7 @@ pub struct Candidate {
 pub struct CleanActivity {
     pub title: String,
     pub instructions: String,
-    pub prompts: Vec<String>,
+    pub prompts: Vec<(String, Bloom)>,
     pub student_tasks: Vec<String>,
     pub answer_format: Option<String>,
     pub purpose_zh: String,
@@ -1787,10 +1797,23 @@ pub fn evaluate_warmup(raw: &RawWarmup, ctx: &WarmupCtx<'_>) -> Eval<CleanWarmup
         let name = format!("background_activities 第 {} 個", i + 1);
         let title = clean(&a.title_en);
         let instructions = clean(&a.instructions_en);
-        let prompts = clean_all(&a.prompts_en);
+        let prompts: Vec<_> = a
+            .prompts_en
+            .iter()
+            .enumerate()
+            .filter_map(|(index, prompt)| {
+                let text = clean_prompt(&prompt.text);
+                let bloom = checked_bloom(
+                    prompt.bloom.as_deref(),
+                    &format!("{name} 第 {} 題", index + 1),
+                    &mut t,
+                )?;
+                (!text.is_empty()).then_some((text, bloom))
+            })
+            .collect();
         let english = english_only(&title)
             && english_only(&instructions)
-            && prompts.iter().all(|p| english_only(p));
+            && prompts.iter().all(|(text, _)| english_only(text));
         if !english || (prompts.is_empty() && instructions.is_empty()) {
             t.fail(
                 "english_only",
@@ -2474,6 +2497,10 @@ pub fn evaluate_exit_items(
             .as_deref()
             .map(clean)
             .filter(|s| !s.is_empty());
+        let Some(bloom) = checked_bloom(it.bloom.as_deref(), &name, &mut t) else {
+            continue;
+        };
+        item.bloom = Some(bloom.as_str().to_string());
         if item.answer_format == FMT_CHOICE {
             let mut answer = item.sample_answer_en.clone().unwrap_or_default();
             normalize_choice(&mut item.options, &mut answer);
@@ -4554,7 +4581,7 @@ mod tests {
             table: None,
             answer_en: answer.into(),
             evidence: None,
-            bloom: None,
+            bloom: Some("understand".into()),
         }
     }
 
@@ -5142,6 +5169,7 @@ mod tests {
             student_tasks: vec!["學習反思".into()],
             objective_refs: vec![],
             sample_answer_en: answer.map(str::to_string),
+            bloom: Some("understand".into()),
         }
     }
 
@@ -5256,7 +5284,10 @@ mod tests {
             background_activities: vec![RawBackground {
                 title_en: "Before you read".into(),
                 instructions_en: "Talk to a partner.".into(),
-                prompts_en: vec!["Have you ever lent something to a stranger?".into()],
+                prompts_en: vec![crate::worksheet::schemas::RawWarmupPrompt {
+                    text: "Have you ever lent something to a stranger?".into(),
+                    bloom: Some("remember".into()),
+                }],
                 student_tasks: vec!["討論／分享".into(), "合作活動".into()],
                 answer_format: "簡答題".into(),
                 purpose_zh: "連結個人經驗".into(),
@@ -5539,6 +5570,7 @@ mod tests {
             student_tasks: vec!["學習反思".into()],
             objective_refs: vec!["O1".into(), "O7".into()],
             sample_answer_en: sample.map(str::to_string),
+            bloom: Some("understand".into()),
         };
         let objectives = vec!["O1".to_string()];
         let prompts = vec!["Why did they laugh?".to_string()];
@@ -5597,6 +5629,7 @@ mod tests {
             student_tasks: vec![],
             objective_refs: refs.iter().map(|r| r.to_string()).collect(),
             sample_answer_en: (purpose == "形成性評量").then(|| "A sample.".to_string()),
+            bloom: Some("understand".into()),
         };
         let objectives = vec!["O1".to_string(), "O2".to_string(), "O3".to_string()];
         let ctx = ExitCtx {
@@ -7044,7 +7077,7 @@ mod objective_copy_tests {
             table: None,
             answer_en: "choices".into(),
             evidence: None,
-            bloom: None,
+            bloom: Some("remember".into()),
         };
         let mut fine = copy.clone();
         fine.prompt_en = "The speaker chose the road that was grassy and wanted ______.".into();
@@ -7097,6 +7130,7 @@ mod objective_copy_tests {
             student_tasks: vec![],
             objective_refs: vec![],
             sample_answer_en: answer.map(str::to_string),
+            bloom: Some("understand".into()),
         };
         let exit = RawExit {
             estimated_minutes: 3,

@@ -1749,7 +1749,7 @@ fn target_of_warmup(w: &CleanWarmup) -> ScaffoldTarget {
             w.activities
                 .iter()
                 .flat_map(|a| a.prompts.iter())
-                .map(|p| format!("  - {}", clip_chars(p, 300)))
+                .map(|(text, _)| format!("  - {}", clip_chars(text, 300)))
                 .collect::<Vec<_>>()
                 .join("\n"),
             w.words

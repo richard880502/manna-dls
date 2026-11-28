@@ -1312,9 +1312,10 @@ async fn admin_prompts_imports_and_permissions() {
         // worksheet_template_details v4, worksheet_template_outline v3,
         // worksheet_template_section v7, worksheet_tiered_level v5 and worksheet_warmup v4 since
         // 0060_objectives_not_items.sql.
+        // 0061_generated_question_bloom.sql also versions the three worksheet and SOP stages.
         vec![
-            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 1, 5, 1, 2, 1, 2, 1, 5, 1, 3, 1, 4, 2, 3, 10, 1, 7, 6, 2,
-            4, 11, 4, 3, 7, 5, 1, 1, 4
+            1, 2, 1, 1, 1, 1, 2, 2, 5, 1, 1, 5, 1, 3, 1, 2, 1, 6, 1, 3, 1, 5, 2, 3, 10, 1, 7, 7, 2,
+            4, 12, 4, 3, 7, 5, 1, 1, 5
         ]
     );
     let v1_kept: i64 = sqlx::query_scalar(

@@ -631,11 +631,12 @@ pub fn warmup_block(warmup: &CleanWarmup, material: &Material, levels: &[Level])
     let mut student_tasks: Vec<String> = Vec::new();
     let mut notes = Vec::new();
     for a in &warmup.activities {
-        for p in &a.prompts {
+        for (text, bloom) in &a.prompts {
             items.push(Item {
                 id: format!("{WARMUP_ID}-i{}", items.len() + 1),
                 answer_format: a.answer_format.clone(),
-                prompt: p.clone(),
+                prompt: text.clone(),
+                bloom: Some(*bloom),
                 levels: levels.to_vec(),
                 origin: Origin::Ai,
                 ..Item::default()
@@ -709,6 +710,7 @@ pub fn exit_block(
                 prompt: it.prompt_en.clone(),
                 options: it.options.clone(),
                 answer: it.sample_answer_en.clone().unwrap_or_default(),
+                bloom: it.bloom.as_deref().and_then(Bloom::parse),
                 evidence: String::new(),
                 purpose: Some(purpose(&it.purpose)),
                 levels: levels.to_vec(),

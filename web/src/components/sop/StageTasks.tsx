@@ -18,6 +18,7 @@ paragraphRange
 } from "../../lib/sop";
 import { ANSWER_FORMATS,STUDENT_TASKS,toggleIn } from "../../lib/worksheet";
 import { ErrorText } from "../common";
+import { BloomSelect } from "../worksheet/Bloom";
 import { AnswerFormatChips,StudentTaskChips } from "../worksheet/Chips";
 import { SupportChoice } from "./Choices";
 import { EnglishFix } from "./EnglishFix";
@@ -156,6 +157,7 @@ function TaskEditor({
         paragraphIds={block.paragraph_ids}
         onUse={(english) => onChange({ ...task, text: english, origin: "ai_edited" })}
       />
+      <BloomSelect label="Bloom 層次" value={task.bloom} disabled={false} onChange={(bloom) => onChange({ ...task, bloom })} />
       <label className="field-label" htmlFor={`${id}-format`}>
         作答方式
       </label>
@@ -406,6 +408,7 @@ export function StageTasks({ sop, onGoToStage, lessonId }: StageProps & { lesson
       options: t.options,
       answer: t.answer,
       evidence: t.evidence,
+      bloom: t.bloom,
     }));
     const first = sb.paragraph_ids[0];
     setBlocks((blocks) => {

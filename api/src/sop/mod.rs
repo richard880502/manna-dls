@@ -375,6 +375,8 @@ pub struct Task {
     pub answer: String,
     /// A verbatim piece of the paragraph(s) the answer rests on.
     pub evidence: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom: Option<crate::worksheet::Bloom>,
 }
 
 /// Questions or tasks for one paragraph, or for several merged paragraphs.
@@ -401,6 +403,9 @@ pub struct WarmupActivity {
     pub text: String,
     pub scaffolds: Scaffolds,
     pub origin: Origin,
+    /// One level per generated prompt, in the order they appear in the activity text.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub prompt_blooms: Vec<Option<crate::worksheet::Bloom>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -433,6 +438,8 @@ pub struct ExitItem {
     pub objective_id: String,
     /// Reference answer of a formative item (teacher version only).
     pub answer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bloom: Option<crate::worksheet::Bloom>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

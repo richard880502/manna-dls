@@ -241,6 +241,19 @@ async fn nothing_selected_still_generates_and_says_what_was_chosen() {
         ["tasks", "warmup", "scaffolds", "exit_ticket"]
     );
     assert!(jobs.iter().all(|j| j["outcome"] == "shown"), "{jobs:?}");
+    for block in blocks(&state) {
+        let items = block["items"].as_array().unwrap();
+        assert!(!items.is_empty(), "{block}");
+        for item in items {
+            assert!(
+                item["bloom"]
+                    .as_str()
+                    .and_then(manna_api::worksheet::Bloom::parse)
+                    .is_some(),
+                "{item}"
+            );
+        }
+    }
     let chosen = &state["content"]["chosen"];
     for part in [
         "material_types",
@@ -1474,6 +1487,7 @@ async fn an_edited_answer_format_is_saved_projected_and_exported() {
     items[0]["answer_format"] = json!("表格整理");
     items[0]["prompt"] = json!("Complete the table about the stand.");
     items[0]["table"] = json!({ "columns": ["Problem", "Solution"], "rows": 4 });
+    items[0]["bloom"] = json!("create");
     items[1]["answer_format"] = json!("簡答題");
     items[1]["options"] = json!(["Kept choice A", "Kept choice B"]);
     let base = state["version_no"].as_i64().unwrap();
@@ -1497,6 +1511,7 @@ async fn an_edited_answer_format_is_saved_projected_and_exported() {
     assert_eq!(s, StatusCode::OK, "{v}");
     let (_, reloaded) = app.get(&format!("/api/worksheets/{id}"), Some(&t)).await;
     let saved = &reloaded["content"]["blocks"][b]["items"];
+    assert_eq!(saved[0]["bloom"], "create");
     assert_eq!(
         saved[0]["table"],
         json!({ "columns": ["Problem", "Solution"], "rows": 4 })

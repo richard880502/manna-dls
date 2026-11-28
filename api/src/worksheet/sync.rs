@@ -106,6 +106,7 @@ fn block_tasks(block: &Block) -> Vec<Task> {
             options: i.options.iter().map(|o| clip(o)).collect(),
             answer: clip(i.answer.trim()),
             evidence: clip(i.evidence.trim()),
+            bloom: i.bloom,
         })
         .collect()
 }
