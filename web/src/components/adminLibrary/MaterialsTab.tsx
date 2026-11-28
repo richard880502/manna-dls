@@ -5,6 +5,7 @@ import { formatDate } from "../../lib/labels";
 import { formatBytes } from "../../lib/materials";
 import { ocrBadge, ocrFailed, ocrFailedLine, ocrOpen } from "../../lib/ocr";
 import { BulkUpload } from "./BulkUpload";
+import { PLATFORM_MATERIAL_DELETE_NOTE } from "../library/PlatformDeleteDialog";
 import { LibraryList, useAdminList, type ListFilters } from "./LibraryList";
 import {
   MATERIAL_CATEGORIES,
@@ -154,7 +155,7 @@ export function MaterialsTab({ onBusy }: { onBusy?: (busy: boolean) => void }) {
         )}
         save={adminLibraryApi.updateMaterial}
         remove={adminLibraryApi.deleteMaterial}
-        deleteNote="原檔、擷取的文字與段落都會永久刪除，老師就選不到它了。老師已經用它做好的學習單不受影響。"
+        deleteNote={PLATFORM_MATERIAL_DELETE_NOTE}
       />
     </>
   );

@@ -4,6 +4,7 @@ import { adminLibraryApi, errorMessage } from "../../api/client";
 import type { AdminLibraryTemplate, AdminLibraryTemplateRow } from "../../api/types";
 import { formatDate } from "../../lib/labels";
 import { BulkUpload } from "./BulkUpload";
+import { PLATFORM_TEMPLATE_DELETE_NOTE } from "../library/PlatformDeleteDialog";
 import { LibraryList, useAdminList, type ListFilters } from "./LibraryList";
 import {
   SAMPLE_CATEGORIES,
@@ -194,7 +195,7 @@ export function TemplatesTab({ onBusy }: { onBusy?: (busy: boolean) => void }) {
         }
         save={adminLibraryApi.updateTemplate}
         remove={adminLibraryApi.deleteTemplate}
-        deleteNote="這個平台範本會永久刪除，老師就選不到它了。老師已經照它做好的學習單不受影響。"
+        deleteNote={PLATFORM_TEMPLATE_DELETE_NOTE}
       />
     </>
   );

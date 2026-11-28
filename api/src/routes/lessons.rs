@@ -449,6 +449,115 @@ pub async fn update(
     ))
 }
 
+// ---------------------------------------------------------------- delete (soft)
+
+/// What deleting a lesson takes with it (`GET /api/lessons/:id/delete-preview`), so the
+/// confirmation can say it before anything is sent.
+#[derive(Debug, Serialize)]
+pub struct LessonDeletePreview {
+    /// The teacher's worksheets linked to the lesson (hidden with it).
+    pub worksheets: i64,
+    /// Its 上課紀錄 (lesson runs), which no longer show either.
+    pub runs: i64,
+}
+
+/// Counts what [`soft_delete_lessons`] would hide for these lessons: (worksheets, runs).
+pub async fn count_dependents(
+    db: &sqlx::PgPool,
+    teacher_id: i64,
+    lesson_ids: &[i64],
+) -> sqlx::Result<(i64, i64)> {
+    sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM worksheets
+                  WHERE lesson_id = ANY($1) AND teacher_id = $2 AND deleted_at IS NULL),
+                (SELECT COUNT(*) FROM lesson_runs WHERE lesson_id = ANY($1))",
+    )
+    .bind(lesson_ids)
+    .bind(teacher_id)
+    .fetch_one(db)
+    .await
+}
+
+pub async fn delete_preview(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<LessonDeletePreview>> {
+    owned_lesson(&state.db, id, teacher.id()).await?;
+    let (worksheets, runs) = count_dependents(&state.db, teacher.id(), &[id]).await?;
+    Ok(Json(LessonDeletePreview { worksheets, runs }))
+}
+
+/// Hides the lessons and the teacher's worksheets linked to them (`deleted_at`), inside `tx`;
+/// returns the worksheets hidden. Nothing else is touched: plan and SOP versions, CoRe links,
+/// runs and their bookmarks, AI interactions and teacher decisions stay as they are for the
+/// research record (#131); every read path already leaves out deleted lessons.
+pub async fn soft_delete_lessons(
+    tx: &mut sqlx::PgConnection,
+    teacher_id: i64,
+    lesson_ids: &[i64],
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query("UPDATE lessons SET deleted_at = now() WHERE id = ANY($1) AND deleted_at IS NULL")
+        .bind(lesson_ids)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query_scalar(
+        "UPDATE worksheets SET deleted_at = now()
+          WHERE lesson_id = ANY($1) AND teacher_id = $2 AND deleted_at IS NULL
+          RETURNING id",
+    )
+    .bind(lesson_ids)
+    .bind(teacher_id)
+    .fetch_all(&mut *tx)
+    .await
+}
+
+/// Removes the kept previews of worksheets a delete just hid. Best effort, after the commit: a
+/// failure never undoes or blocks the delete.
+pub async fn forget_previews(state: &AppState, worksheet_ids: &[i64]) {
+    for id in worksheet_ids {
+        if let Ok(Some(ws)) = crate::worksheet::store::by_id(&state.db, *id).await {
+            crate::worksheet::thumbnail::forget(state, &ws).await;
+        }
+    }
+}
+
+/// `DELETE /api/lessons/:id`: a soft delete of the lesson and its worksheets (see
+/// [`soft_delete_lessons`]), logged as `lesson_deleted`. Someone else's lesson → 404.
+pub async fn delete(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<Json<Value>> {
+    let mut tx = state.db.begin().await?;
+    // The row lock makes a second delete of the same lesson wait, then find it gone (404).
+    let unit_id: i64 = sqlx::query_scalar(
+        "UPDATE lessons l SET deleted_at = now()
+           FROM units u
+          WHERE l.id = $1 AND u.id = l.unit_id AND u.teacher_id = $2
+            AND l.deleted_at IS NULL AND u.deleted_at IS NULL
+         RETURNING l.unit_id",
+    )
+    .bind(id)
+    .bind(teacher.id())
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("找不到這個課例。"))?;
+    let worksheets = soft_delete_lessons(&mut tx, teacher.id(), &[id]).await?;
+    log_usage(
+        &mut *tx,
+        teacher.id(),
+        "lesson_deleted",
+        json!({ "lesson_id": id, "unit_id": unit_id, "worksheet_ids": worksheets }),
+    )
+    .await?;
+    tx.commit().await?;
+    forget_previews(&state, &worksheets).await;
+    Ok(Json(
+        json!({ "ok": true, "worksheets_deleted": worksheets.len() }),
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateVersion {
     #[serde(default)]

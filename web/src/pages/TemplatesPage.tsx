@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { api, errorMessage } from "../api/client";
+import { adminLibraryApi, api, errorMessage } from "../api/client";
 import type {
   Material,
   MaterialDetail,
@@ -20,13 +20,16 @@ import {
   templateCardTitle,
   type TemplateArea,
 } from "../components/library/labels";
+import { PLATFORM_TEMPLATE_DELETE_NOTE, PlatformDeleteDialog } from "../components/library/PlatformDeleteDialog";
 import { Tabs } from "../components/library/Tabs";
 import { DeleteMaterialDialog } from "../components/material/DeleteMaterialDialog";
 import { MaterialAddForm, titleOf, useMaterialLibrary } from "../components/material/MaterialLibrary";
 import { MaterialViewer } from "../components/material/MaterialViewer";
 import { OcrFollow } from "../components/material/Ocr";
 import { OncePerPage } from "../components/OncePerPage";
+import { useApp } from "../context/AppContext";
 import { mimicTemplatePath } from "../lib/create";
+import { can } from "../lib/permissions";
 import { formatDate } from "../lib/labels";
 import { ocrFailed, ocrFailedLine, ocrOpen } from "../lib/ocr";
 import { NO_TEXT_MESSAGE, TEMPLATES_INTRO, templateDeleteConsequences } from "../lib/templates";
@@ -291,10 +294,13 @@ function OrphanSamples({
  * 學習單範本 (/templates): 平台範本 | 我的範本 (?tab=mine). A card shows its sections; 照這個範本做
  * opens 照我的學習單做 with it. 我的範本 also takes a new worksheet (上傳我的學習單), shows the
  * ones Manna is still reading, deletes one of mine behind its ⋯ (更多動作 → 刪除), and lists the
- * uploaded worksheets no template uses any more.
+ * uploaded worksheets no template uses any more. A `manage_knowledge` account also deletes a
+ * platform template from its card's ⋯ on 平台範本, as in 教材與範本管理.
  */
 function Templates() {
   const ids = useId();
+  const { teacher } = useApp();
+  const manages = can(teacher, "manage_knowledge");
   const [params, setParams] = useSearchParams();
   const tab: TemplateArea = params.get("tab") === "mine" ? "mine" : "platform";
   const [viewing, setViewing] = useState<number | null>(null);
@@ -304,6 +310,7 @@ function Templates() {
   const [rowError, setRowError] = useState<{ id: number; message: string } | null>(null);
   const [retrying, setRetrying] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<TemplateCardData | null>(null);
+  const [deletingPlatform, setDeletingPlatform] = useState<TemplateCardData | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
   /** 上傳我的學習單 or a card's ⋯: focus goes back there when its dialog closes. */
   const opener = useRef<HTMLElement | null>(null);
@@ -379,6 +386,12 @@ function Templates() {
           </div>
         )}
 
+        {tab === "platform" && notice && (
+          <p className="quiet-note" role="status">
+            {notice}
+          </p>
+        )}
+
         <TemplateBrowser
           key={tab}
           area={tab}
@@ -431,7 +444,21 @@ function Templates() {
                     {USE_TEMPLATE}
                   </button>
                 )}
-                {/* Only my own templates; platform ones are managed in 教材與範本管理. */}
+                {/* Platform templates: only for those who manage them (as in 教材與範本管理). */}
+                {tab === "platform" && card.scope === "platform" && manages && (
+                  <MoreMenu
+                    label={`更多動作「${title}」`}
+                    items={[
+                      {
+                        label: "刪除",
+                        onSelect: (from) => {
+                          opener.current = from;
+                          setDeletingPlatform(card);
+                        },
+                      },
+                    ]}
+                  />
+                )}
                 {tab === "mine" && card.scope === "personal" && (
                   <MoreMenu
                     label={`更多動作「${title}」`}
@@ -467,6 +494,20 @@ function Templates() {
 
       <MaterialViewer mode="panel" materialId={viewing} open={viewing !== null} onClose={closeViewer} />
 
+      {deletingPlatform && (
+        <PlatformDeleteDialog
+          title={templateCardTitle(deletingPlatform)}
+          note={PLATFORM_TEMPLATE_DELETE_NOTE}
+          remove={() => adminLibraryApi.deleteTemplate(deletingPlatform.id)}
+          returnFocus={backToOpener}
+          onClose={() => setDeletingPlatform(null)}
+          onDone={() => {
+            if (deletingPlatform.source_material && viewing === deletingPlatform.source_material.id) setViewing(null);
+            setDeletingPlatform(null);
+            listChanged(`已永久刪除「${templateCardTitle(deletingPlatform)}」。`);
+          }}
+        />
+      )}
       {deleting && (
         <DeleteTemplateDialog
           card={deleting}

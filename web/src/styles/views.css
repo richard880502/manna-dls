@@ -705,8 +705,34 @@
 }
 
 .create-lesson-form > .button-row,
-.create-unit-form > .button-row {
+.create-unit-form > .button-row,
+.rename-form > .button-row {
   margin-top: var(--space-lg);
+}
+
+/* ================= 備課庫 and 單元頁: 改名 / 刪除 behind a ⋯ ================= */
+/* The unit's name with its ⋯ beside it; the menu opens to the right, over the page. */
+.title-with-menu {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.title-with-menu > h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.title-with-menu .lib-more-popover {
+  right: auto;
+  left: 0;
+}
+
+/* What a delete takes with it, one item a line. */
+.library-delete-list {
+  padding-left: 1.25em;
+  list-style: disc;
 }
 
 /* ================= lesson page: head and the overview (本節概要); the steps are in sop.css ================= */

@@ -109,7 +109,11 @@ pub fn api_router() -> Router<AppState> {
             "/units/class-profile-default",
             get(units::get_class_profile_default),
         )
-        .route("/units/{id}", get(units::get_one).put(units::update))
+        .route(
+            "/units/{id}",
+            get(units::get_one).put(units::update).delete(units::delete),
+        )
+        .route("/units/{id}/delete-preview", get(units::delete_preview))
         .route(
             "/units/{id}/materials",
             get(materials::list).post(materials::create),
@@ -141,7 +145,13 @@ pub fn api_router() -> Router<AppState> {
             get(lessons::list).post(lessons::create),
         )
         .route("/stepwise-lessons", get(lessons::list_stepwise))
-        .route("/lessons/{id}", get(lessons::detail).put(lessons::update))
+        .route(
+            "/lessons/{id}",
+            get(lessons::detail)
+                .put(lessons::update)
+                .delete(lessons::delete),
+        )
+        .route("/lessons/{id}/delete-preview", get(lessons::delete_preview))
         .route("/lessons/{id}/versions", post(lessons::create_version))
         .route("/lessons/{id}/core-links", put(lessons::set_core_links))
         .route("/siop", get(lessons::list_siop))

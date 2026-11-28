@@ -4123,3 +4123,56 @@ interface WsTemplateDetail { /* …既有欄位… */
 - 每個內容改變的區塊，都在 `worksheet_block_history` 記一列（還原前的樣子、`after_block`、新版本號），所以那一區的「修改歷程」多一步「還原」、「復原上一版」仍可用。
 - 使用紀錄 `worksheet_version_restored`：`{ worksheet_id, from_version_no（還原的那一版）, previous_version_no（被取代的、還原前的最新版）, new_version_no }`（不含內容）。
 - 網頁入口：備課頁學習單卡片的「版本紀錄」按鈕、完整編輯頁（含備課頁的編輯模式）工具列的「版本紀錄」；學習單正在產生或備課對話正在跑時按鈕是 `aria-disabled` 並說明原因。編輯器開啟前先存好手上的修改。
+
+---
+
+# 備課庫：單元與課例改名、刪除（#132）
+
+備課庫的單元和課例可以改名、可以刪除；刪除前先說會一起刪掉什麼。教材平台的卡片上，管理知識庫的帳號也可以刪除平台教材與平台範本。沒有資料表變動：`units.deleted_at`、`lessons.deleted_at`、`worksheets.deleted_at` 原本就有，只是以前沒有端點會設定。
+
+## 刪除是軟刪除，研究紀錄保留
+
+依 `0001_init.sql` 的原則（內容版本化、刪除用 `deleted_at`）與研究紀錄 #131：刪除只是把列標上 `deleted_at`，**不刪任何一列**。
+
+- **刪除單元**：一個交易內把單元、它底下還在的課例、以及**連到這些課例的教師自己的學習單**都標上 `deleted_at`。單元的 CoRe（版本、重點、回答與修訂紀錄）、班級取用（`class_units`，`removed_at` 不變）、課例底下的教案版本、SOP 版本、上課紀錄與書籤、AI 互動、教師決定都**原樣保留**；它們只能經由單元或課例讀到，而所有讀取路徑原本就排除已刪除的單元與課例，所以畫面上不會再出現。
+- **刪除課例**：同上，只是範圍是這一個課例和連到它的學習單。
+- 學習單一起隱藏後，社群分享、我的作品、備課頁都不再列出（同 `DELETE /api/worksheets/:id`）。保留的預覽圖在提交後盡力移除，失敗不影響刪除。
+- 教師畫面上無法復原（沒有「還原」端點）。
+
+## 端點（皆需登入；只能刪除、改名自己的，別人的回 404）
+
+| 方法 | 路徑 | 回應 |
+|---|---|---|
+| GET | `/api/units/:id/delete-preview` | `UnitDeletePreview`：刪除這個單元會一起隱藏什麼，讓確認畫面說清楚 |
+| DELETE | `/api/units/:id` | `{ ok: true; lessons_deleted: number; worksheets_deleted: number }`。已刪除或不是自己的 → 404 |
+| GET | `/api/lessons/:id/delete-preview` | `LessonDeletePreview` |
+| DELETE | `/api/lessons/:id` | `{ ok: true; worksheets_deleted: number }`。已刪除、單元已刪除或不是自己的 → 404 |
+
+```ts
+interface UnitDeletePreview {
+  lessons: number;      // 還在的課例
+  worksheets: number;   // 連到這些課例、教師自己、還在的學習單
+  runs: number;         // 這些課例的上課紀錄（刪除後不再顯示）
+}
+interface LessonDeletePreview { worksheets: number; runs: number; }
+```
+
+改名沿用既有的 `PUT /api/units/:id` 與 `PUT /api/lessons/:id`（`{ title }`；空白 → 400）。單元會離開哪些班級，前端用 `Unit.classes` 說明。
+
+## usage_logs 新事件
+
+- `unit_deleted`：`{ unit_id, lesson_ids, worksheet_ids }`
+- `lesson_deleted`：`{ lesson_id, unit_id, worksheet_ids }`
+
+## 前端
+
+- **備課庫**（`/units`）：每一列「加到班級」旁有「更多動作」（⋯）→「改名」、「刪除」。
+- **單元頁**（`/units/:id`）：單元名稱旁的 ⋯ 可改單元名稱或刪除單元（刪除後回到備課庫並說一次「已刪除單元「…」。」）；每一節課例的列也有 ⋯ →「改名」、「刪除」。
+- **改名**開對話框，欄位帶目前的名稱；空白時直接提示「請輸入單元名稱。」／「請輸入課例名稱。」不送出，名稱沒變就直接關閉。
+- **刪除**開確認視窗（`role="alertdialog"`，標題「刪除單元「…」？」／「刪除課例「…」？」），先讀 `delete-preview` 再列出「會一起刪除：3 節課例、5 份學習單、單元想法（`core_status` 不是 `none` 時）、2 次上課紀錄」，單元另說「也會從高一 3 班、高一 7 班移除。」，最後「刪除後無法復原。」。讀取完成前刪除按鈕不能按；讀不到時改說一般的說明，仍可刪除。取消時焦點回到 ⋯；刪除後那一列不在了，焦點移到頁面標題（備課庫）或「課例」標題。
+- **教材平台**：`manage_knowledge` 帳號（`pi`、`kb_manager`）在「平台教材」（`/reference`）的卡片、「學習單範本」的平台範本卡片上有 ⋯ →「刪除」，確認文字與「教材與範本管理」相同（兩處共用 `PLATFORM_MATERIAL_DELETE_NOTE`／`PLATFORM_TEMPLATE_DELETE_NOTE`），送的是既有的 `DELETE /api/admin/library/:id`／`DELETE /api/admin/library/templates/:id`（真的刪除，規則見「我的範本：刪除範本連同原檔」）。一般老師看不到 ⋯。
+
+## 尚未處理
+
+- 社群分享的學習單由管理員下架：目前沒有這個功能（#132「待確認」）。
+- 我的作品的逐步設計課例卡片仍沒有「刪除」；課例在單元頁刪除。
