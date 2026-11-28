@@ -445,7 +445,7 @@ export function TemplateBrowser({
   empty,
   refreshSignal = 0,
 }: {
-  area: TemplateArea;
+  area: Exclude<TemplateArea, "saved">;
   renderActions: (card: TemplateCardData, update: (next: TemplateCardData) => void) => ReactNode;
   empty: ReactNode;
   refreshSignal?: number;

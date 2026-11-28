@@ -18,7 +18,16 @@ use crate::worksheet::assemble::{project, Sheet};
 use crate::worksheet::images::{self, SlotState};
 use crate::worksheet::material::{MaterialSource, SOURCE_PASTED};
 use crate::worksheet::store;
-use crate::worksheet::{auto_filename, Audience, Content, Level};
+use crate::worksheet::template::store as template_store;
+use crate::worksheet::template::{
+    scaffold_kinds, SupportRole, WsTemplate, WsTemplateSection, WsTemplateSupport,
+    MAX_INSTRUCTION_STYLE_CHARS, MAX_ITEM_PATTERN_CHARS, MAX_SECTIONS, MAX_SUPPORTS,
+    MAX_SUPPORT_HEADING_CHARS, MAX_SUPPORT_PATTERN_CHARS, MAX_TITLE_CHARS,
+};
+use crate::worksheet::{
+    auto_filename, student_tasks, Audience, Content, Level, Settings, ANSWER_FORMATS,
+    GENERATION_OPTIONS,
+};
 use crate::AppState;
 
 pub const MSG_DISABLED: &str = "社群功能目前沒有開放。";
@@ -696,6 +705,183 @@ pub async fn unsave(state: &AppState, teacher_id: i64, id: i64) -> AppResult<()>
     }
     tx.commit().await?;
     Ok(())
+}
+
+fn clipped(value: &str, max: usize) -> String {
+    value.trim().chars().take(max).collect::<String>()
+}
+
+fn language_of(content: &Content) -> String {
+    let instructions = content
+        .blocks
+        .iter()
+        .map(|b| b.instructions.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let has_han = instructions
+        .chars()
+        .any(|c| matches!(c, '\u{3400}'..='\u{9fff}'));
+    let has_latin = instructions.chars().any(|c| c.is_ascii_alphabetic());
+    match (has_han, has_latin) {
+        (true, true) => "中英並用",
+        (true, false) => "中文",
+        _ => "英文",
+    }
+    .to_string()
+}
+
+/// Reconstruct the reusable design only from the shared worksheet's printable document. This
+/// deliberately does not read the author's personal template: style notes and other private
+/// template metadata that were not printed on the shared sheet must not cross accounts.
+fn template_of(settings: &Settings, content: &Content) -> AppResult<WsTemplate> {
+    let allowed_scaffolds = scaffold_kinds();
+    let allowed_tasks = student_tasks();
+    let sections: Vec<WsTemplateSection> = content
+        .blocks
+        .iter()
+        .filter(|b| b.enabled)
+        .take(MAX_SECTIONS)
+        .enumerate()
+        .map(|(index, block)| {
+            let answer_formats = ANSWER_FORMATS
+                .iter()
+                .filter(|format| {
+                    block
+                        .items
+                        .iter()
+                        .any(|item| item.answer_format.as_deref() == Some(**format))
+                })
+                .map(|s| s.to_string())
+                .collect();
+            let scaffolds = allowed_scaffolds
+                .iter()
+                .filter(|kind| block.scaffolds.iter().any(|s| s.kind == **kind))
+                .map(|s| s.to_string())
+                .collect();
+            let supports = block
+                .scaffolds
+                .iter()
+                .filter_map(|s| {
+                    let role = SupportRole::of_kind(&s.kind)?;
+                    let heading = s.own_heading().unwrap_or_else(|| role.default_heading());
+                    let pattern = if s.steps.is_empty() {
+                        s.content.clone()
+                    } else {
+                        s.steps.join("；")
+                    };
+                    Some(WsTemplateSupport {
+                        heading: clipped(heading, MAX_SUPPORT_HEADING_CHARS),
+                        role,
+                        pattern: clipped(&pattern, MAX_SUPPORT_PATTERN_CHARS),
+                    })
+                })
+                .take(MAX_SUPPORTS)
+                .collect();
+            let mut title = clipped(&block.title, MAX_TITLE_CHARS);
+            if title.is_empty() {
+                title = format!("區塊 {}", index + 1);
+            }
+            WsTemplateSection {
+                id: format!("s{}", index + 1),
+                title_pattern: title,
+                purpose: String::new(),
+                block_kind: block.kind,
+                per_paragraph: false,
+                student_tasks: allowed_tasks
+                    .iter()
+                    .filter(|task| block.student_tasks.iter().any(|t| t == **task))
+                    .map(|task| task.to_string())
+                    .collect(),
+                answer_formats,
+                item_count: block.items.len().clamp(1, 12) as i64,
+                text_scope: if block.paragraph_ids.is_empty() {
+                    "全文".to_string()
+                } else {
+                    "對應段落".to_string()
+                },
+                scaffolds,
+                supports,
+                instruction_style: clipped(&block.instructions, MAX_INSTRUCTION_STYLE_CHARS),
+                item_patterns: block
+                    .items
+                    .iter()
+                    .map(|item| clipped(&item.prompt, MAX_ITEM_PATTERN_CHARS))
+                    .filter(|p| !p.is_empty())
+                    .take(6)
+                    .collect(),
+                needs_external_material: false,
+            }
+        })
+        .collect();
+    if sections.is_empty() {
+        return Err(AppError::Conflict(
+            "這份收藏的學習單沒有可做成範本的區塊。".into(),
+        ));
+    }
+    let mut template = WsTemplate {
+        worksheet_kind: settings.output.label().to_string(),
+        instruction_language: language_of(content),
+        header_fields: vec!["Name".into(), "Class".into(), "No".into()],
+        shows_objectives: content.show_objectives,
+        includes_passage_text: false,
+        sections,
+        generation_options: GENERATION_OPTIONS
+            .iter()
+            .filter(|option| settings.generation.iter().any(|g| g == **option))
+            .map(|s| s.to_string())
+            .collect(),
+        style_notes: Vec::new(),
+    };
+    template.validate().map_err(AppError::bad_request)?;
+    Ok(template)
+}
+
+fn saved_template_title(title: &str) -> String {
+    const SUFFIX: &str = "（收藏範本）";
+    let room = MAX_TITLE_CHARS - SUFFIX.chars().count();
+    let base: String = title.trim().chars().take(room).collect();
+    format!("{}{SUFFIX}", base.trim_end())
+}
+
+/// Turns one still-shared worksheet in 我的收藏 into the caller's ready personal template.
+pub async fn use_as_template(
+    state: &AppState,
+    teacher_id: i64,
+    id: i64,
+) -> AppResult<template_store::Detail> {
+    require_enabled(&state.db).await?;
+    let saved_and_visible: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1 FROM worksheet_saves s
+           JOIN worksheets w ON w.id = s.worksheet_id
+          WHERE s.teacher_id = $1 AND s.worksheet_id = $2
+            AND w.shared_at IS NOT NULL AND w.deleted_at IS NULL)",
+    )
+    .bind(teacher_id)
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+    if !saved_and_visible {
+        return Err(AppError::not_found(MSG_NOT_FOUND));
+    }
+    let source = store::by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| AppError::not_found(MSG_NOT_FOUND))?;
+    let content = store::latest(&state.db, id).await?.content;
+    let template = template_of(&source.settings, &content)?;
+    let title = saved_template_title(&source.title);
+    let category =
+        crate::materials::catalog::suggest_sample_category(&template.worksheet_kind, &title);
+    let row =
+        template_store::insert_ready(&state.db, teacher_id, &title, category, &template).await?;
+    log_usage(
+        &state.db,
+        teacher_id,
+        "community_template_created",
+        json!({"worksheet_id": id, "template_id": row.id}),
+    )
+    .await?;
+    template_store::detail(&state.db, row.id).await
 }
 
 // ---------------------------------------------------------------- remix

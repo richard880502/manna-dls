@@ -1,5 +1,5 @@
 // 照我的學習單做 (mimic-contract, "Frontend"): the tool at /create/mimic (first in the sidebar and on
-// the home page) with its sample card (上傳學習單 here, or 從範本挑選: 平台範本 | 我的範本), the lesson text, the
+// the home page) with its sample card (上傳學習單 here, or 從範本挑選: 平台範本 | 我的範本 | 我的收藏), the lesson text, the
 // settings and the sticky bar; the notice when a worksheet lands in the article slot (on any create
 // page, and on the home quick box, where 把它當範本 keeps the teacher there); the home quick box's
 // 照我的學習單做 chip with its 範本 and 課文 slots; the 完整學習單 link; and the session page while
@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   Material,
+  CommunityCard,
   MaterialDetail,
   MaterialLibrary,
   PrepSession,
@@ -16,6 +17,7 @@ import type {
   WorksheetState,
   WsSheet,
   WsTemplateSummary,
+  WsTemplateDetail,
 } from "../api/types";
 import { NO_TEXT_LINE } from "../components/material/MaterialChooser";
 import { worksheetConfig } from "../components/worksheet/useWorksheet";
@@ -298,7 +300,7 @@ describe("照我的學習單做: the sample and the request", () => {
     });
   });
 
-  it("從範本挑選 opens 平台範本 | 我的範本; a ready template's chip shows the title, the sections and 看版型內容; it goes as template_id", async () => {
+  it("從範本挑選 opens 平台範本 | 我的範本 | 我的收藏; a ready template's chip shows the title, the sections and 看版型內容; it goes as template_id", async () => {
     const api = mockApi(routes());
     const user = userEvent.setup();
     await openMimic();
@@ -306,6 +308,7 @@ describe("照我的學習單做: the sample and the request", () => {
     expect(dialog.getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([
       ["平台範本", "true"],
       ["我的範本", "false"],
+      ["我的收藏", "false"],
     ]);
     await user.click(dialog.getByRole("tab", { name: "我的範本" }));
     await waitFor(() =>
@@ -711,8 +714,61 @@ describe("照我的學習單做 on the home quick box", () => {
     });
   });
 
+  it("從範本挑選 → 我的收藏: explains how to save when empty, then converts and chooses a still-shared saved worksheet", async () => {
+    const saved: CommunityCard = {
+      id: 31,
+      title: "雨傘架閱讀單",
+      owner_name: "一位老師",
+      shared_at: "2026-11-20T08:00:00Z",
+      saves: 3,
+      remixes: 0,
+      is_mine: false,
+      saved: true,
+      allow_remix: false,
+      output: "worksheet",
+      levels: ["standard"],
+      cover: null,
+      saved_at: "2026-11-21T08:00:00Z",
+    };
+    const converted: WsTemplateDetail = {
+      ...template({ id: 41, title: "雨傘架閱讀單（收藏範本）", section_count: 4 }),
+      source_material: null,
+      scope: "personal",
+      category: "閱讀理解",
+      tags: [],
+      error: null,
+      content: null,
+      deletes_source_material: false,
+    };
+    const api = mockApi(
+      routes({
+        "GET /api/community/saves": { items: [saved], total: 1, limit: 24, offset: 0, unavailable: 1 },
+        "POST /api/community/worksheets/31/template": converted,
+      }),
+    );
+    const user = userEvent.setup();
+    const { router } = await openHome();
+    await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
+    const dialog = await openSampleWay(user, "從範本挑選");
+    await user.click(dialog.getByRole("tab", { name: "我的收藏" }));
+    expect(await dialog.findByText(/有 1 份收藏的學習單已經取消分享/)).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "選用「雨傘架閱讀單」" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(quickCard().getByRole("status")).toHaveTextContent("範本：雨傘架閱讀單（收藏範本）· 4 區");
+
+    await attachLessonText(user, "The Umbrella Stand");
+    await user.click(screen.getByRole("button", { name: "送出" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/prep/7"));
+    expect(api.lastBody("POST", SESSIONS)).toMatchObject({ template_id: 41, material_id: 5 });
+  });
+
   it("從範本挑選 without templates says so in each tab", async () => {
-    mockApi(routes({ "GET /api/browse/templates": templateBrowse([]) }));
+    mockApi(
+      routes({
+        "GET /api/browse/templates": templateBrowse([]),
+        "GET /api/community/saves": { items: [], total: 0, limit: 24, offset: 0, unavailable: 0 },
+      }),
+    );
     const user = userEvent.setup();
     await openHome();
     await user.click(quickChips().getByRole("radio", { name: "照我的範本設計" }));
@@ -720,6 +776,8 @@ describe("照我的學習單做 on the home quick box", () => {
     expect(await dialog.findByText("還沒有平台範本。")).toBeInTheDocument();
     await user.click(dialog.getByRole("tab", { name: "我的範本" }));
     expect(await dialog.findByText(/^還沒有我的範本。/)).toBeInTheDocument();
+    await user.click(dialog.getByRole("tab", { name: "我的收藏" }));
+    expect(await dialog.findByText(/在「社群」的「探索」看到喜歡的學習單/)).toBeInTheDocument();
   });
 
   it("without a 範本 says 先附上你的學習單範本, without a 課文 先附上這節課的課文, beside 送出, and sends nothing", async () => {

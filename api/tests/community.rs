@@ -499,6 +499,69 @@ async fn a_deleted_worksheet_disappears() {
     assert!(ids(&mine).is_empty());
 }
 
+#[tokio::test]
+async fn a_saved_shared_worksheet_becomes_a_ready_personal_template() {
+    let app = test_app!();
+    switch(&app, true).await;
+    let owner = app.teacher("T-TEMPLATE-OWNER", "general").await;
+    let other = app.teacher("T-TEMPLATE-USER", "general").await;
+    let ws = simple_worksheet(&app, &owner, "Rainy Day Practice").await;
+    share(&app, &owner, ws, "anonymous", false).await;
+
+    // Merely knowing a shared id is not enough: the picker endpoint is specifically 我的收藏.
+    let (s, _) = app
+        .post(
+            &format!("/api/community/worksheets/{ws}/template"),
+            Some(&other),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let (s, _) = app
+        .post(
+            &format!("/api/community/worksheets/{ws}/save"),
+            Some(&other),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, template) = app
+        .post(
+            &format!("/api/community/worksheets/{ws}/template"),
+            Some(&other),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{template}");
+    assert_eq!(template["status"], "ready");
+    assert_eq!(template["scope"], "personal");
+    assert_eq!(template["source_material"], Value::Null);
+    assert!(template["title"]
+        .as_str()
+        .is_some_and(|title| title.ends_with("（收藏範本）")));
+    assert!(template["content"]["sections"]
+        .as_array()
+        .is_some_and(|sections| !sections.is_empty()));
+    assert_eq!(
+        template["section_count"].as_u64(),
+        template["content"]["sections"]
+            .as_array()
+            .map(|sections| sections.len() as u64)
+    );
+
+    // Withdrawing a share removes it from the list and closes the conversion endpoint too.
+    unshare(&app, &owner, ws).await;
+    let (s, _) = app
+        .post(
+            &format!("/api/community/worksheets/{ws}/template"),
+            Some(&other),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
+
 // ---------------------------------------------------------------- explore
 
 #[tokio::test]
@@ -723,6 +786,16 @@ async fn an_anonymous_owner_is_never_named_and_private_material_never_leaves() {
     .await;
     let (_, saved) = app.get("/api/community/saves", Some(&reader)).await;
     assert_clean(&saved, &["T-ANON-OWNER"]);
+    let (s, template) = app
+        .post(
+            &format!("/api/community/worksheets/{ws}/template"),
+            Some(&reader),
+            json!({}),
+        )
+        .await;
+    assert_eq!(s, StatusCode::CREATED, "{template}");
+    assert_eq!(template["source_material"], Value::Null);
+    assert_clean(&template, &["T-ANON-OWNER"]);
 
     // With a code the research id is shown, and still nothing else.
     share(&app, &owner, ws, "code", true).await;

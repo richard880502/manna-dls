@@ -4088,6 +4088,7 @@ interface WsTemplateDetail { /* …既有欄位… */
 | `GET /api/community/worksheets/{id}/images/{image_id}` | 預覽裡的一張圖（JPEG）；只有分享中、該位置目前的圖 |
 | `POST`／`DELETE /api/community/worksheets/{id}/save` | 收藏／取消收藏 → `{id, saved}`。不能收藏自己的（400）；不在分享中 404（取消收藏不受限）；重複無害 |
 | `POST /api/community/worksheets/{id}/remix` | 拿來改 → 201 `{worksheet_id}`（副本）。`allow_remix` 為 false 403；自己的 400；不在分享中 404 |
+| `POST /api/community/worksheets/{id}/template` | 把「我的收藏」中仍在分享的學習單做成自己的 ready 版型 → 201（`WsTemplateDetail`）。未收藏、已取消分享或已刪除皆 404；只從公開的學習單內容重建版型，不讀原作者的私人版型或教材庫資料 |
 
 `Meta`（探索、收藏、預覽的標頭，**沒有任何人的編號**）：
 `{id, title, owner_name, shared_at, saves, remixes, is_mine, saved, allow_remix, output, levels}`。

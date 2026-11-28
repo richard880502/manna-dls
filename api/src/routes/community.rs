@@ -92,6 +92,15 @@ pub async fn remix(
     Ok((StatusCode::CREATED, Json(json!({"worksheet_id": copy}))))
 }
 
+pub async fn use_as_template(
+    State(state): State<AppState>,
+    teacher: AuthTeacher,
+    ApiPath(id): ApiPath<i64>,
+) -> AppResult<(StatusCode, Json<crate::worksheet::template::store::Detail>)> {
+    let template = community::use_as_template(&state, teacher.id(), id).await?;
+    Ok((StatusCode::CREATED, Json(template)))
+}
+
 /// `PUT /api/worksheets/{id}/share`: the owner shares, updates or withdraws.
 pub async fn share(
     State(state): State<AppState>,

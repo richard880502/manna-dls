@@ -387,6 +387,7 @@ export const api = {
     save: (id: number) => post<{ id: number; saved: boolean }>(`/community/worksheets/${id}/save`),
     unsave: (id: number) => del<{ id: number; saved: boolean }>(`/community/worksheets/${id}/save`),
     remix: (id: number) => post<{ worksheet_id: number }>(`/community/worksheets/${id}/remix`),
+    useAsTemplate: (id: number) => post<WsTemplateDetail>(`/community/worksheets/${id}/template`),
     share: (worksheetId: number, body: CommunityShareRequest) =>
       put<CommunityShareState>(`/worksheets/${worksheetId}/share`, body),
     /** 預覽裡的一張圖（JPEG；帶老師的權杖） */
